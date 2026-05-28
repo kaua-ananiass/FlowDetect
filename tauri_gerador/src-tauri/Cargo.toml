@@ -1,0 +1,27 @@
+[package]
+name = "gerador_automacao"
+version = "1.0.0"
+description = "Gerador visual da automacao"
+authors = ["OpenAI Codex"]
+edition = "2021"
+
+[lib]
+name = "gerador_automacao_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+
+[profile.dev]
+debug = 0
+incremental = false
+codegen-units = 8
+
+[profile.dev.build-override]
+debug = 0
+incremental = false

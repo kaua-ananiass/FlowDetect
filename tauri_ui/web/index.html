@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Geracao de ISS Saida e Tomador</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero-card">
+        <div class="hero-backdrop"></div>
+        <div class="hero-grid"></div>
+        <div class="hero-copy">
+          <div class="brand-row">
+            <img class="brand-logo" src="./assets/logo-design.png" alt="Design" />
+            <p class="eyebrow">AUTOMACAO</p>
+          </div>
+          <h1 id="automationTitle" class="title">Geracao de ISS Saida e Tomador todas as empresas</h1>
+          <p id="automationLead" class="lead">Painel de controle da execucao em loop.</p>
+        </div>
+        <div class="hero-status">
+          <span id="badge" class="badge">standby</span>
+        </div>
+      </section>
+
+      <section class="simple-grid">
+        <article class="launch-card full-span">
+          <header class="mini-header launch-header">
+            <p class="panel-kicker">Comando principal</p>
+            <h2>Controle da automacao</h2>
+          </header>
+          <button id="startButton" class="primary-button start-primary">Iniciar automacao</button>
+          <div class="launch-secondary-actions">
+            <button id="configButton" class="secondary-button">Configurar automacao</button>
+            <button id="dataButton" class="ghost-button">Dados da automacao</button>
+          </div>
+        </article>
+
+        <article class="mini-card full-span compact-progress-card">
+          <header class="mini-header">
+            <p class="panel-kicker">Progresso</p>
+            <h2>Automacao concluida</h2>
+          </header>
+          <div class="percent-wrap percent-strong">
+            <span id="percentText">0%</span>
+          </div>
+          <div class="progress-track compact-progress">
+            <div id="progressFill" class="progress-fill"></div>
+          </div>
+          <p id="statusText" class="detail-text">Pronta para executar.</p>
+        </article>
+      </section>
+
+      <div id="configModal" class="modal-shell" hidden>
+        <div class="modal-backdrop" data-close-config="true"></div>
+        <section class="modal-card modal-card-compact">
+          <header class="modal-header">
+            <div>
+              <p class="panel-kicker">Configurar</p>
+              <h2>Configuracao da automacao</h2>
+              <p class="modal-copy">Ajuste o atraso inicial e a linha inicial da execucao.</p>
+            </div>
+            <button id="closeConfigModal" class="icon-button" aria-label="Fechar">Fechar</button>
+          </header>
+
+          <div class="config-grid">
+            <label class="field compact-field">
+              <span>Atraso em segundos</span>
+              <input id="delay" type="number" min="0" step="0.5" value="3" />
+            </label>
+            <label class="field compact-field">
+              <span>Linha inicial do loop</span>
+              <input id="loopStart" type="number" min="1" step="1" value="1" />
+            </label>
+          </div>
+
+          <div class="config-summary">
+            <p id="configSummaryText" class="detail-text">
+              Defina como a automacao deve iniciar antes de executar.
+            </p>
+          </div>
+        </section>
+      </div>
+
+      <div id="dataModal" class="modal-shell" hidden>
+        <div class="modal-backdrop" data-close-modal="true"></div>
+        <section class="modal-card">
+          <header class="modal-header">
+            <div>
+              <p class="panel-kicker">Dados</p>
+              <h2>Dados da automacao</h2>
+              <p class="modal-copy">Edite os itens do loop e os textos digitados sem sair da interface.</p>
+            </div>
+            <button id="closeDataModal" class="icon-button" aria-label="Fechar">Fechar</button>
+          </header>
+
+          <div class="modal-tabs">
+            <button id="loopTabButton" class="tab-button is-active">Itens do loop</button>
+            <button id="textTabButton" class="tab-button">Textos livres</button>
+          </div>
+
+          <section id="loopTabPanel" class="tab-panel">
+            <p id="dataMetaText" class="modal-copy modal-copy-compact"></p>
+
+            <div class="modal-form">
+              <label class="field compact-field">
+                <span>Codigo</span>
+                <input id="dataValueInput" type="text" placeholder="Digite o numero ou codigo" />
+              </label>
+              <label class="field compact-field">
+                <span>Empresa</span>
+                <input id="dataCompanyInput" type="text" placeholder="Nome da empresa" />
+              </label>
+              <button id="addDataButton" class="primary-button">Adicionar</button>
+            </div>
+
+            <div id="dataList" class="data-list"></div>
+          </section>
+
+          <section id="textTabPanel" class="tab-panel" hidden>
+            <p id="textMetaText" class="modal-copy modal-copy-compact"></p>
+            <div id="textList" class="text-list"></div>
+          </section>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

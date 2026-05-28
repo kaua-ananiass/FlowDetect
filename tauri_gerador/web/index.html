@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gerador visual de automacoes</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Montserrat:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="builder-shell">
+      <section class="hero-panel">
+        <div class="hero-noise"></div>
+        <div class="hero-copy">
+          <div class="brand-line">
+            <img src="./assets/logo-design.png" alt="Design" class="brand-logo" />
+            <span class="eyebrow">Gerador de automacoes</span>
+          </div>
+          <h1>Monte o roteiro em blocos visuais conectados</h1>
+          <p>
+            Use o visual do Design para criar, editar e exportar a automacao com
+            mais clareza. Cada bloco representa uma etapa, e o tempo entre elas
+            aparece na propria linha do fluxo.
+          </p>
+        </div>
+
+        <div class="hero-actions">
+          <div class="hero-button-row">
+            <label class="export-name-field">
+              <span>Nome da automacao</span>
+              <input id="exportNameInput" type="text" value="Automacao_Iss" placeholder="Ex.: Geracao ISS Saida" />
+            </label>
+            <button id="refreshButton" class="ghost-button">Atualizar roteiro</button>
+            <button id="legacyButton" class="soft-button">Captura avancada</button>
+            <button id="exportButton" class="primary-button">Gerar automacao</button>
+          </div>
+          <div class="hero-test-panel">
+            <p class="panel-kicker">Teste do loop</p>
+            <div class="hero-test-grid">
+              <label>
+                <span>Atraso inicial</span>
+                <input id="testDelayInput" type="number" min="0" step="0.5" value="3" />
+              </label>
+              <label>
+                <span>Linha inicial do loop</span>
+                <input id="testLoopStartInput" type="number" min="1" step="1" value="1" />
+              </label>
+              <label class="hero-test-window-field">
+                <span>Janela alvo</span>
+                <div class="capture-inline">
+                  <input id="testWindowTitleInput" type="text" list="windowSuggestions" placeholder="Ex.: Alterdata, Chrome, ERP..." />
+                  <button id="refreshWindowsButton" class="tree-open-button" type="button">Atualizar janelas</button>
+                </div>
+              </label>
+            </div>
+            <p id="testLoopHint" class="hero-test-hint">
+              O teste vai procurar a linha escolhida no primeiro loop de planilha do roteiro.
+            </p>
+            <div class="hero-bulk-delay-row">
+              <label class="hero-bulk-delay-field">
+                <span>Atraso para todos os blocos</span>
+                <div class="capture-inline">
+                  <input id="bulkDelayInput" type="number" min="0" step="0.1" value="3" />
+                  <button id="applyBulkDelayButton" class="tree-open-button" type="button">Aplicar em todos</button>
+                </div>
+              </label>
+            </div>
+            <div class="hero-test-actions">
+              <button id="testOnceButton" class="ghost-button hero-test-button" type="button" onclick="document.getElementById('messageBar') && (document.getElementById('messageBar').textContent='Clique detectado: teste simples.'); window.handleQuickTestClick && window.handleQuickTestClick()">Testar uma vez</button>
+              <button id="testAutomationButton" class="soft-button hero-test-button" type="button" onclick="document.getElementById('messageBar') && (document.getElementById('messageBar').textContent='Clique detectado: teste com loop.'); window.handleLoopTestClick && window.handleLoopTestClick()">Testar com loop</button>
+              <button id="stopTestButton" class="danger-button hero-test-button" type="button" onclick="document.getElementById('messageBar') && (document.getElementById('messageBar').textContent='Clique detectado: parar.'); window.handleStopTestClick && window.handleStopTestClick()">Parar</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="stats-strip">
+        <article class="stat-card">
+          <span class="stat-label">Blocos</span>
+          <strong id="totalBlocks">0</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Textos</span>
+          <strong id="textBlocks">0</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Teclas</span>
+          <strong id="keyBlocks">0</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Planilha</span>
+          <strong id="spreadsheetBlocks">0</strong>
+        </article>
+        <article class="stat-card highlight">
+          <span class="stat-label">Estado</span>
+          <strong id="builderStatus">Pronto</strong>
+        </article>
+      </section>
+
+      <section class="workspace-tabs">
+        <button id="launcherTabButton" class="workspace-tab is-active" data-tab="launcher">Launcher de Automacoes</button>
+        <button id="editorTabButton" class="workspace-tab" data-tab="editor">Montagem e edicao</button>
+        <button id="assistTabButton" class="workspace-tab" data-tab="assist">Execucao assistida</button>
+        <button id="commandTabButton" class="workspace-tab" data-tab="commands">Mapa dos comandos</button>
+        <button id="workbookTabButton" class="workspace-tab" data-tab="workbook">Planilha e dados</button>
+      </section>
+
+      <section id="launcherPanel" class="workspace-panel is-active">
+        <section class="launcher-shell">
+          <div class="launcher-top-zone">
+            <header class="launcher-header">
+              <div>
+                <p class="panel-kicker">Biblioteca</p>
+                <h2>Launcher de Automacoes</h2>
+                <p id="launcherMeta" class="timeline-meta">Organize, abra e execute suas automacoes salvas.</p>
+              </div>
+              <button id="newAutomationButton" class="primary-button">+ Nova Automacao</button>
+            </header>
+
+            <section id="launcherCreatePanel" class="launcher-create-panel" hidden>
+              <div class="launcher-create-grid">
+                <label>
+                  <span>Nome</span>
+                  <input id="newAutomationNameInput" type="text" placeholder="Ex.: Cadastro de Cliente Alterdata" />
+                </label>
+                <label>
+                  <span>Categoria</span>
+                  <input id="newAutomationCategoryInput" type="text" list="launcherCategorySuggestions" placeholder="Alterdata" />
+                </label>
+                <label class="launcher-description-field">
+                  <span>Descricao</span>
+                  <textarea id="newAutomationDescriptionInput" rows="3" placeholder="Explique rapidamente o objetivo da automacao"></textarea>
+                </label>
+              </div>
+              <div class="launcher-create-actions">
+                <button id="confirmCreateAutomationButton" class="primary-button">Criar automacao</button>
+                <button id="cancelCreateAutomationButton" class="ghost-button">Cancelar</button>
+              </div>
+            </section>
+
+            <section class="launcher-toolbar">
+              <label>
+                <span>Buscar</span>
+                <input id="launcherSearchInput" type="text" placeholder="Buscar pelo nome da automacao" />
+              </label>
+              <label>
+                <span>Categoria</span>
+                <select id="launcherCategoryFilter">
+                  <option value="">Todas</option>
+                </select>
+              </label>
+              <label>
+                <span>Ordenar por</span>
+                <select id="launcherSortInput">
+                  <option value="updated_desc">Mais recentes</option>
+                  <option value="name_asc">Nome</option>
+                  <option value="created_desc">Criacao</option>
+                  <option value="used_desc">Mais usadas</option>
+                </select>
+              </label>
+              <button id="launcherFiltersToggleButton" class="ghost-button launcher-filters-toggle" type="button">Mais filtros</button>
+            </section>
+
+            <section id="launcherExtraFilters" class="launcher-extra-filters" hidden>
+              <label>
+                <span>Criadas a partir de</span>
+                <input id="launcherCreatedFromInput" type="date" />
+              </label>
+              <label>
+                <span>Atualizadas a partir de</span>
+                <input id="launcherUpdatedFromInput" type="date" />
+              </label>
+            </section>
+          </div>
+
+          <datalist id="launcherCategorySuggestions"></datalist>
+          <div id="launcherList" class="launcher-grid"></div>
+        </section>
+      </section>
+
+      <section id="editorPanel" class="workspace-panel">
+        <section class="workspace-grid">
+          <aside class="composer-column">
+            <article class="composer-card">
+              <header>
+                <p class="panel-kicker">Fluxo atual</p>
+                <h2>Sequencia do bloco</h2>
+              </header>
+              <label>
+                <span>Nome da sequencia</span>
+                <input id="sequenceContextInput" type="text" value="principal" list="sequenceSuggestions" placeholder="principal, tratar_erro_tela..." />
+              </label>
+            </article>
+
+            <article class="composer-card">
+              <header>
+                <p class="panel-kicker">Bloco de texto</p>
+                <h2>Texto livre</h2>
+              </header>
+              <textarea id="textInput" rows="4" placeholder="Digite o texto que a automacao deve escrever"></textarea>
+              <div class="inline-field">
+                <label>
+                  <span>Tempo antes</span>
+                  <input id="textDelay" type="number" min="0" step="0.1" value="0.5" />
+                </label>
+                <button id="addTextButton" class="primary-button">Adicionar texto</button>
+              </div>
+            </article>
+
+            <article class="composer-card">
+              <header>
+                <p class="panel-kicker">Bloco de teclado</p>
+                <h2>Tecla ou atalho</h2>
+              </header>
+              <input id="keyInput" type="text" placeholder="Ex.: tab, enter, alt+f, ctrl+shift+s" />
+              <div class="inline-field">
+                <label>
+                  <span>Tempo antes</span>
+                  <input id="keyDelay" type="number" min="0" step="0.1" value="0.3" />
+                </label>
+                <label>
+                  <span>Repetir</span>
+                  <input id="keyRepeatInput" type="number" min="1" step="1" value="1" />
+                </label>
+                <button id="addKeyButton" class="soft-button">Adicionar tecla</button>
+              </div>
+            </article>
+
+            <article class="composer-card">
+              <header>
+                <p class="panel-kicker">Bloco de mouse</p>
+                <h2>Clique da tela</h2>
+              </header>
+              <div class="triple-grid">
+                <label>
+                  <span>X</span>
+                  <input id="mouseXInput" type="number" step="1" value="0" />
+                </label>
+                <label>
+                  <span>Y</span>
+                  <input id="mouseYInput" type="number" step="1" value="0" />
+                </label>
+                <label>
+                  <span>Botao</span>
+                  <select id="mouseButtonInput">
+                    <option value="left">Esquerdo</option>
+                    <option value="right">Direito</option>
+                    <option value="middle">Meio</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Cliques</span>
+                  <select id="mouseClicksInput">
+                    <option value="1">1 clique</option>
+                    <option value="2">2 cliques</option>
+                  </select>
+                </label>
+              </div>
+              <button id="captureMouseButton" class="tree-open-button composer-capture-button" type="button">
+                Capturar clique na tela
+              </button>
+              <div class="inline-field">
+                <label>
+                  <span>Tempo antes</span>
+                  <input id="mouseDelay" type="number" min="0" step="0.1" value="0.3" />
+                </label>
+                <button id="addMouseButton" class="soft-button">Adicionar clique</button>
+              </div>
+            </article>
+
+            <article class="composer-card">
+              <header>
+                <p class="panel-kicker">Desvio visual</p>
+                <h2>Verificar estado do botao</h2>
+              </header>
+              <label>
+                <span>Nome do bloco</span>
+                <input id="verifyNameInput" type="text" value="Verificar botao" />
+              </label>
+              <label>
+                <span>Referencia ativa</span>
+                <div class="capture-inline">
+                  <input id="verifyActiveImageInput" type="text" placeholder="imagens/botoes/salvar_ativo.png" />
+                  <button id="selectVerifyActiveImageButton" class="tree-open-button" type="button">Selecionar ativa</button>
+                </div>
+              </label>
+              <label>
+                <span>Referencia desativada</span>
+                <div class="capture-inline">
+                  <input id="verifyInactiveImageInput" type="text" placeholder="imagens/botoes/salvar_desativado.png" />
+                  <button id="selectVerifyInactiveImageButton" class="tree-open-button" type="button">Selecionar desativada</button>
+                </div>
+              </label>
+              <div class="double-grid">
+                <label>
+                  <span>Timeout</span>
+                  <input id="verifyTimeoutInput" type="number" min="0.1" step="0.5" value="5" />
+                </label>
+                <label>
+                  <span>Confianca</span>
+                  <input id="verifyConfidenceInput" type="number" min="0.1" max="1" step="0.05" value="0.85" />
+                </label>
+              </div>
+              <div class="field-stack">
+                <label>
+                  <span>Se ativo</span>
+                  <select id="verifyActiveActionInput">
+                    <option value="continuar">Continuar</option>
+                    <option value="pular_card">Pular card</option>
+                    <option value="ir_para_sequencia">Ir para sequencia</option>
+                    <option value="parar">Parar</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Sequencia se ativo</span>
+                  <input id="verifyActiveSequenceInput" type="text" list="sequenceSuggestions" placeholder="Opcional" />
+                </label>
+                <label>
+                  <span>Se desativado</span>
+                  <select id="verifyInactiveActionInput">
+                    <option value="ir_para_sequencia">Ir para sequencia</option>
+                    <option value="continuar">Continuar</option>
+                    <option value="pular_card">Pular card</option>
+                    <option value="parar">Parar</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Sequencia se desativado</span>
+                  <input id="verifyInactiveSequenceInput" type="text" list="sequenceSuggestions" placeholder="preencher_campos_obrigatorios" />
+                </label>
+                <label>
+                  <span>Se nao encontrar</span>
+                  <select id="verifyMissingActionInput">
+                    <option value="parar">Parar</option>
+                    <option value="ir_para_sequencia">Ir para sequencia</option>
+                    <option value="continuar">Continuar</option>
+                    <option value="pular_card">Pular card</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Sequencia se nao encontrar</span>
+                  <input id="verifyMissingSequenceInput" type="text" list="sequenceSuggestions" placeholder="tratar_erro_tela" />
+                </label>
+              </div>
+              <div class="inline-field">
+                <label>
+                  <span>Tempo antes</span>
+                  <input id="verifyDelayInput" type="number" min="0" step="0.1" value="0.5" />
+                </label>
+                <button id="addVerifyButton" class="primary-button">Adicionar verificacao</button>
+              </div>
+            </article>
+
+            <article class="composer-card">
+              <header>
+                <p class="panel-kicker">Bloco de reconhecimento</p>
+                <h2>Reconhecimento visual</h2>
+              </header>
+              <label>
+                <span>Referencia visual</span>
+                <div class="capture-inline">
+                  <input id="imagePathInput" type="text" placeholder="imagens/botao_salvar.png, painel_erro.png..." />
+                  <button id="selectImageButton" class="tree-open-button" type="button">Selecionar referencia</button>
+                </div>
+              </label>
+              <div class="recognition-action-row">
+                <button id="testImageRecognitionButton" class="recognition-test-button" type="button">Testar reconhecimento</button>
+                <span class="recognition-action-help">Valida so este bloco, sem rodar a automacao inteira.</span>
+              </div>
+              <div class="triple-grid">
+                <label>
+                  <span>Timeout</span>
+                  <input id="imageTimeoutInput" type="number" min="0.1" step="0.5" value="10" />
+                </label>
+                <label>
+                  <span>Confianca</span>
+                  <input id="imageConfidenceInput" type="number" min="0.1" max="1" step="0.05" value="0.8" />
+                </label>
+                <label>
+                  <span>Perfil de busca</span>
+                  <select id="imageSearchProfileInput">
+                    <option value="fast">Rapido</option>
+                    <option value="balanced" selected>Equilibrado</option>
+                    <option value="precise">Preciso</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Janela alvo</span>
+                  <div class="capture-inline">
+                    <input id="imageWindowTitleInput" type="text" list="windowSuggestions" placeholder="Ex.: Alterdata, Chrome, painel..." />
+                    <button id="refreshImageWindowsButton" class="tree-open-button" type="button">Atualizar janelas</button>
+                  </div>
+                </label>
+                <label>
+                  <span>Ao reconhecer</span>
+                  <select id="imageClickModeInput">
+                    <option value="single">1 clique</option>
+                    <option value="double">2 cliques</option>
+                    <option value="identify">Somente identificar</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Se nao encontrar</span>
+                  <select id="imageFailureActionInput">
+                    <option value="parar">Parar</option>
+                    <option value="continuar">Continuar</option>
+                    <option value="tentar_novamente">Tentar novamente</option>
+                    <option value="ir_para_bloco">Ir para bloco</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Ir para este bloco</span>
+                  <select id="imageFailureBlockInput">
+                    <option value="">Escolha um bloco</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Tentativas</span>
+                  <input id="imageRetryCountInput" type="number" min="1" step="1" value="3" />
+                </label>
+                <label>
+                  <span>Intervalo entre tentativas</span>
+                  <input id="imageRetryIntervalInput" type="number" min="0" step="0.5" value="1" />
+                </label>
+              </div>
+              <div class="inline-field">
+                <label>
+                  <span>Tempo antes</span>
+                  <input id="imageDelayInput" type="number" min="0" step="0.1" value="0.5" />
+                </label>
+                <button id="addImageButton" class="primary-button">Adicionar reconhecimento</button>
+              </div>
+            </article>
+
+            <article class="composer-card">
+              <header>
+                <p class="panel-kicker">Chrome / HTML</p>
+                <h2>Chrome: Usar Elemento HTML</h2>
+              </header>
+              <label>
+                <span>Nome do bloco</span>
+                <input id="chromeBlockNameInput" type="text" value="Chrome / Elemento HTML" />
+              </label>
+              <label>
+                <span>HTML do elemento</span>
+                <textarea id="chromeHtmlInput" rows="6" placeholder="<input ...> ou <button ...>Salvar</button>"></textarea>
+              </label>
+              <div class="recognition-action-row">
+                <button id="analyzeChromeHtmlButton" class="recognition-test-button" type="button">Analisar HTML</button>
+                <span class="recognition-action-help">Cole o elemento e deixe o gerador sugerir automaticamente o que fazer.</span>
+              </div>
+              <input id="chromeAnalysisJsonInput" type="hidden" />
+              <div id="chromeHtmlPreview" class="chrome-preview-card">
+                <p class="muted-copy">Cole o HTML do elemento para detectar tag, atributos, seletor sugerido e a ação ideal.</p>
+              </div>
+              <div class="chrome-quick-grid">
+                <label>
+                  <span>Método de busca</span>
+                  <select id="chromeTargetMethodInput">
+                    <option value="placeholder">Placeholder</option>
+                    <option value="name">Name</option>
+                    <option value="aria-label">Aria-label</option>
+                    <option value="labelledby">Label / aria-labelledby</option>
+                    <option value="id">ID</option>
+                    <option value="css">CSS</option>
+                    <option value="xpath">XPath</option>
+                    <option value="text">Texto</option>
+                    <option value="role">Role</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Alvo encontrado</span>
+                  <input id="chromeTargetValueInput" type="text" placeholder="Valor do seletor recomendado" />
+                </label>
+                <label>
+                  <span>Ação</span>
+                  <select id="chromeActionTypeInput">
+                    <option value="preencher">Preencher</option>
+                    <option value="clicar">Clicar</option>
+                    <option value="esperar">Esperar aparecer</option>
+                    <option value="verificar_existe">Verificar se existe</option>
+                    <option value="pegar_texto">Pegar texto</option>
+                    <option value="limpar">Limpar campo</option>
+                    <option value="clicar_aguardar_carregamento">Clicar e aguardar carregamento</option>
+                    <option value="clicar_aguardar_download">Clicar e aguardar download</option>
+                    <option value="selecionar_texto">Selecionar por texto</option>
+                    <option value="selecionar_valor">Selecionar por value</option>
+                    <option value="selecionar_indice">Selecionar por indice</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Origem do valor</span>
+                  <select id="chromeValueSourceInput">
+                    <option value="texto_fixo">Texto fixo</option>
+                    <option value="variavel">Variável</option>
+                    <option value="planilha">Coluna da planilha</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Valor</span>
+                  <input id="chromeActionValueInput" type="text" placeholder='Texto fixo ou {{CNPJ}} / {{linha.CNPJ}}' />
+                </label>
+              </div>
+              <details class="chrome-advanced-panel">
+                <summary>Configurações avançadas</summary>
+                <div class="chrome-advanced-grid">
+                  <label>
+                    <span>Timeout (ms)</span>
+                    <input id="chromeTimeoutInput" type="number" min="500" step="500" value="10000" />
+                  </label>
+                  <label>
+                    <span>Salvar texto em</span>
+                    <input id="chromeSaveAsInput" type="text" placeholder="Opcional para pegar_texto" />
+                  </label>
+                  <label>
+                    <span>Pressionar depois</span>
+                    <select id="chromePressAfterInput">
+                      <option value="">Nada</option>
+                      <option value="Enter">Enter</option>
+                      <option value="Tab">Tab</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Ao concluir</span>
+                    <select id="chromeSuccessActionInput">
+                      <option value="continuar">Continuar</option>
+                      <option value="ir_para_bloco">Ir para bloco</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Bloco apos sucesso</span>
+                    <select id="chromeSuccessBlockInput">
+                      <option value="">Escolha um bloco</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Falha</span>
+                    <select id="chromeFailureActionInput">
+                      <option value="parar">Parar</option>
+                      <option value="continuar">Continuar</option>
+                      <option value="tentar_novamente">Tentar novamente</option>
+                      <option value="ir_para_bloco">Ir para bloco</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Ir para bloco</span>
+                    <select id="chromeFailureBlockInput">
+                      <option value="">Escolha um bloco</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Tentativas</span>
+                    <input id="chromeRetryCountInput" type="number" min="1" step="1" value="1" />
+                  </label>
+                  <label>
+                    <span>Intervalo tentativas</span>
+                    <input id="chromeRetryIntervalInput" type="number" min="0" step="0.5" value="0.5" />
+                  </label>
+                  <label class="inline-checkbox">
+                    <input id="chromeClearBeforeInput" type="checkbox" checked />
+                    <span>Limpar antes</span>
+                  </label>
+                  <label class="inline-checkbox">
+                    <input id="chromeFallbackVisualInput" type="checkbox" />
+                    <span>Usar fallback visual</span>
+                  </label>
+                  <label class="chrome-fallback-field">
+                    <span>Imagem do fallback</span>
+                    <div class="capture-inline">
+                      <input id="chromeFallbackImageInput" type="text" placeholder="imagens/campo_cnpj.png" />
+                      <button id="selectChromeFallbackImageButton" class="tree-open-button" type="button">Selecionar</button>
+                    </div>
+                  </label>
+                </div>
+              </details>
+              <div class="inline-field">
+                <label>
+                  <span>Tempo antes</span>
+                  <input id="chromeDelayInput" type="number" min="0" step="0.1" value="0.5" />
+                </label>
+                <button id="addChromeHtmlButton" class="primary-button">Adicionar Chrome HTML</button>
+              </div>
+            </article>
+
+            <article class="composer-card spreadsheet-card">
+              <header>
+                <p class="panel-kicker">Bloco de planilha</p>
+                <h2>Loop da planilha</h2>
+              </header>
+              <label>
+                <span>Arquivo da planilha</span>
+                <select id="composerWorkbookSelect"></select>
+              </label>
+              <div class="double-grid">
+                <label>
+                  <span>Aba</span>
+                  <select id="sheetSelect"></select>
+                </label>
+                <label>
+                  <span>Coluna</span>
+                  <select id="columnSelect"></select>
+                </label>
+              </div>
+              <div class="double-grid">
+                <label>
+                  <span>Acao apos cada item</span>
+                  <div class="capture-inline">
+                    <input id="afterActionInput" type="text" placeholder="nenhuma, enter, tab+tab..." value="nenhuma" />
+                    <button id="afterActionCaptureButton" class="tree-open-button" type="button">Gravar tecla</button>
+                  </div>
+                </label>
+                <label>
+                  <span>Intervalo entre itens</span>
+                  <input id="betweenItemsInput" type="number" min="0" step="0.1" value="0.5" />
+                </label>
+              </div>
+              <div class="inline-field">
+                <label>
+                  <span>Tempo antes</span>
+                  <input id="spreadsheetDelay" type="number" min="0" step="0.1" value="1" />
+                </label>
+                <button id="addSpreadsheetButton" class="primary-button">Adicionar loop</button>
+              </div>
+            </article>
+          </aside>
+
+          <section class="timeline-column">
+            <header class="timeline-header">
+              <div>
+                <p class="panel-kicker">Fluxo visual</p>
+                <h2>Roteiro da automacao</h2>
+                <p id="timelineMeta" class="timeline-meta">Sem blocos no momento.</p>
+              </div>
+              <button id="clearButton" class="danger-button">Limpar roteiro</button>
+            </header>
+
+            <div id="messageBar" class="message-bar">Pronto para editar o roteiro.</div>
+            <div id="timelineList" class="timeline-list"></div>
+          </section>
+        </section>
+      </section>
+
+      <section id="assistPanel" class="workspace-panel">
+        <section class="assist-shell">
+          <header class="assist-header">
+            <div class="command-map-copy">
+              <p class="panel-kicker">Execucao guiada</p>
+              <h2>Acompanhe a automacao passando pelos blocos</h2>
+              <p class="timeline-meta">Use o teste simples ou com loop e veja a trilha acender em verde em tempo real.</p>
+            </div>
+            <div class="assist-actions">
+              <label>
+                <span>Atraso inicial</span>
+                <input id="assistDelayInput" type="number" min="0" step="0.5" value="3" />
+              </label>
+              <label>
+                <span>Linha inicial do loop</span>
+                <input id="assistLoopStartInput" type="number" min="1" step="1" value="1" />
+              </label>
+              <label class="assist-window-field">
+                <span>Janela alvo</span>
+                <div class="capture-inline">
+                  <input id="assistWindowTitleInput" type="text" list="windowSuggestions" placeholder="Titulo ou parte do titulo" />
+                  <button id="refreshAssistWindowsButton" class="tree-open-button" type="button">Atualizar janelas</button>
+                </div>
+              </label>
+              <button id="assistQuickButton" class="ghost-button" type="button" onclick="document.getElementById('assistDetailText') && (document.getElementById('assistDetailText').textContent='Clique detectado: assistido simples.'); document.getElementById('messageBar') && (document.getElementById('messageBar').textContent='Clique assistido detectado: teste simples.'); window.handleAssistQuickTestClick && window.handleAssistQuickTestClick()">Testar uma vez</button>
+              <button id="assistLoopButton" class="soft-button" type="button" onclick="document.getElementById('assistDetailText') && (document.getElementById('assistDetailText').textContent='Clique detectado: assistido com loop.'); document.getElementById('messageBar') && (document.getElementById('messageBar').textContent='Clique assistido detectado: teste com loop.'); window.handleAssistLoopTestClick && window.handleAssistLoopTestClick()">Testar com loop</button>
+              <button id="assistStopButton" class="danger-button" type="button" onclick="document.getElementById('assistDetailText') && (document.getElementById('assistDetailText').textContent='Clique detectado: parar assistido.'); document.getElementById('messageBar') && (document.getElementById('messageBar').textContent='Clique assistido detectado: parar.'); window.handleStopTestClick && window.handleStopTestClick()">Parar</button>
+            </div>
+          </header>
+
+          <section class="assist-status-strip">
+            <article class="assist-status-card">
+              <span class="stat-label">Status</span>
+              <strong id="assistStatusText">Pronto</strong>
+              <p id="assistDetailText" class="assist-detail">Aguardando inicio de um teste.</p>
+            </article>
+            <article class="assist-status-card">
+              <span class="stat-label">Origem</span>
+              <strong id="assistOriginText">Criador de automacoes</strong>
+              <p class="assist-detail">Teste disparado pela aba Execucao assistida do gerador.</p>
+            </article>
+            <article class="assist-status-card">
+              <span class="stat-label">Janela alvo</span>
+              <strong id="assistWindowText">Aguardando captura</strong>
+              <p id="assistWindowDetailText" class="assist-detail">A janela ativa sera mostrada assim que o teste comecar.</p>
+            </article>
+            <article class="assist-status-card">
+              <span class="stat-label">Empresa</span>
+              <strong id="assistCompanyText">-</strong>
+              <p id="assistModeText" class="assist-detail">Modo assistido pronto para acompanhar a execucao.</p>
+            </article>
+            <article class="assist-status-card progress">
+              <div class="assist-progress-top">
+                <span class="stat-label">Progresso</span>
+                <strong id="assistPercentText">0%</strong>
+              </div>
+              <div class="assist-progress-track">
+                <div id="assistProgressFill" class="assist-progress-fill"></div>
+              </div>
+              <p id="assistProgressMeta" class="assist-detail">Nenhum passo em execucao.</p>
+            </article>
+          </section>
+
+          <section class="assist-log-panel">
+            <div class="assist-log-header">
+              <span class="stat-label">Log da execucao</span>
+              <strong>Tempo real</strong>
+            </div>
+            <div id="assistLogList" class="assist-log-list"></div>
+          </section>
+
+          <div id="assistMapList" class="assist-map-list"></div>
+        </section>
+      </section>
+
+      <section id="commandsPanel" class="workspace-panel">
+        <section class="command-map-shell">
+          <header class="command-map-header">
+            <div class="command-map-copy">
+              <p class="panel-kicker">Visao ampla</p>
+              <h2>Arvore da sequencia</h2>
+              <p id="commandMapMeta" class="timeline-meta">
+                Veja o caminho completo da automacao e edite a sequencia longa com mais distancia.
+              </p>
+              <div class="command-map-save-panel">
+                <div class="command-map-save-top">
+                  <button id="mapSaveButton" class="primary-button command-map-save-button" type="button">Salvar mapa</button>
+                  <span id="mapSavePercent" class="command-map-save-percent">0%</span>
+                </div>
+                <div class="command-map-save-bar">
+                  <span id="mapSaveFill" class="command-map-save-fill"></span>
+                </div>
+                <p id="mapSaveStatus" class="command-map-save-status">Mapa ainda nao salvo.</p>
+              </div>
+            </div>
+            <div class="command-map-actions">
+              <div class="map-nav-controls">
+                <button id="mapPrevButton" class="micro-button" type="button" aria-label="Bloco anterior">‹</button>
+                <button id="mapNextButton" class="micro-button" type="button" aria-label="Proximo bloco">›</button>
+              </div>
+              <div class="map-zoom-controls">
+                <button id="mapZoomOutButton" class="micro-button" type="button" aria-label="Diminuir zoom">-</button>
+                <input id="mapZoomRange" class="map-zoom-range" type="range" min="85" max="150" step="5" value="108" />
+                <button id="mapZoomInButton" class="micro-button" type="button" aria-label="Aumentar zoom">+</button>
+                <div class="map-bulk-delay-controls">
+                  <span class="map-bulk-delay-label">Atraso</span>
+                  <input id="mapBulkDelayInput" type="number" min="0" step="0.1" value="3" />
+                  <button id="mapApplyBulkDelayButton" class="micro-button map-delay-apply" type="button">OK</button>
+                </div>
+                <span id="mapZoomValue" class="map-zoom-value">108%</span>
+              </div>
+              <button id="openEditorFromMap" class="ghost-button">Voltar para edicao</button>
+            </div>
+          </header>
+
+          <div id="commandMapList" class="command-map-list"></div>
+        </section>
+      </section>
+
+      <section id="workbookPanel" class="workspace-panel">
+        <section class="workbook-shell">
+          <header class="workbook-header">
+            <div>
+              <p class="panel-kicker">Base visual</p>
+              <h2>Planilha da automacao</h2>
+              <p id="workbookMeta" class="timeline-meta">
+                Visualize os dados reais da planilha e envie valores ou colunas para o mapa.
+              </p>
+            </div>
+            <div class="workbook-header-actions">
+              <button id="addWorkbookButton" class="primary-button" type="button">Adicionar planilha</button>
+              <input id="workbookFileInput" type="file" accept=".xlsx,.xlsm,.xltx,.xltm" hidden />
+              <input id="imageFileInput" type="file" accept=".png,.jpg,.jpeg,.bmp,.gif,.webp" hidden />
+            </div>
+          </header>
+
+          <div id="workbookFilesTabs" class="workbook-files-tabs"></div>
+
+          <div class="workbook-toolbar">
+            <label>
+              <span>Aba</span>
+              <select id="workbookSheetSelect"></select>
+            </label>
+            <label>
+              <span>Buscar</span>
+              <input id="workbookSearchInput" type="text" placeholder="Filtrar por valor, empresa ou codigo..." />
+            </label>
+            <div class="workbook-toolbar-info">
+              <span id="workbookRowsInfo">Sem linhas carregadas.</span>
+            </div>
+          </div>
+
+          <section class="workbook-layout">
+            <div class="workbook-table-card">
+              <div id="workbookTableWrap" class="workbook-table-wrap"></div>
+            </div>
+
+            <aside class="workbook-side-card">
+              <div class="workbook-side-block">
+                <p class="panel-kicker">Valor selecionado</p>
+                <h3 id="selectedWorkbookTitle">Nada selecionado</h3>
+                <p id="selectedWorkbookSubtitle" class="workbook-side-copy">
+                  Clique em uma celula da tabela para enviar esse valor como texto ao mapa.
+                </p>
+                <div id="selectedWorkbookValue" class="selected-workbook-value">-</div>
+                <label>
+                  <span>Tempo antes do texto</span>
+                  <input id="workbookTextDelay" type="number" min="0" step="0.1" value="0.3" />
+                </label>
+                <button id="addWorkbookCellButton" class="primary-button">Adicionar valor ao mapa</button>
+              </div>
+
+              <div class="workbook-side-block">
+                <p class="panel-kicker">Coluna selecionada</p>
+                <h3 id="selectedWorkbookColumnTitle">Nenhuma coluna</h3>
+                <p id="selectedWorkbookColumnSubtitle" class="workbook-side-copy">
+                  Use a coluna escolhida para criar um loop da planilha no mapa.
+                </p>
+                <label>
+                  <span>Tempo antes do loop</span>
+                  <input id="workbookLoopDelay" type="number" min="0" step="0.1" value="1" />
+                </label>
+                <label>
+                  <span>Acao apos cada item</span>
+                  <div class="capture-inline">
+                    <input id="workbookAfterAction" type="text" value="nenhuma" />
+                    <button id="workbookAfterActionCaptureButton" class="tree-open-button" type="button">Gravar tecla</button>
+                  </div>
+                </label>
+                <label>
+                  <span>Intervalo entre itens</span>
+                  <input id="workbookBetweenItems" type="number" min="0" step="0.1" value="0.5" />
+                </label>
+                <button id="addWorkbookColumnButton" class="soft-button">Adicionar coluna como loop</button>
+              </div>
+            </aside>
+          </section>
+        </section>
+      </section>
+
+      <div id="captureOverlay" class="capture-overlay" hidden>
+        <div class="capture-modal">
+          <div class="capture-header">
+            <div>
+              <p class="panel-kicker">Capturando</p>
+              <h3>Aperte a tecla ou o atalho</h3>
+            </div>
+            <button id="cancelCaptureButton" class="micro-button" type="button">Cancelar</button>
+          </div>
+          <p id="captureOverlayText" class="capture-copy">
+            Assim que voce pressionar a combinacao desejada, a captura fecha automaticamente.
+          </p>
+          <p class="capture-hint">Clique fora ou pressione ESC para cancelar.</p>
+        </div>
+      </div>
+    </main>
+
+    <datalist id="sequenceSuggestions"></datalist>
+    <datalist id="windowSuggestions"></datalist>
+
+
+
+
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

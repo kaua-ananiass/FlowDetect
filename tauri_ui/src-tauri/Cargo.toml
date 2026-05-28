@@ -1,0 +1,27 @@
+[package]
+name = "automacao_tauri_ui"
+version = "1.0.0"
+description = "Launcher visual da automacao"
+authors = ["OpenAI Codex"]
+edition = "2021"
+
+[lib]
+name = "automacao_tauri_ui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+
+[profile.dev]
+debug = 0
+incremental = false
+codegen-units = 8
+
+[profile.dev.build-override]
+debug = 0
+incremental = false

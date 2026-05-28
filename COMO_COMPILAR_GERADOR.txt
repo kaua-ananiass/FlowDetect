@@ -1,0 +1,21 @@
+COMPILAR O GERADOR EM .EXE
+==========================
+
+Opcao 1 - PowerShell:
+
+cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
+powershell -ExecutionPolicy Bypass -File .\compilar_gerador_exe.ps1
+
+Opcao 2 - Duplo clique:
+
+- Execute o arquivo compilar_gerador_exe.bat
+
+Resultado:
+
+- O pacote final sera criado em:
+  C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys\saida_exe\Gerador_de_Automacoes
+
+Observacao:
+
+- O .exe do gerador e compilado pelo Tauri.
+- As automacoes continuam funcionando com os scripts Python incluidos no pacote.

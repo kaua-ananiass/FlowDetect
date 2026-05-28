@@ -1,0 +1,239 @@
+import pyautogui
+import time
+
+INTERVALO_TEXTO = 0.01
+
+
+def digitar_texto(texto):
+    for caractere in texto:
+        if caractere == "\r":
+            continue
+        if caractere == "\n":
+            pyautogui.press("enter")
+            continue
+        if caractere == "\t":
+            pyautogui.press("tab")
+            continue
+        pyautogui.write(caractere, interval=INTERVALO_TEXTO)
+
+
+def eh_texto_simples(nome):
+    return len(str(nome)) == 1 and str(nome) not in {"\r", "\n", "\t"}
+
+
+def tecla_para_pyautogui(nome):
+    nome = str(nome)
+    if len(nome) == 1:
+        return nome
+    mapa = {
+        "ctrl": "ctrl",
+        "control": "ctrl",
+        "shift": "shift",
+        "alt": "alt",
+        "altgr": "altright",
+        "enter": "enter",
+        "tab": "tab",
+        "esc": "esc",
+        "escape": "esc",
+        "space": "space",
+        "backspace": "backspace",
+        "delete": "delete",
+        "del": "delete",
+        "insert": "insert",
+        "home": "home",
+        "end": "end",
+        "pgup": "pageup",
+        "pgdn": "pagedown",
+        "up": "up",
+        "down": "down",
+        "left": "left",
+        "right": "right",
+    }
+    return mapa.get(nome, nome)
+
+
+def executar_acao(acao):
+    if not acao:
+        return
+    if isinstance(acao, str):
+        acao = [parte.strip() for parte in acao.split("+") if parte.strip()]
+    if len(acao) == 1:
+        pyautogui.press(str(acao[0]))
+        return
+    pyautogui.hotkey(*[str(parte) for parte in acao])
+
+
+def executar_teclas(teclas, repeticoes=1):
+    teclas = [str(tecla) for tecla in (teclas or []) if str(tecla)]
+    if not teclas:
+        return
+    total = max(1, int(repeticoes))
+    teclas_pyautogui = [tecla_para_pyautogui(tecla) for tecla in teclas]
+    for _ in range(total):
+        if len(teclas_pyautogui) > 1:
+            pyautogui.hotkey(*teclas_pyautogui)
+            continue
+        tecla = teclas[0]
+        tecla_pyautogui = teclas_pyautogui[0]
+        if eh_texto_simples(tecla):
+            pyautogui.write(tecla)
+        else:
+            pyautogui.press(tecla_pyautogui)
+
+
+def executar_sequencia(valores, acao_apos_item=None, intervalo_entre_itens=0.5):
+    total = len(valores)
+    for indice, valor in enumerate(valores):
+        digitar_texto(str(valor))
+        if indice < total - 1 and acao_apos_item:
+            executar_acao(acao_apos_item)
+        if indice < total - 1 and intervalo_entre_itens > 0:
+            time.sleep(intervalo_entre_itens)
+
+
+def esperar_imagem(imagem, timeout=10, confianca=0.8):
+    confianca = float(confianca)
+    confiancas_busca = [confianca]
+    if confianca > 0.72:
+        confiancas_busca.append(round(max(0.55, confianca - 0.12), 2))
+    fim = time.perf_counter() + max(0, float(timeout))
+    while time.perf_counter() <= fim:
+        for confianca_atual in confiancas_busca:
+            for grayscale in (False, True):
+                local = pyautogui.locateOnScreen(imagem, confidence=confianca_atual, grayscale=grayscale)
+                if local:
+                    return local
+        time.sleep(0.25)
+    return None
+
+
+def clicar_por_imagem(
+    imagem,
+    timeout=10,
+    confianca=0.8,
+    clicar=True,
+    offset_x=0,
+    offset_y=0,
+    ao_nao_encontrar="parar",
+    sequencia_nao_encontrar="",
+    bloco_nao_encontrar="",
+    quantidade_tentativas=1,
+    intervalo_tentativas=1,
+):
+    tentativas = max(1, int(quantidade_tentativas))
+    for tentativa in range(tentativas):
+        local = esperar_imagem(imagem, timeout=timeout, confianca=confianca)
+        if local:
+            centro_x, centro_y = pyautogui.center(local)
+            destino_x = int(centro_x + int(offset_x))
+            destino_y = int(centro_y + int(offset_y))
+            if clicar:
+                pyautogui.click(destino_x, destino_y)
+            return True
+        if ao_nao_encontrar != "tentar_novamente" or tentativa >= tentativas - 1:
+            break
+        time.sleep(max(0, float(intervalo_tentativas)))
+    if ao_nao_encontrar == "parar":
+        raise RuntimeError(f"Imagem nao encontrada: {imagem}")
+    return False
+
+
+def verificar_estado_botao(
+    imagem_ativo,
+    imagem_desativado,
+    timeout=5,
+    confianca=0.85,
+    se_ativo=None,
+    se_desativado=None,
+    se_nao_encontrar=None,
+):
+    if esperar_imagem(imagem_ativo, timeout=timeout, confianca=confianca):
+        return se_ativo or {"acao": "continuar"}
+    if esperar_imagem(imagem_desativado, timeout=timeout, confianca=confianca):
+        return se_desativado or {"acao": "continuar"}
+    return se_nao_encontrar or {"acao": "parar"}
+
+
+def executar():
+    time.sleep(0.5)
+    executar_sequencia([346, 351, 330, 355, 44, 289, 354, 199, 285, 228, 328, 327, 214, 78, 72, 227, 219, 42, 306, 236, 301, 81, 58, 11, 104, 226, 342, 84, 196, 94], acao_apos_item=['enter'], intervalo_entre_itens=0.5)
+    time.sleep(0.5)
+    executar_teclas(['tab'], repeticoes=3)
+    time.sleep(0.5)
+    digitar_texto('01032026')
+    time.sleep(0.5)
+    executar_teclas(['enter'], repeticoes=2)
+    time.sleep(0.5)
+    executar_teclas(['alt', 'f'], repeticoes=1)
+    time.sleep(1.0)
+    executar_teclas(['tab'], repeticoes=3)
+    time.sleep(0.5)
+    digitar_texto('50317977000105')
+    time.sleep(0.5)
+    executar_teclas(['enter'], repeticoes=1)
+    time.sleep(0.3)
+    executar_teclas(['tab'], repeticoes=2)
+    time.sleep(0.5)
+    executar_teclas(['alt', 'f'], repeticoes=1)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/reconhecimento-cod-01.png', timeout=3.0, confianca=0.5, perfil_busca='balanced', clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=23, quantidade_tentativas=2, intervalo_tentativas=1.0)
+    time.sleep(1.0)
+    clicar_por_imagem(imagem='imagens/Botao-Selecionar-Ligado.png', timeout=5.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=2, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=11, quantidade_tentativas=2, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/referencia.png', timeout=5.0, confianca=0.8, perfil_busca='fast', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=2, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/confirmado.png', timeout=5.0, confianca=0.6, perfil_busca='precise', clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=12, quantidade_tentativas=1, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/Botao-Ligado.png', timeout=5.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=19, quantidade_tentativas=1, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/Botao-expandir.png', timeout=3.0, confianca=0.5, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='tentar_novamente', sequencia_nao_encontrar='', bloco_nao_encontrar=19, quantidade_tentativas=1, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/Escolher-tipo.png', timeout=3.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=22, quantidade_tentativas=1, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/Capturar.png', timeout=3.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=1, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/selecionar-campo.png', timeout=3.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=1, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    digitar_texto('425')
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/gravar.png', timeout=3.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='continuar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=1, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/cancelar.png', timeout=5.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='continuar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=1, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/fornecedor.png', timeout=10.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=2, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='tentar_novamente', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=2, intervalo_tentativas=1.0)
+    time.sleep(1.0)
+    digitar_texto('03943209/0001-87')
+    time.sleep(0.5)
+    executar_teclas(['alt', 'f'], repeticoes=1)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/reconhecimento-cod-02.png', timeout=10.0, confianca=1.0, perfil_busca='precise', clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=39, quantidade_tentativas=2, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/Botao-Selecionar-Ligado.png', timeout=10.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=25, quantidade_tentativas=1, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/referencia.png', timeout=10.0, confianca=0.8, perfil_busca='fast', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=1, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/confirmado.png', timeout=5.0, confianca=0.8, perfil_busca='balanced', clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=26, quantidade_tentativas=1, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/Botao-Ligado.png', timeout=10.0, confianca=0.8, perfil_busca='precise', clicar=True, clicks=2, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/Botao-expandir.png', timeout=10.0, confianca=0.9, perfil_busca='precise', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/Escolher-tipo.png', timeout=10.0, confianca=0.8, perfil_busca='precise', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=37, quantidade_tentativas=1, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/Capturar.png', timeout=10.0, confianca=0.9, perfil_busca='precise', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/selecionar-campo.png', timeout=10.0, confianca=0.9, perfil_busca='precise', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    digitar_texto('425')
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/gravar.png', timeout=10.0, confianca=1.0, perfil_busca='precise', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/cancelar.png', timeout=10.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='continuar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=2, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/referencia.png', timeout=10.0, confianca=0.8, perfil_busca='fast', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.5)
+    clicar_por_imagem(imagem='imagens/click_empresas.png', timeout=5.0, confianca=0.7, perfil_busca='fast', clicar=True, clicks=2, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='tentar_novamente', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=1, intervalo_tentativas=1.0)
+
+
+if __name__ == "__main__":
+    executar()

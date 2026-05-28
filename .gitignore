@@ -1,0 +1,57 @@
+# Node / Tauri
+tauri_gerador/node_modules/
+tauri_ui/node_modules/
+dist/
+build/
+target/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Logs / temp
+*.log
+assist_test_stdout.log
+assist_test_stderr.log
+tauri_gerador_dev_stdout.log
+tauri_gerador_dev_stderr.log
+ultimo_log_launcher.txt
+.parar_automacao.flag
+
+# Build outputs / exported packages
+saida_exe/
+build_automacao/
+Versao_01/
+Versao_02/
+projeto_v1_final/
+*.exe
+*.msi
+
+# Sensitive spreadsheets and runtime data
+planilhas/
+db.xlsx
+*.xlsx
+*.xls
+*.xlsm
+*.xltx
+*.xltm
+
+# Private automations / local library
+automacoes/
+Automacao_Iss/
+Automação-Alterar-425/
+Automação-Alterar-4255/
+
+# Diagnostics / captured artifacts
+diagnosticos_reconhecimento/
+debug_screenshot*.png
+assist_*.png
+
+# OS / editor
+.DS_Store
+Thumbs.db
+Design/

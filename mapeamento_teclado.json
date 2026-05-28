@@ -1,0 +1,950 @@
+{
+  "criado_em": "2026-05-28T09:00:46",
+  "instrucoes": [
+    "Teclas simples e atalhos sao gravados individualmente.",
+    "F8 abre uma caixa de texto grande e salva o bloco como um unico comando.",
+    "O botao Capturar mouse salva a coordenada exata do proximo clique.",
+    "Cada evento tambem salva o intervalo em segundos desde a acao anterior.",
+    "A aba Planilha pode adicionar uma sequencia inteira ou so linhas selecionadas ao roteiro.",
+    "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura."
+  ],
+  "resumo_digitado": "[PLANILHA:codigoalter x30 | apos:enter][TAB x3]01032026[ENTER x2]\n[ALT+F][TAB x3]50317977000105[ENTER]\n[TAB x2][ALT+F][IMAGEM:reconhecimento-cod-01.png | localizar | timeout=3s | conf=0.5 | perfil:balanced | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:ir_para_bloco -> bloco 23][IMAGEM:Botao-Selecionar-Ligado.png | 2 cliques | timeout=5s | conf=0.8 | perfil:balanced | falha:ir_para_bloco -> bloco 11][IMAGEM:referencia.png | clicar | timeout=5s | conf=0.8 | perfil:fast | falha:parar][IMAGEM:confirmado.png | localizar | timeout=5s | conf=0.6 | perfil:precise | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:ir_para_bloco -> bloco 12][IMAGEM:Botao-Ligado.png | clicar | timeout=5s | conf=0.8 | perfil:balanced | falha:ir_para_bloco -> bloco 19][IMAGEM:Botao-expandir.png | clicar | timeout=3s | conf=0.5 | perfil:balanced | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:tentar_novamente][IMAGEM:Escolher-tipo.png | clicar | timeout=3s | conf=0.8 | perfil:balanced | falha:ir_para_bloco -> bloco 22][IMAGEM:Capturar.png | clicar | timeout=3s | conf=0.8 | perfil:balanced | falha:parar][IMAGEM:selecionar-campo.png | clicar | timeout=3s | conf=0.8 | perfil:balanced | falha:parar]425[IMAGEM:gravar.png | clicar | timeout=3s | conf=0.8 | perfil:balanced | falha:continuar][IMAGEM:cancelar.png | clicar | timeout=5s | conf=0.8 | perfil:balanced | falha:continuar][IMAGEM:fornecedor.png | 2 cliques | timeout=10s | conf=0.8 | perfil:balanced | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:tentar_novamente]03943209/0001-87[ALT+F][IMAGEM:reconhecimento-cod-02.png | localizar | timeout=10s | conf=1 | perfil:precise | falha:ir_para_bloco -> bloco 39][IMAGEM:Botao-Selecionar-Ligado.png | clicar | timeout=10s | conf=0.8 | perfil:balanced | falha:ir_para_bloco -> bloco 25][IMAGEM:referencia.png | clicar | timeout=10s | conf=0.8 | perfil:fast | falha:parar][IMAGEM:confirmado.png | localizar | timeout=5s | conf=0.8 | perfil:balanced | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:ir_para_bloco -> bloco 26][IMAGEM:Botao-Ligado.png | 2 cliques | timeout=10s | conf=0.8 | perfil:precise | falha:parar][IMAGEM:Botao-expandir.png | clicar | timeout=10s | conf=0.9 | perfil:precise | falha:parar][IMAGEM:Escolher-tipo.png | clicar | timeout=10s | conf=0.8 | perfil:precise | falha:ir_para_bloco -> bloco 37][IMAGEM:Capturar.png | clicar | timeout=10s | conf=0.9 | perfil:precise | falha:parar][IMAGEM:selecionar-campo.png | clicar | timeout=10s | conf=0.9 | perfil:precise | falha:parar]425[IMAGEM:gravar.png | clicar | timeout=10s | conf=1 | perfil:precise | falha:parar][IMAGEM:cancelar.png | clicar | timeout=10s | conf=0.8 | perfil:balanced | falha:continuar][IMAGEM:referencia.png | clicar | timeout=10s | conf=0.8 | perfil:fast | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:parar][IMAGEM:click_empresas.png | 2 cliques | timeout=5s | conf=0.7 | perfil:fast | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:tentar_novamente]",
+  "eventos": [
+    {
+      "ordem": 1,
+      "sequencia": "principal",
+      "tipo": "sequencia_planilha",
+      "teclas": [
+        "planilha:codigoalter"
+      ],
+      "texto": "[PLANILHA:codigoalter x30 | apos:enter]",
+      "intervalo_antes": 0.5,
+      "comando_python": "executar_sequencia([346, 351, 330, 355, 44, 289, 354, 199, 285, 228, 328, 327, 214, 78, 72, 227, 219, 42, 306, 236, 301, 81, 58, 11, 104, 226, 342, 84, 196, 94], acao_apos_item=['enter'], intervalo_entre_itens=0.5)",
+      "detalhes": {
+        "arquivo": "planilhas/codigos-cod.xlsx",
+        "aba": "Sheet1",
+        "coluna": "codigoalter",
+        "valores": [
+          346,
+          351,
+          330,
+          355,
+          44,
+          289,
+          354,
+          199,
+          285,
+          228,
+          328,
+          327,
+          214,
+          78,
+          72,
+          227,
+          219,
+          42,
+          306,
+          236,
+          301,
+          81,
+          58,
+          11,
+          104,
+          226,
+          342,
+          84,
+          196,
+          94
+        ],
+        "origem": "coluna_inteira",
+        "linhas_selecionadas": [],
+        "acao_apos_item": [
+          "enter"
+        ],
+        "acao_apos_item_texto": "enter",
+        "intervalo_entre_itens": 0.5
+      }
+    },
+    {
+      "ordem": 2,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "tab"
+      ],
+      "texto": "[TAB x3]",
+      "intervalo_antes": 0.5,
+      "comando_python": "executar_teclas(['tab'], repeticoes=3)",
+      "detalhes": {
+        "repeticoes": 3
+      }
+    },
+    {
+      "ordem": 3,
+      "sequencia": "principal",
+      "tipo": "texto_livre",
+      "teclas": [
+        "texto_livre"
+      ],
+      "texto": "01032026",
+      "intervalo_antes": 0.5,
+      "comando_python": "digitar_texto('01032026')"
+    },
+    {
+      "ordem": 4,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "enter"
+      ],
+      "texto": "[ENTER x2]\n",
+      "intervalo_antes": 0.5,
+      "comando_python": "executar_teclas(['enter'], repeticoes=2)",
+      "detalhes": {
+        "repeticoes": 2
+      }
+    },
+    {
+      "ordem": 5,
+      "sequencia": "principal",
+      "tipo": "atalho",
+      "teclas": [
+        "alt",
+        "f"
+      ],
+      "texto": "[ALT+F]",
+      "intervalo_antes": 0.5,
+      "comando_python": "executar_teclas(['alt', 'f'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1
+      }
+    },
+    {
+      "ordem": 6,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "tab"
+      ],
+      "texto": "[TAB x3]",
+      "intervalo_antes": 1.0,
+      "comando_python": "executar_teclas(['tab'], repeticoes=3)",
+      "detalhes": {
+        "repeticoes": 3
+      }
+    },
+    {
+      "ordem": 7,
+      "sequencia": "principal",
+      "tipo": "texto_livre",
+      "teclas": [
+        "texto_livre"
+      ],
+      "texto": "50317977000105",
+      "intervalo_antes": 0.5,
+      "comando_python": "digitar_texto('50317977000105')"
+    },
+    {
+      "ordem": 8,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "enter"
+      ],
+      "texto": "[ENTER]\n",
+      "intervalo_antes": 0.5,
+      "comando_python": "executar_teclas(['enter'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1
+      }
+    },
+    {
+      "ordem": 9,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "tab"
+      ],
+      "texto": "[TAB x2]",
+      "intervalo_antes": 0.3,
+      "comando_python": "executar_teclas(['tab'], repeticoes=2)",
+      "detalhes": {
+        "repeticoes": 2
+      }
+    },
+    {
+      "ordem": 10,
+      "sequencia": "principal",
+      "tipo": "atalho",
+      "teclas": [
+        "alt",
+        "f"
+      ],
+      "texto": "[ALT+F]",
+      "intervalo_antes": 0.5,
+      "comando_python": "executar_teclas(['alt', 'f'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1
+      }
+    },
+    {
+      "ordem": 11,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:reconhecimento-cod-01.png | localizar | timeout=3s | conf=0.5 | perfil:balanced | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:ir_para_bloco -> bloco 23]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/reconhecimento-cod-01.png', timeout=3.0, confianca=0.5, perfil_busca='balanced', clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=23, quantidade_tentativas=2, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/reconhecimento-cod-01.png",
+        "timeout": 3.0,
+        "confianca": 0.5,
+        "perfil_busca": "balanced",
+        "clicar": false,
+        "cliques": 0,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "Consulta de movimento de ISS / Faturamento e Deduções",
+        "ao_nao_encontrar": "ir_para_bloco",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": 23,
+        "quantidade_tentativas": 2,
+        "intervalo_tentativas": 0.0
+      }
+    },
+    {
+      "ordem": 12,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Botao-Selecionar-Ligado.png | 2 cliques | timeout=5s | conf=0.8 | perfil:balanced | falha:ir_para_bloco -> bloco 11]",
+      "intervalo_antes": 1.0,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Botao-Selecionar-Ligado.png', timeout=5.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=2, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=11, quantidade_tentativas=2, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Botao-Selecionar-Ligado.png",
+        "timeout": 5.0,
+        "confianca": 0.8,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "ir_para_bloco",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": 11,
+        "quantidade_tentativas": 2,
+        "intervalo_tentativas": 0.0,
+        "cliques": 2,
+        "perfil_busca": "balanced",
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    },
+    {
+      "ordem": 13,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:referencia.png | clicar | timeout=5s | conf=0.8 | perfil:fast | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/referencia.png', timeout=5.0, confianca=0.8, perfil_busca='fast', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=2, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/referencia.png",
+        "timeout": 5.0,
+        "confianca": 0.8,
+        "perfil_busca": "fast",
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 2,
+        "intervalo_tentativas": 0.0
+      }
+    },
+    {
+      "ordem": 14,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:confirmado.png | localizar | timeout=5s | conf=0.6 | perfil:precise | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:ir_para_bloco -> bloco 12]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/confirmado.png', timeout=5.0, confianca=0.6, perfil_busca='precise', clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=12, quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/confirmado.png",
+        "timeout": 5.0,
+        "confianca": 0.6,
+        "clicar": false,
+        "cliques": 0,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "Consulta de movimento de ISS / Faturamento e Deduções",
+        "ao_nao_encontrar": "ir_para_bloco",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": 12,
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.0,
+        "perfil_busca": "precise",
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    },
+    {
+      "ordem": 15,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Botao-Ligado.png | clicar | timeout=5s | conf=0.8 | perfil:balanced | falha:ir_para_bloco -> bloco 19]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Botao-Ligado.png', timeout=5.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=19, quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Botao-Ligado.png",
+        "timeout": 5.0,
+        "confianca": 0.8,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "ir_para_bloco",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": 19,
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.0,
+        "cliques": 1,
+        "perfil_busca": "balanced",
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    },
+    {
+      "ordem": 16,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Botao-expandir.png | clicar | timeout=3s | conf=0.5 | perfil:balanced | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:tentar_novamente]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Botao-expandir.png', timeout=3.0, confianca=0.5, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='tentar_novamente', sequencia_nao_encontrar='', bloco_nao_encontrar=19, quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Botao-expandir.png",
+        "timeout": 3.0,
+        "confianca": 0.5,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "Consulta de movimento de ISS / Faturamento e Deduções",
+        "ao_nao_encontrar": "tentar_novamente",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": 19,
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.0,
+        "perfil_busca": "balanced",
+        "cliques": 1,
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    },
+    {
+      "ordem": 17,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Escolher-tipo.png | clicar | timeout=3s | conf=0.8 | perfil:balanced | falha:ir_para_bloco -> bloco 22]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Escolher-tipo.png', timeout=3.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=22, quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Escolher-tipo.png",
+        "timeout": 3.0,
+        "confianca": 0.8,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "ir_para_bloco",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": 22,
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.0,
+        "perfil_busca": "balanced",
+        "cliques": 1,
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    },
+    {
+      "ordem": 18,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Capturar.png | clicar | timeout=3s | conf=0.8 | perfil:balanced | falha:parar]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Capturar.png', timeout=3.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Capturar.png",
+        "timeout": 3.0,
+        "confianca": 0.8,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.0,
+        "cliques": 1,
+        "perfil_busca": "balanced",
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    },
+    {
+      "ordem": 19,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:selecionar-campo.png | clicar | timeout=3s | conf=0.8 | perfil:balanced | falha:parar]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/selecionar-campo.png', timeout=3.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/selecionar-campo.png",
+        "timeout": 3.0,
+        "confianca": 0.8,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.0,
+        "perfil_busca": "balanced",
+        "cliques": 1,
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    },
+    {
+      "ordem": 20,
+      "sequencia": "principal",
+      "tipo": "texto_livre",
+      "teclas": [
+        "texto_livre"
+      ],
+      "texto": "425",
+      "intervalo_antes": 0.5,
+      "comando_python": "digitar_texto('425')"
+    },
+    {
+      "ordem": 21,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:gravar.png | clicar | timeout=3s | conf=0.8 | perfil:balanced | falha:continuar]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/gravar.png', timeout=3.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='continuar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/gravar.png",
+        "timeout": 3.0,
+        "confianca": 0.8,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "continuar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 1.0,
+        "perfil_busca": "balanced",
+        "cliques": 1,
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    },
+    {
+      "ordem": 22,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:cancelar.png | clicar | timeout=5s | conf=0.8 | perfil:balanced | falha:continuar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/cancelar.png', timeout=5.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='continuar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/cancelar.png",
+        "timeout": 5.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "continuar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.0
+      }
+    },
+    {
+      "ordem": 23,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:fornecedor.png | 2 cliques | timeout=10s | conf=0.8 | perfil:balanced | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:tentar_novamente]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/fornecedor.png', timeout=10.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=2, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='tentar_novamente', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=2, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/fornecedor.png",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "clicar": true,
+        "cliques": 2,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "Consulta de movimento de ISS / Faturamento e Deduções",
+        "ao_nao_encontrar": "tentar_novamente",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 2,
+        "intervalo_tentativas": 0.0,
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    },
+    {
+      "ordem": 24,
+      "sequencia": "principal",
+      "tipo": "texto_livre",
+      "teclas": [
+        "texto_livre"
+      ],
+      "texto": "03943209/0001-87",
+      "intervalo_antes": 1.0,
+      "comando_python": "digitar_texto('03943209/0001-87')"
+    },
+    {
+      "ordem": 25,
+      "sequencia": "principal",
+      "tipo": "atalho",
+      "teclas": [
+        "alt",
+        "f"
+      ],
+      "texto": "[ALT+F]",
+      "intervalo_antes": 0.5,
+      "comando_python": "executar_teclas(['alt', 'f'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1
+      }
+    },
+    {
+      "ordem": 26,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:reconhecimento-cod-02.png | localizar | timeout=10s | conf=1 | perfil:precise | falha:ir_para_bloco -> bloco 39]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/reconhecimento-cod-02.png', timeout=10.0, confianca=1.0, perfil_busca='precise', clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=39, quantidade_tentativas=2, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/reconhecimento-cod-02.png",
+        "timeout": 10.0,
+        "confianca": 1.0,
+        "perfil_busca": "precise",
+        "clicar": false,
+        "cliques": 0,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "ir_para_bloco",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": 39,
+        "quantidade_tentativas": 2,
+        "intervalo_tentativas": 0.0
+      }
+    },
+    {
+      "ordem": 27,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Botao-Selecionar-Ligado.png | clicar | timeout=10s | conf=0.8 | perfil:balanced | falha:ir_para_bloco -> bloco 25]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Botao-Selecionar-Ligado.png', timeout=10.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=25, quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Botao-Selecionar-Ligado.png",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "ir_para_bloco",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": 25,
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.0
+      }
+    },
+    {
+      "ordem": 28,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:referencia.png | clicar | timeout=10s | conf=0.8 | perfil:fast | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/referencia.png', timeout=10.0, confianca=0.8, perfil_busca='fast', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/referencia.png",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "fast",
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 1.0
+      }
+    },
+    {
+      "ordem": 29,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:confirmado.png | localizar | timeout=5s | conf=0.8 | perfil:balanced | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:ir_para_bloco -> bloco 26]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/confirmado.png', timeout=5.0, confianca=0.8, perfil_busca='balanced', clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=26, quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/confirmado.png",
+        "timeout": 5.0,
+        "confianca": 0.8,
+        "clicar": false,
+        "cliques": 0,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "Consulta de movimento de ISS / Faturamento e Deduções",
+        "ao_nao_encontrar": "ir_para_bloco",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": 26,
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.0,
+        "perfil_busca": "balanced",
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    },
+    {
+      "ordem": 30,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Botao-Ligado.png | 2 cliques | timeout=10s | conf=0.8 | perfil:precise | falha:parar]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Botao-Ligado.png', timeout=10.0, confianca=0.8, perfil_busca='precise', clicar=True, clicks=2, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Botao-Ligado.png",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "cliques": 2,
+        "modo_clique": "mouse",
+        "segundo_plano": false,
+        "perfil_busca": "precise"
+      }
+    },
+    {
+      "ordem": 31,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Botao-expandir.png | clicar | timeout=10s | conf=0.9 | perfil:precise | falha:parar]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Botao-expandir.png', timeout=10.0, confianca=0.9, perfil_busca='precise', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Botao-expandir.png",
+        "timeout": 10.0,
+        "confianca": 0.9,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "modo_clique": "mouse",
+        "segundo_plano": false,
+        "perfil_busca": "precise",
+        "cliques": 1
+      }
+    },
+    {
+      "ordem": 32,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Escolher-tipo.png | clicar | timeout=10s | conf=0.8 | perfil:precise | falha:ir_para_bloco -> bloco 37]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Escolher-tipo.png', timeout=10.0, confianca=0.8, perfil_busca='precise', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=37, quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Escolher-tipo.png",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "ir_para_bloco",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": 37,
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.0,
+        "modo_clique": "mouse",
+        "segundo_plano": false,
+        "perfil_busca": "precise",
+        "cliques": 1
+      }
+    },
+    {
+      "ordem": 33,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Capturar.png | clicar | timeout=10s | conf=0.9 | perfil:precise | falha:parar]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Capturar.png', timeout=10.0, confianca=0.9, perfil_busca='precise', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Capturar.png",
+        "timeout": 10.0,
+        "confianca": 0.9,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "modo_clique": "mouse",
+        "segundo_plano": false,
+        "perfil_busca": "precise",
+        "cliques": 1
+      }
+    },
+    {
+      "ordem": 34,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:selecionar-campo.png | clicar | timeout=10s | conf=0.9 | perfil:precise | falha:parar]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/selecionar-campo.png', timeout=10.0, confianca=0.9, perfil_busca='precise', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/selecionar-campo.png",
+        "timeout": 10.0,
+        "confianca": 0.9,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "perfil_busca": "precise",
+        "cliques": 1,
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    },
+    {
+      "ordem": 35,
+      "sequencia": "principal",
+      "tipo": "texto_livre",
+      "teclas": [
+        "texto_livre"
+      ],
+      "texto": "425",
+      "intervalo_antes": 0.5,
+      "comando_python": "digitar_texto('425')"
+    },
+    {
+      "ordem": 36,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:gravar.png | clicar | timeout=10s | conf=1 | perfil:precise | falha:parar]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/gravar.png', timeout=10.0, confianca=1.0, perfil_busca='precise', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/gravar.png",
+        "timeout": 10.0,
+        "confianca": 1.0,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "modo_clique": "mouse",
+        "segundo_plano": false,
+        "perfil_busca": "precise",
+        "cliques": 1
+      }
+    },
+    {
+      "ordem": 37,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:cancelar.png | clicar | timeout=10s | conf=0.8 | perfil:balanced | falha:continuar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/cancelar.png', timeout=10.0, confianca=0.8, perfil_busca='balanced', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='continuar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=2, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/cancelar.png",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "continuar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 2,
+        "intervalo_tentativas": 0.0
+      }
+    },
+    {
+      "ordem": 38,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:referencia.png | clicar | timeout=10s | conf=0.8 | perfil:fast | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/referencia.png', timeout=10.0, confianca=0.8, perfil_busca='fast', clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/referencia.png",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "fast",
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "Consulta de movimento de ISS / Faturamento e Deduções",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    },
+    {
+      "ordem": 39,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:click_empresas.png | 2 cliques | timeout=5s | conf=0.7 | perfil:fast | janela:Consulta de movimento de ISS / Faturamento e Deduções | falha:tentar_novamente]",
+      "intervalo_antes": 0.5,
+      "comando_python": "clicar_por_imagem(imagem='imagens/click_empresas.png', timeout=5.0, confianca=0.7, perfil_busca='fast', clicar=True, clicks=2, offset_x=0, offset_y=0, janela_alvo='Consulta de movimento de ISS / Faturamento e Deduções', ao_nao_encontrar='tentar_novamente', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=1, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/click_empresas.png",
+        "timeout": 5.0,
+        "confianca": 0.7,
+        "clicar": true,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "Consulta de movimento de ISS / Faturamento e Deduções",
+        "ao_nao_encontrar": "tentar_novamente",
+        "sequencia_nao_encontrar": "",
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.0,
+        "cliques": 2,
+        "perfil_busca": "fast",
+        "modo_clique": "mouse",
+        "segundo_plano": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+Execute `python main.py`
+ou `python capturar_cliques.py`
+
+Interface:
+O programa agora abre uma janela com duas abas: `Captura` e `Planilha`.
+Na aba `Captura` voce acompanha as teclas gravadas, o resumo, os intervalos
+e tambem o historico quando alguma entrada for deletada.
+Tambem existe um botao para executar a automacao dentro do proprio programa.
+Ao selecionar um item do roteiro, voce pode editar o tempo antes dele
+e salvar esse ajuste depois que a automacao ja estiver pronta.
+Se quiser digitar outras coisas sem gravar nada, use `Pausar captura`
+e depois `Retomar captura` quando quiser voltar a registrar.
+
+Captura:
+Cada tecla simples e cada atalho continuam sendo gravados.
+Tudo fica salvo em `mapeamento_teclado.json`, `resumo_teclado.txt` e `comandos_teclado.py`.
+O intervalo real entre uma acao e outra tambem fica salvo para a automacao repetir o ritmo.
+Se precisar, esse tempo pode ser alterado depois pela interface.
+
+Texto grande:
+F8 abre uma janela grande para voce digitar um texto maior.
+Ctrl+Enter confirma, salva esse texto como um unico comando em `comandos_teclado.py`
+e depois o programa volta para a janela anterior para digitar o texto.
+
+Planilha:
+A aba `Planilha` mostra as informacoes disponiveis da `db.xlsx`.
+Voce pode escolher uma coluna, por exemplo `Id Alterdata`,
+visualizar as linhas dessa coluna e adicionar tudo ao roteiro em sequencia.
+Agora tambem da para selecionar linhas especificas da coluna
+e montar uma sequencia separada so com essas linhas.
+Voce escolhe a tecla ou atalho entre um item e outro,
+por exemplo `enter`, `tab` ou `ctrl+f`,
+e tambem define o intervalo entre um item da planilha e outro.
+
+Extras:
+Use `Executar roteiro` para rodar tudo automaticamente com os tempos gravados.
+Voce pode definir um atraso antes do inicio para focar a janela correta
+e usar `Parar execucao` se quiser interromper.
+
+325
+Use `Executar em loop` para repetir o roteiro usando os itens
+da sequencia de planilha que foi gravada.
+Use `Pausar captura` para impedir novas gravacoes temporariamente.
+Backspace remove a ultima entrada salva.
+Esc ou F9 encerram o programa.
+
+Build e execucao separada:
+Existe agora um botao `Gerar build` na interface.
+Ele cria a pasta `build_automacao` com o roteiro salvo, a `db.xlsx`,
+o executor `executar_automacao.py` e o arquivo `executar_automacao.bat`.
+Esse `.bat` abre um menu simples para rodar a automacao normal
+ou em loop sem precisar abrir a tela de captura.

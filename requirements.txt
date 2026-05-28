@@ -1,0 +1,7 @@
+pynput
+pyautogui
+openpyxl
+opencv-python
+pillow
+pytesseract
+playwright
