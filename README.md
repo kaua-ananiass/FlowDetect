@@ -1,4 +1,8 @@
-# Gerador de Automacoes
+<p align="center">
+  <img src="tauri_gerador/web/assets/flowdetect-welcome.png" alt="FlowDetect" width="820">
+</p>
+
+# FlowDetect
 
 Plataforma visual para criar, editar, testar e exportar automacoes desktop com blocos reutilizaveis.
 
