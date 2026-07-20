@@ -1,75 +1,71 @@
-# FlowDetect
+# Gerador de Automacoes
 
-**Automacao visual com reconhecimento inteligente para qualquer software**
+Plataforma visual para criar, editar, testar e exportar automacoes desktop com blocos reutilizaveis.
 
-Uma plataforma visual para criar, testar, organizar e exportar automacoes para desktop e web sem depender de API do sistema.
+O projeto foi pensado para automatizar **qualquer tipo de programa**, inclusive sistemas legados, ERPs, navegadores, paineis internos e aplicativos sem API. Para isso, ele combina:
 
-Este projeto nasceu para resolver um problema muito comum em operacoes reais: muitos sistemas importantes ainda exigem trabalho manual, repetitivo e dependente de interface. Em vez de limitar a automacao a um unico tipo de integracao, o FlowDetect combina fluxo visual, reconhecimento de imagem, planilha, teclado, mouse e Chrome para permitir automar praticamente qualquer rotina.
+- automacao por teclado e mouse
+- reconhecimento de imagem na tela
+- loops com planilha
+- variaveis e textos dinamicos
+- desvios de fluxo entre blocos
+- execucao assistida com acompanhamento visual
 
-## O que e este projeto
+## O que este produto faz
 
-O **FlowDetect** e um produto focado em criacao de automacoes por blocos.
+Com o Gerador de Automacoes, voce monta uma rotina como se estivesse desenhando um fluxo:
 
-Com ele, voce pode:
+- blocos de texto
+- blocos de tecla ou atalho
+- blocos de clique de mouse
+- blocos de reconhecimento visual
+- blocos de loop com planilha
+- blocos de verificacao de estado
+- blocos para Chrome via HTML/Playwright
 
-- montar fluxos visuais sem escrever toda a logica do zero
-- testar uma etapa isolada antes de rodar a rotina inteira
-- executar automacoes em loop usando planilhas
-- criar desvios de fluxo entre blocos
-- exportar uma automacao pronta com interface propria
+Depois disso, voce pode:
 
-O objetivo nao e apenas "clicar automaticamente". O foco aqui e transformar uma rotina operacional em um fluxo controlavel, editavel e reaproveitavel.
+- editar tudo pelo `Mapa dos comandos`
+- testar uma vez
+- testar em loop
+- acompanhar a execucao em tempo real
+- exportar a automacao pronta com interface propria
 
-## Proposta do produto
+## Diferencial principal
 
-Este projeto foi pensado para funcionar bem em cenarios como:
+### 1. Reconhecimento visual
+
+O sistema consegue localizar elementos pela tela usando imagem de referencia, mesmo quando nao existe integracao oficial com o programa.
+
+Exemplos de uso:
+
+- localizar um botao `Salvar`
+- reconhecer um painel de erro
+- clicar em um campo especifico
+- validar se uma tela apareceu
+- pular para outro bloco se algo nao for encontrado
+
+Isso permite automatizar programas desktop, navegadores, sistemas antigos e telas que normalmente nao teriam API.
+
+### 2. Automacao para qualquer software
+
+Nem todo sistema oferece integracao. Este projeto resolve isso com uma abordagem hibrida:
+
+- quando existe elemento HTML: usa Playwright
+- quando nao existe: usa PyAutoGUI, teclado, mouse e reconhecimento visual
+
+Na pratica, isso torna possivel automatizar:
 
 - ERPs
 - sistemas fiscais
+- portais web
 - paineis internos
-- programas Windows legados
-- navegadores
-- portais web sem API
-- processos operacionais com alto volume de repeticao
+- aplicativos Windows
+- programas com janelas e modais complexos
 
-O diferencial esta em permitir dois caminhos ao mesmo tempo:
+### 3. Fluxo com planilha
 
-1. Automacao visual, quando o sistema nao oferece integracao tecnica
-2. Automacao estrutural no navegador, quando existe HTML acessivel
-
-Isso torna o produto util tanto para sistemas modernos quanto para ambientes antigos e engessados.
-
-## Principais capacidades
-
-### Reconhecimento de imagem
-
-O sistema consegue localizar elementos na tela usando uma imagem de referencia.
-
-Isso permite:
-
-- encontrar botoes
-- validar se uma tela apareceu
-- detectar mensagens ou paineis
-- clicar em pontos dinamicos sem depender de coordenada fixa
-- decidir para qual bloco a automacao deve ir quando algo e encontrado ou nao encontrado
-
-Esse recurso e o que permite automatizar programas que normalmente nao teriam integracao automatica.
-
-### Fluxo visual por blocos
-
-As automacoes sao montadas com blocos editaveis, como:
-
-- texto livre
-- tecla ou atalho
-- clique de mouse
-- reconhecimento visual
-- verificacao de estado
-- loop de planilha
-- bloco Chrome por elemento HTML
-
-### Planilha como fonte de dados
-
-O projeto permite usar colunas de planilha para repetir a automacao em massa.
+Voce pode usar colunas da planilha para repetir a automacao em massa.
 
 Exemplos:
 
@@ -78,80 +74,26 @@ Exemplos:
 - um codigo por linha
 - um texto dinamico por linha
 
-### Automacao de Chrome por elemento HTML
+## Principais recursos
 
-Quando a rotina for no navegador, o sistema tambem consegue trabalhar com elementos HTML.
+- `Launcher de Automacoes` para organizar automacoes salvas
+- `Mapa dos comandos` como editor principal do fluxo
+- `Execucao assistida` com progresso por bloco
+- exportacao da automacao pronta para pasta separada
+- reconhecimento de imagem com janela alvo
+- testes isolados de reconhecimento
+- salto entre blocos em caso de sucesso ou falha
+- blocos Chrome por colagem de elemento HTML
+- fallback visual para cenarios onde o seletor HTML falhar
 
-Voce pode colar um trecho do elemento e deixar o sistema:
+## Como funciona o fluxo
 
-- identificar o tipo de elemento
-- sugerir o melhor metodo de busca
-- configurar a acao adequada
-
-Isso complementa o reconhecimento visual com um caminho mais preciso para paginas web.
-
-## O que voce encontra hoje no projeto
-
-### Interface principal do gerador
-
-Na pasta [tauri_gerador](c:/Users/kaua/Desktop/Capturar_atalhos_hotkeys/tauri_gerador) fica a aplicacao principal usada para criar e editar as automacoes.
-
-As areas centrais do produto hoje sao:
-
-- `Launcher de Automacoes`
-- `Mapa dos comandos`
-- `Execucao assistida`
-- `Planilha e dados`
-
-### Interface final exportada
-
-Na pasta [tauri_ui](c:/Users/kaua/Desktop/Capturar_atalhos_hotkeys/tauri_ui) fica a interface usada nas automacoes exportadas para entrega final.
-
-### Motor de execucao
-
-O executor principal esta em [executar_automacao.py](c:/Users/kaua/Desktop/Capturar_atalhos_hotkeys/executar_automacao.py).
-
-Ele e responsavel por:
-
-- rodar o fluxo dos blocos
-- executar loop
-- fazer reconhecimento de imagem
-- aplicar desvios
-- integrar Chrome quando necessario
-
-### Persistencia do roteiro
-
-O gerenciamento do fluxo fica em [gerenciar_roteiro.py](c:/Users/kaua/Desktop/Capturar_atalhos_hotkeys/gerenciar_roteiro.py).
-
-### Biblioteca local de automacoes
-
-As automacoes salvas ficam em [automacoes](c:/Users/kaua/Desktop/Capturar_atalhos_hotkeys/automacoes).
-
-### Recursos auxiliares
-
-- [imagens](c:/Users/kaua/Desktop/Capturar_atalhos_hotkeys/Imagens) e [imagens](c:/Users/kaua/Desktop/Capturar_atalhos_hotkeys/imagens) para referencias visuais
-- [planilhas](c:/Users/kaua/Desktop/Capturar_atalhos_hotkeys/planilhas) para bases auxiliares
-- [compilar_gerador_exe.ps1](c:/Users/kaua/Desktop/Capturar_atalhos_hotkeys/compilar_gerador_exe.ps1) para build do produto
-
-## Fluxo de uso
-
-1. Abra ou crie uma automacao nova no launcher.
+1. Crie ou abra uma automacao no launcher.
 2. Monte os blocos no mapa.
-3. Ajuste tempos, reconhecimentos e desvios.
+3. Ajuste tempos, desvios e reconhecimentos.
 4. Salve o mapa.
 5. Rode um teste simples ou em loop.
-6. Acompanhe pela execucao assistida.
-7. Exporte a automacao final quando estiver pronta.
-
-## Diferenciais do produto
-
-- Funciona em sistemas que nao possuem API
-- Permite automacao visual baseada na tela real
-- Permite automacao web por HTML quando disponivel
-- Suporta fluxo condicional entre blocos
-- Usa planilha como fonte de execucao em massa
-- Exporta a automacao em pacote final separado
-- Foi pensado para uso operacional real, nao apenas para demo
+6. Exporte a automacao final com interface propria.
 
 ## Tecnologias usadas
 
@@ -160,23 +102,38 @@ As automacoes salvas ficam em [automacoes](c:/Users/kaua/Desktop/Capturar_atalho
 - `OpenCV`
 - `Pillow`
 - `OpenPyXL`
-- `PyTesseract`
 - `Playwright`
 - `Tauri`
-- `HTML`
-- `CSS`
-- `JavaScript`
+- `HTML/CSS/JavaScript`
+
+## Estrutura do projeto
+
+- `tauri_gerador/`  
+  Interface principal do criador de automacoes
+
+- `tauri_ui/`  '
+  Interface final usada nas automacoes exportadas
+
+- `executar_automacao.py`  
+  Motor de execucao dos blocos
+
+- `gerenciar_roteiro.py`  
+  Manipulacao e persistencia do roteiro
+
+- `automacoes/`  
+  Biblioteca local de automacoes salvas
+
+- `imagens/`  
+  Referencias usadas nos blocos de reconhecimento visual
+
+- `planilhas/`  
+  Arquivos auxiliares de dados
 
 ## Requisitos
 
-Para desenvolvimento e execucao local:
+Windows e Python 3.
 
-- Windows
-- Python 3
-- Node.js
-- npm
-
-Dependencias Python atuais do projeto:
+Dependencias Python do projeto:
 
 - `pynput`
 - `pyautogui`
@@ -188,13 +145,11 @@ Dependencias Python atuais do projeto:
 
 Arquivo de referencia:
 
-- [requirements.txt](c:/Users/kaua/Desktop/Capturar_atalhos_hotkeys/requirements.txt)
-
-Se voce quiser usar OCR com mais confianca, tambem e recomendado instalar o **Tesseract OCR** no Windows.
+- `requirements.txt`
 
 ## Como rodar em desenvolvimento
 
-### Aplicacao principal do FlowDetect
+### Interface principal do gerador
 
 ```powershell
 cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys\tauri_gerador
@@ -209,41 +164,31 @@ python -m pip install -r requirements.txt
 python -m playwright install
 ```
 
-## Como compilar o executavel
+Se voce quiser usar OCR, tambem e recomendado instalar o **Tesseract OCR** no Windows.
+
+## Como compilar o .exe
 
 ```powershell
 cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
 powershell -ExecutionPolicy Bypass -File .\compilar_gerador_exe.ps1
 ```
 
-O pacote compilado e montado em:
+O pacote final e gerado em:
 
 ```text
 saida_exe\Gerador_de_Automacoes
 ```
 
-## Estrutura resumida da raiz
+## Como gerar uma versao final em pasta separada
 
-- `tauri_gerador/`  
-  app principal do criador
+Exemplo usado no projeto:
 
-- `tauri_ui/`  
-  interface final da automacao exportada
-
-- `automacoes/`  
-  biblioteca local das automacoes criadas
-
-- `planilhas/`  
-  bases auxiliares
-
-- `executar_automacao.py`  
-  motor de execucao
-
-- `gerenciar_roteiro.py`  
-  estrutura e persistencia do fluxo
-
-- `compilar_gerador_exe.ps1`  
-  script oficial de compilacao
+```powershell
+cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
+powershell -ExecutionPolicy Bypass -File .\compilar_gerador_exe.ps1
+if (Test-Path .\projeto_v1_final) { Remove-Item .\projeto_v1_final -Recurse -Force }
+Copy-Item .\saida_exe\Gerador_de_Automacoes .\projeto_v1_final -Recurse -Force
+```
 
 ## Casos de uso
 
@@ -251,39 +196,35 @@ saida_exe\Gerador_de_Automacoes
 - automacao de ERP
 - preenchimento repetitivo em sistemas
 - navegacao guiada por imagens
-- digitacao em massa por planilha
-- operacoes em navegador com ou sem seletor HTML
+- busca e digitacao por planilha
+- automacao de tarefas operacionais no navegador
 
-## Quando usar cada abordagem
+## Quando usar reconhecimento de imagem
 
-### Use reconhecimento visual quando:
+Use reconhecimento visual quando:
 
 - o sistema nao tiver API
-- o elemento nao puder ser acessado por HTML
-- a rotina depender do que aparece na tela
-- voce estiver automatizando um programa desktop
+- o elemento nao for acessivel por HTML
+- o botao estiver dentro de um software desktop
+- o fluxo depender do que aparece na tela
 
-### Use o bloco de Chrome / Elemento HTML quando:
+Use o bloco de `Chrome / Elemento HTML` quando:
 
-- a rotina for no navegador
-- o elemento puder ser obtido pelo inspetor
-- voce quiser uma automacao mais estrutural e previsivel
+- a automacao for no navegador
+- o elemento puder ser copiado do inspetor
+- voce quiser mais estabilidade com seletores
 
-## Observacoes importantes
+## Status do projeto
 
-Automacao desktop depende do contexto visual real. Alguns cenarios exigem:
+Produto em evolucao, ja com fluxo real de criacao, teste, execucao em loop, exportacao e automacao visual/HTML funcionando.
+
+## Observacao importante
+
+Automacao desktop depende de contexto real de tela. Por isso, alguns cenarios exigem:
 
 - janela alvo correta
 - resolucao consistente
 - imagens de referencia bem recortadas
 - tempos de espera ajustados ao sistema
 
-O projeto foi construido justamente para dar controle sobre esses pontos sem exigir que o usuario tenha que reconstruir toda a automacao manualmente em codigo.
-
-## Posicionamento
-
-Este repositorio representa mais do que um script de clique. Ele e a base do **FlowDetect**, um produto novo de automacao visual com foco em transformar tarefas operacionais repetitivas em fluxos reutilizaveis, controlados e exportaveis.
-
-Se a ideia for publicar no GitHub como vitrine de produto, este projeto pode ser apresentado como:
-
-**uma plataforma de automacao visual para qualquer software, com reconhecimento de imagem, execucao por planilha e suporte a navegador.**
+Esse projeto foi construido justamente para dar ao usuario controle sobre esses pontos sem precisar programar tudo do zero.

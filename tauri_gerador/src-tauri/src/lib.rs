@@ -1,12 +1,15 @@
-use serde::Serialize;
+﻿use serde::Serialize;
+use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
 use std::{
     fs,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Read, Write},
+    net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 #[cfg(windows)]
@@ -50,6 +53,12 @@ struct RuntimeState {
     running: Arc<Mutex<bool>>,
     pid: Arc<Mutex<Option<u32>>>,
 }
+
+static REMOTE_AGENT_SNAPSHOT: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
+static REMOTE_AGENT_LAST_CONTACT_MS: OnceLock<Arc<Mutex<u128>>> = OnceLock::new();
+static PYTHON_COMMAND_CACHE: OnceLock<(String, Vec<String>)> = OnceLock::new();
+
+static TARGET_OVERLAY_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 
 #[derive(Serialize)]
 struct AutomationConfig {
@@ -111,6 +120,31 @@ fn workspace_root(app: &AppHandle) -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
+fn is_flowdetect_agent_runtime(app: &AppHandle) -> bool {
+    let exe_name = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.file_stem().and_then(|name| name.to_str()).map(str::to_string))
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if exe_name.contains("agent") {
+        return true;
+    }
+
+    let current_dir = std::env::current_dir()
+        .ok()
+        .map(|path| path.display().to_string().to_ascii_lowercase())
+        .unwrap_or_default();
+    if current_dir.contains("flowdetect_agent") {
+        return true;
+    }
+
+    app.path()
+        .resource_dir()
+        .ok()
+        .map(|path| path.display().to_string().to_ascii_lowercase().contains("flowdetect_agent"))
+        .unwrap_or(false)
+}
+
 fn sanitize_workbook_filename(file_name: &str) -> String {
     let raw_name = Path::new(file_name)
         .file_name()
@@ -159,6 +193,28 @@ fn sanitize_asset_filename(file_name: &str, fallback: &str) -> String {
     }
 }
 
+fn image_mime_from_bytes(path: &Path, bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return "image/png";
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return "image/jpeg";
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return "image/gif";
+    }
+    if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
+        return "image/webp";
+    }
+
+    match path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "image/png",
+    }
+}
+
 fn normalize_automation_name(name: &str) -> String {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -196,20 +252,32 @@ fn newest_timestamp(paths: &[PathBuf]) -> Option<std::time::SystemTime> {
         .max()
 }
 
+fn configure_no_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        command.creation_flags(0x08000000);
+    }
+}
+
 fn python_command(root: &PathBuf) -> Result<(String, Vec<String>), String> {
+    if let Some((program, args)) = PYTHON_COMMAND_CACHE.get() {
+        return Ok((program.clone(), args.clone()));
+    }
+
     let candidates = [
         ("python", Vec::<String>::new()),
         ("py", vec!["-3".to_string()]),
     ];
 
     for (program, args) in candidates {
-        let probe = Command::new(program)
-            .args(&args)
-            .arg("--version")
-            .current_dir(root)
-            .output();
+        let mut command = Command::new(program);
+        command.args(&args).arg("--version").current_dir(root);
+        configure_no_window(&mut command);
+        let probe = command.output();
         if probe.map(|out| out.status.success()).unwrap_or(false) {
-            return Ok((program.to_string(), args));
+            let detected = (program.to_string(), args);
+            let _ = PYTHON_COMMAND_CACHE.set(detected.clone());
+            return Ok(detected);
         }
     }
 
@@ -223,11 +291,14 @@ fn run_python_script(root: &PathBuf, script_name: &str, extra_args: &[String]) -
     }
 
     let (python_program, python_args) = python_command(root)?;
-    let output = Command::new(&python_program)
+    let mut command = Command::new(&python_program);
+    command
         .current_dir(root)
         .args(&python_args)
         .arg(&script_path)
-        .args(extra_args)
+        .args(extra_args);
+    configure_no_window(&mut command);
+    let output = command
         .output()
         .map_err(|err| format!("Falha ao executar {script_name}: {err}"))?;
 
@@ -332,6 +403,1047 @@ fn run_script_json(root: &PathBuf, script_name: &str, args: &[String]) -> Result
     Ok(parsed)
 }
 
+#[tauri::command]
+fn get_login_session(app: AppHandle) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let path = root.join("login_session.json");
+    if !path.exists() {
+        return Ok(serde_json::json!({"exists": false, "session": null}));
+    }
+    let text = fs::read_to_string(&path)
+        .map_err(|err| format!("Falha ao ler sessao local: {err}"))?;
+    let session: Value = serde_json::from_str(&text).map_err(|err| format!("Sessao local invalida: {err}"))?;
+    Ok(serde_json::json!({"exists": true, "session": session}))
+}
+
+#[tauri::command]
+fn save_login_session(
+    app: AppHandle,
+    nome: String,
+    email: String,
+    activation_key: Option<String>,
+    activation_id: Option<String>,
+    expires_at: Option<String>,
+    screen_width: Option<i32>,
+    screen_height: Option<i32>,
+    viewport_width: Option<i32>,
+    viewport_height: Option<i32>,
+    device_pixel_ratio: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let path = root.join("login_session.json");
+    let session = serde_json::json!({
+        "nome": nome,
+        "email": email,
+        "activation_key": activation_key.unwrap_or_else(|| "LOCAL-WELCOME".to_string()),
+        "activation_id": activation_id.unwrap_or_else(|| "local-welcome".to_string()),
+        "expires_at": expires_at.unwrap_or_default(),
+        "screen_width": screen_width.unwrap_or_default(),
+        "screen_height": screen_height.unwrap_or_default(),
+        "viewport_width": viewport_width.unwrap_or_default(),
+        "viewport_height": viewport_height.unwrap_or_default(),
+        "device_pixel_ratio": device_pixel_ratio.unwrap_or(1.0),
+    });
+    let text = serde_json::to_string_pretty(&session)
+        .map_err(|err| format!("Falha ao preparar sessao local: {err}"))?;
+    fs::write(&path, text).map_err(|err| format!("Falha ao salvar sessao local: {err}"))?;
+    Ok(serde_json::json!({"exists": true, "session": session}))
+}
+
+#[tauri::command]
+fn export_saved_automation_zip(
+    app: AppHandle,
+    id: String,
+    destino: Option<String>,
+    destination_path: Option<String>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec!["automation-export-zip".into(), "--id".into(), id];
+    let output_path = destination_path.or(destino);
+    if let Some(value) = output_path {
+        if !value.trim().is_empty() {
+            args.push("--destino".into());
+            args.push(value);
+        }
+    }
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn import_saved_automation_zip(app: AppHandle, arquivo: String) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    run_helper_json(&root, &["automation-import-zip".into(), "--arquivo".into(), arquivo])
+}
+
+#[tauri::command]
+fn import_saved_automation_zip_from_path(app: AppHandle, path: String) -> Result<Value, String> {
+    import_saved_automation_zip(app, path)
+}
+
+#[tauri::command]
+fn import_saved_automation_zip_from_file_path(app: AppHandle, file_path: String) -> Result<Value, String> {
+    import_saved_automation_zip(app, file_path)
+}
+
+#[tauri::command]
+fn export_runtime_update_zip(app: AppHandle, destino: Option<String>) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec!["runtime-export-zip".into()];
+    if let Some(value) = destino {
+        if !value.trim().is_empty() {
+            args.push("--destino".into());
+            args.push(value);
+        }
+    }
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn import_runtime_update_zip(app: AppHandle, arquivo: String) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    run_helper_json(&root, &["runtime-import-zip".into(), "--arquivo".into(), arquivo])
+}
+
+#[tauri::command]
+fn import_runtime_update_zip_from_path(app: AppHandle, path: String) -> Result<Value, String> {
+    import_runtime_update_zip(app, path)
+}
+
+#[tauri::command]
+fn get_recognition_image_preview(app: AppHandle, image_id: String) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let normalized = image_id.replace('\\', "/");
+    let relative = normalized.strip_prefix("imagens/").unwrap_or(&normalized);
+    let path = root.join("Imagens").join(relative);
+    let fallback = root.join("imagens").join(relative);
+    let final_path = if path.exists() { path } else { fallback };
+    if !final_path.exists() {
+        return Err(format!("Imagem nao encontrada: {image_id}"));
+    }
+    let bytes = fs::read(&final_path)
+        .map_err(|err| format!("Falha ao abrir imagem de preview ({image_id}): {err}"))?;
+    let mime = image_mime_from_bytes(&final_path, &bytes);
+    let encoded = general_purpose::STANDARD.encode(&bytes);
+    Ok(serde_json::json!({
+        "src": format!("data:{mime};base64,{encoded}"),
+        "mime": mime,
+        "file_name": final_path.file_name().and_then(|name| name.to_str()).unwrap_or("referencia.png"),
+        "image_id": image_id,
+    }))
+}
+
+#[tauri::command]
+fn capture_image_asset(app: AppHandle, base_name_hint: Option<String>) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec!["--pasta-projeto".into(), root.display().to_string()];
+    if let Some(value) = base_name_hint {
+        if !value.trim().is_empty() {
+            args.push("--nome-base".into());
+            args.push(value);
+        }
+    }
+    let main_window = app.get_webview_window("main");
+    if let Some(window) = main_window.as_ref() {
+        let _ = window.minimize();
+        thread::sleep(Duration::from_millis(450));
+    }
+
+    let result = run_script_json(&root, "capturar_imagem_tela.py", &args);
+
+    if let Some(window) = main_window.as_ref() {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+
+    result
+}
+
+#[tauri::command]
+fn rename_image_asset(app: AppHandle, image_id: String, new_name: String) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let normalized = image_id.replace('\\', "/");
+    let relative = normalized.strip_prefix("imagens/").unwrap_or(&normalized);
+    let source = root.join("Imagens").join(relative);
+    if !source.exists() {
+        return Err(format!("Imagem nao encontrada: {image_id}"));
+    }
+    let sanitized = sanitize_asset_filename(&new_name, "referencia.png");
+    let destination = source.parent().unwrap_or(&root.join("Imagens")).join(&sanitized);
+    fs::rename(&source, &destination).map_err(|err| format!("Falha ao renomear imagem: {err}"))?;
+    Ok(serde_json::json!({
+        "image_id": format!("imagens/{}", sanitized),
+        "file_name": sanitized,
+    }))
+}
+
+#[tauri::command]
+fn open_images_folder(app: AppHandle) -> Result<String, String> {
+    let root = workspace_root(&app);
+    let path = root.join("Imagens");
+    fs::create_dir_all(&path).map_err(|err| format!("Falha ao criar pasta de imagens: {err}"))?;
+    Command::new("explorer").arg(&path).spawn().map_err(|err| format!("Falha ao abrir pasta: {err}"))?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+fn open_recognition_diagnostics_folder(app: AppHandle) -> Result<String, String> {
+    let root = workspace_root(&app);
+    let path = root.join("diagnosticos_reconhecimento");
+    fs::create_dir_all(&path).map_err(|err| format!("Falha ao criar pasta de diagnosticos: {err}"))?;
+    Command::new("explorer").arg(&path).spawn().map_err(|err| format!("Falha ao abrir pasta: {err}"))?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+fn remove_workbook_preview_row(app: AppHandle, workbook: Option<String>, sheet: String, row_number: i32) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let workbook_path = workbook.unwrap_or_else(|| "db.xlsx".to_string());
+    let removal_result = run_script_json(
+        &root,
+        "gerenciar_dados_planilha.py",
+        &[
+            "remover_planilha".into(),
+            "--planilha".into(),
+            workbook_path,
+            "--aba".into(),
+            sheet,
+            "--linha".into(),
+            row_number.to_string(),
+        ],
+    )?;
+    let roadmap_result = run_helper_json(&root, &["sync-spreadsheets".into()])?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "removed": removal_result,
+        "roadmap": roadmap_result,
+    }))
+}
+
+fn http_json_response(status: &str, body: Value) -> Vec<u8> {
+    let body_text = serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string());
+    format!(
+        "HTTP/1.1 {status}\r\nContent-Type: application/json; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body_text.as_bytes().len(),
+        body_text
+    )
+    .into_bytes()
+}
+
+fn url_decode_component(value: &str) -> String {
+    let mut output = String::new();
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[index + 1..index + 3]) {
+                if let Ok(decoded) = u8::from_str_radix(hex, 16) {
+                    output.push(decoded as char);
+                    index += 3;
+                    continue;
+                }
+            }
+        }
+        output.push(if bytes[index] == b'+' { ' ' } else { bytes[index] as char });
+        index += 1;
+    }
+    output
+}
+
+fn url_encode_component(value: &str) -> String {
+    let mut output = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            output.push(byte as char);
+        } else {
+            output.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    output
+}
+
+fn local_agent_address() -> String {
+    let ip = UdpSocket::bind("0.0.0.0:0")
+        .and_then(|socket| {
+            let _ = socket.connect("8.8.8.8:80");
+            socket.local_addr()
+        })
+        .map(|addr| addr.ip().to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+    format!("{ip}:18452")
+}
+
+#[tauri::command]
+fn get_agent_connection_info() -> Result<Value, String> {
+    Ok(serde_json::json!({
+        "port": 18452,
+        "address": local_agent_address(),
+        "local": "127.0.0.1:18452",
+    }))
+}
+
+#[tauri::command]
+fn get_agent_remote_snapshot(app: AppHandle) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    Ok(get_remote_agent_snapshot(&root))
+}
+
+fn read_http_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), String> {
+    let mut data = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    let mut header_end = None;
+
+    loop {
+        let read = stream
+            .read(&mut buffer)
+            .map_err(|err| format!("Falha ao ler requisicao remota: {err}"))?;
+        if read == 0 {
+            break;
+        }
+        data.extend_from_slice(&buffer[..read]);
+        if header_end.is_none() {
+            header_end = data.windows(4).position(|window| window == b"\r\n\r\n").map(|index| index + 4);
+        }
+        if let Some(end) = header_end {
+            let header_text = String::from_utf8_lossy(&data[..end]).to_string();
+            let content_length = header_text
+                .lines()
+                .find_map(|line| {
+                    let (key, value) = line.split_once(':')?;
+                    if key.trim().eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+            if data.len() >= end + content_length {
+                let body = data[end..end + content_length].to_vec();
+                return Ok((header_text, body));
+            }
+        }
+    }
+
+    if let Some(end) = header_end {
+        Ok((String::from_utf8_lossy(&data[..end]).to_string(), data[end..].to_vec()))
+    } else {
+        Ok((String::from_utf8_lossy(&data).to_string(), Vec::new()))
+    }
+}
+
+fn read_recent_launcher_logs(root: &PathBuf) -> Vec<String> {
+    fs::read_to_string(root.join("ultimo_log_launcher.txt"))
+        .ok()
+        .map(|text| {
+            let mut lines = text
+                .lines()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>();
+            if lines.len() > 40 {
+                lines = lines.split_off(lines.len() - 40);
+            }
+            lines
+        })
+        .unwrap_or_default()
+}
+
+fn remote_status_payload(root: &PathBuf, running: bool, automation_id: Option<String>, progress: Option<Value>) -> Value {
+    let active_name = fs::read_to_string(root.join("automacoes").join("automacao_atual.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|value| value.get("nome").and_then(Value::as_str).map(str::to_string))
+        .unwrap_or_else(|| "Automacao atual".to_string());
+
+    serde_json::json!({
+        "snapshot": {
+            "running": running,
+            "automation_id": automation_id.unwrap_or_default(),
+            "automation_name": active_name,
+            "remote_connection": remote_agent_connection_payload(),
+            "target_title": "",
+            "logs": read_recent_launcher_logs(root),
+            "progress": progress.unwrap_or_else(|| serde_json::json!({
+                "percent": if running { 1 } else { 0 },
+                "description": if running { "Automacao remota iniciada no Agent." } else { "Agent pronto para executar." },
+                "sequence": "principal",
+                "order": 1,
+                "company": ""
+            }))
+        }
+    })
+}
+
+fn remote_agent_snapshot_store() -> Arc<Mutex<Value>> {
+    REMOTE_AGENT_SNAPSHOT
+        .get_or_init(|| Arc::new(Mutex::new(serde_json::json!({}))))
+        .clone()
+}
+
+fn now_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
+}
+
+fn remote_agent_last_contact_store() -> Arc<Mutex<u128>> {
+    REMOTE_AGENT_LAST_CONTACT_MS
+        .get_or_init(|| Arc::new(Mutex::new(0)))
+        .clone()
+}
+
+fn mark_remote_agent_contact() {
+    if let Ok(mut guard) = remote_agent_last_contact_store().lock() {
+        *guard = now_millis();
+    }
+}
+
+fn remote_agent_connection_payload() -> Value {
+    let last_contact_ms = remote_agent_last_contact_store()
+        .lock()
+        .map(|guard| *guard)
+        .unwrap_or(0);
+    let current_ms = now_millis();
+    let connected = last_contact_ms > 0 && current_ms.saturating_sub(last_contact_ms) <= 15_000;
+    serde_json::json!({
+        "connected": connected,
+        "last_contact_ms": last_contact_ms,
+        "age_ms": if last_contact_ms > 0 { current_ms.saturating_sub(last_contact_ms) } else { 0 }
+    })
+}
+
+fn set_remote_agent_snapshot(value: Value) {
+    if let Ok(mut guard) = remote_agent_snapshot_store().lock() {
+        *guard = value;
+    }
+}
+
+fn get_remote_agent_snapshot(root: &PathBuf) -> Value {
+    let mut payload = remote_agent_snapshot_store()
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            if guard.as_object().map(|object| object.is_empty()).unwrap_or(true) {
+                None
+            } else {
+                Some(guard.clone())
+            }
+        })
+        .unwrap_or_else(|| remote_status_payload(root, false, None, None));
+    if let Some(snapshot) = payload.get_mut("snapshot").and_then(Value::as_object_mut) {
+        snapshot.insert("remote_connection".to_string(), remote_agent_connection_payload());
+    }
+    payload
+}
+
+fn open_remote_automation(root: &PathBuf, automation_id: &str) -> Result<Value, String> {
+    let result = run_helper_json(root, &["automation-open".into(), "--id".into(), automation_id.to_string()])?;
+    set_remote_agent_snapshot(remote_status_payload(
+        root,
+        false,
+        Some(automation_id.to_string()),
+        Some(serde_json::json!({
+            "percent": 0,
+            "description": "Automacao aberta remotamente pelo Control.",
+            "sequence": "principal",
+            "order": 1,
+            "company": ""
+        })),
+    ));
+    Ok(result)
+}
+
+fn import_remote_automation_zip(root: &PathBuf, file_name: &str, body: &[u8]) -> Result<Value, String> {
+    let import_dir = root.join("automacoes").join("_imports_remotos");
+    fs::create_dir_all(&import_dir).map_err(|err| format!("Falha ao criar pasta de importacao remota: {err}"))?;
+    let safe_name = sanitize_asset_filename(file_name, "automacao.zip");
+    let zip_path = import_dir.join(safe_name);
+    fs::write(&zip_path, body).map_err(|err| format!("Falha ao salvar ZIP recebido pelo Agent: {err}"))?;
+    let result = run_helper_json(root, &["automation-import-zip".into(), "--arquivo".into(), zip_path.display().to_string()])?;
+    let imported_id = result
+        .get("imported_id")
+        .or_else(|| result.get("importedId"))
+        .or_else(|| result.get("active_automation").and_then(|item| item.get("id")))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    set_remote_agent_snapshot(remote_status_payload(
+        root,
+        false,
+        Some(imported_id),
+        Some(serde_json::json!({
+            "percent": 0,
+            "description": format!("Automacao importada pelo Control: {file_name}"),
+            "sequence": "principal",
+            "order": 1,
+            "company": ""
+        })),
+    ));
+    Ok(result)
+}
+
+fn remote_recognition_preview(root: &PathBuf, image_id: &str) -> Result<Value, String> {
+    let normalized = image_id.replace('\\', "/");
+    let relative = normalized.strip_prefix("imagens/").unwrap_or(&normalized);
+    let path = root.join("Imagens").join(relative);
+    let fallback = root.join("imagens").join(relative);
+    let final_path = if path.exists() { path } else { fallback };
+    if !final_path.exists() {
+        return Err(format!("Imagem nao encontrada: {image_id}"));
+    }
+    let bytes = fs::read(&final_path).map_err(|err| format!("Falha ao ler preview remoto: {err}"))?;
+    let extension = final_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mime = match extension.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        _ => "image/png",
+    };
+    Ok(serde_json::json!({
+        "src": format!("data:{mime};base64,{}", general_purpose::STANDARD.encode(bytes)),
+        "file_name": final_path.file_name().and_then(|name| name.to_str()).unwrap_or("referencia.png"),
+        "image_id": image_id,
+    }))
+}
+
+fn update_remote_progress_from_stdout(root: &PathBuf, automation_id: &str, raw_line: &str) {
+    let line = raw_line.trim();
+    let Some(json_text) = line.strip_prefix("PROGRESS_JSON|") else {
+        return;
+    };
+
+    match serde_json::from_str::<Value>(json_text) {
+        Ok(progress) => {
+            set_remote_agent_snapshot(remote_status_payload(
+                root,
+                true,
+                Some(automation_id.to_string()),
+                Some(progress),
+            ));
+        }
+        Err(err) => {
+            append_launcher_log(root, format!("REMOTE PROGRESS_JSON invalido: {err} | {json_text}"));
+        }
+    }
+}
+
+fn launch_execution_screen_overlay(root: &PathBuf, label: &str, follow_pid: Option<u32>) {
+    let script_path = root.join("overlay_automacao_tela.py");
+    if !script_path.exists() {
+        append_launcher_log(root, format!("Overlay de execucao nao encontrado: {}", script_path.display()));
+        return;
+    }
+    let Ok((python_program, python_args)) = python_command(root) else {
+        append_launcher_log(root, "Nao foi possivel iniciar overlay de execucao: Python indisponivel.");
+        return;
+    };
+    let mut command = Command::new(&python_program);
+    command
+        .current_dir(root)
+        .args(&python_args)
+        .arg(script_path)
+        .arg("--texto")
+        .arg(label);
+    if let Some(pid) = follow_pid {
+        command.arg("--seguir-pid").arg(pid.to_string());
+    }
+    configure_no_window(&mut command);
+    if let Err(err) = command.spawn() {
+        append_launcher_log(root, format!("Falha ao iniciar overlay de execucao: {err}"));
+    }
+}
+
+fn resolve_remote_loop_start(root: &PathBuf, requested_line: i32, start_company: Option<&str>) -> Result<i32, String> {
+    let company_query = start_company.map(str::trim).filter(|value| !value.is_empty());
+    let Some(query) = company_query else {
+        return Ok(requested_line.max(1));
+    };
+
+    let loop_data = run_script_json(root, "gerenciar_dados_planilha.py", &["listar".into()])?;
+    let normalized_query = query.to_ascii_lowercase();
+    let rows = loop_data
+        .get("rows")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Nao foi possivel ler as linhas da planilha no Agent.".to_string())?;
+
+    for row in rows {
+        let company = row.get("company").and_then(Value::as_str).unwrap_or("");
+        if company.to_ascii_lowercase().contains(&normalized_query) {
+            let row_number = row.get("row_number").and_then(Value::as_i64).unwrap_or(0) as i32;
+            if row_number > 0 {
+                return Ok(row_number);
+            }
+        }
+    }
+
+    Err(format!("Empresa nao encontrada no loop do Agent: {query}"))
+}
+
+fn execute_remote_automation(
+    app: &AppHandle,
+    root: &PathBuf,
+    automation_id: &str,
+    delay: f64,
+    loop_start: i32,
+    start_company: Option<String>,
+    minimize_agent: bool,
+) -> Result<Value, String> {
+    let resolved_loop_start = resolve_remote_loop_start(root, loop_start, start_company.as_deref())?;
+    append_launcher_log(
+        root,
+        format!(
+            "Execucao remota solicitada pelo Control | id={automation_id} | delay={delay} | loop_start={resolved_loop_start} | empresa={}",
+            start_company.as_deref().unwrap_or("")
+        ),
+    );
+    let opened = open_remote_automation(root, automation_id)?;
+    let _ = run_helper_json(root, &["automation-mark-run".into(), "--id".into(), automation_id.to_string()]);
+    let _ = fs::remove_file(root.join(".parar_automacao.flag"));
+    if minimize_agent {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.minimize();
+        }
+    }
+
+    let has_spreadsheet = opened
+        .get("summary")
+        .and_then(|summary| summary.get("spreadsheet_blocks"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        > 0;
+
+    let script_path = root.join("executar_automacao.py");
+    if !script_path.exists() {
+        append_launcher_log(root, format!("ERRO remoto: executor nao encontrado em {}", script_path.display()));
+        return Err(format!("Executor nao encontrado no Agent: {}", script_path.display()));
+    }
+
+    let (python_program, python_args) = python_command(root)?;
+    append_launcher_log(root, format!("Execucao remota usando Python: {} {}", python_program, python_args.join(" ")));
+    let mut command = Command::new(&python_program);
+    command
+        .current_dir(root)
+        .args(&python_args)
+        .arg(&script_path)
+        .arg("--modo")
+        .arg(if has_spreadsheet { "loop" } else { "normal" })
+        .arg("--atraso")
+        .arg(delay.max(0.0).to_string())
+        .arg("--arquivo")
+        .arg(root.join("mapeamento_teclado.json"))
+        .arg("--planilha")
+        .arg(root.join("db.xlsx"))
+        .arg("--cancelamento-arquivo")
+        .arg(root.join(".parar_automacao.flag"));
+    if has_spreadsheet {
+        command.arg("--loop-start").arg(resolved_loop_start.max(1).to_string());
+    }
+    configure_no_window(&mut command);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("Falha ao iniciar automacao remota no Agent: {err}"))?;
+    launch_execution_screen_overlay(root, "Executando automacao...", Some(child.id()));
+    append_launcher_log(root, "Processo remoto iniciado pelo Control.");
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let started_snapshot = remote_status_payload(
+        root,
+        true,
+        Some(automation_id.to_string()),
+        Some(serde_json::json!({
+            "percent": 1,
+            "description": "Automacao remota iniciada no Agent.",
+            "sequence": "principal",
+            "order": 1,
+            "company": ""
+        })),
+    );
+    set_remote_agent_snapshot(started_snapshot.clone());
+
+    let root_clone = root.clone();
+    let automation_id_clone = automation_id.to_string();
+    thread::spawn(move || {
+        let stdout_thread = stdout.map(|stdout_pipe| {
+            let root = root_clone.clone();
+            let automation_id = automation_id_clone.clone();
+            thread::spawn(move || {
+                let reader = BufReader::new(stdout_pipe);
+                for raw_line in reader.lines().flatten() {
+                    if !raw_line.trim().is_empty() {
+                        append_launcher_log(&root, format!("REMOTE STDOUT: {raw_line}"));
+                        update_remote_progress_from_stdout(&root, &automation_id, &raw_line);
+                    }
+                }
+            })
+        });
+        let stderr_thread = stderr.map(|stderr_pipe| {
+            let root = root_clone.clone();
+            thread::spawn(move || {
+                let reader = BufReader::new(stderr_pipe);
+                for raw_line in reader.lines().flatten() {
+                    if !raw_line.trim().is_empty() {
+                        append_launcher_log(&root, format!("REMOTE STDERR: {raw_line}"));
+                    }
+                }
+            })
+        });
+        let success = child.wait().map(|status| status.success()).unwrap_or(false);
+        if let Some(handle) = stdout_thread {
+            let _ = handle.join();
+        }
+        if let Some(handle) = stderr_thread {
+            let _ = handle.join();
+        }
+        append_launcher_log(&root_clone, format!("Processo remoto finalizado | sucesso={success}"));
+        set_remote_agent_snapshot(remote_status_payload(
+            &root_clone,
+            false,
+            Some(automation_id_clone),
+            Some(serde_json::json!({
+                "percent": if success { 100 } else { 0 },
+                "description": if success { "Automacao remota concluida no Agent." } else { "Automacao remota finalizada com falha ou parada." },
+                "sequence": "principal",
+                "order": 1,
+                "company": ""
+            })),
+        ));
+    });
+
+    Ok(started_snapshot)
+}
+
+fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf) {
+    let (request, body) = match read_http_request(&mut stream) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = stream.write_all(&http_json_response("400 Bad Request", serde_json::json!({"error": error})));
+            return;
+        }
+    };
+    let first_line = request.lines().next().unwrap_or("");
+    let mut parts = first_line.split_whitespace();
+    let method = parts.next().unwrap_or("");
+    let path = parts.next().unwrap_or("");
+    let clean_path = path.split('?').next().unwrap_or(path);
+
+    if method != "OPTIONS" {
+        mark_remote_agent_contact();
+    }
+
+    let response = if method == "OPTIONS" {
+        http_json_response("204 No Content", serde_json::json!({}))
+    } else if method == "GET" && clean_path == "/api/ping" {
+        http_json_response("200 OK", serde_json::json!({
+            "agent": "FlowDetect Agent",
+            "port": 18452,
+            "address": local_agent_address()
+        }))
+    } else if method == "GET" && clean_path == "/api/automations" {
+        match run_helper_json(&root, &["automation-library-list".into()]) {
+            Ok(value) => http_json_response("200 OK", value),
+            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+        }
+    } else if method == "GET" && clean_path == "/api/status" {
+        http_json_response("200 OK", get_remote_agent_snapshot(&root))
+    } else if method == "POST" && clean_path == "/api/stop" {
+        let _ = fs::write(root.join(".parar_automacao.flag"), b"stop");
+        let snapshot = remote_status_payload(&root, false, None, Some(serde_json::json!({
+            "percent": 0,
+            "description": "Parada solicitada no Agent.",
+            "sequence": "principal",
+            "order": 1,
+            "company": ""
+        })));
+        set_remote_agent_snapshot(snapshot.clone());
+        http_json_response("200 OK", snapshot)
+    } else if method == "POST" && clean_path == "/api/automation-import-zip" {
+        let file_name = path
+            .split_once('?')
+            .and_then(|(_, query)| {
+                query.split('&').find_map(|pair| {
+                    let (key, value) = pair.split_once('=')?;
+                    if key == "file_name" {
+                        Some(url_decode_component(value))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or_else(|| "automacao.zip".to_string());
+        match import_remote_automation_zip(&root, &file_name, &body) {
+            Ok(value) => http_json_response("200 OK", value),
+            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+        }
+    } else if method == "GET" && clean_path == "/api/recognition-preview" {
+        let image_id = path
+            .split_once('?')
+            .and_then(|(_, query)| {
+                query.split('&').find_map(|pair| {
+                    let (key, value) = pair.split_once('=')?;
+                    if key == "image_id" || key == "imageId" {
+                        Some(url_decode_component(value))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or_default();
+        match remote_recognition_preview(&root, &image_id) {
+            Ok(value) => http_json_response("200 OK", value),
+            Err(error) => http_json_response("404 Not Found", serde_json::json!({"error": error})),
+        }
+    } else if method == "POST" && clean_path.starts_with("/api/automations/") && clean_path.ends_with("/open") {
+        let encoded_id = clean_path
+            .trim_start_matches("/api/automations/")
+            .trim_end_matches("/open")
+            .trim_end_matches('/');
+        let automation_id = url_decode_component(encoded_id);
+        match open_remote_automation(&root, &automation_id) {
+            Ok(value) => http_json_response("200 OK", value),
+            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+        }
+    } else if method == "POST" && clean_path.starts_with("/api/automations/") && clean_path.ends_with("/execute") {
+        let encoded_id = clean_path
+            .trim_start_matches("/api/automations/")
+            .trim_end_matches("/execute")
+            .trim_end_matches('/');
+        let automation_id = url_decode_component(encoded_id);
+        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let delay = payload.get("delay").and_then(Value::as_f64).unwrap_or(3.0);
+        let loop_start = payload
+            .get("loop_start")
+            .or_else(|| payload.get("loopStart"))
+            .and_then(Value::as_i64)
+            .unwrap_or(1) as i32;
+        let start_company = payload
+            .get("start_company")
+            .or_else(|| payload.get("startCompany"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let minimize_agent = payload
+            .get("minimize_agent")
+            .or_else(|| payload.get("minimizeAgent"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        match execute_remote_automation(&app, &root, &automation_id, delay, loop_start, start_company, minimize_agent) {
+            Ok(value) => http_json_response("200 OK", value),
+            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+        }
+    } else if method == "DELETE" && clean_path.starts_with("/api/automations/") {
+        let encoded_id = clean_path.trim_start_matches("/api/automations/");
+        let automation_id = url_decode_component(encoded_id);
+        match run_helper_json(&root, &["automation-delete".into(), "--id".into(), automation_id]) {
+            Ok(value) => http_json_response("200 OK", value),
+            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+        }
+    } else {
+        http_json_response("404 Not Found", serde_json::json!({"error": "Endpoint nao encontrado"}))
+    };
+
+    let _ = stream.write_all(&response);
+    let _ = stream.flush();
+}
+
+fn start_agent_http_server(app: AppHandle, root: PathBuf) {
+    thread::spawn(move || {
+        let listener = match TcpListener::bind("0.0.0.0:18452") {
+            Ok(listener) => listener,
+            Err(_) => return,
+        };
+        for stream in listener.incoming().flatten() {
+            let root_clone = root.clone();
+            let app_clone = app.clone();
+            thread::spawn(move || handle_agent_http_client(stream, app_clone, root_clone));
+        }
+    });
+}
+
+fn normalize_agent_address(address: &str) -> String {
+    let trimmed = address.trim();
+    if trimmed.is_empty() {
+        "127.0.0.1:18452".to_string()
+    } else if trimmed.starts_with("http://") {
+        trimmed.trim_start_matches("http://").trim_end_matches('/').to_string()
+    } else if trimmed.starts_with("https://") {
+        trimmed.trim_start_matches("https://").trim_end_matches('/').to_string()
+    } else {
+        trimmed.trim_end_matches('/').to_string()
+    }
+}
+
+fn remote_agent_request(address: &str, method: &str, path: &str, body: Option<&[u8]>) -> Result<Value, String> {
+    let normalized = normalize_agent_address(address);
+    let socket_addr: SocketAddr = normalized
+        .to_socket_addrs()
+        .map_err(|err| format!("Endereco do Agent invalido ({normalized}): {err}"))?
+        .next()
+        .ok_or_else(|| format!("Endereco do Agent invalido: {normalized}"))?;
+    let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(3))
+        .map_err(|err| format!("Nao foi possivel conectar ao Agent em {normalized}: {err}"))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(8)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(8)));
+    let body_bytes = body.unwrap_or(&[]);
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {normalized}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body_bytes.len()
+    );
+    stream
+        .write_all(request.as_bytes())
+        .and_then(|_| stream.write_all(body_bytes))
+        .map_err(|err| format!("Falha ao enviar requisicao ao Agent: {err}"))?;
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|err| format!("Falha ao ler resposta do Agent: {err}"))?;
+    let status_ok = response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.1 204");
+    let body_text = response.split("\r\n\r\n").nth(1).unwrap_or("{}");
+    let parsed: Value = serde_json::from_str(body_text).unwrap_or_else(|_| serde_json::json!({ "raw": body_text }));
+    if status_ok {
+        Ok(parsed)
+    } else {
+        Err(parsed.get("error").and_then(Value::as_str).unwrap_or("Falha remota no Agent.").to_string())
+    }
+}
+
+#[tauri::command]
+fn remote_agent_ping(address: String) -> Result<Value, String> {
+    remote_agent_request(&address, "GET", "/api/ping", None)
+}
+
+#[tauri::command]
+fn remote_agent_list_automations(address: String) -> Result<Value, String> {
+    remote_agent_request(&address, "GET", "/api/automations", None)
+}
+
+#[tauri::command]
+fn remote_agent_open_automation(address: String, id: String) -> Result<Value, String> {
+    let encoded = url_encode_component(&id);
+    remote_agent_request(&address, "POST", &format!("/api/automations/{encoded}/open"), None)
+}
+
+#[tauri::command]
+fn remote_agent_status(address: String) -> Result<Value, String> {
+    remote_agent_request(&address, "GET", "/api/status", None)
+}
+
+#[tauri::command]
+fn remote_agent_execute(
+    address: String,
+    id: String,
+    delay: f64,
+    loop_start: i32,
+    start_company: Option<String>,
+    minimize_agent: Option<bool>,
+) -> Result<Value, String> {
+    let encoded = url_encode_component(&id);
+    let body = serde_json::to_vec(&serde_json::json!({
+        "delay": delay,
+        "loop_start": loop_start,
+        "start_company": start_company.unwrap_or_default(),
+        "minimize_agent": minimize_agent.unwrap_or(false),
+    }))
+    .map_err(|err| format!("Falha ao preparar execucao remota: {err}"))?;
+    remote_agent_request(&address, "POST", &format!("/api/automations/{encoded}/execute"), Some(&body))
+}
+
+#[tauri::command]
+fn remote_agent_stop(address: String) -> Result<Value, String> {
+    remote_agent_request(&address, "POST", "/api/stop", None)
+}
+
+#[tauri::command]
+fn remote_agent_import_automation_zip(address: String, file_name: String, bytes: Vec<u8>) -> Result<Value, String> {
+    let encoded_name = url_encode_component(&file_name);
+    remote_agent_request(
+        &address,
+        "POST",
+        &format!("/api/automation-import-zip?file_name={encoded_name}"),
+        Some(&bytes),
+    )
+}
+
+#[tauri::command]
+fn remote_agent_get_recognition_preview(address: String, image_id: String) -> Result<Value, String> {
+    let encoded = url_encode_component(&image_id);
+    remote_agent_request(&address, "GET", &format!("/api/recognition-preview?image_id={encoded}"), None)
+}
+
+#[tauri::command]
+fn remote_agent_delete_automation(address: String, id: String) -> Result<Value, String> {
+    let encoded = url_encode_component(&id);
+    remote_agent_request(&address, "DELETE", &format!("/api/automations/{encoded}"), None)
+}
+
+#[tauri::command]
+fn show_target_window_overlay(app: AppHandle, hwnd: i64, title: Option<String>) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    hide_target_window_overlay(app.clone(), false).ok();
+    let script_path = root.join("overlay_janela_alvo.py");
+    if !script_path.exists() {
+        return Err(format!("Overlay nao encontrado: {}", script_path.display()));
+    }
+    let (python_program, python_args) = python_command(&root)?;
+    let mut command = Command::new(&python_program);
+    command
+        .current_dir(&root)
+        .args(&python_args)
+        .arg(&script_path)
+        .arg("--hwnd")
+        .arg(hwnd.to_string());
+    if let Some(value) = title.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        command.arg("--title").arg(value);
+    }
+    configure_no_window(&mut command);
+    let child = command.spawn().map_err(|err| format!("Falha ao iniciar overlay: {err}"))?;
+    if let Ok(mut guard) = TARGET_OVERLAY_CHILD.lock() {
+        *guard = Some(child);
+    }
+    Ok(serde_json::json!({"visible": true, "hwnd": hwnd}))
+}
+
+#[tauri::command]
+fn hide_target_window_overlay(_app: AppHandle, clear_target: bool) -> Result<Value, String> {
+    if let Ok(mut guard) = TARGET_OVERLAY_CHILD.lock() {
+        if let Some(mut child) = guard.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+    Ok(serde_json::json!({"visible": false, "clear_target": clear_target}))
+}
+
+#[tauri::command]
+fn update_sequence_settings(app: AppHandle, sequence: String, execution_mode: String, after_loop_sequence: Option<String>) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "update-sequence-settings".into(),
+        "--sequencia".into(),
+        sequence,
+        "--modo-execucao".into(),
+        execution_mode,
+    ];
+    if let Some(value) = after_loop_sequence {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-apos-loop".into());
+            args.push(value);
+        }
+    }
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn update_initial_sequence(app: AppHandle, sequence: String) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    run_helper_json(&root, &["update-initial-sequence".into(), "--sequencia".into(), sequence])
+}
+
 fn copy_if_exists(source: &Path, destination: &Path, copied: &mut Vec<String>, missing: &mut Vec<String>) {
     if source.exists() {
         if let Some(parent) = destination.parent() {
@@ -424,10 +1536,7 @@ fn export_guide(automation_name: &str) -> String {
 
 fn configure_background_process(command: &mut Command) {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        command.creation_flags(0x08000000);
-    }
+    configure_no_window(command);
 }
 
 fn set_running_state(state: &State<'_, RuntimeState>, running: bool) {
@@ -825,7 +1934,13 @@ fn import_image_asset(app: AppHandle, file_name: String, bytes: Vec<u8>) -> Resu
     }))
 }
 
-fn append_success_flow_args(args: &mut Vec<String>, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>) {
+fn append_success_flow_args(
+    args: &mut Vec<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) {
     if let Some(value) = ao_sucesso {
         if !value.trim().is_empty() {
             args.push("--ao-sucesso".into());
@@ -838,6 +1953,16 @@ fn append_success_flow_args(args: &mut Vec<String>, ao_sucesso: Option<String>, 
             args.push(value.to_string());
         }
     }
+    if let Some(value) = sequencia_sucesso {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-sucesso".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_sucesso {
+        args.push("--atraso-sequencia-sucesso".into());
+        args.push(value.max(0.0).to_string());
+    }
 }
 
 #[tauri::command]
@@ -847,19 +1972,19 @@ fn capture_mouse_click(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn add_text_block(app: AppHandle, text: String, delay: f64, sequencia: Option<String>, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>) -> Result<Value, String> {
+fn add_text_block(app: AppHandle, text: String, delay: f64, sequencia: Option<String>, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec!["add-text".into(), "--text".into(), text, "--delay".into(), delay.to_string()];
     if let Some(sequence_name) = sequencia {
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
 #[tauri::command]
-fn add_key_block(app: AppHandle, keys: String, repeat: i32, delay: f64, sequencia: Option<String>, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>) -> Result<Value, String> {
+fn add_key_block(app: AppHandle, keys: String, repeat: i32, delay: f64, sequencia: Option<String>, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
         "add-key".into(),
@@ -874,12 +1999,47 @@ fn add_key_block(app: AppHandle, keys: String, repeat: i32, delay: f64, sequenci
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
 #[tauri::command]
-fn add_mouse_block(app: AppHandle, x: i32, y: i32, button: String, clicks: i32, delay: f64, sequencia: Option<String>, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>) -> Result<Value, String> {
+fn add_loop_start_block(app: AppHandle, delay: f64, sequencia: Option<String>) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec!["add-loop-start".into(), "--delay".into(), delay.to_string()];
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn add_loop_end_block(
+    app: AppHandle,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec!["add-loop-end".into(), "--delay".into(), delay.to_string()];
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn add_mouse_block(app: AppHandle, x: i32, y: i32, button: String, clicks: i32, delay: f64, sequencia: Option<String>, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
         "add-mouse".into(),
@@ -898,7 +2058,7 @@ fn add_mouse_block(app: AppHandle, x: i32, y: i32, button: String, clicks: i32, 
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -917,12 +2077,15 @@ fn add_image_click_block(
     ao_nao_encontrar: String,
     sequencia_nao_encontrar: Option<String>,
     bloco_nao_encontrar: Option<i32>,
+    atraso_sequencia_nao_encontrar: Option<f64>,
     quantidade_tentativas: i32,
     intervalo_tentativas: f64,
     delay: f64,
     sequencia: Option<String>,
     ao_sucesso: Option<String>,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -960,6 +2123,10 @@ fn add_image_click_block(
             args.push(value.to_string());
         }
     }
+    if let Some(value) = atraso_sequencia_nao_encontrar {
+        args.push("--atraso-sequencia-nao-encontrar".into());
+        args.push(value.max(0.0).to_string());
+    }
     args.extend([
         "--quantidade-tentativas".into(),
         quantidade_tentativas.max(1).to_string(),
@@ -972,7 +2139,7 @@ fn add_image_click_block(
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -988,6 +2155,8 @@ fn add_spreadsheet_block(
     sequencia: Option<String>,
     ao_sucesso: Option<String>,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec!["add-planilha".into()];
@@ -1013,7 +2182,7 @@ fn add_spreadsheet_block(
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -1088,8 +2257,12 @@ fn add_chrome_html_block(
     fallback_imagem: Option<String>,
     ao_sucesso: String,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
     ao_falhar: String,
     bloco_falha: Option<i32>,
+    sequencia_falha: Option<String>,
+    atraso_sequencia_falha: Option<f64>,
     quantidade_tentativas: i32,
     intervalo_tentativas: f64,
     delay: f64,
@@ -1137,10 +2310,99 @@ fn add_chrome_html_block(
             args.push(value.to_string());
         }
     }
+    if let Some(value) = sequencia_sucesso {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-sucesso".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_sucesso {
+        args.push("--atraso-sequencia-sucesso".into());
+        args.push(value.max(0.0).to_string());
+    }
+    if let Some(value) = sequencia_falha {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-falha".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_falha {
+        args.push("--atraso-sequencia-falha".into());
+        args.push(value.max(0.0).to_string());
+    }
     if let Some(sequence_name) = sequencia {
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn add_open_url_block(
+    app: AppHandle,
+    url: String,
+    navegador: String,
+    modo_abertura: String,
+    aguardar_segundos: f64,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "add-open-url".into(),
+        "--url".into(),
+        url,
+        "--navegador".into(),
+        navegador,
+        "--modo-abertura".into(),
+        modo_abertura,
+        "--aguardar-segundos".into(),
+        aguardar_segundos.max(0.0).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(sequence_name) = sequencia {
+        args.push("--sequencia".into());
+        args.push(sequence_name);
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn add_open_program_block(
+    app: AppHandle,
+    caminho: String,
+    parametros: Option<String>,
+    aguardar_segundos: f64,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "add-open-program".into(),
+        "--caminho".into(),
+        caminho,
+        "--parametros".into(),
+        parametros.unwrap_or_default(),
+        "--aguardar-segundos".into(),
+        aguardar_segundos.max(0.0).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(sequence_name) = sequencia {
+        args.push("--sequencia".into());
+        args.push(sequence_name);
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -1151,8 +2413,11 @@ fn insert_text_block(
     position: String,
     text: String,
     delay: f64,
+    sequencia: Option<String>,
     ao_sucesso: Option<String>,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -1166,7 +2431,13 @@ fn insert_text_block(
             "--delay".into(),
             delay.to_string(),
         ];
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -1178,8 +2449,11 @@ fn insert_key_block(
     keys: String,
     repeat: i32,
     delay: f64,
+    sequencia: Option<String>,
     ao_sucesso: Option<String>,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -1195,7 +2469,72 @@ fn insert_key_block(
             "--delay".into(),
             delay.to_string(),
         ];
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn insert_loop_start_block(
+    app: AppHandle,
+    target_order: i32,
+    position: String,
+    delay: f64,
+    sequencia: Option<String>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "insert-loop-start".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn insert_loop_end_block(
+    app: AppHandle,
+    target_order: i32,
+    position: String,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "insert-loop-end".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -1209,8 +2548,11 @@ fn insert_mouse_block(
     button: String,
     clicks: i32,
     delay: f64,
+    sequencia: Option<String>,
     ao_sucesso: Option<String>,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -1230,7 +2572,13 @@ fn insert_mouse_block(
             "--delay".into(),
             delay.to_string(),
         ];
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -1251,11 +2599,15 @@ fn insert_image_click_block(
     ao_nao_encontrar: String,
     sequencia_nao_encontrar: Option<String>,
     bloco_nao_encontrar: Option<i32>,
+    atraso_sequencia_nao_encontrar: Option<f64>,
     quantidade_tentativas: i32,
     intervalo_tentativas: f64,
     delay: f64,
+    sequencia: Option<String>,
     ao_sucesso: Option<String>,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -1297,6 +2649,10 @@ fn insert_image_click_block(
             args.push(value.to_string());
         }
     }
+    if let Some(value) = atraso_sequencia_nao_encontrar {
+        args.push("--atraso-sequencia-nao-encontrar".into());
+        args.push(value.max(0.0).to_string());
+    }
     args.extend([
         "--quantidade-tentativas".into(),
         quantidade_tentativas.max(1).to_string(),
@@ -1305,7 +2661,13 @@ fn insert_image_click_block(
         "--delay".into(),
         delay.to_string(),
     ]);
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -1320,8 +2682,11 @@ fn insert_spreadsheet_block(
     delay: f64,
     after_action: String,
     interval_between: f64,
+    sequencia: Option<String>,
     ao_sucesso: Option<String>,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -1349,7 +2714,13 @@ fn insert_spreadsheet_block(
         "--interval-between".into(),
         interval_between.to_string(),
     ]);
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -1368,11 +2739,16 @@ fn insert_chrome_html_block(
     fallback_imagem: Option<String>,
     ao_sucesso: String,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
     ao_falhar: String,
     bloco_falha: Option<i32>,
+    sequencia_falha: Option<String>,
+    atraso_sequencia_falha: Option<f64>,
     quantidade_tentativas: i32,
     intervalo_tentativas: f64,
     delay: f64,
+    sequencia: Option<String>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -1420,11 +2796,122 @@ fn insert_chrome_html_block(
             args.push(value.to_string());
         }
     }
+    if let Some(value) = sequencia_sucesso {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-sucesso".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_sucesso {
+        args.push("--atraso-sequencia-sucesso".into());
+        args.push(value.max(0.0).to_string());
+    }
+    if let Some(value) = sequencia_falha {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-falha".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_falha {
+        args.push("--atraso-sequencia-falha".into());
+        args.push(value.max(0.0).to_string());
+    }
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
     run_helper_json(&root, &args)
 }
 
 #[tauri::command]
-fn update_text_block(app: AppHandle, order: i32, text: String, delay: f64, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>) -> Result<Value, String> {
+fn insert_open_url_block(
+    app: AppHandle,
+    target_order: i32,
+    position: String,
+    url: String,
+    navegador: String,
+    modo_abertura: String,
+    aguardar_segundos: f64,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "insert-open-url".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+        "--url".into(),
+        url,
+        "--navegador".into(),
+        navegador,
+        "--modo-abertura".into(),
+        modo_abertura,
+        "--aguardar-segundos".into(),
+        aguardar_segundos.max(0.0).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn insert_open_program_block(
+    app: AppHandle,
+    target_order: i32,
+    position: String,
+    caminho: String,
+    parametros: Option<String>,
+    aguardar_segundos: f64,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "insert-open-program".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+        "--caminho".into(),
+        caminho,
+        "--parametros".into(),
+        parametros.unwrap_or_default(),
+        "--aguardar-segundos".into(),
+        aguardar_segundos.max(0.0).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn update_text_block(app: AppHandle, order: i32, text: String, delay: f64, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
             "update-text".into(),
@@ -1435,12 +2922,12 @@ fn update_text_block(app: AppHandle, order: i32, text: String, delay: f64, ao_su
             "--delay".into(),
             delay.to_string(),
         ];
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
 #[tauri::command]
-fn update_key_block(app: AppHandle, order: i32, keys: String, repeat: i32, delay: f64, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>) -> Result<Value, String> {
+fn update_key_block(app: AppHandle, order: i32, keys: String, repeat: i32, delay: f64, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
             "update-key".into(),
@@ -1453,7 +2940,7 @@ fn update_key_block(app: AppHandle, order: i32, keys: String, repeat: i32, delay
             "--delay".into(),
             delay.to_string(),
         ];
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -1468,6 +2955,8 @@ fn update_mouse_block(
     delay: f64,
     ao_sucesso: Option<String>,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -1485,7 +2974,7 @@ fn update_mouse_block(
             "--delay".into(),
             delay.to_string(),
         ];
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -1505,11 +2994,14 @@ fn update_image_click_block(
     ao_nao_encontrar: String,
     sequencia_nao_encontrar: Option<String>,
     bloco_nao_encontrar: Option<i32>,
+    atraso_sequencia_nao_encontrar: Option<f64>,
     quantidade_tentativas: i32,
     intervalo_tentativas: f64,
     delay: f64,
     ao_sucesso: Option<String>,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -1549,6 +3041,10 @@ fn update_image_click_block(
             args.push(value.to_string());
         }
     }
+    if let Some(value) = atraso_sequencia_nao_encontrar {
+        args.push("--atraso-sequencia-nao-encontrar".into());
+        args.push(value.max(0.0).to_string());
+    }
     args.extend([
         "--quantidade-tentativas".into(),
         quantidade_tentativas.max(1).to_string(),
@@ -1557,7 +3053,7 @@ fn update_image_click_block(
         "--delay".into(),
         delay.to_string(),
     ]);
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -1573,6 +3069,8 @@ fn update_spreadsheet_block(
     delay: f64,
     ao_sucesso: Option<String>,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -1598,7 +3096,7 @@ fn update_spreadsheet_block(
         "--delay".into(),
         delay.to_string(),
     ]);
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso);
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -1672,8 +3170,12 @@ fn update_chrome_html_block(
     fallback_imagem: Option<String>,
     ao_sucesso: String,
     bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
     ao_falhar: String,
     bloco_falha: Option<i32>,
+    sequencia_falha: Option<String>,
+    atraso_sequencia_falha: Option<f64>,
     quantidade_tentativas: i32,
     intervalo_tentativas: f64,
     delay: f64,
@@ -1722,6 +3224,120 @@ fn update_chrome_html_block(
             args.push(value.to_string());
         }
     }
+    if let Some(value) = sequencia_sucesso {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-sucesso".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_sucesso {
+        args.push("--atraso-sequencia-sucesso".into());
+        args.push(value.max(0.0).to_string());
+    }
+    if let Some(value) = sequencia_falha {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-falha".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_falha {
+        args.push("--atraso-sequencia-falha".into());
+        args.push(value.max(0.0).to_string());
+    }
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn update_open_url_block(
+    app: AppHandle,
+    order: i32,
+    url: String,
+    navegador: String,
+    modo_abertura: String,
+    aguardar_segundos: f64,
+    delay: f64,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "update-open-url".into(),
+        "--order".into(),
+        order.to_string(),
+        "--url".into(),
+        url,
+        "--navegador".into(),
+        navegador,
+        "--modo-abertura".into(),
+        modo_abertura,
+        "--aguardar-segundos".into(),
+        aguardar_segundos.max(0.0).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn update_loop_marker_block(
+    app: AppHandle,
+    order: i32,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "update-loop-marker".into(),
+        "--order".into(),
+        order.to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn update_open_program_block(
+    app: AppHandle,
+    order: i32,
+    caminho: String,
+    parametros: Option<String>,
+    aguardar_segundos: f64,
+    delay: f64,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "update-open-program".into(),
+        "--order".into(),
+        order.to_string(),
+        "--caminho".into(),
+        caminho,
+        "--parametros".into(),
+        parametros.unwrap_or_default(),
+        "--aguardar-segundos".into(),
+        aguardar_segundos.max(0.0).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
 
@@ -1811,10 +3427,13 @@ fn launch_legacy_capture(app: AppHandle) -> Result<String, String> {
     }
 
     let (python_program, python_args) = python_command(&root)?;
-    Command::new(&python_program)
+    let mut command = Command::new(&python_program);
+    command
         .current_dir(&root)
         .args(&python_args)
-        .arg(&script_path)
+        .arg(&script_path);
+    configure_no_window(&mut command);
+    command
         .spawn()
         .map_err(|err| format!("Falha ao abrir a captura avancada: {err}"))?;
 
@@ -1866,6 +3485,7 @@ fn test_image_recognition(
     if let Some(title) = janela_alvo.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
         command.arg("--janela-alvo").arg(title);
     }
+    configure_no_window(&mut command);
 
     let main_window = app.get_webview_window("main");
     if let Some(window) = main_window.as_ref() {
@@ -2282,46 +3902,87 @@ fn export_automation_bundle(app: AppHandle, automation_name: String) -> Result<E
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(RuntimeState {
             child: Arc::new(Mutex::new(None)),
             running: Arc::new(Mutex::new(false)),
             pid: Arc::new(Mutex::new(None)),
         })
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            if is_flowdetect_agent_runtime(&app_handle) {
+                let root = workspace_root(&app_handle);
+                start_agent_http_server(app_handle.clone(), root);
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_roadmap,
             get_workbook_meta,
             get_workbook_preview,
+            remove_workbook_preview_row,
             list_saved_automations,
             list_open_windows,
+            show_target_window_overlay,
+            hide_target_window_overlay,
+            get_agent_connection_info,
+            get_agent_remote_snapshot,
+            get_login_session,
+            save_login_session,
             create_saved_automation,
             open_saved_automation,
             duplicate_saved_automation,
             rename_saved_automation,
             delete_saved_automation,
+            export_saved_automation_zip,
+            import_saved_automation_zip,
+            import_saved_automation_zip_from_path,
+            import_saved_automation_zip_from_file_path,
             execute_saved_automation,
+            export_runtime_update_zip,
+            import_runtime_update_zip,
+            import_runtime_update_zip_from_path,
             import_workbook,
             import_image_asset,
+            rename_image_asset,
+            get_recognition_image_preview,
+            capture_image_asset,
+            open_images_folder,
+            open_recognition_diagnostics_folder,
             capture_mouse_click,
             add_text_block,
             add_key_block,
+            add_loop_start_block,
+            add_loop_end_block,
             add_mouse_block,
             add_image_click_block,
             add_verify_button_state_block,
             add_chrome_html_block,
+            add_open_url_block,
+            add_open_program_block,
             add_spreadsheet_block,
             insert_text_block,
             insert_key_block,
+            insert_loop_start_block,
+            insert_loop_end_block,
             insert_mouse_block,
             insert_image_click_block,
             insert_chrome_html_block,
+            insert_open_url_block,
+            insert_open_program_block,
             insert_spreadsheet_block,
             update_text_block,
             update_key_block,
+            update_loop_marker_block,
             update_mouse_block,
             update_image_click_block,
             update_verify_button_state_block,
             update_chrome_html_block,
+            update_open_url_block,
+            update_open_program_block,
             update_spreadsheet_block,
+            update_sequence_settings,
+            update_initial_sequence,
             update_block_delay,
             update_all_blocks_delay,
             move_block,
@@ -2338,6 +3999,15 @@ pub fn run() {
             launch_test_automation,
             launch_assisted_loop_test,
             stop_test_execution,
+            remote_agent_ping,
+            remote_agent_list_automations,
+            remote_agent_open_automation,
+            remote_agent_status,
+            remote_agent_execute,
+            remote_agent_stop,
+            remote_agent_import_automation_zip,
+            remote_agent_get_recognition_preview,
+            remote_agent_delete_automation,
             export_automation_bundle,
         ])
         .run(tauri::generate_context!())

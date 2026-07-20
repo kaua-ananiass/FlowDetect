@@ -50,10 +50,15 @@ def identificar_coluna_empresa(colunas):
     return None
 
 
-def encontrar_evento_planilha(dados):
+def iterar_eventos_planilha(dados):
     for evento in dados.get("eventos", []):
         if evento.get("tipo") == "sequencia_planilha":
-            return evento
+            yield evento
+
+
+def encontrar_evento_planilha(dados):
+    for evento in iterar_eventos_planilha(dados):
+        return evento
     raise ValueError("Nenhuma sequencia de planilha foi encontrada no roteiro atual.")
 
 
@@ -141,47 +146,50 @@ def montar_comando_texto(texto):
     return f"digitar_texto({texto!r})"
 
 
-def sincronizar_eventos_planilha(arquivo_planilha, dados_mapeamento):
-    workbook = load_workbook(arquivo_planilha, read_only=True, data_only=True)
-    try:
-        for evento in dados_mapeamento.get("eventos", []):
-            if evento.get("tipo") != "sequencia_planilha":
-                continue
-
-            detalhes = evento.setdefault("detalhes", {})
-            info = listar_linhas_evento(arquivo_planilha, detalhes)
-            valores = []
-            for linha in info["rows"]:
-                texto = linha["value"]
-                try:
-                    valor_numero = int(texto)
-                    valores.append(valor_numero)
-                except ValueError:
-                    try:
-                        valor_decimal = float(texto.replace(",", "."))
-                        valores.append(valor_decimal)
-                    except ValueError:
-                        valores.append(texto)
-
-            detalhes["valores"] = valores
-            coluna = detalhes.get("coluna", "coluna")
-            acao_texto = detalhes.get("acao_apos_item_texto", "nenhuma")
-            evento["texto"] = montar_texto_evento(coluna, len(valores), acao_texto)
-            evento["comando_python"] = montar_comando_python(
-                valores,
-                detalhes.get("acao_apos_item", []),
-                detalhes.get("intervalo_entre_itens", 0.5),
-            )
-    finally:
-        workbook.close()
+def detalhes_correspondem_planilha(detalhes, arquivo_planilha=None, aba=None):
+    if arquivo_planilha and normalizar_id_planilha(detalhes.get("arquivo")) != normalizar_id_planilha(arquivo_planilha):
+        return False
+    if aba and str(detalhes.get("aba") or "").strip() != str(aba).strip():
+        return False
+    return True
 
 
-def ajustar_linhas_selecionadas_apos_remocao(dados_mapeamento, aba, linha_removida):
-    for evento in dados_mapeamento.get("eventos", []):
-        if evento.get("tipo") != "sequencia_planilha":
+def sincronizar_eventos_planilha(arquivo_planilha, dados_mapeamento, aba=None):
+    for evento in iterar_eventos_planilha(dados_mapeamento):
+        detalhes = evento.setdefault("detalhes", {})
+        if not detalhes_correspondem_planilha(detalhes, arquivo_planilha, aba):
             continue
+
+        arquivo_evento = resolver_planilha((detalhes.get("arquivo") or arquivo_planilha))
+        info = listar_linhas_evento(arquivo_evento, detalhes)
+        valores = []
+        for linha in info["rows"]:
+            texto = linha["value"]
+            try:
+                valor_numero = int(texto)
+                valores.append(valor_numero)
+            except ValueError:
+                try:
+                    valor_decimal = float(texto.replace(",", "."))
+                    valores.append(valor_decimal)
+                except ValueError:
+                    valores.append(texto)
+
+        detalhes["valores"] = valores
+        coluna = detalhes.get("coluna", "coluna")
+        acao_texto = detalhes.get("acao_apos_item_texto", "nenhuma")
+        evento["texto"] = montar_texto_evento(coluna, len(valores), acao_texto)
+        evento["comando_python"] = montar_comando_python(
+            valores,
+            detalhes.get("acao_apos_item", []),
+            detalhes.get("intervalo_entre_itens", 0.5),
+        )
+
+
+def ajustar_linhas_selecionadas_apos_remocao(dados_mapeamento, arquivo_planilha, aba, linha_removida):
+    for evento in iterar_eventos_planilha(dados_mapeamento):
         detalhes = evento.get("detalhes", {})
-        if detalhes.get("aba") != aba:
+        if not detalhes_correspondem_planilha(detalhes, arquivo_planilha, aba):
             continue
         linhas = []
         for linha in detalhes.get("linhas_selecionadas") or []:
@@ -302,8 +310,44 @@ def remover_linha(arquivo_planilha, dados_mapeamento, row_number):
     finally:
         workbook.close()
 
-    ajustar_linhas_selecionadas_apos_remocao(dados_mapeamento, aba, int(row_number))
+    ajustar_linhas_selecionadas_apos_remocao(
+        dados_mapeamento,
+        normalizar_id_planilha((detalhes.get("arquivo") or arquivo_planilha)),
+        aba,
+        int(row_number),
+    )
     sincronizar_eventos_planilha(arquivo_planilha, dados_mapeamento)
+
+
+def remover_linha_planilha(arquivo_planilha, dados_mapeamento, aba, row_number):
+    if int(row_number) <= 1:
+        raise ValueError("Nao e permitido excluir a linha de cabecalho da planilha.")
+
+    workbook = load_workbook(arquivo_planilha)
+    try:
+        if aba not in workbook.sheetnames:
+            raise ValueError(f"Aba nao encontrada na planilha: {aba}")
+
+        worksheet = workbook[aba]
+        if int(row_number) > worksheet.max_row:
+            raise ValueError(
+                f"A linha {row_number} nao existe na aba {aba}. Ultima linha disponivel: {worksheet.max_row}."
+            )
+
+        worksheet.delete_rows(int(row_number), 1)
+        workbook.save(arquivo_planilha)
+    finally:
+        workbook.close()
+
+    workbook_id = normalizar_id_planilha(arquivo_planilha)
+    ajustar_linhas_selecionadas_apos_remocao(dados_mapeamento, workbook_id, aba, int(row_number))
+    sincronizar_eventos_planilha(arquivo_planilha, dados_mapeamento, aba)
+    return {
+        "ok": True,
+        "workbook_file": workbook_id,
+        "sheet": aba,
+        "row_number": int(row_number),
+    }
 
 
 def mover_linha(arquivo_planilha, dados_mapeamento, row_number, direcao):
@@ -338,9 +382,13 @@ def mover_linha(arquivo_planilha, dados_mapeamento, row_number, direcao):
 
 def criar_parser():
     parser = argparse.ArgumentParser(description="Gerencia os dados usados pela automacao.")
-    parser.add_argument("acao", choices=("listar", "adicionar", "remover", "mover", "listar_textos", "atualizar_texto"))
+    parser.add_argument(
+        "acao",
+        choices=("listar", "adicionar", "remover", "mover", "remover_planilha", "listar_textos", "atualizar_texto"),
+    )
     parser.add_argument("--arquivo", default=str(ARQUIVO_MAPEAMENTO))
     parser.add_argument("--planilha", default=str(ARQUIVO_PLANILHA))
+    parser.add_argument("--aba", default="")
     parser.add_argument("--valor", default="")
     parser.add_argument("--empresa", default="")
     parser.add_argument("--linha", type=int, default=0)
@@ -391,6 +439,14 @@ def main():
 
     if args.linha <= 0:
         raise ValueError("Informe a linha da planilha que deve ser alterada.")
+
+    if args.acao == "remover_planilha":
+        if not str(args.aba).strip():
+            raise ValueError("Informe a aba da planilha que deve ser alterada.")
+        resultado = remover_linha_planilha(arquivo_planilha, dados_mapeamento, args.aba, args.linha)
+        salvar_mapeamento(arquivo_mapeamento, dados_mapeamento)
+        print(json.dumps(resultado, ensure_ascii=False))
+        return 0
 
     if args.acao == "remover":
         remover_linha(arquivo_evento, dados_mapeamento, args.linha)

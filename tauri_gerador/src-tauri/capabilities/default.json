@@ -4,6 +4,7 @@
   "description": "Permite a interface do gerador usar invoke.",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "dialog:default"
   ]
 }

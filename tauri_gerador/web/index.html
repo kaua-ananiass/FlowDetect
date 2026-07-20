@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gerador visual de automacoes</title>
+    <title>FlowDetect</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -13,6 +13,42 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
+    <section id="loginOverlay" class="login-overlay welcome-overlay" aria-modal="true" role="dialog" aria-labelledby="loginTitleText">
+      <div class="welcome-shell">
+        <div class="login-card welcome-card">
+          <section class="welcome-visual-panel" aria-hidden="true">
+            <img
+              src="./assets/flowdetect-cards-sem-fundo.png"
+              alt="Cartoes visuais do FlowDetect"
+              class="welcome-hero-art"
+            />
+          </section>
+
+          <section class="welcome-copy-panel">
+            <h1 id="loginTitleText">
+              <span class="welcome-title-flow">Flow</span><span class="welcome-title-detect">Detect</span>
+            </h1>
+
+            <div id="loginActivationSummary" class="login-activation-summary welcome-summary">
+              Automacao visual para criar, testar e executar fluxos desktop.
+            </div>
+
+            <div class="welcome-actions">
+              <button id="devAdminLoginButton" class="primary-button welcome-enter-button" type="button">
+                Entrar
+              </button>
+            </div>
+
+            <div class="welcome-footer">
+              <p id="loginResolutionPreview" class="login-resolution welcome-resolution" hidden>Resolucao detectada: aguardando.</p>
+            </div>
+
+            <p id="loginErrorText" class="login-error" hidden></p>
+          </section>
+        </div>
+      </div>
+    </section>
+
     <main class="builder-shell">
       <section class="hero-panel">
         <div class="hero-noise"></div>
@@ -50,12 +86,12 @@
                 <span>Linha inicial do loop</span>
                 <input id="testLoopStartInput" type="number" min="1" step="1" value="1" />
               </label>
-              <label class="hero-test-window-field">
-                <span>Janela alvo</span>
-                <div class="capture-inline">
-                  <input id="testWindowTitleInput" type="text" list="windowSuggestions" placeholder="Ex.: Alterdata, Chrome, ERP..." />
-                  <button id="refreshWindowsButton" class="tree-open-button" type="button">Atualizar janelas</button>
-                </div>
+              <label>
+                <span>Janela do FlowDetect</span>
+                <select id="testWindowModeSelect">
+                  <option value="normal" selected>Manter aberta</option>
+                  <option value="minimize">Minimizar ao executar</option>
+                </select>
               </label>
             </div>
             <p id="testLoopHint" class="hero-test-hint">
@@ -71,9 +107,8 @@
               </label>
             </div>
             <div class="hero-test-actions">
-              <button id="testOnceButton" class="ghost-button hero-test-button" type="button" onclick="document.getElementById('messageBar') && (document.getElementById('messageBar').textContent='Clique detectado: teste simples.'); window.handleQuickTestClick && window.handleQuickTestClick()">Testar uma vez</button>
-              <button id="testAutomationButton" class="soft-button hero-test-button" type="button" onclick="document.getElementById('messageBar') && (document.getElementById('messageBar').textContent='Clique detectado: teste com loop.'); window.handleLoopTestClick && window.handleLoopTestClick()">Testar com loop</button>
-              <button id="stopTestButton" class="danger-button hero-test-button" type="button" onclick="document.getElementById('messageBar') && (document.getElementById('messageBar').textContent='Clique detectado: parar.'); window.handleStopTestClick && window.handleStopTestClick()">Parar</button>
+              <button id="testOnceButton" class="soft-button hero-test-button" type="button">Executar</button>
+              <button id="stopTestButton" class="danger-button hero-test-button" type="button">Parar</button>
             </div>
           </div>
         </div>
@@ -108,18 +143,17 @@
         <button id="assistTabButton" class="workspace-tab" data-tab="assist">Execucao assistida</button>
         <button id="commandTabButton" class="workspace-tab" data-tab="commands">Mapa dos comandos</button>
         <button id="workbookTabButton" class="workspace-tab" data-tab="workbook">Planilha e dados</button>
+        <button id="remoteControlTabButton" class="workspace-tab" data-tab="remote-control">Controle remoto</button>
+        <div id="sessionChip" class="workspace-session-chip">Sessao bloqueada</div>
       </section>
 
       <section id="launcherPanel" class="workspace-panel is-active">
         <section class="launcher-shell">
           <div class="launcher-top-zone">
             <header class="launcher-header">
-              <div>
-                <p class="panel-kicker">Biblioteca</p>
-                <h2>Launcher de Automacoes</h2>
-                <p id="launcherMeta" class="timeline-meta">Organize, abra e execute suas automacoes salvas.</p>
-              </div>
+              <p id="launcherMeta" class="timeline-meta" hidden>Organize, abra e execute suas automacoes salvas.</p>
               <button id="newAutomationButton" class="primary-button">+ Nova Automacao</button>
+              <input id="automationZipFileInput" type="file" accept=".zip,application/zip" hidden />
             </header>
 
             <section id="launcherCreatePanel" class="launcher-create-panel" hidden>
@@ -186,7 +220,7 @@
       <section id="editorPanel" class="workspace-panel">
         <section class="workspace-grid">
           <aside class="composer-column">
-            <article class="composer-card">
+            <article class="composer-card" hidden>
               <header>
                 <p class="panel-kicker">Fluxo atual</p>
                 <h2>Sequencia do bloco</h2>
@@ -365,12 +399,17 @@
                 <span>Referencia visual</span>
                 <div class="capture-inline">
                   <input id="imagePathInput" type="text" placeholder="imagens/botao_salvar.png, painel_erro.png..." />
+                  <button id="captureImageButton" class="tree-open-button" type="button">Capturar nova imagem</button>
                   <button id="selectImageButton" class="tree-open-button" type="button">Selecionar referencia</button>
                 </div>
               </label>
               <div class="recognition-action-row">
-                <button id="testImageRecognitionButton" class="recognition-test-button" type="button">Testar reconhecimento</button>
+                <button id="testImageRecognitionButton" class="recognition-test-button" type="button">Testar imagem</button>
                 <span class="recognition-action-help">Valida so este bloco, sem rodar a automacao inteira.</span>
+              </div>
+              <div class="recognition-utility-row">
+                <button id="openImagesFolderButton" class="tree-open-button" type="button">Abrir pasta imagens</button>
+                <button id="openRecognitionDiagnosticsButton" class="tree-open-button" type="button">Abrir diagnosticos</button>
               </div>
               <div class="triple-grid">
                 <label>
@@ -390,13 +429,6 @@
                   </select>
                 </label>
                 <label>
-                  <span>Janela alvo</span>
-                  <div class="capture-inline">
-                    <input id="imageWindowTitleInput" type="text" list="windowSuggestions" placeholder="Ex.: Alterdata, Chrome, painel..." />
-                    <button id="refreshImageWindowsButton" class="tree-open-button" type="button">Atualizar janelas</button>
-                  </div>
-                </label>
-                <label>
                   <span>Ao reconhecer</span>
                   <select id="imageClickModeInput">
                     <option value="single">1 clique</option>
@@ -410,7 +442,14 @@
                     <option value="parar">Parar</option>
                     <option value="continuar">Continuar</option>
                     <option value="tentar_novamente">Tentar novamente</option>
+                    <option value="ir_para_sequencia">Ir para pagina</option>
                     <option value="ir_para_bloco">Ir para bloco</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Ir para esta pagina</span>
+                  <select id="imageFailureSequenceInput">
+                    <option value="pagina_2">Pagina 2</option>
                   </select>
                 </label>
                 <label>
@@ -456,11 +495,11 @@
               </div>
               <input id="chromeAnalysisJsonInput" type="hidden" />
               <div id="chromeHtmlPreview" class="chrome-preview-card">
-                <p class="muted-copy">Cole o HTML do elemento para detectar tag, atributos, seletor sugerido e a ação ideal.</p>
+                <p class="muted-copy">Cole o HTML do elemento para detectar tag, atributos, seletor sugerido e a aÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o ideal.</p>
               </div>
               <div class="chrome-quick-grid">
                 <label>
-                  <span>Método de busca</span>
+                  <span>MÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©todo de busca</span>
                   <select id="chromeTargetMethodInput">
                     <option value="placeholder">Placeholder</option>
                     <option value="name">Name</option>
@@ -478,7 +517,7 @@
                   <input id="chromeTargetValueInput" type="text" placeholder="Valor do seletor recomendado" />
                 </label>
                 <label>
-                  <span>Ação</span>
+                  <span>AÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â£o</span>
                   <select id="chromeActionTypeInput">
                     <option value="preencher">Preencher</option>
                     <option value="clicar">Clicar</option>
@@ -497,7 +536,7 @@
                   <span>Origem do valor</span>
                   <select id="chromeValueSourceInput">
                     <option value="texto_fixo">Texto fixo</option>
-                    <option value="variavel">Variável</option>
+                    <option value="variavel">VariÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡vel</option>
                     <option value="planilha">Coluna da planilha</option>
                   </select>
                 </label>
@@ -507,7 +546,7 @@
                 </label>
               </div>
               <details class="chrome-advanced-panel">
-                <summary>Configurações avançadas</summary>
+                <summary>ConfiguraÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Âµes avanÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â§adas</summary>
                 <div class="chrome-advanced-grid">
                   <label>
                     <span>Timeout (ms)</span>
@@ -529,7 +568,14 @@
                     <span>Ao concluir</span>
                     <select id="chromeSuccessActionInput">
                       <option value="continuar">Continuar</option>
+                      <option value="ir_para_sequencia">Ir para pagina</option>
                       <option value="ir_para_bloco">Ir para bloco</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Ir para pagina</span>
+                    <select id="chromeSuccessSequenceInput">
+                      <option value="">Escolha uma pagina</option>
                     </select>
                   </label>
                   <label>
@@ -544,7 +590,14 @@
                       <option value="parar">Parar</option>
                       <option value="continuar">Continuar</option>
                       <option value="tentar_novamente">Tentar novamente</option>
+                      <option value="ir_para_sequencia">Ir para pagina</option>
                       <option value="ir_para_bloco">Ir para bloco</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Ir para pagina</span>
+                    <select id="chromeFailureSequenceInput">
+                      <option value="">Escolha uma pagina</option>
                     </select>
                   </label>
                   <label>
@@ -611,7 +664,7 @@
                   <span>Acao apos cada item</span>
                   <div class="capture-inline">
                     <input id="afterActionInput" type="text" placeholder="nenhuma, enter, tab+tab..." value="nenhuma" />
-                    <button id="afterActionCaptureButton" class="tree-open-button" type="button">Gravar tecla</button>
+                    <button id="afterActionCaptureButton" class="tree-open-button record-key-button" type="button">Gravar tecla</button>
                   </div>
                 </label>
                 <label>
@@ -627,6 +680,21 @@
                 <button id="addSpreadsheetButton" class="primary-button">Adicionar loop</button>
               </div>
             </article>
+
+            <article class="composer-card spreadsheet-card">
+              <header>
+                <p class="panel-kicker">Marcadores do loop</p>
+                <h2>Trecho em repeticao</h2>
+              </header>
+              <p class="composer-note">
+                Use os dois marcadores para repetir apenas uma parte do fluxo a cada linha da planilha.
+              </p>
+              <div class="inline-field">
+                <button id="addLoopStartButton" class="ghost-button" type="button">Adicionar inicio</button>
+                <button id="addLoopEndButton" class="primary-button" type="button">Adicionar fim</button>
+              </div>
+            </article>
+
           </aside>
 
           <section class="timeline-column">
@@ -648,10 +716,10 @@
       <section id="assistPanel" class="workspace-panel">
         <section class="assist-shell">
           <header class="assist-header">
-            <div class="command-map-copy">
+            <div class="assist-copy">
               <p class="panel-kicker">Execucao guiada</p>
               <h2>Acompanhe a automacao passando pelos blocos</h2>
-              <p class="timeline-meta">Use o teste simples ou com loop e veja a trilha acender em verde em tempo real.</p>
+              <p class="timeline-meta">Execute o fluxo e veja a trilha acender em verde em tempo real.</p>
             </div>
             <div class="assist-actions">
               <label>
@@ -662,16 +730,15 @@
                 <span>Linha inicial do loop</span>
                 <input id="assistLoopStartInput" type="number" min="1" step="1" value="1" />
               </label>
-              <label class="assist-window-field">
-                <span>Janela alvo</span>
-                <div class="capture-inline">
-                  <input id="assistWindowTitleInput" type="text" list="windowSuggestions" placeholder="Titulo ou parte do titulo" />
-                  <button id="refreshAssistWindowsButton" class="tree-open-button" type="button">Atualizar janelas</button>
-                </div>
+              <label>
+                <span>Janela do FlowDetect</span>
+                <select id="assistWindowModeSelect">
+                  <option value="normal" selected>Manter aberta</option>
+                  <option value="minimize">Minimizar ao executar</option>
+                </select>
               </label>
-              <button id="assistQuickButton" class="ghost-button" type="button" onclick="document.getElementById('assistDetailText') && (document.getElementById('assistDetailText').textContent='Clique detectado: assistido simples.'); document.getElementById('messageBar') && (document.getElementById('messageBar').textContent='Clique assistido detectado: teste simples.'); window.handleAssistQuickTestClick && window.handleAssistQuickTestClick()">Testar uma vez</button>
-              <button id="assistLoopButton" class="soft-button" type="button" onclick="document.getElementById('assistDetailText') && (document.getElementById('assistDetailText').textContent='Clique detectado: assistido com loop.'); document.getElementById('messageBar') && (document.getElementById('messageBar').textContent='Clique assistido detectado: teste com loop.'); window.handleAssistLoopTestClick && window.handleAssistLoopTestClick()">Testar com loop</button>
-              <button id="assistStopButton" class="danger-button" type="button" onclick="document.getElementById('assistDetailText') && (document.getElementById('assistDetailText').textContent='Clique detectado: parar assistido.'); document.getElementById('messageBar') && (document.getElementById('messageBar').textContent='Clique assistido detectado: parar.'); window.handleStopTestClick && window.handleStopTestClick()">Parar</button>
+              <button id="assistQuickButton" class="soft-button" type="button">Executar</button>
+              <button id="assistStopButton" class="danger-button" type="button">Parar</button>
             </div>
           </header>
 
@@ -679,17 +746,17 @@
             <article class="assist-status-card">
               <span class="stat-label">Status</span>
               <strong id="assistStatusText">Pronto</strong>
-              <p id="assistDetailText" class="assist-detail">Aguardando inicio de um teste.</p>
+              <p id="assistDetailText" class="assist-detail">Aguardando inicio da execucao.</p>
             </article>
             <article class="assist-status-card">
               <span class="stat-label">Origem</span>
               <strong id="assistOriginText">Criador de automacoes</strong>
-              <p class="assist-detail">Teste disparado pela aba Execucao assistida do gerador.</p>
+              <p class="assist-detail">Execucao disparada pela aba Execucao assistida do gerador.</p>
             </article>
             <article class="assist-status-card">
-              <span class="stat-label">Janela alvo</span>
-              <strong id="assistWindowText">Aguardando captura</strong>
-              <p id="assistWindowDetailText" class="assist-detail">A janela ativa sera mostrada assim que o teste comecar.</p>
+              <span class="stat-label">Sessao</span>
+              <strong id="assistWindowText">Aguardando login</strong>
+              <p id="assistWindowDetailText" class="assist-detail">Entre no programa para salvar a resolucao desta maquina.</p>
             </article>
             <article class="assist-status-card">
               <span class="stat-label">Empresa</span>
@@ -708,27 +775,77 @@
             </article>
           </section>
 
-          <section class="assist-log-panel">
-            <div class="assist-log-header">
-              <span class="stat-label">Log da execucao</span>
-              <strong>Tempo real</strong>
-            </div>
-            <div id="assistLogList" class="assist-log-list"></div>
-          </section>
+          <section class="assist-body">
+            <div id="assistMapList" class="assist-map-list"></div>
 
-          <div id="assistMapList" class="assist-map-list"></div>
+            <aside class="assist-side-stack">
+              <section class="assist-control-dock">
+                <div id="assistControlTabs" class="assist-control-tabs" role="tablist" aria-label="Controles da execucao assistida">
+                  <button class="assist-control-tab is-active" type="button" data-assist-control-tab="target" aria-pressed="true">Janela alvo</button>
+                  <button class="assist-control-tab" type="button" data-assist-control-tab="pages" aria-pressed="false">Paginas</button>
+                </div>
+
+                <div class="assist-control-panels">
+                  <section class="assist-target-panel assist-control-panel is-active" data-assist-control-panel="target">
+                    <div class="assist-target-copy">
+                      <span class="stat-label">Janela alvo</span>
+                      <strong id="assistTargetTitle">Nenhuma janela selecionada</strong>
+                      <p id="assistTargetDetailText" class="assist-detail">Selecione uma janela aberta antes de executar quando quiser travar a automacao em um alvo especifico.</p>
+                    </div>
+                    <div class="assist-target-status-block">
+                      <span id="assistTargetStatusChip" class="assist-target-status-chip is-idle">Nenhuma janela selecionada</span>
+                      <div id="assistTargetMetaText" class="assist-target-meta">Sem hwnd ativo para esta execucao.</div>
+                    </div>
+                    <div class="assist-target-actions">
+                      <button id="assistSelectWindowButton" class="primary-button" type="button">Selecionar janela</button>
+                      <button id="assistClearWindowButton" class="ghost-button" type="button">Limpar alvo</button>
+                    </div>
+                  </section>
+
+                  <section class="assist-sequence-strip assist-control-panel" data-assist-control-panel="pages" hidden>
+                    <div class="assist-sequence-start">
+                      <span class="stat-label">Inicio da automacao</span>
+                      <select id="assistInitialSequenceSelect" aria-label="Pagina inicial da automacao"></select>
+                    </div>
+                    <div class="assist-sequence-pages">
+                      <span class="stat-label">Paginas</span>
+                      <div id="assistSequenceModeList" class="assist-sequence-mode-list"></div>
+                    </div>
+                  </section>
+                </div>
+              </section>
+
+              <section class="assist-log-panel">
+                <div class="assist-log-header">
+                  <span class="stat-label">Log da execucao</span>
+                  <strong>Tempo real</strong>
+                </div>
+                <div id="assistLogList" class="assist-log-list"></div>
+              </section>
+            </aside>
+          </section>
         </section>
       </section>
 
       <section id="commandsPanel" class="workspace-panel">
         <section class="command-map-shell">
           <header class="command-map-header">
+            <div class="command-map-utility-row">
+              <span id="commandMapStepBadge" class="command-map-step-badge">0 etapas</span>
+              <button id="commandMapChromeToggleButton" class="ghost-button command-map-toggle-button" type="button">Mostrar menu</button>
+              <div class="map-nav-controls">
+                <button id="mapPrevButton" class="micro-button" type="button" aria-label="Bloco anterior">ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¹</button>
+                <button id="mapNextButton" class="micro-button" type="button" aria-label="Proximo bloco">ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Âº</button>
+              </div>
+            </div>
             <div class="command-map-copy">
-              <p class="panel-kicker">Visao ampla</p>
+              <span class="command-map-eyebrow">Mapa dos comandos</span>
               <h2>Arvore da sequencia</h2>
               <p id="commandMapMeta" class="timeline-meta">
                 Veja o caminho completo da automacao e edite a sequencia longa com mais distancia.
               </p>
+            </div>
+            <div class="command-map-save-stack">
               <div class="command-map-save-panel">
                 <div class="command-map-save-top">
                   <button id="mapSaveButton" class="primary-button command-map-save-button" type="button">Salvar mapa</button>
@@ -739,16 +856,16 @@
                 </div>
                 <p id="mapSaveStatus" class="command-map-save-status">Mapa ainda nao salvo.</p>
               </div>
+              <button id="openEditorFromMap" class="ghost-button command-map-back-button">Voltar para edicao</button>
             </div>
-            <div class="command-map-actions">
-              <div class="map-nav-controls">
-                <button id="mapPrevButton" class="micro-button" type="button" aria-label="Bloco anterior">‹</button>
-                <button id="mapNextButton" class="micro-button" type="button" aria-label="Proximo bloco">›</button>
-              </div>
+            <div class="command-map-side-stack">
               <div class="map-zoom-controls">
-                <button id="mapZoomOutButton" class="micro-button" type="button" aria-label="Diminuir zoom">-</button>
-                <input id="mapZoomRange" class="map-zoom-range" type="range" min="85" max="150" step="5" value="108" />
-                <button id="mapZoomInButton" class="micro-button" type="button" aria-label="Aumentar zoom">+</button>
+                <div id="commandMapPageTabs" class="command-page-tabs" aria-label="Paginas do mapa"></div>
+                <div class="map-zoom-cluster">
+                  <button id="mapZoomOutButton" class="micro-button" type="button" aria-label="Diminuir zoom">-</button>
+                  <input id="mapZoomRange" class="map-zoom-range" type="range" min="72" max="140" step="4" value="96" />
+                  <button id="mapZoomInButton" class="micro-button" type="button" aria-label="Aumentar zoom">+</button>
+                </div>
                 <div class="map-bulk-delay-controls">
                   <span class="map-bulk-delay-label">Atraso</span>
                   <input id="mapBulkDelayInput" type="number" min="0" step="0.1" value="3" />
@@ -756,8 +873,8 @@
                 </div>
                 <span id="mapZoomValue" class="map-zoom-value">108%</span>
               </div>
-              <button id="openEditorFromMap" class="ghost-button">Voltar para edicao</button>
             </div>
+
           </header>
 
           <div id="commandMapList" class="command-map-list"></div>
@@ -803,26 +920,49 @@
             </div>
 
             <aside class="workbook-side-card">
-              <div class="workbook-side-block">
-                <p class="panel-kicker">Valor selecionado</p>
-                <h3 id="selectedWorkbookTitle">Nada selecionado</h3>
-                <p id="selectedWorkbookSubtitle" class="workbook-side-copy">
-                  Clique em uma celula da tabela para enviar esse valor como texto ao mapa.
-                </p>
-                <div id="selectedWorkbookValue" class="selected-workbook-value">-</div>
+              <div id="workbookSelectedValueBlock" class="workbook-side-block workbook-side-block--value is-empty">
+                <div class="workbook-side-head">
+                  <div>
+                    <p class="panel-kicker">Passo 1</p>
+                    <h3>Enviar valor como texto</h3>
+                  </div>
+                  <span id="selectedWorkbookStatus" class="workbook-side-status">Aguardando</span>
+                </div>
+                <div class="workbook-side-selection">
+                  <strong id="selectedWorkbookTitle" class="workbook-side-selection-title">Escolha uma celula</strong>
+                  <p id="selectedWorkbookSubtitle" class="workbook-side-copy">
+                    Clique em qualquer celula da tabela para mandar aquele valor direto para o mapa.
+                  </p>
+                </div>
+                <div class="selected-workbook-value-card">
+                  <span class="selected-workbook-value-label">Valor que sera enviado</span>
+                  <div id="selectedWorkbookValue" class="selected-workbook-value">-</div>
+                </div>
                 <label>
                   <span>Tempo antes do texto</span>
                   <input id="workbookTextDelay" type="number" min="0" step="0.1" value="0.3" />
                 </label>
-                <button id="addWorkbookCellButton" class="primary-button">Adicionar valor ao mapa</button>
+                <button id="addWorkbookCellButton" class="primary-button workbook-side-cta">Enviar valor para o mapa</button>
               </div>
 
-              <div class="workbook-side-block">
-                <p class="panel-kicker">Coluna selecionada</p>
-                <h3 id="selectedWorkbookColumnTitle">Nenhuma coluna</h3>
-                <p id="selectedWorkbookColumnSubtitle" class="workbook-side-copy">
-                  Use a coluna escolhida para criar um loop da planilha no mapa.
-                </p>
+              <div id="workbookSelectedColumnBlock" class="workbook-side-block workbook-side-block--column is-empty">
+                <div class="workbook-side-head">
+                  <div>
+                    <p class="panel-kicker">Passo 2</p>
+                    <h3>Criar loop com coluna</h3>
+                  </div>
+                  <span id="selectedWorkbookColumnStatus" class="workbook-side-status">Aguardando</span>
+                </div>
+                <div class="workbook-side-selection">
+                  <strong id="selectedWorkbookColumnTitle" class="workbook-side-selection-title">Escolha uma coluna</strong>
+                  <p id="selectedWorkbookColumnSubtitle" class="workbook-side-copy">
+                    Clique no cabecalho de uma coluna para transformar cada linha dela em um item do loop.
+                  </p>
+                </div>
+                <div class="selected-workbook-value-card selected-workbook-value-card--column">
+                  <span class="selected-workbook-value-label">Coluna que vai virar loop</span>
+                  <div id="selectedWorkbookColumnPreview" class="selected-workbook-value">Nenhuma coluna escolhida ainda.</div>
+                </div>
                 <label>
                   <span>Tempo antes do loop</span>
                   <input id="workbookLoopDelay" type="number" min="0" step="0.1" value="1" />
@@ -831,16 +971,125 @@
                   <span>Acao apos cada item</span>
                   <div class="capture-inline">
                     <input id="workbookAfterAction" type="text" value="nenhuma" />
-                    <button id="workbookAfterActionCaptureButton" class="tree-open-button" type="button">Gravar tecla</button>
+                    <button id="workbookAfterActionCaptureButton" class="tree-open-button record-key-button" type="button">Gravar tecla</button>
                   </div>
                 </label>
                 <label>
                   <span>Intervalo entre itens</span>
                   <input id="workbookBetweenItems" type="number" min="0" step="0.1" value="0.5" />
                 </label>
-                <button id="addWorkbookColumnButton" class="soft-button">Adicionar coluna como loop</button>
+                <button id="addWorkbookColumnButton" class="soft-button workbook-side-cta">Criar loop com esta coluna</button>
               </div>
             </aside>
+          </section>
+        </section>
+      </section>
+
+      <section id="remoteControlPanel" class="workspace-panel">
+        <section class="studio-control-shell">
+          <header class="studio-control-header">
+            <div>
+              <p class="panel-kicker">FlowDetect Control</p>
+              <h2>Controle remoto do Agent</h2>
+              <p id="studioControlHint">Conecte no Agent do outro PC para importar, visualizar e executar automacoes.</p>
+            </div>
+            <div class="studio-control-connect-card">
+              <span id="studioControlStatus" class="studio-control-status is-offline">Desconectado</span>
+              <label>
+                <span>Endereco do Agent</span>
+                <input id="studioControlAddressInput" type="text" value="127.0.0.1:18452" placeholder="192.168.1.102:18452" />
+              </label>
+              <div class="studio-control-actions">
+                <button id="studioControlConnectButton" class="primary-button" type="button">Conectar</button>
+                <button id="studioControlRefreshButton" class="ghost-button" type="button">Atualizar</button>
+              </div>
+            </div>
+          </header>
+
+          <section class="studio-control-toolbar">
+            <div>
+              <p class="panel-kicker">Agent conectado</p>
+              <strong id="studioControlAgentLabel">Aguardando conexao</strong>
+              <span id="studioControlMeta">0 automacoes</span>
+            </div>
+            <div class="studio-control-actions">
+              <button id="studioControlImportButton" class="soft-button" type="button">Importar ZIP no Agent</button>
+              <input id="studioControlZipInput" type="file" accept=".zip,application/zip,application/x-zip-compressed" hidden />
+              <label class="studio-control-minimize-option">
+                <span>Janela do Agent</span>
+                <select id="studioControlAgentWindowMode">
+                  <option value="normal">Manter aberta</option>
+                  <option value="minimize" selected>Minimizar ao executar</option>
+                </select>
+              </label>
+              <label class="studio-control-run-option">
+                <span>Linha inicial</span>
+                <input id="studioControlLoopStartInput" type="number" min="1" value="1" />
+              </label>
+              <label class="studio-control-run-option studio-control-run-option-wide">
+                <span>Empresa</span>
+                <input id="studioControlCompanyStartInput" type="text" placeholder="Opcional" />
+              </label>
+              <button id="studioControlRunButton" class="primary-button" type="button" disabled>Executar</button>
+              <button id="studioControlStopButton" class="danger-button" type="button" disabled>Parar execucao</button>
+            </div>
+          </section>
+
+          <aside class="studio-control-monitor">
+            <div class="studio-control-monitor-head">
+              <div>
+                <p class="panel-kicker">Tempo real</p>
+                <h3 id="studioControlSelectedTitle">Nenhuma automacao selecionada</h3>
+              </div>
+            </div>
+            <div class="studio-control-runtime-grid">
+              <article>
+                <span>Empresa</span>
+                <strong id="studioControlCompanyText">-</strong>
+              </article>
+              <article>
+                <span>Pagina</span>
+                <strong id="studioControlPageText">Pagina 1</strong>
+              </article>
+              <article>
+                <span>Bloco atual</span>
+                <strong id="studioControlBlockText">Aguardando</strong>
+              </article>
+            </div>
+            <div class="studio-control-progress-inline">
+              <span id="studioControlProgressPercent">0%</span>
+              <div class="studio-control-progress-track">
+                <div id="studioControlProgressFill"></div>
+              </div>
+              <p id="studioControlProgressText">A execucao remota vai aparecer aqui.</p>
+            </div>
+            <div id="studioControlLogList" class="studio-control-log-list"></div>
+          </aside>
+
+          <nav class="studio-control-subtabs" aria-label="Areas do controle remoto">
+            <button class="is-active" type="button" data-studio-control-view="execution">Execucao remota</button>
+            <button type="button" data-studio-control-view="library">Biblioteca do Agent</button>
+          </nav>
+
+          <section class="studio-control-view-panel is-active" data-studio-control-panel="execution">
+            <section class="studio-control-flow-panel">
+              <div class="studio-control-flow-head">
+                <span>Navegue sem executar</span>
+                <div class="studio-control-flow-actions">
+                  <button id="studioControlPrevBlockButton" class="ghost-button" type="button">Anterior</button>
+                  <button id="studioControlNextBlockButton" class="ghost-button" type="button">Proximo</button>
+                </div>
+              </div>
+              <div id="studioControlPageChips" class="studio-control-page-chips"></div>
+              <div id="studioControlFlowList" class="studio-control-flow-list"></div>
+            </section>
+          </section>
+
+          <section class="studio-control-view-panel" data-studio-control-panel="library" hidden>
+            <div id="studioControlEmpty" class="empty-state">
+              Conecte no Agent para carregar as automacoes remotas.
+            </div>
+            <div id="studioControlList" class="studio-control-grid"></div>
           </section>
         </section>
       </section>
@@ -860,14 +1109,27 @@
           <p class="capture-hint">Clique fora ou pressione ESC para cancelar.</p>
         </div>
       </div>
+
+      <div id="assistWindowPickerOverlay" class="capture-overlay assist-window-picker-overlay" hidden>
+        <div class="capture-modal assist-window-picker-modal">
+          <div class="capture-header">
+            <div>
+              <p class="panel-kicker">Janela alvo</p>
+              <h3>Escolha a janela da automacao</h3>
+            </div>
+            <button id="assistWindowPickerCloseButton" class="micro-button" type="button">Fechar</button>
+          </div>
+          <p class="capture-copy">A lista mostra janelas abertas com titulo visivel. O proprio FlowDetect fica bloqueado para evitar execucao no lugar errado.</p>
+          <p id="assistWindowPickerStatus" class="capture-hint">Carregando janelas abertas...</p>
+          <div id="assistWindowPickerList" class="assist-window-picker-list"></div>
+          <div class="assist-window-picker-actions">
+            <button id="assistWindowPickerRefreshButton" class="ghost-button" type="button">Atualizar lista</button>
+          </div>
+        </div>
+      </div>
     </main>
 
     <datalist id="sequenceSuggestions"></datalist>
-    <datalist id="windowSuggestions"></datalist>
-
-
-
-
 
     <script type="module" src="./main.js"></script>
   </body>

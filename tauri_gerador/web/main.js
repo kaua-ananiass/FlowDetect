@@ -1,5 +1,6 @@
 const tauriCore = window.__TAURI__?.core ?? null;
 const tauriEvent = window.__TAURI__?.event ?? null;
+const tauriDialog = window.__TAURI__?.dialog ?? null;
 window.__GENERATOR_MAIN_READY = true;
 
 async function invoke(command, payload) {
@@ -22,19 +23,66 @@ async function safeListen(eventName, handler) {
   }
 }
 
+async function openNativeFileDialog(options = {}) {
+  if (typeof tauriDialog?.open !== "function") {
+    throw new Error("Seletor de arquivos indisponivel na interface atual.");
+  }
+  return tauriDialog.open(options);
+}
+
+async function saveNativeFileDialog(options = {}) {
+  if (typeof tauriDialog?.save !== "function") {
+    throw new Error("Janela nativa para salvar arquivo indisponivel na interface atual.");
+  }
+  return tauriDialog.save(options);
+}
+
+if (!window.__FLOWDETECT_DESIGN_SYSTEM__) {
 const state = {
   roadmap: null,
   workbook: null,
   workbookPreview: null,
   activeTab: "launcher",
-  commandMapZoom: 1.08,
+  remoteControl: {
+    address: "127.0.0.1:18452",
+    connected: false,
+    agentLabel: "Aguardando conexao",
+    activeView: "execution",
+    library: [],
+    selectedId: "",
+    roadmap: null,
+    currentSequence: "principal",
+    currentOrder: null,
+    detailOpenOrder: null,
+    lastCenteredOrder: null,
+    running: false,
+    pollTimer: null,
+    statusRefreshing: false,
+    lastStatusSignature: "",
+    logs: [],
+    progress: {
+      percent: 0,
+      description: "A execucao remota vai aparecer aqui.",
+      company: "",
+      sequence: "principal",
+      order: 0,
+    },
+  },
+  commandMapZoom: 0.96,
+  commandMapRequestedZoom: 0.96,
+  commandMapChromeCollapsed: true,
+  commandMapPageSequence: "principal",
+  commandMapPageSequenceLock: null,
   commandMapFocusOrder: null,
+  commandMapAutoFitFrame: 0,
+  commandConnectorLayoutFrame: 0,
   commandMapSave: {
     running: false,
     percent: 0,
     status: "Mapa ainda nao salvo.",
     dirty: false,
   },
+  commandMapDrafts: {},
   assist: {
     mode: "idle",
     current: 0,
@@ -47,12 +95,42 @@ const state = {
     success: null,
     logs: [],
   },
+  assistControlTab: "target",
+  assistTarget: {
+    enabled: false,
+    status: "idle",
+    title: "",
+    className: "",
+    hwnd: 0,
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+    pid: 0,
+    modalOpen: false,
+    loading: false,
+    windows: [],
+    lastSeenAt: 0,
+  },
+  recognitionWindowCatalog: [],
   assistPlayback: {
     running: false,
     timer: null,
     token: 0,
     mode: "idle",
   },
+  login: {
+    authenticated: false,
+    profile: null,
+    resolution: null,
+    activationKey: "",
+    activationId: "",
+    expiresAt: "",
+    step: "admin",
+    users: [],
+    selectedUser: null,
+  },
+  executionWindowMode: "normal",
   testLaunchPending: false,
   insertPanel: null,
   captureTarget: null,
@@ -65,6 +143,19 @@ const state = {
   dragPreviewEl: null,
   dragOffsetX: 0,
   dragOffsetY: 0,
+  dragClientX: 0,
+  dragClientY: 0,
+  dragMoveFrame: 0,
+  dragSegments: [],
+  dragDropZones: [],
+  dragThresholds: [],
+  dragContainerRect: null,
+  recognitionTreeTabs: {},
+  spreadsheetTreeTabs: {},
+  recognitionTestStatus: {},
+  recognitionPreviewCache: {},
+  expandedTreeCardOrder: null,
+  expandedTreeCardOrigin: null,
   workbookSearch: "",
   composerWorkbookId: "",
   previewWorkbookId: "",
@@ -72,7 +163,6 @@ const state = {
   workbookSelectedColumn: "",
   workbookSelectedCell: null,
   testLoopData: null,
-  openWindows: [],
   library: {
     items: [],
     activeId: "",
@@ -97,14 +187,76 @@ const state = {
     filtersOpen: false,
     dirty: false,
   },
+  systemDiagnostics: {
+    loading: true,
+    fixing: false,
+    data: null,
+    error: "",
+  },
 };
 
+let commandMapClientKeySequence = 0;
+let assistTargetPollTimer = 0;
+let assistWindowPickerRequestId = 0;
+let assistTargetValidationPending = false;
+let loginSubmitInFlight = false;
+const DEV_ADMIN_CONFIG = Object.freeze({
+  enabled: true,
+  displayName: "Usuario local",
+  email: "local@flowdetect.app",
+  password: "flow123",
+});
+
 const builderShell = document.querySelector(".builder-shell");
+const loginOverlay = document.getElementById("loginOverlay");
+const loginTitleText = document.getElementById("loginTitleText");
+const loginStepBadgeDiagnostics = document.getElementById("loginStepBadgeDiagnostics");
+const loginStepBadgeActivation = document.getElementById("loginStepBadgeActivation");
+const loginStepBadgeUsers = document.getElementById("loginStepBadgeUsers");
+const loginStepBadgeCredentials = document.getElementById("loginStepBadgeCredentials");
+const loginModeBadge = document.getElementById("loginModeBadge");
+const loginActivationSummary = document.getElementById("loginActivationSummary");
+const loginDevAdminQuickButton = document.getElementById("loginDevAdminQuickButton");
+const loginActivationKeyInput = document.getElementById("loginActivationKeyInput");
+const loginStepDiagnostics = document.getElementById("loginStepDiagnostics");
+const loginStepActivation = document.getElementById("loginStepActivation");
+const loginStepDevAdmin = document.getElementById("loginStepDevAdmin");
+const loginStepUsers = document.getElementById("loginStepUsers");
+const loginStepCredentials = document.getElementById("loginStepCredentials");
+const loginStepRegister = document.getElementById("loginStepRegister");
+const loginUsersList = document.getElementById("loginUsersList");
+const loginContinueKeyButton = document.getElementById("loginContinueKeyButton");
+const loginChooseUserButton = document.getElementById("loginChooseUserButton");
+const loginCreateUserButton = document.getElementById("loginCreateUserButton");
+const loginBackToUsersButton = document.getElementById("loginBackToUsersButton");
+const loginBackToActivationButton = document.getElementById("loginBackToActivationButton");
+const loginSelectedUserSummary = document.getElementById("loginSelectedUserSummary");
+const loginDisplayNameInput = document.getElementById("loginDisplayNameInput");
+const loginResetActivationButton = document.getElementById("loginResetActivationButton");
+const loginEmailInput = document.getElementById("loginEmailInput");
+const loginPasswordInput = document.getElementById("loginPasswordInput");
+const loginRegisterPasswordInput = document.getElementById("loginRegisterPasswordInput");
+const loginPasswordConfirmInput = document.getElementById("loginPasswordConfirmInput");
+const loginSubmitButton = document.getElementById("loginSubmitButton");
+const loginRegisterSubmitButton = document.getElementById("loginRegisterSubmitButton");
+const loginResolutionPreview = document.getElementById("loginResolutionPreview");
+const loginErrorText = document.getElementById("loginErrorText");
+const loginContinueDiagnosticsButton = document.getElementById("loginContinueDiagnosticsButton");
+const devAdminPanel = document.getElementById("devAdminPanel");
+const devAdminEmailInput = document.getElementById("devAdminEmailInput");
+const devAdminPasswordInput = document.getElementById("devAdminPasswordInput");
+const devAdminLoginButton = document.getElementById("devAdminLoginButton");
+const loginBackFromDevAdminButton = document.getElementById("loginBackFromDevAdminButton");
 const timelineList = document.getElementById("timelineList");
 const commandMapList = document.getElementById("commandMapList");
 const messageBar = document.getElementById("messageBar");
 const timelineMeta = document.getElementById("timelineMeta");
 const commandMapMeta = document.getElementById("commandMapMeta");
+const commandMapStepBadge = document.getElementById("commandMapStepBadge");
+const commandMapPageTabs = document.getElementById("commandMapPageTabs");
+const commandMapPageModeSelect = document.getElementById("commandMapPageModeSelect");
+const commandMapPageAfterLoopSelect = document.getElementById("commandMapPageAfterLoopSelect");
+const commandMapPageModeHint = document.getElementById("commandMapPageModeHint");
 const builderStatus = document.getElementById("builderStatus");
 const totalBlocks = document.getElementById("totalBlocks");
 const textBlocks = document.getElementById("textBlocks");
@@ -113,8 +265,6 @@ const spreadsheetBlocks = document.getElementById("spreadsheetBlocks");
 const exportNameInput = document.getElementById("exportNameInput");
 const testDelayInput = document.getElementById("testDelayInput");
 const testLoopStartInput = document.getElementById("testLoopStartInput");
-const testWindowTitleInput = document.getElementById("testWindowTitleInput");
-const refreshWindowsButton = document.getElementById("refreshWindowsButton");
 const testLoopHint = document.getElementById("testLoopHint");
 const bulkDelayInput = document.getElementById("bulkDelayInput");
 const applyBulkDelayButton = document.getElementById("applyBulkDelayButton");
@@ -125,8 +275,8 @@ const mapSavePercent = document.getElementById("mapSavePercent");
 const mapSaveFill = document.getElementById("mapSaveFill");
 const mapSaveStatus = document.getElementById("mapSaveStatus");
 const testOnceButton = document.getElementById("testOnceButton");
-const testAutomationButton = document.getElementById("testAutomationButton");
 const stopTestButton = document.getElementById("stopTestButton");
+const testWindowModeSelect = document.getElementById("testWindowModeSelect");
 const assistTabButton = document.getElementById("assistTabButton");
 const captureOverlay = document.getElementById("captureOverlay");
 const captureOverlayText = document.getElementById("captureOverlayText");
@@ -135,23 +285,57 @@ const editorTabButton = document.getElementById("editorTabButton");
 const commandTabButton = document.getElementById("commandTabButton");
 const workbookTabButton = document.getElementById("workbookTabButton");
 const launcherTabButton = document.getElementById("launcherTabButton");
+const remoteControlTabButton = document.getElementById("remoteControlTabButton");
+const sessionChip = document.getElementById("sessionChip");
 const launcherPanel = document.getElementById("launcherPanel");
 const editorPanel = document.getElementById("editorPanel");
 const assistPanel = document.getElementById("assistPanel");
+const assistShell = assistPanel?.querySelector(".assist-shell");
 const commandsPanel = document.getElementById("commandsPanel");
+const commandMapShell = commandsPanel?.querySelector(".command-map-shell");
 const mapPrevButton = document.getElementById("mapPrevButton");
 const mapNextButton = document.getElementById("mapNextButton");
 const workbookPanel = document.getElementById("workbookPanel");
+const remoteControlPanel = document.getElementById("remoteControlPanel");
+const studioControlHint = document.getElementById("studioControlHint");
+const studioControlStatus = document.getElementById("studioControlStatus");
+const studioControlAddressInput = document.getElementById("studioControlAddressInput");
+const studioControlConnectButton = document.getElementById("studioControlConnectButton");
+const studioControlRefreshButton = document.getElementById("studioControlRefreshButton");
+const studioControlAgentLabel = document.getElementById("studioControlAgentLabel");
+const studioControlMeta = document.getElementById("studioControlMeta");
+const studioControlImportButton = document.getElementById("studioControlImportButton");
+const studioControlZipInput = document.getElementById("studioControlZipInput");
+const studioControlAgentWindowMode = document.getElementById("studioControlAgentWindowMode");
+const studioControlLoopStartInput = document.getElementById("studioControlLoopStartInput");
+const studioControlCompanyStartInput = document.getElementById("studioControlCompanyStartInput");
+const studioControlRunButton = document.getElementById("studioControlRunButton");
+const studioControlStopButton = document.getElementById("studioControlStopButton");
+const studioControlViewButtons = Array.from(document.querySelectorAll("[data-studio-control-view]"));
+const studioControlViewPanels = Array.from(document.querySelectorAll("[data-studio-control-panel]"));
+const studioControlEmpty = document.getElementById("studioControlEmpty");
+const studioControlList = document.getElementById("studioControlList");
+const studioControlSelectedTitle = document.getElementById("studioControlSelectedTitle");
+const studioControlProgressPercent = document.getElementById("studioControlProgressPercent");
+const studioControlProgressFill = document.getElementById("studioControlProgressFill");
+const studioControlProgressText = document.getElementById("studioControlProgressText");
+const studioControlCompanyText = document.getElementById("studioControlCompanyText");
+const studioControlPageText = document.getElementById("studioControlPageText");
+const studioControlBlockText = document.getElementById("studioControlBlockText");
+const studioControlPrevBlockButton = document.getElementById("studioControlPrevBlockButton");
+const studioControlNextBlockButton = document.getElementById("studioControlNextBlockButton");
+const studioControlPageChips = document.getElementById("studioControlPageChips");
+const studioControlFlowList = document.getElementById("studioControlFlowList");
+const studioControlLogList = document.getElementById("studioControlLogList");
 const mapZoomOutButton = document.getElementById("mapZoomOutButton");
 const mapZoomInButton = document.getElementById("mapZoomInButton");
 const mapZoomRange = document.getElementById("mapZoomRange");
 const mapZoomValue = document.getElementById("mapZoomValue");
+const commandMapChromeToggleButton = document.getElementById("commandMapChromeToggleButton");
 const assistDelayInput = document.getElementById("assistDelayInput");
 const assistLoopStartInput = document.getElementById("assistLoopStartInput");
-const assistWindowTitleInput = document.getElementById("assistWindowTitleInput");
-const refreshAssistWindowsButton = document.getElementById("refreshAssistWindowsButton");
+const assistWindowModeSelect = document.getElementById("assistWindowModeSelect");
 const assistQuickButton = document.getElementById("assistQuickButton");
-const assistLoopButton = document.getElementById("assistLoopButton");
 const assistStopButton = document.getElementById("assistStopButton");
 const assistStatusText = document.getElementById("assistStatusText");
 const assistDetailText = document.getElementById("assistDetailText");
@@ -165,20 +349,40 @@ const assistProgressFill = document.getElementById("assistProgressFill");
 const assistProgressMeta = document.getElementById("assistProgressMeta");
 const assistMapList = document.getElementById("assistMapList");
 const assistLogList = document.getElementById("assistLogList");
+const assistControlTabs = document.getElementById("assistControlTabs");
+const assistInitialSequenceSelect = document.getElementById("assistInitialSequenceSelect");
+const assistSequenceModeList = document.getElementById("assistSequenceModeList");
+const assistTargetTitle = document.getElementById("assistTargetTitle");
+const assistTargetDetailText = document.getElementById("assistTargetDetailText");
+const assistTargetStatusChip = document.getElementById("assistTargetStatusChip");
+const assistTargetMetaText = document.getElementById("assistTargetMetaText");
+const assistSelectWindowButton = document.getElementById("assistSelectWindowButton");
+const assistClearWindowButton = document.getElementById("assistClearWindowButton");
+const assistWindowPickerOverlay = document.getElementById("assistWindowPickerOverlay");
+const assistWindowPickerList = document.getElementById("assistWindowPickerList");
+const assistWindowPickerStatus = document.getElementById("assistWindowPickerStatus");
+const assistWindowPickerCloseButton = document.getElementById("assistWindowPickerCloseButton");
+const assistWindowPickerRefreshButton = document.getElementById("assistWindowPickerRefreshButton");
 const workbookMeta = document.getElementById("workbookMeta");
 const workbookFilesTabs = document.getElementById("workbookFilesTabs");
 const addWorkbookButton = document.getElementById("addWorkbookButton");
 const workbookFileInput = document.getElementById("workbookFileInput");
 const imageFileInput = document.getElementById("imageFileInput");
+const automationZipFileInput = document.getElementById("automationZipFileInput");
 const workbookSheetSelect = document.getElementById("workbookSheetSelect");
 const workbookSearchInput = document.getElementById("workbookSearchInput");
 const workbookRowsInfo = document.getElementById("workbookRowsInfo");
 const workbookTableWrap = document.getElementById("workbookTableWrap");
+const workbookSelectedValueBlock = document.getElementById("workbookSelectedValueBlock");
+const selectedWorkbookStatus = document.getElementById("selectedWorkbookStatus");
 const selectedWorkbookTitle = document.getElementById("selectedWorkbookTitle");
 const selectedWorkbookSubtitle = document.getElementById("selectedWorkbookSubtitle");
 const selectedWorkbookValue = document.getElementById("selectedWorkbookValue");
+const workbookSelectedColumnBlock = document.getElementById("workbookSelectedColumnBlock");
+const selectedWorkbookColumnStatus = document.getElementById("selectedWorkbookColumnStatus");
 const selectedWorkbookColumnTitle = document.getElementById("selectedWorkbookColumnTitle");
 const selectedWorkbookColumnSubtitle = document.getElementById("selectedWorkbookColumnSubtitle");
+const selectedWorkbookColumnPreview = document.getElementById("selectedWorkbookColumnPreview");
 const workbookTextDelay = document.getElementById("workbookTextDelay");
 const addWorkbookCellButton = document.getElementById("addWorkbookCellButton");
 const workbookLoopDelay = document.getElementById("workbookLoopDelay");
@@ -188,6 +392,12 @@ const workbookBetweenItems = document.getElementById("workbookBetweenItems");
 const addWorkbookColumnButton = document.getElementById("addWorkbookColumnButton");
 const launcherList = document.getElementById("launcherList");
 const launcherMeta = document.getElementById("launcherMeta");
+const systemCheckPanel = document.getElementById("systemCheckPanel");
+const systemCheckSummary = document.getElementById("systemCheckSummary");
+const systemCheckBadge = document.getElementById("systemCheckBadge");
+const systemCheckGrid = document.getElementById("systemCheckGrid");
+const systemCheckFixButton = document.getElementById("systemCheckFixButton");
+const systemCheckRefreshButton = document.getElementById("systemCheckRefreshButton");
 const launcherSearchInput = document.getElementById("launcherSearchInput");
 const launcherCategoryFilter = document.getElementById("launcherCategoryFilter");
 const launcherCreatedFromInput = document.getElementById("launcherCreatedFromInput");
@@ -203,7 +413,6 @@ const newAutomationDescriptionInput = document.getElementById("newAutomationDesc
 const confirmCreateAutomationButton = document.getElementById("confirmCreateAutomationButton");
 const cancelCreateAutomationButton = document.getElementById("cancelCreateAutomationButton");
 const launcherCategorySuggestions = document.getElementById("launcherCategorySuggestions");
-const windowSuggestions = document.getElementById("windowSuggestions");
 
 const textInput = document.getElementById("textInput");
 const textDelay = document.getElementById("textDelay");
@@ -218,16 +427,18 @@ const mouseClicksInput = document.getElementById("mouseClicksInput");
 const captureMouseButton = document.getElementById("captureMouseButton");
 const mouseDelay = document.getElementById("mouseDelay");
 const imagePathInput = document.getElementById("imagePathInput");
+const captureImageButton = document.getElementById("captureImageButton");
 const selectImageButton = document.getElementById("selectImageButton");
 const testImageRecognitionButton = document.getElementById("testImageRecognitionButton");
+const openImagesFolderButton = document.getElementById("openImagesFolderButton");
+const openRecognitionDiagnosticsButton = document.getElementById("openRecognitionDiagnosticsButton");
 const imageTimeoutInput = document.getElementById("imageTimeoutInput");
 const imageConfidenceInput = document.getElementById("imageConfidenceInput");
 const imageSearchProfileInput = document.getElementById("imageSearchProfileInput");
-const imageWindowTitleInput = document.getElementById("imageWindowTitleInput");
-const refreshImageWindowsButton = document.getElementById("refreshImageWindowsButton");
 const imageClickModeInput = document.getElementById("imageClickModeInput");
 const imageFailureActionInput = document.getElementById("imageFailureActionInput");
 const imageFailureBlockInput = document.getElementById("imageFailureBlockInput");
+const imageFailureSequenceInput = document.getElementById("imageFailureSequenceInput");
 const imageRetryCountInput = document.getElementById("imageRetryCountInput");
 const imageRetryIntervalInput = document.getElementById("imageRetryIntervalInput");
 const imageDelayInput = document.getElementById("imageDelayInput");
@@ -245,8 +456,10 @@ const chromeSaveAsInput = document.getElementById("chromeSaveAsInput");
 const chromeTimeoutInput = document.getElementById("chromeTimeoutInput");
 const chromePressAfterInput = document.getElementById("chromePressAfterInput");
 const chromeSuccessActionInput = document.getElementById("chromeSuccessActionInput");
+const chromeSuccessSequenceInput = document.getElementById("chromeSuccessSequenceInput");
 const chromeSuccessBlockInput = document.getElementById("chromeSuccessBlockInput");
 const chromeFailureActionInput = document.getElementById("chromeFailureActionInput");
+const chromeFailureSequenceInput = document.getElementById("chromeFailureSequenceInput");
 const chromeFailureBlockInput = document.getElementById("chromeFailureBlockInput");
 const chromeRetryCountInput = document.getElementById("chromeRetryCountInput");
 const chromeRetryIntervalInput = document.getElementById("chromeRetryIntervalInput");
@@ -277,6 +490,8 @@ const afterActionInput = document.getElementById("afterActionInput");
 const afterActionCaptureButton = document.getElementById("afterActionCaptureButton");
 const betweenItemsInput = document.getElementById("betweenItemsInput");
 const spreadsheetDelay = document.getElementById("spreadsheetDelay");
+const addLoopStartButton = document.getElementById("addLoopStartButton");
+const addLoopEndButton = document.getElementById("addLoopEndButton");
 
 if (messageBar) {
   messageBar.textContent = "main.js carregado. Inicializando interface...";
@@ -308,14 +523,18 @@ function setTestExecutionState(running) {
   stopTestButton.disabled = !active;
   assistStopButton.disabled = !active;
   if (active) {
-    builderStatus.textContent = "Executando teste";
-  } else if (builderStatus.textContent === "Executando teste") {
+    builderStatus.textContent = "Executando automacao";
+  } else if (builderStatus.textContent === "Executando automacao") {
     builderStatus.textContent = "Pronto";
   }
 }
 
 function isTestExecutionActive() {
   return !stopTestButton.disabled || !assistStopButton.disabled;
+}
+
+function hasSpreadsheetLoopBlock() {
+  return (state.roadmap?.events ?? []).some((event) => event.type === "sequencia_planilha");
 }
 
 function triggerSuccessPulse(button) {
@@ -354,22 +573,59 @@ function setWorkspaceTab(tabName) {
   const assistActive = tabName === "assist";
   const commandsActive = tabName === "commands";
   const workbookActive = tabName === "workbook";
+  const remoteControlActive = tabName === "remote-control";
   launcherTabButton.classList.toggle("is-active", launcherActive);
   editorTabButton.classList.toggle("is-active", editorActive);
   assistTabButton.classList.toggle("is-active", assistActive);
   commandTabButton.classList.toggle("is-active", commandsActive);
   workbookTabButton.classList.toggle("is-active", workbookActive);
+  remoteControlTabButton?.classList.toggle("is-active", remoteControlActive);
   launcherPanel.classList.toggle("is-active", launcherActive);
   editorPanel.classList.toggle("is-active", editorActive);
   assistPanel.classList.toggle("is-active", assistActive);
   commandsPanel.classList.toggle("is-active", commandsActive);
   workbookPanel.classList.toggle("is-active", workbookActive);
+  remoteControlPanel?.classList.toggle("is-active", remoteControlActive);
   builderShell?.classList.toggle("is-launcher-active", launcherActive);
   builderShell?.classList.toggle("is-commands-active", commandsActive);
   builderShell?.classList.toggle("is-workbook-active", workbookActive);
   builderShell?.classList.toggle("is-assist-active", assistActive);
+  builderShell?.classList.toggle("is-remote-control-active", remoteControlActive);
+  applyCommandMapChromeMode();
+  if (commandsActive) {
+    scheduleCommandMapAutoFit();
+  }
   if (commandsActive && state.commandMapFocusOrder) {
     requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
+  }
+  if (assistActive) {
+    requestAnimationFrame(() => {
+      if (!assistMapList) {
+        return;
+      }
+      if (state.assist.mode === "running" && state.assist.currentOrder != null) {
+        syncAssistEdgeSpacers();
+        centerAssistOrder(state.assist.currentOrder, "auto");
+      } else {
+        centerFirstAssistOrder("auto");
+      }
+    });
+  }
+}
+
+function applyCommandMapChromeMode() {
+  const collapsed = state.activeTab === "commands" && Boolean(state.commandMapChromeCollapsed);
+  builderShell?.classList.toggle("is-command-map-chrome-collapsed", collapsed);
+  if (commandMapChromeToggleButton) {
+    commandMapChromeToggleButton.textContent = collapsed ? "Mostrar menu" : "Ocultar menu";
+    commandMapChromeToggleButton.setAttribute("aria-pressed", collapsed ? "true" : "false");
+    commandMapChromeToggleButton.setAttribute(
+      "aria-label",
+      collapsed ? "Mostrar menu superior do mapa" : "Ocultar menu superior do mapa"
+    );
+  }
+  if (state.activeTab === "commands") {
+    scheduleCommandMapAutoFit();
   }
 }
 
@@ -384,16 +640,379 @@ function applyCommandMapZoom() {
   }
 }
 
-function setCommandMapZoom(nextZoom) {
-  state.commandMapZoom = Math.min(1.5, Math.max(0.85, Number(nextZoom) || 1));
+function autoFitCommandMapZoom() {
+  if (!commandMapList || state.activeTab !== "commands") {
+    return;
+  }
+
+  const cards = Array.from(commandMapList.querySelectorAll(".command-tree-card"));
+  if (!cards.length) {
+    state.commandMapZoom = Math.min(1.4, Math.max(0.6, Number(state.commandMapRequestedZoom) || 0.96));
+    applyCommandMapZoom();
+    return;
+  }
+
+  const requestedZoom = Math.min(1.4, Math.max(0.6, Number(state.commandMapRequestedZoom) || 0.96));
+  const currentZoom = Math.max(0.01, Number(state.commandMapZoom) || requestedZoom || 0.96);
+  const availableHeight = Math.max(220, commandMapList.clientHeight - 24);
+
+  let tallestNaturalHeight = 0;
+  cards.forEach((card) => {
+    const rect = card.getBoundingClientRect();
+    if (!rect.height) {
+      return;
+    }
+    tallestNaturalHeight = Math.max(tallestNaturalHeight, rect.height / currentZoom);
+  });
+
+  if (!tallestNaturalHeight) {
+    state.commandMapZoom = requestedZoom;
+    applyCommandMapZoom();
+    return;
+  }
+
+  const fitZoom = Math.min(1.4, Math.max(0.6, availableHeight / tallestNaturalHeight));
+  state.commandMapZoom = Math.min(requestedZoom, fitZoom);
   applyCommandMapZoom();
+}
+
+function findAdjacentCommandFlowSegment(element, direction = "previous") {
+  if (!element) {
+    return null;
+  }
+
+  let sibling = direction === "next" ? element.nextElementSibling : element.previousElementSibling;
+  while (sibling) {
+    if (sibling.classList?.contains("command-flow-segment")) {
+      return sibling;
+    }
+    sibling = direction === "next" ? sibling.nextElementSibling : sibling.previousElementSibling;
+  }
+  return null;
+}
+
+function updateCommandConnectorPositions() {
+  if (!commandMapList || state.activeTab !== "commands") {
+    return;
+  }
+
+  const row = commandMapList.querySelector(".command-flow-row");
+  if (!row) {
+    return;
+  }
+
+  const rowRect = row.getBoundingClientRect();
+  row.querySelectorAll(".command-inline-connector").forEach((connector) => {
+    const previousSegment = findAdjacentCommandFlowSegment(connector, "previous");
+    const nextSegment = findAdjacentCommandFlowSegment(connector, "next");
+    const centers = [previousSegment, nextSegment]
+      .map((segment) => segment?.querySelector(".command-tree-card"))
+      .filter(Boolean)
+      .map((card) => {
+        const rect = card.getBoundingClientRect();
+        const factor = Number.parseFloat(getComputedStyle(card).getPropertyValue("--connector-anchor-factor"));
+        if (Number.isFinite(factor) && factor > 0) {
+          return rect.top - rowRect.top + rect.height * factor;
+        }
+        return rect.top - rowRect.top + rect.height / 2;
+      });
+
+    if (!centers.length) {
+      connector.style.removeProperty("--connector-inline-top");
+      return;
+    }
+
+    const centerTop = centers.reduce((sum, value) => sum + value, 0) / centers.length;
+    connector.style.setProperty("--connector-inline-top", `${Math.round(centerTop)}px`);
+  });
+}
+
+function getCommandMapFailureRoute(event) {
+  const details = event?.details || event?.detalhes || {};
+  const eventType = String(event?.type || "").trim();
+
+  if (eventType === "clicar_imagem") {
+    const action = String(details.ao_nao_encontrar || "parar").trim().toLowerCase();
+    const block = Number(details.bloco_nao_encontrar || 0);
+    const delay = Math.max(0, parseNumber(details.atraso_antes_sequencia_nao_encontrar, 0));
+    return {
+      action,
+      block: Number.isFinite(block) && block > 0 ? block : null,
+      delay,
+    };
+  }
+
+  if (eventType === "chrome_elemento_html") {
+    const action = String(details.ao_falhar || "parar").trim().toLowerCase();
+    const block = Number(details.bloco_falha || 0);
+    const delay = Math.max(0, parseNumber(details.atraso_antes_sequencia_falha, 0));
+    return {
+      action,
+      block: Number.isFinite(block) && block > 0 ? block : null,
+      delay,
+    };
+  }
+
+  return { action: "parar", block: null, delay: 0 };
+}
+
+function normalizeCommandJumpRoute(event, route, kind, visibleOrders) {
+  if (route.action !== "ir_para_bloco" || !route.block) {
+    return null;
+  }
+  const sourceOrder = Number(event.order || 0);
+  const targetOrder = Number(route.block || 0);
+  if (!sourceOrder || !targetOrder || sourceOrder === targetOrder || !visibleOrders.has(targetOrder)) {
+    return null;
+  }
+  return {
+    sourceOrder,
+    targetOrder,
+    delay: route.delay,
+    kind,
+  };
+}
+
+function getCommandMapJumpRoutes(events = getCommandMapEvents().map((event) => applyCommandMapDraftToEvent(event))) {
+  const visibleOrders = new Set(events.map((event) => Number(event.order || 0)));
+  return events.flatMap((event) => [
+    normalizeCommandJumpRoute(event, getCommandMapSuccessRoute(event), "success", visibleOrders),
+    normalizeCommandJumpRoute(event, getCommandMapFailureRoute(event), "failure", visibleOrders),
+  ]).filter(Boolean);
+}
+
+function clearCommandJumpLayer(row) {
+  row?.querySelector(".command-jump-layer")?.remove();
+  row?.classList.remove("has-jump-paths");
+  row?.classList.remove("has-backward-jump-paths");
+  row?.style.removeProperty("--jump-route-lanes");
+}
+
+function renderCommandJumpPaths() {
+  if (!commandMapList || state.activeTab !== "commands") {
+    return;
+  }
+
+  const row = commandMapList.querySelector(".command-flow-row");
+  if (!row) {
+    return;
+  }
+
+  clearCommandJumpLayer(row);
+  const routes = getCommandMapJumpRoutes();
+  if (!routes.length) {
+    return;
+  }
+
+  row.classList.add("has-jump-paths");
+  const endpointLaneUsage = new Map();
+  const preparedRoutes = routes.map((route) => {
+    const sourceKey = `source:${route.sourceOrder}`;
+    const targetKey = `target:${route.targetOrder}`;
+    const pairKey = `pair:${Math.min(route.sourceOrder, route.targetOrder)}:${Math.max(route.sourceOrder, route.targetOrder)}`;
+    const lane = Math.max(
+      endpointLaneUsage.get(sourceKey) || 0,
+      endpointLaneUsage.get(targetKey) || 0,
+      endpointLaneUsage.get(pairKey) || 0
+    );
+    endpointLaneUsage.set(sourceKey, lane + 1);
+    endpointLaneUsage.set(targetKey, lane + 1);
+    endpointLaneUsage.set(pairKey, lane + 1);
+    return { ...route, lane };
+  });
+  const maxLane = preparedRoutes.reduce((max, route) => Math.max(max, route.lane || 0), 0);
+  row.style.setProperty("--jump-route-lanes", String(maxLane));
+  const zoom = Number(state.commandMapZoom || 1) || 1;
+  const rowRect = row.getBoundingClientRect();
+  const rowWidth = Math.max(row.scrollWidth / zoom, rowRect.width / zoom, 1);
+  const rowHeight = Math.max(row.scrollHeight / zoom, rowRect.height / zoom, 1);
+  const layer = document.createElement("div");
+  layer.className = "command-jump-layer";
+  layer.style.width = `${Math.ceil(rowWidth)}px`;
+  layer.style.height = `${Math.ceil(rowHeight)}px`;
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "command-jump-svg");
+  svg.setAttribute("viewBox", `0 0 ${Math.ceil(rowWidth)} ${Math.ceil(rowHeight)}`);
+  svg.setAttribute("aria-hidden", "true");
+
+  preparedRoutes.forEach((route, index) => {
+    const sourceSegment = row.querySelector(`.command-flow-segment[data-order="${route.sourceOrder}"]`);
+    const targetSegment = row.querySelector(`.command-flow-segment[data-order="${route.targetOrder}"]`);
+    const sourceCard = sourceSegment?.querySelector(".command-tree-card");
+    const targetCard = targetSegment?.querySelector(".command-tree-card");
+    if (!sourceCard || !targetCard) {
+      return;
+    }
+
+    const sourceRect = sourceCard.getBoundingClientRect();
+    const targetRect = targetCard.getBoundingClientRect();
+    const sourceCenterX = (sourceRect.left - rowRect.left + sourceRect.width / 2) / zoom;
+    const targetCenterX = (targetRect.left - rowRect.left + targetRect.width / 2) / zoom;
+    const sourceTop = (sourceRect.top - rowRect.top) / zoom;
+    const targetTop = (targetRect.top - rowRect.top) / zoom;
+    const isBackward = targetCenterX < sourceCenterX;
+    const laneOffset = 38 + Number(route.lane || 0) * 24;
+    const pathY = Math.max(16, Math.min(sourceTop, targetTop) - laneOffset);
+    const sourceY = Math.max(18, sourceTop + 10);
+    const targetY = Math.max(18, targetTop + 10);
+    const radius = 12;
+    const direction = targetCenterX >= sourceCenterX ? 1 : -1;
+    const sourceTurnX = sourceCenterX;
+    const targetTurnX = targetCenterX;
+    const sourceCornerX = sourceTurnX + radius * direction;
+    const targetCornerX = targetTurnX - radius * direction;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const pathId = `commandJumpPath${route.sourceOrder}_${route.targetOrder}_${route.kind}_${index}`;
+    path.setAttribute("id", pathId);
+    path.setAttribute(
+      "d",
+      [
+        `M ${sourceCenterX} ${sourceY}`,
+        `L ${sourceTurnX} ${pathY + radius}`,
+        `Q ${sourceTurnX} ${pathY} ${sourceCornerX} ${pathY}`,
+        `L ${targetCornerX} ${pathY}`,
+        `Q ${targetTurnX} ${pathY} ${targetTurnX} ${pathY + radius}`,
+        `L ${targetCenterX} ${targetY}`,
+      ].join(" ")
+    );
+    path.setAttribute("class", `command-jump-path ${isBackward ? "is-backward" : "is-forward"} ${route.kind === "failure" ? "is-failure" : "is-success"}`);
+    svg.appendChild(path);
+
+    const energy = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    energy.setAttribute("class", `command-jump-energy ${route.kind === "failure" ? "is-failure" : "is-success"}`);
+    energy.setAttribute("r", route.kind === "failure" ? "3.2" : "3");
+    const motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
+    motion.setAttribute("dur", route.kind === "failure" ? "1.65s" : "1.45s");
+    motion.setAttribute("repeatCount", "indefinite");
+    motion.setAttribute("rotate", "auto");
+    const mpath = document.createElementNS("http://www.w3.org/2000/svg", "mpath");
+    mpath.setAttribute("href", `#${pathId}`);
+    mpath.setAttributeNS("http://www.w3.org/1999/xlink", "href", `#${pathId}`);
+    motion.appendChild(mpath);
+    energy.appendChild(motion);
+    svg.appendChild(energy);
+
+    const midpointX = (sourceCenterX + targetCenterX) / 2;
+    const label = document.createElement("label");
+    label.className = `connector-time command-jump-time ${isBackward ? "is-backward" : "is-forward"} ${route.kind === "failure" ? "is-failure" : "is-success"}`;
+    label.style.left = `${Math.round(midpointX)}px`;
+    label.style.top = `${Math.round(pathY)}px`;
+    label.innerHTML = `
+      <span class="connector-link-label">${escapeHtml(`${route.sourceOrder} > ${route.targetOrder}`)}</span>
+      <input
+        data-jump-delay="true"
+        data-route-kind="${escapeHtml(route.kind)}"
+        data-source-order="${escapeHtml(String(route.sourceOrder))}"
+        data-target-order="${escapeHtml(String(route.targetOrder))}"
+        type="number"
+        min="0"
+        step="0.1"
+        value="${escapeHtml(formatTransitionDelayValue(route.delay))}"
+      />
+      <strong>s</strong>
+    `;
+    layer.appendChild(label);
+  });
+
+  layer.prepend(svg);
+  row.prepend(layer);
+}
+
+function scheduleCommandConnectorLayout() {
+  if (state.commandConnectorLayoutFrame) {
+    cancelAnimationFrame(state.commandConnectorLayoutFrame);
+  }
+  state.commandConnectorLayoutFrame = requestAnimationFrame(() => {
+    state.commandConnectorLayoutFrame = 0;
+    updateCommandConnectorPositions();
+    renderCommandJumpPaths();
+  });
+}
+
+function scheduleCommandMapAutoFit() {
+  if (state.commandMapAutoFitFrame) {
+    cancelAnimationFrame(state.commandMapAutoFitFrame);
+  }
+  state.commandMapAutoFitFrame = requestAnimationFrame(() => {
+    state.commandMapAutoFitFrame = 0;
+    autoFitCommandMapZoom();
+    scheduleCommandConnectorLayout();
+  });
+}
+
+function setCommandMapZoom(nextZoom) {
+  state.commandMapRequestedZoom = Math.min(1.4, Math.max(0.6, Number(nextZoom) || 1));
+  state.commandMapZoom = state.commandMapRequestedZoom;
+  applyCommandMapZoom();
+  scheduleCommandMapAutoFit();
   if (state.activeTab === "commands" && state.commandMapFocusOrder) {
     requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
   }
 }
 
 function getCommandMapOrders() {
-  return (state.roadmap?.events ?? []).map((event) => Number(event.order)).filter((order) => Number.isFinite(order));
+  return getCommandMapEvents()
+    .map((event) => Number(event.order))
+    .filter((order) => Number.isFinite(order));
+}
+
+function getAssistRoadmapEvents() {
+  return [...(state.roadmap?.events ?? [])].sort((firstEvent, secondEvent) => {
+    const firstOrder = Number(firstEvent?.order ?? firstEvent?.ordem ?? 0);
+    const secondOrder = Number(secondEvent?.order ?? secondEvent?.ordem ?? 0);
+    const firstIsFinite = Number.isFinite(firstOrder);
+    const secondIsFinite = Number.isFinite(secondOrder);
+
+    if (!firstIsFinite && !secondIsFinite) {
+      return 0;
+    }
+    if (!firstIsFinite) {
+      return 1;
+    }
+    if (!secondIsFinite) {
+      return -1;
+    }
+    return firstOrder - secondOrder;
+  });
+}
+
+function getAssistInitialOrder(roadmap = state.roadmap) {
+  const initialSequence = resolveRoadmapInitialSequence(roadmap);
+  return getCommandMapEvents(initialSequence, roadmap)[0]?.order ?? getAssistRoadmapEvents()[0]?.order ?? null;
+}
+
+function getAssistCurrentSequence() {
+  const byOrder = getCommandMapEventSequenceByOrder(state.assist.currentOrder);
+  if (byOrder) {
+    return byOrder;
+  }
+
+  return resolveRoadmapInitialSequence();
+}
+
+function setAssistControlTab(tabName = "target") {
+  const nextTab = String(tabName || "").trim().toLowerCase() === "pages" ? "pages" : "target";
+  state.assistControlTab = nextTab;
+
+  document.querySelectorAll("[data-assist-control-tab]").forEach((button) => {
+    const isActive = button.dataset.assistControlTab === nextTab;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+
+  document.querySelectorAll("[data-assist-control-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.assistControlPanel !== nextTab;
+    panel.classList.toggle("is-active", panel.dataset.assistControlPanel === nextTab);
+  });
+}
+
+function syncAssistTheme() {
+  if (!assistShell) {
+    return;
+  }
+
+  assistShell.dataset.pageTheme = resolveCommandMapPageTheme(getAssistCurrentSequence());
 }
 
 function updateCommandMapNavButtons() {
@@ -426,38 +1045,287 @@ function moveCommandMapFocus(step) {
 function syncTestInputsFrom(source) {
   const delayValue = source === "assist" ? assistDelayInput.value : testDelayInput.value;
   const loopValue = source === "assist" ? assistLoopStartInput.value : testLoopStartInput.value;
-  const windowValue = source === "assist" ? assistWindowTitleInput.value : testWindowTitleInput.value;
   testDelayInput.value = delayValue;
   assistDelayInput.value = delayValue;
   testLoopStartInput.value = loopValue;
   assistLoopStartInput.value = loopValue;
-  testWindowTitleInput.value = windowValue;
-  assistWindowTitleInput.value = windowValue;
   updateTestLoopHint();
 }
 
-function getConfiguredWindowTitle(fromAssist = false) {
-  const raw = fromAssist ? assistWindowTitleInput?.value : testWindowTitleInput?.value;
-  return String(raw || "").trim();
+function normalizeExecutionWindowMode(value) {
+  return String(value || "").trim().toLowerCase() === "minimize" ? "minimize" : "normal";
 }
 
-function renderWindowSuggestions() {
-  if (!windowSuggestions) {
+function syncExecutionWindowModeFrom(source) {
+  const modeValue = normalizeExecutionWindowMode(
+    source === "assist" ? assistWindowModeSelect?.value : testWindowModeSelect?.value
+  );
+  state.executionWindowMode = modeValue;
+  if (testWindowModeSelect) {
+    testWindowModeSelect.value = modeValue;
+  }
+  if (assistWindowModeSelect) {
+    assistWindowModeSelect.value = modeValue;
+  }
+}
+
+function shouldMinimizeExecutionWindow() {
+  return normalizeExecutionWindowMode(state.executionWindowMode) === "minimize";
+}
+
+function surfaceAssistExecutionMessage(message, kind = "info") {
+  const text = String(message || "").trim();
+  if (!text) {
+    return;
+  }
+  pushAssistLog(text, kind);
+  state.assist.description = text;
+  updateAssistProgressUI();
+}
+
+function captureLoginResolution() {
+  const screenWidth = Number(window.screen?.width || 0);
+  const screenHeight = Number(window.screen?.height || 0);
+  const viewportWidth = Number(window.innerWidth || document.documentElement?.clientWidth || 0);
+  const viewportHeight = Number(window.innerHeight || document.documentElement?.clientHeight || 0);
+  const devicePixelRatio = Number(window.devicePixelRatio || 1);
+  return {
+    screenWidth,
+    screenHeight,
+    viewportWidth,
+    viewportHeight,
+    devicePixelRatio,
+    label: `${screenWidth} x ${screenHeight}`,
+  };
+}
+
+function setLoginError(message = "") {
+  if (!loginErrorText) {
+    return;
+  }
+  const text = String(message || "").trim();
+  loginErrorText.hidden = !text;
+  loginErrorText.textContent = text;
+}
+
+function hasDevAdminConfig() {
+  return Boolean(DEV_ADMIN_CONFIG?.enabled);
+}
+
+function setLoginStep(step = "admin") {
+  state.login.step = step;
+}
+
+function renderLoginTitle() {
+  if (!loginTitleText) {
+    return;
+  }
+  loginTitleText.innerHTML = '<span class="welcome-title-flow">Flow</span><span class="welcome-title-detect">Detect</span>';
+}
+
+function updateLoginModeUI() {
+  renderLoginTitle();
+
+  if (hasDevAdminConfig() && devAdminEmailInput && !devAdminEmailInput.value) {
+    devAdminEmailInput.value = String(DEV_ADMIN_CONFIG?.email || "").trim();
+  }
+}
+
+function updateActivationSummary() {
+  if (!loginActivationSummary) {
+    return;
+  }
+  loginActivationSummary.textContent = state.login.authenticated
+    ? "FlowDetect pronto para uso nesta maquina."
+    : "Automacao visual para criar, testar e executar fluxos desktop.";
+}
+
+function renderLoginUsersList() {
+  return;
+}
+
+function updateSelectedUserSummary() {
+  return;
+}
+
+function updateLoginResolutionPreview(resolution = null) {
+  if (!loginResolutionPreview) {
+    return;
+  }
+  const current = resolution || captureLoginResolution();
+  loginResolutionPreview.textContent = `Resolucao detectada ao entrar: ${current.screenWidth} x ${current.screenHeight} | area util ${current.viewportWidth} x ${current.viewportHeight}`;
+}
+
+function applyLoginStateUI() {
+  const authenticated = Boolean(state.login.authenticated);
+  document.body.classList.toggle("is-authenticated", authenticated);
+  document.body.classList.toggle("is-auth-locked", !authenticated);
+  if (loginOverlay) {
+    loginOverlay.setAttribute("aria-hidden", authenticated ? "true" : "false");
+    loginOverlay.hidden = authenticated;
+  }
+
+  const profile = state.login.profile || {};
+  const resolution = state.login.resolution || captureLoginResolution();
+  const userName = String(profile.nome || profile.email || "").trim();
+  const resolutionLabel = `${resolution.screenWidth || 0} x ${resolution.screenHeight || 0}`;
+
+  updateLoginModeUI();
+  updateActivationSummary();
+  updateLoginResolutionPreview(resolution);
+
+  if (sessionChip) {
+    sessionChip.textContent = authenticated
+      ? `${userName || DEV_ADMIN_CONFIG.displayName} | ${resolutionLabel}`
+      : "FlowDetect | aguardando entrada";
+  }
+
+  if (assistWindowText) {
+    assistWindowText.textContent = authenticated
+      ? userName || DEV_ADMIN_CONFIG.displayName
+      : "Aguardando entrada";
+  }
+
+  if (assistWindowDetailText) {
+    assistWindowDetailText.textContent = authenticated
+      ? `Resolucao salva: ${resolutionLabel}`
+      : "Clique em entrar para salvar a resolucao atual desta maquina.";
+  }
+}
+
+async function loadPersistedLoginSession(options = {}) {
+  const preserveAuthenticated = Boolean(options.preserveAuthenticated);
+  try {
+    const result = await invoke("get_login_session");
+    if (!result?.exists || !result?.session) {
+      if (preserveAuthenticated && (state.login.authenticated || loginSubmitInFlight)) {
+        return;
+      }
+      state.login.authenticated = false;
+      state.login.profile = {
+        nome: DEV_ADMIN_CONFIG.displayName,
+        email: DEV_ADMIN_CONFIG.email,
+        role: "local",
+        isDevAdmin: false,
+      };
+      state.login.resolution = null;
+      state.login.step = "admin";
+      return;
+    }
+
+    const saved = result.session;
+    const email = String(saved.email || "").trim();
+    const nome = String(saved.nome || "").trim();
+    const normalizedName = !nome || nome === "Administrador" ? DEV_ADMIN_CONFIG.displayName : nome;
+    const normalizedEmail = !email || email === "admin@flowdetect.local" ? DEV_ADMIN_CONFIG.email : email;
+    const resolution = {
+      screenWidth: Number(saved.screen_width || 0),
+      screenHeight: Number(saved.screen_height || 0),
+      viewportWidth: Number(saved.viewport_width || 0),
+      viewportHeight: Number(saved.viewport_height || 0),
+      devicePixelRatio: Number(saved.device_pixel_ratio || 1),
+    };
+
+    const hasSavedResolution = resolution.screenWidth > 0 && resolution.screenHeight > 0;
+    state.login.authenticated = true;
+    state.login.profile = {
+      nome: normalizedName,
+      email: normalizedEmail,
+      role: "local",
+      isDevAdmin: false,
+    };
+    state.login.resolution = hasSavedResolution ? resolution : captureLoginResolution();
+    state.login.activationKey = String(saved.activation_key || "LOCAL-WELCOME").trim() || "LOCAL-WELCOME";
+    state.login.activationId = String(saved.activation_id || "local-welcome").trim() || "local-welcome";
+    state.login.expiresAt = String(saved.expires_at || "").trim();
+    state.login.step = "admin";
+    if (devAdminEmailInput) {
+      devAdminEmailInput.value = normalizedEmail || String(DEV_ADMIN_CONFIG.email || "").trim();
+    }
+  } catch (error) {
+    if (preserveAuthenticated && state.login.authenticated) {
+      return;
+    }
+    console.warn("Nao foi possivel carregar a sessao local do FlowDetect.", error);
+  }
+}
+
+async function submitDevAdminLogin() {
+  if (!hasDevAdminConfig()) {
+    setLoginError("A entrada local do FlowDetect nao esta habilitada.");
     return;
   }
 
-  const items = state.openWindows || [];
-  windowSuggestions.innerHTML = items
-    .map((item) => `<option value="${escapeHtml(item.title || "")}"></option>`)
-    .join("");
-}
+  if (loginSubmitInFlight || state.login.authenticated) {
+    applyLoginStateUI();
+    return;
+  }
 
-async function refreshOpenWindows(feedbackMessage = "") {
-  const result = await invoke("list_open_windows");
-  state.openWindows = Array.isArray(result?.items) ? result.items : [];
-  renderWindowSuggestions();
-  if (feedbackMessage) {
-    setMessage(feedbackMessage, "success");
+  const expectedEmail = String(DEV_ADMIN_CONFIG?.email || "").trim().toLowerCase();
+  const expectedPassword = String(DEV_ADMIN_CONFIG?.password || "").trim();
+  const usingLegacyCredentialFields = Boolean(devAdminEmailInput || devAdminPasswordInput);
+
+  if (usingLegacyCredentialFields) {
+    const email = String(devAdminEmailInput?.value || "").trim().toLowerCase();
+    const password = String(devAdminPasswordInput?.value || "").trim();
+
+    if (!email || !password) {
+      setLoginError("Digite o e-mail e a senha do admin local.");
+      return;
+    }
+
+    if (email !== expectedEmail || password !== expectedPassword) {
+      setLoginError("Credencial admin invalida.");
+      return;
+    }
+  }
+
+  setLoginError("");
+  const resolution = captureLoginResolution();
+  updateLoginResolutionPreview(resolution);
+  if (devAdminLoginButton) {
+    devAdminLoginButton.textContent = "Entrando...";
+    devAdminLoginButton.disabled = true;
+  }
+  loginSubmitInFlight = true;
+
+  try {
+    const displayName = String(state.login.profile?.nome || DEV_ADMIN_CONFIG?.displayName || "Usuario local").trim() || "Usuario local";
+    await invoke("save_login_session", {
+      nome: displayName,
+      email: expectedEmail,
+      activationKey: "LOCAL-WELCOME",
+      activationId: "local-welcome",
+      expiresAt: "",
+      screenWidth: resolution.screenWidth,
+      screenHeight: resolution.screenHeight,
+      viewportWidth: resolution.viewportWidth,
+      viewportHeight: resolution.viewportHeight,
+      devicePixelRatio: resolution.devicePixelRatio,
+    });
+
+    state.login.authenticated = true;
+    state.login.profile = {
+      nome: displayName,
+      email: expectedEmail,
+      role: "local",
+      isDevAdmin: false,
+    };
+    state.login.resolution = resolution;
+    state.login.activationKey = "LOCAL-WELCOME";
+    state.login.activationId = "local-welcome";
+    state.login.expiresAt = "";
+    state.login.step = "admin";
+    applyLoginStateUI();
+    setMessage(`FlowDetect pronto. Resolucao ${resolution.screenWidth} x ${resolution.screenHeight} salva para esta maquina.`, "success");
+  } catch (error) {
+    setLoginError(String(error || "Falha ao abrir o FlowDetect."));
+  } finally {
+    loginSubmitInFlight = false;
+    if (devAdminLoginButton) {
+      devAdminLoginButton.textContent = "Entrar";
+      devAdminLoginButton.disabled = false;
+    }
   }
 }
 
@@ -465,26 +1333,18 @@ async function runImageRecognitionTest(values, options = {}) {
   const imagePath = String(values?.imagePath || "").trim();
   if (!imagePath) {
     setMessage("Selecione uma referencia visual antes de testar o reconhecimento.", "error");
+    if (Number.isFinite(Number(options.recognitionOrder))) {
+      setRecognitionTestStatusForOrder(Number(options.recognitionOrder), imagePath, false);
+    }
     return;
   }
-
-  const inheritWindowFallback = options.inheritWindowFallback !== false;
-  const ownWindowTitle = String(values?.windowTitle || "").trim();
-  const resolvedWindowTitle =
-    ownWindowTitle ||
-    (inheritWindowFallback
-      ? String(imageWindowTitleInput?.value || "").trim() ||
-        String(assistWindowTitleInput?.value || "").trim() ||
-        String(testWindowTitleInput?.value || "").trim()
-      : "") ||
-    null;
 
   try {
     setBusy("Testando reconhecimento");
     setMessage(
-      inheritWindowFallback
-        ? "Testando somente o bloco de reconhecimento..."
-        : "Testando o bloco no estado atual da tela, usando apenas os dados dele.",
+      options.inheritWindowFallback === false
+        ? "Testando o bloco no estado atual da tela, usando apenas os dados dele."
+        : "Testando somente o bloco de reconhecimento...",
       "info"
     );
     const result = await invoke("test_image_recognition", {
@@ -492,13 +1352,30 @@ async function runImageRecognitionTest(values, options = {}) {
       timeout: parseNumber(values.timeout, 10),
       confianca: parseNumber(values.confidence, 0.8),
       perfilBusca: normalizeRecognitionProfile(values.searchProfile, "balanced"),
-      janelaAlvo: resolvedWindowTitle,
+      modoAreaBusca: "target_window",
+      areaBuscaX: 0,
+      areaBuscaY: 0,
+      areaBuscaLargura: 0,
+      areaBuscaAltura: 0,
+      janelaAlvo: values.windowTitle?.trim() || null,
     });
     setBusy("Pronto");
+    if (Number.isFinite(Number(options.recognitionOrder))) {
+      setRecognitionTestStatusForOrder(Number(options.recognitionOrder), imagePath, true);
+    }
     setMessage(result || "Reconhecimento testado com sucesso.", "success");
+    return true;
   } catch (error) {
     setBusy("Erro");
-    setMessage(String(error), "error");
+    if (Number.isFinite(Number(options.recognitionOrder))) {
+      setRecognitionTestStatusForOrder(Number(options.recognitionOrder), imagePath, false);
+    }
+    const message = String(error || "");
+    const diagnosticHint = message.toLowerCase().includes("diagnostico")
+      ? " Veja a pasta diagnosticos_reconhecimento para comparar a captura usada no teste."
+      : "";
+    setMessage(`${message}${diagnosticHint}`, "error");
+    return false;
   }
 }
 
@@ -507,8 +1384,524 @@ function extractOrderFromDescription(description) {
   return match ? Number(match[1]) : null;
 }
 
+function extractAssistPositionHint(text) {
+  const content = String(text || "").trim();
+  if (!content) {
+    return null;
+  }
+
+  const orderFromDescription = extractOrderFromDescription(content);
+  if (orderFromDescription != null) {
+    return { order: orderFromDescription, sequence: getCommandMapEventSequenceByOrder(orderFromDescription) };
+  }
+
+  const loopBlockReturn = content.match(/Retorno para o bloco\s+(\d+)\s+da pagina inicial do loop\s+\(([^)]+)\)/i);
+  if (loopBlockReturn) {
+    const hintedOrder = Number(loopBlockReturn[1]);
+    return {
+      order: Number.isFinite(hintedOrder) ? hintedOrder : null,
+      sequence: normalizeSequenceName(loopBlockReturn[2]),
+    };
+  }
+
+  const loopPageReturn = content.match(/Retorno para a pagina inicial do loop\s+\(([^)]+)\)/i);
+  if (loopPageReturn) {
+    const sequence = normalizeSequenceName(loopPageReturn[1]);
+    return {
+      order: getCommandMapFirstOrderForSequence(sequence),
+      sequence,
+    };
+  }
+
+  return null;
+}
+
+function extractAssistIterationHint(text) {
+  const match = String(text || "").match(/Iteracao\s+(\d+)\/(\d+)/i);
+  if (!match) {
+    return null;
+  }
+  return {
+    current: Number(match[1] || 0),
+    total: Number(match[2] || 0),
+  };
+}
+
+function getAssistRequestedLoopStart() {
+  return Math.max(
+    1,
+    Math.trunc(parseNumber(assistLoopStartInput?.value || testLoopStartInput?.value, 1)),
+  );
+}
+
+function resolveAssistLoopRowByIteration(iterationNumber) {
+  const rows = state.testLoopData?.rows ?? [];
+  if (!rows.length || !Number.isFinite(Number(iterationNumber)) || Number(iterationNumber) <= 0) {
+    return null;
+  }
+
+  const startLine = getAssistRequestedLoopStart();
+  const startIndex = rows.findIndex((row) => Number(row.row_number) >= startLine);
+  if (startIndex < 0) {
+    return null;
+  }
+
+  return rows[startIndex + Number(iterationNumber) - 1] || null;
+}
+
+function resolveAssistLoopRowByLine(lineNumber) {
+  const rows = state.testLoopData?.rows ?? [];
+  if (!rows.length || !Number.isFinite(Number(lineNumber)) || Number(lineNumber) <= 0) {
+    return null;
+  }
+  return rows.find((row) => Number(row.row_number) === Number(lineNumber)) || null;
+}
+
+function applyAssistLoopRuntimeHint(text, { updateDescription = false, updateCompany = true } = {}) {
+  const content = String(text || "").trim();
+  if (!content) {
+    return false;
+  }
+
+  let changed = false;
+  const iteration = extractAssistIterationHint(content);
+  if (iteration) {
+    const row = resolveAssistLoopRowByIteration(iteration.current);
+    if (iteration.total > 0) {
+      state.assist.current = iteration.current;
+      state.assist.total = iteration.total;
+      state.assist.percent = (iteration.current / iteration.total) * 100;
+      changed = true;
+    }
+    if (updateCompany && row?.company && state.assist.company !== String(row.company)) {
+      state.assist.company = String(row.company);
+      changed = true;
+    }
+    if (updateDescription) {
+      state.assist.description = content;
+      changed = true;
+    }
+  }
+
+  const loopGroupMatch = content.match(/grupo em loop:\s*(.+)$/i);
+  if (loopGroupMatch) {
+    const firstSequence = normalizeSequenceName(String(loopGroupMatch[1] || "").split(",")[0] || "");
+    const firstOrder = getCommandMapFirstOrderForSequence(firstSequence);
+    if (firstOrder != null && Number(state.assist.currentOrder) !== Number(firstOrder)) {
+      state.assist.currentOrder = Number(firstOrder);
+      changed = true;
+    }
+    if (updateDescription) {
+      state.assist.description = content;
+      changed = true;
+    }
+  }
+
+  if (updateDescription && /trecho em loop|retorno para a pagina inicial do loop|retorno para o bloco/i.test(content)) {
+    state.assist.description = content;
+    changed = true;
+  }
+
+  return changed;
+}
+
+function applyAssistPositionHint(text, { render = true } = {}) {
+  const hint = extractAssistPositionHint(text);
+  if (!hint) {
+    return false;
+  }
+
+  if (Number.isFinite(Number(hint.order))) {
+    state.assist.currentOrder = Number(hint.order);
+  } else if (hint.sequence) {
+    const firstOrder = getCommandMapFirstOrderForSequence(hint.sequence);
+    if (firstOrder != null) {
+      state.assist.currentOrder = firstOrder;
+    }
+  }
+
+  if (render) {
+    renderAssistExecutionMap();
+  }
+  return true;
+}
+
+const FLOWDETECT_WINDOW_PATTERN = /flowdetect|gerador visual de automacoes/i;
+
+function isFlowDetectWindowCandidate(item) {
+  return FLOWDETECT_WINDOW_PATTERN.test(String(item?.title || ""));
+}
+
+function normalizeAssistTargetWindow(item) {
+  const title = String(item?.title || "").trim();
+  return {
+    title,
+    hwnd: Number(item?.hwnd || 0),
+    className: String(item?.class_name || item?.className || "").trim(),
+    pid: Number(item?.pid || 0),
+    left: Number(item?.left || 0),
+    top: Number(item?.top || 0),
+    width: Number(item?.width || 0),
+    height: Number(item?.height || 0),
+    isFlowDetect: isFlowDetectWindowCandidate(item),
+  };
+}
+
+function normalizeRecognitionWindowTitle(value) {
+  return String(value ?? "").trim();
+}
+
+function recognitionWindowCatalogItems() {
+  const seen = new Set();
+  return (Array.isArray(state.recognitionWindowCatalog) ? state.recognitionWindowCatalog : [])
+    .map(normalizeAssistTargetWindow)
+    .filter((item) => item.title && !item.isFlowDetect)
+    .filter((item) => {
+      const key = `${item.title}::${item.className}::${item.hwnd}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+}
+
+function recognitionWindowOptionsMarkup(selectedTitle = "", emptyLabel = "Sem janela fixa neste bloco") {
+  const normalizedSelected = normalizeRecognitionWindowTitle(selectedTitle);
+  const items = recognitionWindowCatalogItems();
+  const options = [`<option value="">${escapeHtml(emptyLabel)}</option>`];
+  if (normalizedSelected && !items.some((item) => item.title === normalizedSelected)) {
+    options.push(
+      `<option value="${escapeHtml(normalizedSelected)}" selected>${escapeHtml(`${normalizedSelected} (janela salva)`)}</option>`
+    );
+  }
+  items.forEach((item) => {
+    const meta = item.className ? ` | ${item.className}` : "";
+    options.push(
+      `<option value="${escapeHtml(item.title)}" ${item.title === normalizedSelected ? "selected" : ""}>${escapeHtml(`${item.title}${meta}`)}</option>`
+    );
+  });
+  return options.join("");
+}
+
+function updateRecognitionWindowSelects(root = document) {
+  if (!root?.querySelectorAll) {
+    return;
+  }
+  root.querySelectorAll('[data-field="windowTitle"], [data-tree-field="windowTitle"], [data-insert-field="windowTitle"]').forEach((select) => {
+    const currentValue = normalizeRecognitionWindowTitle(select.value || select.dataset.windowTitle || "");
+    select.innerHTML = recognitionWindowOptionsMarkup(currentValue);
+    if (currentValue) {
+      select.value = currentValue;
+    }
+  });
+}
+
+async function refreshRecognitionWindowCatalog(options = {}) {
+  const silent = Boolean(options.silent);
+  const result = await invoke("list_open_windows");
+  state.recognitionWindowCatalog = Array.isArray(result?.items)
+    ? result.items.map(normalizeAssistTargetWindow).filter((item) => item.title && !item.isFlowDetect)
+    : [];
+  updateRecognitionWindowSelects(options.root || document);
+  if (!silent) {
+    const total = recognitionWindowCatalogItems().length;
+    setMessage(total ? `${total} janela(s) carregada(s) para o bloco.` : "Nenhuma janela visivel foi encontrada agora.", total ? "success" : "info");
+  }
+}
+
+function resetAssistTargetState() {
+  state.assistTarget = {
+    ...state.assistTarget,
+    enabled: false,
+    status: "idle",
+    title: "",
+    className: "",
+    hwnd: 0,
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+    pid: 0,
+    lastSeenAt: 0,
+  };
+}
+
+function assistTargetMetaLabel(target = state.assistTarget) {
+  if (!target?.enabled) {
+    return "Sem hwnd ativo para esta execucao.";
+  }
+  const parts = [`hwnd ${target.hwnd || 0}`];
+  if (target.className) {
+    parts.push(`classe ${target.className}`);
+  }
+  if (target.width > 0 && target.height > 0) {
+    parts.push(`${target.width}x${target.height}`);
+  }
+  parts.push(`x=${target.left || 0} y=${target.top || 0}`);
+  return parts.join(" | ");
+}
+
+function updateAssistTargetUI() {
+  if (!assistTargetTitle || !assistTargetDetailText || !assistTargetStatusChip || !assistTargetMetaText) {
+    return;
+  }
+
+  const target = state.assistTarget;
+  const hasTarget = Boolean(target?.enabled && target?.hwnd);
+  let chipVariant = "is-idle";
+  let chipText = "Nenhuma janela selecionada";
+  let detailText = "Selecione uma janela aberta antes de executar quando quiser travar a automacao em um alvo especifico.";
+
+  if (hasTarget && target.status === "lost") {
+    chipVariant = "is-lost";
+    chipText = "Janela perdida";
+    detailText = "A janela alvo nao esta mais disponivel. Escolha outra antes de iniciar a automacao.";
+  } else if (hasTarget && state.assist.mode === "running") {
+    chipVariant = "is-running";
+    chipText = "Executando nesta janela";
+    detailText = "A execucao atual esta presa a esta janela. Se ela sumir, a automacao para com aviso.";
+  } else if (hasTarget) {
+    chipVariant = "is-selected";
+    chipText = "Janela selecionada";
+    detailText = "O contorno azul marca este alvo e o executor usa esse contexto so nesta execucao.";
+  }
+
+  assistTargetTitle.textContent = hasTarget ? target.title || "Janela sem titulo" : "Nenhuma janela selecionada";
+  assistTargetDetailText.textContent = detailText;
+  assistTargetMetaText.textContent = assistTargetMetaLabel(target);
+  assistTargetStatusChip.textContent = chipText;
+  assistTargetStatusChip.className = `assist-target-status-chip ${chipVariant}`;
+  if (assistClearWindowButton) {
+    assistClearWindowButton.disabled = !hasTarget;
+  }
+}
+
+function stopAssistTargetMonitor() {
+  if (assistTargetPollTimer) {
+    clearTimeout(assistTargetPollTimer);
+    assistTargetPollTimer = 0;
+  }
+}
+
+function scheduleAssistTargetMonitor() {
+  stopAssistTargetMonitor();
+  if (!state.assistTarget.enabled) {
+    return;
+  }
+  assistTargetPollTimer = setTimeout(async () => {
+    try {
+      await refreshAssistTargetAvailability({ silent: true });
+    } finally {
+      scheduleAssistTargetMonitor();
+    }
+  }, 1400);
+}
+
+async function refreshAssistTargetAvailability(options = {}) {
+  if (!state.assistTarget.enabled || !state.assistTarget.hwnd || assistTargetValidationPending) {
+    return state.assistTarget.status !== "lost";
+  }
+
+  assistTargetValidationPending = true;
+  const silent = Boolean(options.silent);
+  try {
+    const result = await invoke("list_open_windows");
+    const items = Array.isArray(result?.items) ? result.items.map(normalizeAssistTargetWindow) : [];
+    const current = items.find((item) => item.hwnd === state.assistTarget.hwnd);
+    if (!current || current.isFlowDetect) {
+      const wasLost = state.assistTarget.status === "lost";
+      state.assistTarget = {
+        ...state.assistTarget,
+        status: "lost",
+      };
+      updateAssistTargetUI();
+      if (!wasLost) {
+        await invoke("hide_target_window_overlay", { clearTarget: false }).catch(() => null);
+        pushAssistLog("Janela alvo perdida. Execucao pausada.", "error");
+        if (!silent) {
+          setMessage("A janela alvo selecionada nao esta mais disponivel.", "error");
+        }
+      }
+      return false;
+    }
+
+    state.assistTarget = {
+      ...state.assistTarget,
+      enabled: true,
+      status: "selected",
+      title: current.title,
+      className: current.className,
+      hwnd: current.hwnd,
+      left: current.left,
+      top: current.top,
+      width: current.width,
+      height: current.height,
+      pid: current.pid,
+      lastSeenAt: Date.now(),
+    };
+    updateAssistTargetUI();
+    return true;
+  } finally {
+    assistTargetValidationPending = false;
+  }
+}
+
+function closeAssistWindowPicker() {
+  state.assistTarget.modalOpen = false;
+  if (assistWindowPickerOverlay) {
+    assistWindowPickerOverlay.hidden = true;
+  }
+}
+
+function renderAssistWindowPicker() {
+  if (!assistWindowPickerList || !assistWindowPickerStatus) {
+    return;
+  }
+
+  const items = Array.isArray(state.assistTarget.windows) ? state.assistTarget.windows : [];
+  if (state.assistTarget.loading) {
+    assistWindowPickerStatus.textContent = "Carregando janelas abertas...";
+  } else if (!items.length) {
+    assistWindowPickerStatus.textContent = "Nenhuma janela com titulo visivel foi encontrada agora.";
+  } else {
+    assistWindowPickerStatus.textContent = `${items.length} janela(s) encontrada(s). Escolha a correta para esta execucao.`;
+  }
+
+  if (!items.length) {
+    assistWindowPickerList.innerHTML = `<div class="assist-log-line is-muted">Abra a janela do sistema que deseja automatizar e atualize a lista.</div>`;
+    return;
+  }
+
+  assistWindowPickerList.innerHTML = items.map((item) => {
+    const blocked = Boolean(item.isFlowDetect);
+    const active = state.assistTarget.enabled && Number(state.assistTarget.hwnd) === Number(item.hwnd);
+    const tagLabel = blocked ? "FlowDetect" : active ? "Atual" : "Selecionar";
+    const tagClass = blocked ? "assist-window-picker-tag is-blocked" : "assist-window-picker-tag";
+    return `
+      <button
+        class="assist-window-picker-item${blocked ? " is-blocked" : ""}"
+        type="button"
+        data-window-picker-hwnd="${Number(item.hwnd)}"
+        ${blocked ? "disabled" : ""}
+      >
+        <div class="assist-window-picker-title-row">
+          <strong>${escapeHtml(item.title || "Janela sem titulo")}</strong>
+          <span class="${tagClass}">${escapeHtml(tagLabel)}</span>
+        </div>
+        <div class="assist-window-picker-meta">
+          hwnd ${Number(item.hwnd)}${item.className ? ` | classe ${escapeHtml(item.className)}` : ""}
+        </div>
+        <div class="assist-window-picker-meta">
+          ${Number(item.width)}x${Number(item.height)} | x=${Number(item.left)} y=${Number(item.top)}
+        </div>
+      </button>
+    `;
+  }).join("");
+}
+
+async function refreshAssistWindowPicker() {
+  state.assistTarget.loading = true;
+  renderAssistWindowPicker();
+  const requestId = ++assistWindowPickerRequestId;
+  try {
+    const result = await invoke("list_open_windows");
+    if (requestId !== assistWindowPickerRequestId) {
+      return;
+    }
+    state.assistTarget.windows = Array.isArray(result?.items) ? result.items.map(normalizeAssistTargetWindow) : [];
+  } catch (error) {
+    if (requestId !== assistWindowPickerRequestId) {
+      return;
+    }
+    state.assistTarget.windows = [];
+    assistWindowPickerStatus.textContent = String(error || "Falha ao listar as janelas abertas.");
+  } finally {
+    if (requestId === assistWindowPickerRequestId) {
+      state.assistTarget.loading = false;
+      renderAssistWindowPicker();
+    }
+  }
+}
+
+async function openAssistWindowPicker() {
+  state.assistTarget.modalOpen = true;
+  if (assistWindowPickerOverlay) {
+    assistWindowPickerOverlay.hidden = false;
+  }
+  await refreshAssistWindowPicker();
+}
+
+async function applyAssistTargetWindow(item) {
+  const target = normalizeAssistTargetWindow(item);
+  if (!target.hwnd || !target.title) {
+    throw new Error("Selecione uma janela valida.");
+  }
+  if (target.isFlowDetect) {
+    throw new Error("A propria janela do FlowDetect nao pode ser usada como alvo da automacao.");
+  }
+
+  const result = await invoke("show_target_window_overlay", {
+    target: {
+      hwnd: target.hwnd,
+      title: target.title,
+      className: target.className,
+      left: target.left,
+      top: target.top,
+      width: target.width,
+      height: target.height,
+    },
+  });
+  const applied = normalizeAssistTargetWindow(result?.target || target);
+  state.assistTarget = {
+    ...state.assistTarget,
+    enabled: true,
+    status: "selected",
+    title: applied.title,
+    className: applied.className,
+    hwnd: applied.hwnd,
+    left: applied.left,
+    top: applied.top,
+    width: applied.width,
+    height: applied.height,
+    pid: target.pid,
+    lastSeenAt: Date.now(),
+  };
+  updateAssistTargetUI();
+  scheduleAssistTargetMonitor();
+  closeAssistWindowPicker();
+  pushAssistLog(`Janela alvo selecionada: ${applied.title} / hwnd ${applied.hwnd}`, "info");
+  setMessage(`Janela alvo selecionada: ${applied.title}`, "success");
+}
+
+async function clearAssistTargetWindow(options = {}) {
+  stopAssistTargetMonitor();
+  await invoke("hide_target_window_overlay", { clearTarget: true }).catch(() => null);
+  resetAssistTargetState();
+  updateAssistTargetUI();
+  if (!options.silent) {
+    pushAssistLog("Janela alvo limpa para esta execucao.", "info");
+    setMessage("Janela alvo removida. O comportamento atual da automacao foi mantido.", "info");
+  }
+}
+
+async function ensureAssistTargetReadyForExecution() {
+  if (!state.assistTarget.enabled) {
+    return null;
+  }
+  const available = await refreshAssistTargetAvailability({ silent: true });
+  if (!available || state.assistTarget.status === "lost") {
+    throw new Error("A janela alvo selecionada foi perdida. Escolha outra antes de executar.");
+  }
+  return state.assistTarget;
+}
+
 function updateAssistProgressUI() {
   const assist = state.assist;
+  const resolution = state.login.resolution || captureLoginResolution();
+  const resolutionLabel = `${resolution.screenWidth || 0} x ${resolution.screenHeight || 0}`;
+  syncAssistTheme();
+  updateAssistTargetUI();
   assistStatusText.textContent =
     assist.mode === "running"
       ? `Executando ${assist.current}/${assist.total || 0}`
@@ -522,11 +1915,11 @@ function updateAssistProgressUI() {
   assistDetailText.textContent =
     assist.description || (assist.mode === "idle" ? "Aguardando inicio de um teste." : "Sem detalhes da execucao.");
   assistOriginText.textContent = "Criador de automacoes";
-  assistWindowText.textContent = assist.windowTitle || "Aguardando captura";
+  assistWindowText.textContent = state.login.profile?.nome || "Sessao local";
   assistWindowDetailText.textContent =
-    assist.windowTitle
-      ? "Janela capturada pelo executor real da automacao."
-      : "A janela ativa sera mostrada assim que o teste comecar.";
+    state.login.authenticated
+      ? `Resolucao salva: ${resolutionLabel}`
+      : "Entre no programa para salvar a resolucao desta maquina.";
   assistCompanyText.textContent = assist.company || "-";
   assistModeText.textContent =
     assist.mode === "running"
@@ -575,28 +1968,96 @@ function pushAssistLog(message, kind = "info") {
   renderAssistLogs();
 }
 
+function resetAssistViewportToStart() {
+  if (!assistMapList) {
+    return;
+  }
+  assistMapList.scrollLeft = 0;
+  assistMapList.scrollTop = 0;
+  assistMapList.scrollTo({ left: 0, top: 0, behavior: "auto" });
+}
+
+function syncAssistEdgeSpacers() {
+  if (!assistMapList) {
+    return;
+  }
+
+  const assistFlowRow = assistMapList.querySelector(".assist-flow-row");
+  if (!assistFlowRow) {
+    return;
+  }
+
+  const assistCards = assistFlowRow.querySelectorAll(".assist-card");
+  if (!assistCards.length) {
+    return;
+  }
+
+  const startSpacer = assistFlowRow.querySelector(".assist-edge-spacer.is-start");
+  const endSpacer = assistFlowRow.querySelector(".assist-edge-spacer.is-end");
+  const containerWidth = assistMapList.clientWidth || assistMapList.getBoundingClientRect().width || 0;
+  const firstCard = assistCards[0];
+  const lastCard = assistCards[assistCards.length - 1];
+
+  if (startSpacer && firstCard) {
+    const startWidth = Math.max(0, Math.round(containerWidth / 2 - firstCard.offsetWidth / 2));
+    startSpacer.style.width = `${startWidth}px`;
+  }
+
+  if (endSpacer && lastCard) {
+    const trailingElement = endSpacer.previousElementSibling?.classList?.contains("assist-end")
+      ? endSpacer.previousElementSibling
+      : null;
+    const trailingWidth = trailingElement?.offsetWidth ?? 0;
+    const endWidth = Math.max(0, Math.round(containerWidth / 2 - lastCard.offsetWidth / 2 - trailingWidth));
+    endSpacer.style.width = `${endWidth}px`;
+  }
+}
+
+function centerFirstAssistOrder(behavior = "auto") {
+  const firstAssistOrder = getAssistInitialOrder();
+  if (firstAssistOrder == null) {
+    resetAssistViewportToStart();
+    return;
+  }
+
+  syncAssistEdgeSpacers();
+  centerAssistOrder(firstAssistOrder, behavior);
+}
+
 function renderAssistExecutionMap() {
-  const events = state.roadmap?.events ?? [];
+  const currentSequence = getAssistCurrentSequence();
+  const events = getCommandMapEvents(currentSequence);
+  const fallbackEvents = getAssistRoadmapEvents();
+  const visibleEvents = events.length ? events : fallbackEvents;
+  syncAssistTheme();
   assistMapList.innerHTML = "";
 
-  if (!events.length) {
+  if (!visibleEvents.length) {
     assistMapList.innerHTML = `<div class="empty-state">Adicione blocos ao roteiro para acompanhar a execucao assistida aqui.</div>`;
     return;
   }
 
-  const activeOrder = state.assist.currentOrder;
-  const activeIndex = events.findIndex((event) => Number(event.order) === Number(activeOrder));
-  const showProgress = activeIndex >= 0 && state.assist.mode !== "idle";
+  const hasKnownCurrentOrder = visibleEvents.some((event) => Number(event.order) === Number(state.assist.currentOrder));
+  const isRunningAssist = state.assist.mode === "running";
+  if (state.assist.mode === "idle" || !hasKnownCurrentOrder) {
+    state.assist.currentOrder = visibleEvents[0]?.order ?? getAssistInitialOrder() ?? null;
+  }
 
-  const markup = events
+  const activeOrder = state.assist.currentOrder;
+  const activeIndex = visibleEvents.findIndex((event) => Number(event.order) === Number(activeOrder));
+  const hasProgress = activeIndex >= 0 && state.assist.mode !== "idle";
+  const leadingSpacer = `<div class="assist-edge-spacer is-start" aria-hidden="true"></div>`;
+  const trailingSpacer = `<div class="assist-edge-spacer is-end" aria-hidden="true"></div>`;
+
+  const markup = visibleEvents
     .map((event, index) => {
-      const isDone = showProgress && index < activeIndex;
-      const isCurrent = showProgress && index === activeIndex;
+      const isDone = hasProgress && index < activeIndex;
+      const isCurrent = activeIndex >= 0 ? index === activeIndex : index === 0;
       const stateClass = isCurrent ? "is-current" : isDone ? "is-done" : "is-upcoming";
       const connectorClass =
-        showProgress && index < activeIndex
+        hasProgress && index < activeIndex
           ? "is-done"
-          : showProgress && index === activeIndex - 1
+          : hasProgress && index === activeIndex - 1
             ? "is-current"
             : "is-upcoming";
 
@@ -611,7 +2072,7 @@ function renderAssistExecutionMap() {
         </article>
       `;
 
-      if (index === events.length - 1) {
+      if (index === visibleEvents.length - 1) {
         return `${card}<div class="assist-end ${state.assist.mode === "done" ? "is-done" : ""}">Fim</div>`;
       }
 
@@ -624,8 +2085,15 @@ function renderAssistExecutionMap() {
     })
     .join("");
 
-  assistMapList.innerHTML = `<div class="assist-flow-row">${markup}</div>`;
-  requestAnimationFrame(() => centerAssistOrder(state.assist.currentOrder, state.assist.mode === "running" ? "smooth" : "auto"));
+  assistMapList.innerHTML = `<div class="assist-flow-row">${leadingSpacer}${markup}${trailingSpacer}</div>`;
+  requestAnimationFrame(() => {
+    syncAssistEdgeSpacers();
+    if (state.assist.mode === "running" && state.assist.currentOrder != null) {
+      centerAssistOrder(state.assist.currentOrder, "smooth");
+      return;
+    }
+    centerFirstAssistOrder("auto");
+  });
 }
 
 function centerAssistOrder(order, behavior = "smooth") {
@@ -659,7 +2127,7 @@ function resetAssistState(mode = "idle") {
     description: "",
     company: "",
     windowTitle: "",
-    currentOrder: mode === "running" ? null : state.roadmap?.events?.[0]?.order ?? null,
+    currentOrder: mode === "running" ? null : getAssistInitialOrder(),
     success: null,
     logs: [],
   };
@@ -689,8 +2157,41 @@ function formatAssistValue(value, max = 40) {
 }
 
 function getSpreadsheetEventValues(event) {
-  const values = event?.details?.values ?? event?.detalhes?.valores ?? [];
+  const values = event?.details?.valores ?? event?.details?.values ?? event?.detalhes?.valores ?? event?.detalhes?.values ?? [];
   return Array.isArray(values) ? values : [];
+}
+
+function getSpreadsheetLoopCount(event) {
+  const values = getSpreadsheetEventValues(event);
+  if (values.length) {
+    return values.length;
+  }
+  const description = String(event?.description ?? "").trim();
+  const match = description.match(/(\d+)\s+itens?/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function getSpreadsheetLoopBadgeLabel(event) {
+  const total = getSpreadsheetLoopCount(event);
+  return `${total} ${total === 1 ? "loop" : "loops"}`;
+}
+
+function isLoopMarkerType(type) {
+  return type === "inicio_loop" || type === "fim_loop";
+}
+
+function normalizeExecutionFeedbackMessage(message) {
+  const text = String(message ?? "").trim();
+  if (!text) {
+    return "Execucao iniciada com sucesso.";
+  }
+  return text
+    .replace(/^Teste simples iniciado/i, "Execucao iniciada")
+    .replace(/^Teste com loop iniciado/i, "Execucao iniciada")
+    .replace("A automacao vai executar uma vez", "A automacao vai executar")
+    .replace("O executor vai procurar a linha", "A automacao vai iniciar pela linha")
+    .replace("o teste simples", "a automacao")
+    .replace("o teste direto com loop", "a automacao");
 }
 
 function describeAssistBaseEvent(event, index = null, total = null, value = null) {
@@ -701,6 +2202,14 @@ function describeAssistBaseEvent(event, index = null, total = null, value = null
   const order = Number(event.order || event.ordem || 0);
   const type = String(event.type || event.tipo || "");
   const details = event.details || event.detalhes || {};
+
+  if (type === "inicio_loop") {
+    return `Evento #${order}: inicio do loop`;
+  }
+
+  if (type === "fim_loop") {
+    return `Evento #${order}: fim do loop`;
+  }
 
   if (type === "texto_livre") {
     return `Evento #${order}: texto ${formatAssistValue(event.text || event.texto || "", 28)}`;
@@ -733,18 +2242,43 @@ function describeAssistBaseEvent(event, index = null, total = null, value = null
 }
 
 function buildAssistSimulationSteps(mode, loopStart) {
-  const events = state.roadmap?.events ?? [];
-  if (!events.length) {
+  const roadmap = state.roadmap;
+  if (!(roadmap?.events ?? []).length) {
     return [];
   }
 
+  const startSequence = resolveRoadmapInitialSequence(roadmap);
+  const flowTrace = traceCommandMapExecutionFlow({
+    roadmap,
+    startSequence,
+  });
   const steps = [];
-  if (mode === "normal") {
+  const appendTraceEvents = (events, options = {}) => {
+    const { row = null, rowIndex = null, rowPosition = null, totalRows = null } = options;
     events.forEach((event) => {
+      if (isLoopMarkerType(event.type)) {
+        return;
+      }
       const delayBefore = Math.max(0, parseNumber(event.delay ?? event.intervalo_antes, 0));
-      if (event.type === "sequencia_planilha") {
-        const details = event.details || event.detalhes || {};
+      if (row && event.type === "sequencia_planilha") {
         const values = getSpreadsheetEventValues(event);
+        const relativeIndex = rowIndex ?? 0;
+        const displayIndex = rowPosition ?? relativeIndex;
+        const value = values[relativeIndex] ?? row.value ?? "";
+        steps.push({
+          order: Number(event.order),
+          wait: delayBefore,
+          company: String(row.company || ""),
+          description:
+            `Iteracao ${displayIndex + 1}/${totalRows || values.length || 1} - linha ${row.row_number} - `
+            + describeAssistBaseEvent(event, relativeIndex, values.length || totalRows, value),
+        });
+        return;
+      }
+
+      if (!row && event.type === "sequencia_planilha") {
+        const values = getSpreadsheetEventValues(event);
+        const details = event.details || event.detalhes || {};
         const intervalBetween = Math.max(0, parseNumber(details.interval_between ?? details.intervalo_entre_itens, 0.5));
         values.forEach((value, index) => {
           steps.push({
@@ -754,15 +2288,22 @@ function buildAssistSimulationSteps(mode, loopStart) {
             description: describeAssistBaseEvent(event, index, values.length, value),
           });
         });
-      } else {
-        steps.push({
-          order: Number(event.order),
-          wait: delayBefore,
-          company: "",
-          description: describeAssistBaseEvent(event),
-        });
+        return;
       }
+
+      steps.push({
+        order: Number(event.order),
+        wait: delayBefore,
+        company: String(row?.company || ""),
+        description: row
+          ? `Iteracao ${(rowPosition ?? rowIndex ?? 0) + 1}/${totalRows || 1} - ${describeAssistBaseEvent(event)}`
+          : describeAssistBaseEvent(event),
+      });
     });
+  };
+
+  if (mode === "normal") {
+    appendTraceEvents(flowTrace.events);
     return steps;
   }
 
@@ -779,32 +2320,103 @@ function buildAssistSimulationSteps(mode, loopStart) {
 
   const iterations = primaryLoopRows.slice(startIndex);
   const totalIterations = iterations.length;
+  const markerLoopRange = getLoopMarkerRange(roadmap);
+  if (markerLoopRange) {
+    const preLoopTrace = traceCommandMapExecutionFlow({
+      roadmap,
+      startSequence,
+      blockBoundarySequence: markerLoopRange.sequence,
+      stopBeforeBlockOrder: markerLoopRange.startOrder,
+    });
+    appendTraceEvents(preLoopTrace.events);
+
+    const loopTrace = traceCommandMapExecutionFlow({
+      roadmap,
+      startSequence: markerLoopRange.sequence,
+      startIndex: markerLoopRange.startIndex + 1,
+      limitSequence: markerLoopRange.sequence,
+      blockBoundarySequence: markerLoopRange.sequence,
+      minBlockOrder: markerLoopRange.startOrder + 1,
+      stopBeforeBlockOrder: markerLoopRange.endOrder,
+    });
+
+    iterations.forEach((row, iterationIndex) => {
+      appendTraceEvents(loopTrace.events, {
+        row,
+        rowIndex: startIndex + iterationIndex,
+        rowPosition: iterationIndex,
+        totalRows: totalIterations,
+      });
+    });
+
+    if (loopTrace.exit?.action === "ir_para_bloco" || loopTrace.exit?.action === "ir_para_sequencia") {
+      const postLoopStart = resolveAssistPostLoopStart(loopTrace, roadmap);
+      if (postLoopStart?.sequence) {
+        const postLoopTrace = traceCommandMapExecutionFlow({
+          roadmap,
+          startSequence: postLoopStart.sequence,
+          startIndex: postLoopStart.startIndex || 0,
+        });
+        appendTraceEvents(postLoopTrace.events);
+      }
+      return steps;
+    }
+
+    const postLoopTrace = traceCommandMapExecutionFlow({
+      roadmap,
+      startSequence: markerLoopRange.sequence,
+      startIndex: markerLoopRange.endIndex + 1,
+    });
+    appendTraceEvents(postLoopTrace.events);
+    return steps;
+  }
+
+  const configuredLoopSequences = getConfiguredLoopSequences(roadmap);
+  if (configuredLoopSequences.length) {
+    const preLoopTrace = traceCommandMapUntilLoopEntry({
+      roadmap,
+      startSequence,
+      loopSequences: configuredLoopSequences,
+    });
+    const loopSequence = preLoopTrace.loopSequence || "";
+    if (loopSequence) {
+      appendTraceEvents(preLoopTrace.events);
+      const loopTrace = traceCommandMapLoopRegion({
+        roadmap,
+        startSequence: loopSequence,
+        startIndex: preLoopTrace.startIndex || 0,
+        loopSequences: configuredLoopSequences,
+      });
+
+      iterations.forEach((row, iterationIndex) => {
+        appendTraceEvents(loopTrace.events, {
+          row,
+          rowIndex: startIndex + iterationIndex,
+          rowPosition: iterationIndex,
+          totalRows: totalIterations,
+        });
+      });
+
+      const postLoopStart = resolveAssistPostLoopStart(loopTrace, roadmap);
+      if (postLoopStart?.sequence) {
+        const postLoopTrace = traceCommandMapExecutionFlow({
+          roadmap,
+          startSequence: postLoopStart.sequence,
+          startIndex: postLoopStart.startIndex || 0,
+        });
+        appendTraceEvents(postLoopTrace.events);
+      }
+
+      return steps;
+    }
+  }
 
   iterations.forEach((row, iterationIndex) => {
-    events.forEach((event) => {
-      const delayBefore = Math.max(0, parseNumber(event.delay ?? event.intervalo_antes, 0));
-      const details = event.details || event.detalhes || {};
-      if (event.type === "sequencia_planilha") {
-        const values = getSpreadsheetEventValues(event);
-        const relativeIndex = startIndex + iterationIndex;
-        const value = values[relativeIndex] ?? row.value ?? "";
-        steps.push({
-          order: Number(event.order),
-          wait: delayBefore,
-          company: String(row.company || ""),
-          description:
-            `Iteracao ${iterationIndex + 1}/${totalIterations} - linha ${row.row_number} - ` +
-            describeAssistBaseEvent(event, relativeIndex, values.length || totalIterations, value),
-        });
-      } else {
-        steps.push({
-          order: Number(event.order),
-          wait: delayBefore,
-          company: String(row.company || ""),
-          description:
-            `Iteracao ${iterationIndex + 1}/${totalIterations} - ${describeAssistBaseEvent(event)}`,
-        });
-      }
+    appendTraceEvents(flowTrace.events, {
+      row,
+      rowIndex: startIndex + iterationIndex,
+      rowPosition: iterationIndex,
+      totalRows: totalIterations,
     });
   });
 
@@ -861,119 +2473,166 @@ function startAssistPlayback(mode, initialDelaySeconds, loopStart = 1) {
   state.assist.total = steps.length;
   state.assist.current = 0;
   state.assist.percent = 0;
-  state.assist.currentOrder = state.roadmap?.events?.[0]?.order ?? null;
+  state.assist.currentOrder = getAssistInitialOrder();
   updateAssistProgressUI();
   renderAssistExecutionMap();
   scheduleAssistPlaybackStep(token, Math.max(0, initialDelaySeconds) * 1000);
 }
 
+async function startQuickTestExecution(forceAssist = false) {
+  const fromAssist = forceAssist || assistPanel.classList.contains("is-active");
+  try {
+    if (!(await ensureCommandMapPreparedForExecution({
+      actionLabel: "executar a automacao",
+      onInfo: fromAssist
+        ? (message) => surfaceAssistExecutionMessage(message, "info")
+        : null,
+      onError: fromAssist
+        ? (message) => surfaceAssistExecutionMessage(message, "error")
+        : null,
+    }))) {
+      return;
+    }
+    const activeTarget = await ensureAssistTargetReadyForExecution();
 
-  async function startQuickTestExecution(forceAssist = false) {
-    try {
-      await persistCommandMapDraftsForExecution();
-
-      if (state.testLaunchPending) {
-        setMessage("Ja existe um disparo de teste em andamento.", "error");
-        return;
+    if (state.testLaunchPending) {
+      const message = "Ja existe um disparo de teste em andamento.";
+      if (fromAssist) {
+        surfaceAssistExecutionMessage(message, "error");
+      }
+      setMessage(message, "error");
+      return;
     }
     if (isTestExecutionActive()) {
-      setMessage("Ja existe uma automacao em execucao. Pare a atual antes de iniciar outra.", "error");
+      const message = "Ja existe uma automacao em execucao. Pare a atual antes de iniciar outra.";
+      if (fromAssist) {
+        surfaceAssistExecutionMessage(message, "error");
+      }
+      setMessage(message, "error");
       return;
     }
 
-    const fromAssist = forceAssist || assistPanel.classList.contains("is-active");
     const delay = parseNumber(fromAssist ? assistDelayInput.value : testDelayInput.value, 0);
-    const windowTitle = getConfiguredWindowTitle(fromAssist);
+    const minimizeWindow = shouldMinimizeExecutionWindow();
     syncTestInputsFrom(fromAssist ? "assist" : "top");
     state.testLaunchPending = true;
-    setMessage("Clique detectado: iniciando teste simples...", "info");
-    setBusy("Iniciando teste");
+    setMessage("Iniciando execucao...", "info");
+    setBusy("Iniciando execucao");
     setTestExecutionState(true);
     resetAssistState("running");
-    if (windowTitle) {
-      state.assist.windowTitle = windowTitle;
-    }
     state.assist.description = `Voce tem ${delay}s para focar a janela onde a automacao deve executar.`;
     updateAssistProgressUI();
-    pushAssistLog(`Teste simples iniciado. Atraso inicial: ${delay}s.`, "info");
+    if (activeTarget) {
+      pushAssistLog(`Executando nesta janela: ${activeTarget.title} / hwnd ${activeTarget.hwnd}`, "info");
+    } else {
+      pushAssistLog("Nenhuma janela alvo selecionada. Captura e reconhecimento vao usar a tela inteira.", "info");
+    }
+    pushAssistLog(`Execucao iniciada. Atraso inicial: ${delay}s.`, "info");
     const result = fromAssist
-      ? await invoke("launch_assisted_quick_test", { delay, windowTitle: windowTitle || null })
-      : await invoke("launch_quick_test", { delay, minimizeWindow: true, windowTitle: windowTitle || null });
+      ? await invoke("launch_assisted_quick_test", { delay, minimizeWindow })
+      : await invoke("launch_quick_test", { delay, minimizeWindow });
+    triggerSuccessPulse(fromAssist ? assistQuickButton : testOnceButton);
     setBusy("Pronto");
-    setMessage(result, "success");
+    setMessage(normalizeExecutionFeedbackMessage(result), "success");
   } catch (error) {
     setBusy("Erro");
     setTestExecutionState(false);
     stopAssistPlayback();
     resetAssistState("idle");
-    setMessage(String(error), "error");
+    const message = String(error);
+    if (fromAssist) {
+      surfaceAssistExecutionMessage(message, "error");
+    }
+    setMessage(message, "error");
   } finally {
     state.testLaunchPending = false;
   }
 }
 
-  async function startLoopTestExecution(forceAssist = false) {
-    try {
-      await persistCommandMapDraftsForExecution();
-
-      const hasSpreadsheetBlock = (state.roadmap?.events ?? []).some((event) => event.type === "sequencia_planilha");
-    if (!hasSpreadsheetBlock) {
-      setMessage("Esse roteiro nao possui bloco de planilha. Use 'Testar uma vez' ou o botao 'Testar reconhecimento'.", "error");
+async function startLoopTestExecution(forceAssist = false) {
+  const fromAssist = forceAssist || assistPanel.classList.contains("is-active");
+  try {
+    if (!hasSpreadsheetLoopBlock()) {
+      await startQuickTestExecution(forceAssist);
       return;
     }
+    if (!(await ensureCommandMapPreparedForExecution({
+      actionLabel: "executar a automacao",
+      onInfo: fromAssist
+        ? (message) => surfaceAssistExecutionMessage(message, "info")
+        : null,
+      onError: fromAssist
+        ? (message) => surfaceAssistExecutionMessage(message, "error")
+        : null,
+    }))) {
+      return;
+    }
+    const activeTarget = await ensureAssistTargetReadyForExecution();
 
     await refreshTestLoopData();
 
     if (state.testLaunchPending) {
-      setMessage("Ja existe um disparo de teste em andamento.", "error");
+      const message = "Ja existe um disparo de teste em andamento.";
+      if (fromAssist) {
+        surfaceAssistExecutionMessage(message, "error");
+      }
+      setMessage(message, "error");
       return;
     }
     if (isTestExecutionActive()) {
-      setMessage("Ja existe uma automacao em execucao. Pare a atual antes de iniciar outra.", "error");
+      const message = "Ja existe uma automacao em execucao. Pare a atual antes de iniciar outra.";
+      if (fromAssist) {
+        surfaceAssistExecutionMessage(message, "error");
+      }
+      setMessage(message, "error");
       return;
     }
 
-    const fromAssist = forceAssist || assistPanel.classList.contains("is-active");
     const delay = parseNumber(fromAssist ? assistDelayInput.value : testDelayInput.value, 0);
-    const windowTitle = getConfiguredWindowTitle(fromAssist);
+    const minimizeWindow = shouldMinimizeExecutionWindow();
     const loopStart = Math.max(
       1,
       Math.trunc(parseNumber(fromAssist ? assistLoopStartInput.value : testLoopStartInput.value, 1)),
     );
     syncTestInputsFrom(fromAssist ? "assist" : "top");
     state.testLaunchPending = true;
-    setMessage("Clique detectado: iniciando teste com loop...", "info");
-    setBusy("Iniciando teste com loop");
+    setMessage("Iniciando execucao com planilha...", "info");
+    setBusy("Iniciando execucao");
     setTestExecutionState(true);
     resetAssistState("running");
-    if (windowTitle) {
-      state.assist.windowTitle = windowTitle;
-    }
     state.assist.description =
       `Voce tem ${delay}s para focar a janela da automacao. O loop vai procurar a linha ${loopStart}.`;
     updateAssistProgressUI();
-    pushAssistLog(`Teste com loop iniciado. Linha inicial: ${loopStart}. Atraso: ${delay}s.`, "info");
+    if (activeTarget) {
+      pushAssistLog(`Executando nesta janela: ${activeTarget.title} / hwnd ${activeTarget.hwnd}`, "info");
+    } else {
+      pushAssistLog("Nenhuma janela alvo selecionada. Captura e reconhecimento vao usar a tela inteira.", "info");
+    }
+    pushAssistLog(`Execucao iniciada com planilha. Linha inicial: ${loopStart}. Atraso: ${delay}s.`, "info");
     const result = fromAssist
       ? await invoke("launch_assisted_loop_test", {
           delay,
           loopStart,
-          windowTitle: windowTitle || null,
+          minimizeWindow,
         })
       : await invoke("launch_test_automation", {
           delay,
           loopStart,
-          minimizeWindow: true,
-          windowTitle: windowTitle || null,
+          minimizeWindow,
         });
-    triggerSuccessPulse(fromAssist ? assistLoopButton : testAutomationButton);
+    triggerSuccessPulse(fromAssist ? assistQuickButton : testOnceButton);
     setBusy("Pronto");
-    setMessage(result, "success");
+    setMessage(normalizeExecutionFeedbackMessage(result), "success");
   } catch (error) {
     setBusy("Erro");
     setTestExecutionState(false);
     stopAssistPlayback();
     resetAssistState("idle");
-    setMessage(String(error), "error");
+    const message = String(error);
+    if (fromAssist) {
+      surfaceAssistExecutionMessage(message, "error");
+    }
+    setMessage(message, "error");
   } finally {
     state.testLaunchPending = false;
   }
@@ -997,25 +2656,77 @@ async function stopCurrentTestExecution() {
   }
 }
 
+async function startAutoExecution(forceAssist = false) {
+  if (hasSpreadsheetLoopBlock()) {
+    await startLoopTestExecution(forceAssist);
+    return;
+  }
+  await startQuickTestExecution(forceAssist);
+}
+
+window.handleExecuteClick = () => {
+  startAutoExecution(false);
+};
+
+window.handleAssistExecuteClick = () => {
+  startAutoExecution(true);
+};
+
 window.handleQuickTestClick = () => {
-  startQuickTestExecution(false);
+  startAutoExecution(false);
 };
 
 window.handleLoopTestClick = () => {
-  startLoopTestExecution(false);
+  startAutoExecution(false);
 };
 
 window.handleAssistQuickTestClick = () => {
-  startQuickTestExecution(true);
+  startAutoExecution(true);
 };
 
 window.handleAssistLoopTestClick = () => {
-  startLoopTestExecution(true);
+  startAutoExecution(true);
 };
 
 window.handleStopTestClick = () => {
   stopCurrentTestExecution();
 };
+
+function registerExecutionActionButtons() {
+  testOnceButton?.addEventListener("click", () => {
+    if (messageBar) {
+      messageBar.textContent = "Iniciando execucao...";
+    }
+    window.handleExecuteClick?.();
+  });
+
+  assistQuickButton?.addEventListener("click", () => {
+    if (assistDetailText) {
+      assistDetailText.textContent = "Iniciando execucao assistida...";
+    }
+    if (messageBar) {
+      messageBar.textContent = "Iniciando execucao assistida...";
+    }
+    window.handleAssistExecuteClick?.();
+  });
+
+  stopTestButton?.addEventListener("click", () => {
+    if (messageBar) {
+      messageBar.textContent = "Solicitando parada da automacao...";
+    }
+    window.handleStopTestClick?.();
+  });
+
+  assistStopButton?.addEventListener("click", () => {
+    if (assistDetailText) {
+      assistDetailText.textContent = "Solicitando parada da automacao...";
+    }
+    if (messageBar) {
+      messageBar.textContent = "Solicitando parada da automacao...";
+    }
+    window.handleStopTestClick?.();
+  });
+}
 
 const escapeHtml = (value) =>
   String(value ?? "")
@@ -1068,13 +2779,632 @@ function markCommandMapSaveDirty() {
   });
 }
 
+function syncCommandMapSaveStateWithPending(pendingSnapshots = null) {
+  if (state.commandMapSave.running) {
+    return Array.isArray(pendingSnapshots) ? pendingSnapshots : [];
+  }
+
+  const pending = Array.isArray(pendingSnapshots)
+    ? pendingSnapshots
+    : getPendingCommandMapSnapshots();
+
+  if (pending.length) {
+    setCommandMapSaveState({
+      dirty: true,
+      percent: 0,
+      status: "Alteracoes pendentes no mapa. Clique em Salvar mapa quando quiser persistir.",
+    });
+    return pending;
+  }
+
+  setCommandMapSaveState({
+    dirty: false,
+    percent: 100,
+    status: "Mapa sincronizado e pronto para o loop.",
+  });
+  return pending;
+}
+
+function ensureCommandMapSavedBefore(actionLabel = "continuar") {
+  const pending = syncCommandMapSaveStateWithPending();
+  if (pending.length) {
+    setMessage(`Existem alteracoes pendentes no mapa. Clique em Salvar mapa antes de ${actionLabel}.`, "error");
+    return false;
+  }
+  return true;
+}
+
+async function ensureCommandMapPreparedForExecution(options = {}) {
+  const {
+    actionLabel = "executar a automacao",
+    onInfo = null,
+    onError = null,
+  } = options;
+  const pending = syncCommandMapSaveStateWithPending();
+  if (!pending.length) {
+    return true;
+  }
+
+  const infoMessage = pending.length === 1
+    ? "1 bloco pendente detectado. Sincronizando o mapa antes de executar..."
+    : `${pending.length} blocos pendentes detectados. Sincronizando o mapa antes de executar...`;
+
+  if (typeof onInfo === "function") {
+    onInfo(infoMessage);
+  }
+  setBusy("Sincronizando mapa");
+  setMessage(infoMessage, "info");
+
+  try {
+    setCommandMapSaveState({
+      running: true,
+      dirty: true,
+      percent: 0,
+      status: "Sincronizando alteracoes do mapa para executar...",
+    });
+
+    const result = await persistCommandMapDraftsForExecution({
+      onProgress: ({ current, total, percent }) => {
+        setCommandMapSaveState({
+          running: total > 0 && current < total,
+          dirty: true,
+          percent,
+          status: total
+            ? `Sincronizando blocos ${current}/${total} antes da execucao...`
+            : "Nenhuma alteracao pendente no mapa.",
+        });
+      },
+    });
+
+    setCommandMapSaveState({
+      running: false,
+      dirty: false,
+      percent: 100,
+      status: result.total
+        ? "Mapa sincronizado e pronto para executar."
+        : "Mapa ja estava sincronizado para executar.",
+    });
+    setBusy("Pronto");
+    return true;
+  } catch (error) {
+    const message = `Nao foi possivel sincronizar o mapa antes de ${actionLabel}: ${String(error)}`;
+    setCommandMapSaveState({
+      running: false,
+      dirty: true,
+      status: message,
+    });
+    setBusy("Erro");
+    if (typeof onError === "function") {
+      onError(message);
+    }
+    setMessage(message, "error");
+    return false;
+  }
+}
+
+function nextCommandMapClientKey() {
+  commandMapClientKeySequence += 1;
+  return `command-card-${commandMapClientKeySequence}`;
+}
+
+function buildCommandEventFingerprint(event = {}) {
+  return JSON.stringify([
+    event.type || "",
+    event.title || "",
+    event.subtitle || "",
+    event.command || "",
+    event.delay ?? "",
+  ]);
+}
+
+function commandEventClientKey(event = {}) {
+  return String(event?.clientKey || "").trim();
+}
+
+function findRoadmapEventByClientKey(clientKey) {
+  const normalizedClientKey = String(clientKey || "").trim();
+  if (!normalizedClientKey) {
+    return null;
+  }
+  return (state.roadmap?.events ?? []).find((event) => commandEventClientKey(event) === normalizedClientKey) || null;
+}
+
+function normalizeKeysDraftValue(value) {
+  return String(value || "")
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function applySuccessFlowDraft(details, values) {
+  details.ao_sucesso = values.successAction || "continuar";
+  details.bloco_sucesso = optionalPositiveInt(values.successBlock) || "";
+  details.sequencia_sucesso = values.successAction === "ir_para_sequencia"
+    ? optionalSequenceValue(values.successSequence) || ""
+    : "";
+  details.atraso_antes_sequencia_sucesso = transitionSequenceDelayArg(
+    values.successAction,
+    values.successSequenceDelay,
+  );
+  return details;
+}
+
+function applyCommandMapDraftToEvent(event) {
+  const clientKey = commandEventClientKey(event);
+  const draft = state.commandMapDrafts?.[clientKey];
+  if (!clientKey || !draft?.values) {
+    return event;
+  }
+
+  const values = draft.values;
+  const nextEvent = {
+    ...event,
+    delay: parseNumber(values.delay, event.delay ?? 0),
+    details: {
+      ...(event.details ?? {}),
+    },
+  };
+  const details = nextEvent.details;
+
+  if (nextEvent.type === "texto_livre") {
+    nextEvent.text = values.text ?? nextEvent.text;
+    applySuccessFlowDraft(details, values);
+    return nextEvent;
+  }
+
+  if (nextEvent.type === "tecla" || nextEvent.type === "atalho") {
+    nextEvent.keys = normalizeKeysDraftValue(values.keys);
+    details.repeticoes = Math.max(1, Math.trunc(parseNumber(values.repeat, details.repeticoes ?? 1)));
+    applySuccessFlowDraft(details, values);
+    return nextEvent;
+  }
+
+  if (nextEvent.type === "mouse_click") {
+    details.x = parseNumber(values.x, details.x ?? 0);
+    details.y = parseNumber(values.y, details.y ?? 0);
+    details.botao = values.button || details.botao || "left";
+    details.cliques = Math.max(1, Math.trunc(parseNumber(values.clicks, details.cliques ?? details.clicks ?? 1)));
+    details.clicks = details.cliques;
+    applySuccessFlowDraft(details, values);
+    return nextEvent;
+  }
+
+  if (nextEvent.type === "clicar_imagem") {
+    details.imagem = values.imagePath ?? details.imagem ?? "";
+    details.timeout = parseNumber(values.timeout, details.timeout ?? 10);
+    details.confianca = parseNumber(values.confidence, details.confianca ?? 0.8);
+    details.perfil_busca = normalizeRecognitionProfile(values.searchProfile, details.perfil_busca ?? "balanced");
+    details.modo_area_busca = "target_window";
+    details.area_busca_x = 0;
+    details.area_busca_y = 0;
+    details.area_busca_largura = 0;
+    details.area_busca_altura = 0;
+    details.janela_alvo = normalizeRecognitionWindowTitle(values.windowTitle || details.janela_alvo || "");
+    details.clicar = recognitionClicksFromMode(values.recognitionClickMode, 1) > 0;
+    details.clicks = recognitionClicksFromMode(values.recognitionClickMode, 1);
+    details.cliques = details.clicks;
+    details.ao_nao_encontrar = values.failureAction || "parar";
+    details.sequencia_nao_encontrar = values.failureAction === "ir_para_sequencia"
+      ? optionalSequenceValue(values.failureSequence) || ""
+      : "";
+    details.bloco_nao_encontrar = optionalPositiveInt(values.failureBlock) || "";
+    details.atraso_antes_sequencia_nao_encontrar = transitionSequenceDelayArg(
+      values.failureAction,
+      values.failureSequenceDelay,
+    );
+    details.quantidade_tentativas = Math.max(1, Math.trunc(parseNumber(values.retryCount, details.quantidade_tentativas ?? 1)));
+    details.intervalo_tentativas = parseNumber(values.retryInterval, details.intervalo_tentativas ?? 1);
+    applySuccessFlowDraft(details, values);
+    return nextEvent;
+  }
+
+  if (nextEvent.type === "chrome_elemento_html") {
+    return {
+      ...nextEvent,
+      details: buildChromeDetailsFromAnalysisAndValues(draft.values.chromeAnalysis || {}, draft.values),
+    };
+  }
+
+  if (nextEvent.type === "verificar_estado_botao") {
+    details.nome = values.verifyName || details.nome || "Verificar botao";
+    details.imagem_ativo = values.verifyActiveImage ?? details.imagem_ativo ?? "";
+    details.imagem_desativado = values.verifyInactiveImage ?? details.imagem_desativado ?? "";
+    details.timeout = parseNumber(values.verifyTimeout, details.timeout ?? 5);
+    details.confianca = parseNumber(values.verifyConfidence, details.confianca ?? 0.85);
+    details.se_ativo = {
+      acao: values.verifyActiveAction || "continuar",
+      sequencia: optionalSequenceValue(values.verifyActiveSequence) || "",
+    };
+    details.se_desativado = {
+      acao: values.verifyInactiveAction || "ir_para_sequencia",
+      sequencia: optionalSequenceValue(values.verifyInactiveSequence) || "",
+    };
+    details.se_nao_encontrar = {
+      acao: values.verifyMissingAction || "parar",
+      sequencia: optionalSequenceValue(values.verifyMissingSequence) || "",
+    };
+    return nextEvent;
+  }
+
+  if (nextEvent.type === "sequencia_planilha") {
+    details.arquivo = values.workbook ?? details.arquivo ?? "";
+    details.aba = values.sheet ?? details.aba ?? "";
+    details.coluna = values.column ?? details.coluna ?? "";
+    details.acao_apos_item_texto = values.afterAction ?? details.acao_apos_item_texto ?? "nenhuma";
+    details.intervalo_entre_itens = parseNumber(values.intervalBetween, details.intervalo_entre_itens ?? 0.5);
+    applySuccessFlowDraft(details, values);
+    return nextEvent;
+  }
+
+  return nextEvent;
+}
+
+function syncCommandMapDraftsWithRoadmap(roadmap = state.roadmap) {
+  const validKeys = new Set(
+    (roadmap?.events ?? [])
+      .map((event) => commandEventClientKey(event))
+      .filter(Boolean)
+  );
+
+  state.commandMapDrafts = Object.fromEntries(
+    Object.entries(state.commandMapDrafts || {}).filter(([clientKey]) => validKeys.has(clientKey))
+  );
+}
+
+function decorateRoadmapForClient(roadmap, previousRoadmap = null) {
+  if (!roadmap) {
+    return roadmap;
+  }
+
+  const previousQueues = new Map();
+  for (const previousEvent of previousRoadmap?.events ?? []) {
+    const fingerprint = buildCommandEventFingerprint(previousEvent);
+    if (!previousQueues.has(fingerprint)) {
+      previousQueues.set(fingerprint, []);
+    }
+    previousQueues.get(fingerprint).push(previousEvent.clientKey || nextCommandMapClientKey());
+  }
+
+  return {
+    ...roadmap,
+    events: (roadmap.events ?? []).map((event) => {
+      const fingerprint = buildCommandEventFingerprint(event);
+      const queue = previousQueues.get(fingerprint);
+      const clientKey = event.clientKey || queue?.shift() || nextCommandMapClientKey();
+      return {
+        ...event,
+        clientKey,
+      };
+    }),
+  };
+}
+
+function normalizeRecognitionImagePath(imagePath) {
+  return normalizeStringValue(imagePath);
+}
+
+function recognitionPreviewFileName(imagePath) {
+  const normalized = normalizeRecognitionImagePath(imagePath);
+  if (!normalized) {
+    return "";
+  }
+  const parts = normalized.replace(/\\/g, "/").split("/");
+  return parts[parts.length - 1] || normalized;
+}
+
+function recognitionPreviewCardsWithin(root) {
+  if (!root) {
+    return [];
+  }
+  if (typeof root.matches === "function" && root.matches("[data-recognition-preview-card]")) {
+    return [root];
+  }
+  return Array.from(root.querySelectorAll?.("[data-recognition-preview-card]") || []);
+}
+
+function resolveRecognitionPreviewPath(container, fallbackPath = "") {
+  if (!container) {
+    return normalizeRecognitionImagePath(fallbackPath);
+  }
+  return normalizeRecognitionImagePath(
+    container.querySelector?.('[data-tree-field="imagePath"]')?.value
+      || container.querySelector?.('[data-insert-field="imagePath"]')?.value
+      || container.dataset.recognitionPreviewPath
+      || fallbackPath
+  );
+}
+
+function renderRecognitionPreviewCardState({ status = "empty", imagePath = "", src = "", message = "" } = {}) {
+  const normalizedPath = normalizeRecognitionImagePath(imagePath);
+  const fileName = recognitionPreviewFileName(normalizedPath);
+  const title = normalizedPath ? fileName || normalizedPath : "Nenhuma referencia visual";
+  const subtitle = normalizedPath
+    ? normalizedPath
+    : "Capture ou selecione uma referencia para visualizar aqui.";
+
+  let stageContent = `
+    <div class="recognition-preview-state is-empty">
+      <strong>Sem imagem definida</strong>
+      <span>Esse bloco ainda nao tem referencia salva.</span>
+    </div>
+  `;
+
+  if (status === "loading" && normalizedPath) {
+    stageContent = `
+      <div class="recognition-preview-state is-loading">
+        <strong>Carregando preview</strong>
+        <span>${escapeHtml(fileName || normalizedPath)}</span>
+      </div>
+    `;
+  } else if (status === "error" && normalizedPath) {
+    stageContent = `
+      <div class="recognition-preview-state is-error">
+        <strong>Preview indisponivel</strong>
+        <span>${escapeHtml(message || "Nao foi possivel abrir a imagem dessa referencia.")}</span>
+      </div>
+    `;
+  } else if (status === "ready" && normalizedPath && src) {
+    stageContent = `
+      <img
+        class="recognition-preview-image"
+        src="${escapeHtml(src)}"
+        alt="Preview da referencia ${escapeHtml(fileName || normalizedPath)}"
+        loading="lazy"
+      />
+    `;
+  }
+
+  return `
+    <div class="recognition-preview-stage is-${escapeHtml(status)}" data-recognition-preview-stage="true">
+      ${stageContent}
+    </div>
+    <div class="recognition-preview-meta">
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(subtitle)}</span>
+    </div>
+  `;
+}
+
+function renderRecognitionPreviewPanel(imagePath = "") {
+  const normalizedPath = normalizeRecognitionImagePath(imagePath);
+  return `
+    <div class="recognition-preview-card" data-recognition-preview-card="true" data-recognition-preview-path="${escapeHtml(normalizedPath)}">
+      ${renderRecognitionPreviewCardState({
+        status: normalizedPath ? "loading" : "empty",
+        imagePath: normalizedPath,
+      })}
+    </div>
+  `;
+}
+
+function setRecognitionPreviewCardState(previewCard, payload = {}) {
+  if (!previewCard) {
+    return;
+  }
+  const imagePath = normalizeRecognitionImagePath(payload.imagePath || "");
+  previewCard.dataset.recognitionPreviewPath = imagePath;
+  previewCard.innerHTML = renderRecognitionPreviewCardState({
+    status: payload.status || (imagePath ? "loading" : "empty"),
+    imagePath,
+    src: payload.src || "",
+    message: payload.message || "",
+  });
+}
+
+async function fetchRecognitionPreviewAsset(imagePath) {
+  const normalizedPath = normalizeRecognitionImagePath(imagePath);
+  if (!normalizedPath) {
+    return null;
+  }
+
+  const cached = state.recognitionPreviewCache?.[normalizedPath];
+  if (cached?.src) {
+    return cached;
+  }
+  if (cached?.promise) {
+    return cached.promise;
+  }
+
+  const promise = invoke("get_recognition_image_preview", {
+    imageId: normalizedPath,
+  }).then((result) => {
+    const payload = {
+      imagePath: normalizedPath,
+      src: String(result?.src || ""),
+      fileName: String(result?.file_name || recognitionPreviewFileName(normalizedPath)),
+    };
+    state.recognitionPreviewCache[normalizedPath] = payload;
+    return payload;
+  }).catch((error) => {
+    delete state.recognitionPreviewCache[normalizedPath];
+    throw error;
+  });
+
+  state.recognitionPreviewCache[normalizedPath] = { promise };
+  return promise;
+}
+
+function clearRecognitionPreviewCache(imagePath = "") {
+  const normalizedPath = normalizeRecognitionImagePath(imagePath);
+  if (!normalizedPath) {
+    state.recognitionPreviewCache = {};
+    return;
+  }
+  delete state.recognitionPreviewCache[normalizedPath];
+}
+
+async function hydrateRecognitionPreviewCard(previewCard, overridePath = null) {
+  if (!previewCard) {
+    return;
+  }
+
+  const host = previewCard.closest(".command-tree-card, .insert-card-panel");
+  const imagePath = resolveRecognitionPreviewPath(
+    host,
+    (overridePath ?? previewCard.dataset.recognitionPreviewPath) || ""
+  );
+  const requestId = `${Date.now()}-${Math.random()}`;
+  previewCard.dataset.recognitionPreviewRequestId = requestId;
+
+  if (!imagePath) {
+    setRecognitionPreviewCardState(previewCard, { status: "empty", imagePath: "" });
+    return;
+  }
+
+  setRecognitionPreviewCardState(previewCard, { status: "loading", imagePath });
+
+  try {
+    const preview = await fetchRecognitionPreviewAsset(imagePath);
+    if (previewCard.dataset.recognitionPreviewRequestId !== requestId) {
+      return;
+    }
+    if (!preview?.src) {
+      throw new Error("A imagem nao retornou um preview valido.");
+    }
+    setRecognitionPreviewCardState(previewCard, {
+      status: "ready",
+      imagePath,
+      src: preview.src,
+    });
+  } catch (error) {
+    if (previewCard.dataset.recognitionPreviewRequestId !== requestId) {
+      return;
+    }
+    setRecognitionPreviewCardState(previewCard, {
+      status: "error",
+      imagePath,
+      message: String(error || "Nao foi possivel carregar a imagem.").slice(0, 160),
+    });
+  }
+}
+
+function hydrateRecognitionPreviewCards(root, overridePath = null) {
+  recognitionPreviewCardsWithin(root).forEach((previewCard) => {
+    hydrateRecognitionPreviewCard(previewCard, overridePath);
+  });
+}
+
+function findRecognitionRoadmapEventByOrder(order, type = "") {
+  const numericOrder = Number(order);
+  if (!Number.isFinite(numericOrder) || numericOrder <= 0) {
+    return null;
+  }
+  return (state.roadmap?.events ?? []).find((event) =>
+    Number(event.order) === numericOrder && (!type || String(event.type || "") === type)
+  ) || null;
+}
+
+function syncRecognitionTestStatusWithRoadmap(roadmap) {
+  const validKeys = new Set(
+    (roadmap?.events ?? [])
+      .filter((event) => String(event.type || "") === "clicar_imagem" && String(event.clientKey || "").trim())
+      .map((event) => String(event.clientKey).trim())
+  );
+
+  state.recognitionTestStatus = Object.fromEntries(
+    Object.entries(state.recognitionTestStatus || {}).filter(([clientKey]) => validKeys.has(clientKey))
+  );
+}
+
+function setRecognitionTestStatusForOrder(order, imagePath, tested) {
+  const event = findRecognitionRoadmapEventByOrder(order, "clicar_imagem");
+  const clientKey = String(event?.clientKey || "").trim();
+  if (!clientKey) {
+    return;
+  }
+
+  const normalizedImagePath = normalizeRecognitionImagePath(imagePath);
+  if (!normalizedImagePath) {
+    delete state.recognitionTestStatus[clientKey];
+    updateRecognitionStatusUIForOrder(order, "");
+    return;
+  }
+
+  state.recognitionTestStatus = {
+    ...state.recognitionTestStatus,
+    [clientKey]: {
+      imagePath: normalizedImagePath,
+      tested: Boolean(tested),
+    },
+  };
+  updateRecognitionStatusUIForOrder(order, normalizedImagePath);
+}
+
+function isRecognitionTestedForEvent(event, overrideImagePath = null) {
+  const clientKey = String(event?.clientKey || "").trim();
+  const normalizedImagePath =
+    overrideImagePath !== null
+      ? normalizeRecognitionImagePath(overrideImagePath)
+      : normalizeRecognitionImagePath(event?.details?.imagem || "");
+  if (!clientKey || !normalizedImagePath) {
+    return false;
+  }
+
+  const status = state.recognitionTestStatus?.[clientKey];
+  return Boolean(status?.tested && status?.imagePath === normalizedImagePath);
+}
+
+function recognitionSubtitleLabel(event) {
+  if (String(event?.type || "") !== "clicar_imagem") {
+    return String(event?.subtitle || "");
+  }
+  const windowTitle = normalizeRecognitionWindowTitle(event?.details?.janela_alvo || "");
+  if (windowTitle) {
+    return `Busca presa em ${windowTitle}`;
+  }
+  return normalizeRecognitionImagePath(event?.details?.imagem || "")
+    ? "Referencia pronta para uso"
+    : "Capture ou selecione uma referencia";
+}
+
+function updateRecognitionStatusUIForOrder(order, overrideImagePath = null) {
+  const event = findRecognitionRoadmapEventByOrder(order, "clicar_imagem");
+  if (!event) {
+    return;
+  }
+
+  const hasReference =
+    overrideImagePath !== null
+      ? Boolean(normalizeRecognitionImagePath(overrideImagePath))
+      : Boolean(normalizeRecognitionImagePath(event?.details?.imagem || ""));
+  const tested = isRecognitionTestedForEvent(event, overrideImagePath);
+  const subtitle = hasReference
+    ? "Referencia pronta para uso"
+    : "Capture ou selecione uma referencia";
+
+  document
+    .querySelectorAll(
+      `.flow-card[data-order="${order}"][data-type="clicar_imagem"], .command-tree-card[data-order="${order}"][data-type="clicar_imagem"]`
+    )
+    .forEach((card) => {
+      const subtitleEl = card.querySelector('[data-recognition-subtitle="true"]');
+      if (subtitleEl) {
+        subtitleEl.textContent = subtitle;
+      }
+
+      const stateEl = card.querySelector('[data-recognition-state="true"]');
+      if (stateEl) {
+        stateEl.textContent = hasReference ? "Reconhecimento feito" : "Sem referencia";
+        stateEl.classList.toggle("is-ready", hasReference);
+        stateEl.classList.toggle("is-missing", !hasReference);
+      }
+
+      const testEl = card.querySelector('[data-recognition-test="true"]');
+      if (testEl) {
+        testEl.textContent = tested ? "Testado" : "Nao testado";
+        testEl.classList.toggle("is-tested", tested);
+        testEl.classList.toggle("is-pending", !tested);
+      }
+    });
+}
+
 function showCaptureOverlay(text) {
   captureOverlayText.textContent = text;
   captureOverlay.hidden = false;
 }
 
 function resolveNearestCommandMapFocus(roadmap, preferredOrder) {
-  const events = roadmap?.events ?? [];
+  const events = getCommandMapEvents(state.commandMapPageSequence, roadmap);
   if (!events.length) {
     return null;
   }
@@ -1092,6 +3422,19 @@ function resolveNearestCommandMapFocus(roadmap, preferredOrder) {
   return events.at(-1)?.order ?? events[0]?.order ?? null;
 }
 
+function resolveCommandMapFocusByClientKey(roadmap, clientKey, fallbackOrder = null) {
+  const normalizedClientKey = String(clientKey || "").trim();
+  if (normalizedClientKey) {
+    const match = getCommandMapEvents(state.commandMapPageSequence, roadmap)
+      .find((event) => String(event?.clientKey || "").trim() === normalizedClientKey);
+    if (match?.order != null) {
+      return Number(match.order);
+    }
+  }
+
+  return resolveNearestCommandMapFocus(roadmap, fallbackOrder);
+}
+
 function centerCommandMapOrder(order, behavior = "smooth") {
   const targetSegment = commandMapList.querySelector(`.command-flow-segment[data-order="${order}"]`);
   if (!targetSegment) {
@@ -1107,10 +3450,126 @@ function centerCommandMapOrder(order, behavior = "smooth") {
   });
 }
 
+function captureCommandMapCardPositions() {
+  const positions = new Map();
+  commandMapList.querySelectorAll(".command-flow-segment[data-client-key]").forEach((segment) => {
+    const key = segment.dataset.clientKey;
+    const card = segment.querySelector(".command-tree-card");
+    if (!key || !card) {
+      return;
+    }
+    positions.set(key, card.getBoundingClientRect());
+  });
+  return positions;
+}
+
+function animateCommandMapLayoutShift(previousPositions) {
+  if (!(previousPositions instanceof Map) || !previousPositions.size) {
+    return;
+  }
+
+  const animatedCards = [];
+  commandMapList.querySelectorAll(".command-flow-segment[data-client-key]").forEach((segment) => {
+    const key = segment.dataset.clientKey;
+    const card = segment.querySelector(".command-tree-card");
+    const previousRect = previousPositions.get(key);
+    if (!key || !card || !previousRect) {
+      return;
+    }
+
+    const nextRect = card.getBoundingClientRect();
+    const deltaX = previousRect.left - nextRect.left;
+    const deltaY = previousRect.top - nextRect.top;
+
+    if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) {
+      return;
+    }
+
+    const tilt = Math.max(-2.2, Math.min(2.2, deltaX / 58));
+    animatedCards.push({
+      card,
+      deltaX,
+      deltaY,
+      tilt,
+    });
+  });
+
+  if (!animatedCards.length) {
+    return;
+  }
+
+  commandMapList.getBoundingClientRect();
+
+  requestAnimationFrame(() => {
+    animatedCards.forEach(({ card, deltaX, deltaY, tilt }) => {
+      const distance = Math.abs(deltaX);
+      const arcLift = distance > 20 ? Math.min(18, Math.max(8, distance * 0.085)) : 0;
+      const arcY = deltaY + (deltaX > 0 ? arcLift : -arcLift);
+
+      const cleanup = () => {
+        card.style.transition = "";
+        card.style.transform = "";
+        card.style.willChange = "";
+        card.style.zIndex = "";
+        card.__commandMapShiftAnimation = null;
+      };
+
+      if (card.__commandMapShiftAnimation) {
+        card.__commandMapShiftAnimation.cancel();
+        card.__commandMapShiftAnimation = null;
+      }
+
+      card.style.willChange = "transform";
+      card.style.zIndex = "7";
+
+      if (typeof card.animate === "function") {
+        const animation = card.animate(
+          [
+            {
+              transform: `translate(${deltaX}px, ${deltaY}px) rotate(${tilt}deg) scale(0.985)`,
+            },
+            {
+              transform: `translate(${Math.round(deltaX * 0.38)}px, ${Math.round(arcY)}px) rotate(${(tilt * 0.42).toFixed(3)}deg) scale(1.018)`,
+              offset: 0.56,
+            },
+            {
+              transform: "translate(0px, 0px) rotate(0deg) scale(1)",
+            },
+          ],
+          {
+            duration: 320,
+            easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+            fill: "both",
+          }
+        );
+
+        card.__commandMapShiftAnimation = animation;
+        animation.addEventListener("finish", cleanup, { once: true });
+        animation.addEventListener("cancel", cleanup, { once: true });
+        return;
+      }
+
+      card.style.transition = "transform 320ms cubic-bezier(0.22, 1, 0.36, 1)";
+      card.style.transform = `translate(${deltaX}px, ${deltaY}px) rotate(${tilt}deg)`;
+
+      requestAnimationFrame(() => {
+        card.style.transform = "";
+      });
+
+      card.addEventListener("transitionend", cleanup, { once: true });
+    });
+  });
+}
+
 function applyCommandMapFocus(behavior = "smooth") {
-  const events = state.roadmap?.events ?? [];
+  const events = getCommandMapEvents();
   const focusOrder = resolveNearestCommandMapFocus(state.roadmap, state.commandMapFocusOrder ?? events[0]?.order ?? null);
   state.commandMapFocusOrder = focusOrder;
+  const visibleOrders = events.map((event) => Number(event.order)).filter((order) => Number.isFinite(order));
+  const focusIndex = visibleOrders.indexOf(Number(focusOrder));
+  const neighborOrders = new Set(
+    [visibleOrders[focusIndex - 1], visibleOrders[focusIndex + 1]].filter((order) => Number.isFinite(order))
+  );
 
   const row = commandMapList.querySelector(".command-flow-row");
   if (!row) {
@@ -1122,16 +3581,18 @@ function applyCommandMapFocus(behavior = "smooth") {
   commandMapList.querySelectorAll(".command-flow-segment").forEach((segment) => {
     const order = Number(segment.dataset.order);
     const isFocused = order === focusOrder;
-    const isNeighbor = focusOrder != null && Math.abs(order - focusOrder) === 1;
+    const isNeighbor = neighborOrders.has(order);
     segment.classList.toggle("is-focused", isFocused);
     segment.classList.toggle("is-neighbor", isNeighbor);
   });
 
   commandMapList.querySelectorAll(".command-inline-connector").forEach((connector) => {
     const targetIndex = Number(connector.dataset.targetIndex);
-    const nearFocus = focusOrder != null && (targetIndex === focusOrder || targetIndex === focusOrder + 1);
+    const nearFocus = focusOrder != null && (targetIndex === focusOrder || neighborOrders.has(targetIndex));
     connector.classList.toggle("is-near-focus", nearFocus);
   });
+
+  scheduleCommandConnectorLayout();
 
   updateCommandMapNavButtons();
 
@@ -1141,12 +3602,30 @@ function applyCommandMapFocus(behavior = "smooth") {
 }
 
 function setCommandMapFocus(order, behavior = "smooth") {
+  const targetSequence = getCommandMapEventSequenceByOrder(order);
+  const lockedSequence = activeCommandMapPageSequenceLock();
+  if (lockedSequence && targetSequence && targetSequence !== lockedSequence) {
+    state.commandMapPageSequence = lockedSequence;
+    syncSequenceContextInput();
+    renderCommandMapPageTabs();
+    updateCommandMapHeaderSummary();
+    state.commandMapFocusOrder = resolveNearestCommandMapFocus(state.roadmap, state.commandMapFocusOrder ?? order);
+    applyCommandMapFocus(behavior);
+    return;
+  }
+  if (targetSequence && targetSequence !== normalizeSequenceName(state.commandMapPageSequence)) {
+    state.commandMapPageSequence = targetSequence;
+    syncSequenceContextInput();
+    renderCommandMapPageTabs();
+    updateCommandMapHeaderSummary();
+    renderCommandMap();
+  }
   state.commandMapFocusOrder = order;
   applyCommandMapFocus(behavior);
 }
 
 function focusLastCommandMapCard(roadmap) {
-  return roadmap?.events?.at(-1)?.order ?? state.commandMapFocusOrder;
+  return getCommandMapEvents(state.commandMapPageSequence, roadmap).at(-1)?.order ?? state.commandMapFocusOrder;
 }
 
 function hideCaptureOverlay() {
@@ -1280,7 +3759,44 @@ function formatMouseButtonLabel(button) {
 }
 
 function clearDragState() {
+  if (state.dragMoveFrame) {
+    cancelAnimationFrame(state.dragMoveFrame);
+    state.dragMoveFrame = 0;
+  }
+  builderShell?.classList.remove("is-map-dragging");
+  commandMapList.querySelectorAll(".command-drop-zone").forEach((zone) => {
+    zone.classList.remove("is-drop-target");
+  });
+  commandMapList.querySelectorAll(".command-flow-segment").forEach((segment) => {
+    segment.classList.remove("is-drag-source");
+    segment.classList.remove("is-drop-before");
+    segment.classList.remove("is-drop-after");
+  });
+
+  state.draggingOrder = null;
+  state.dragTargetIndex = null;
+  state.dragPointerId = null;
+  state.dragOffsetX = 0;
+  state.dragOffsetY = 0;
+  state.dragClientX = 0;
+  state.dragClientY = 0;
+  state.dragSegments = [];
+  state.dragDropZones = [];
+  state.dragThresholds = [];
+  state.dragContainerRect = null;
+
   if (state.dragPreviewEl) {
+    state.dragPreviewEl.remove();
+    state.dragPreviewEl = null;
+  }
+}
+
+function releaseDragInteraction({ keepPreview = false } = {}) {
+  if (state.dragMoveFrame) {
+    cancelAnimationFrame(state.dragMoveFrame);
+    state.dragMoveFrame = 0;
+  }
+  if (!keepPreview && state.dragPreviewEl) {
     state.dragPreviewEl.remove();
     state.dragPreviewEl = null;
   }
@@ -1289,6 +3805,12 @@ function clearDragState() {
   state.dragPointerId = null;
   state.dragOffsetX = 0;
   state.dragOffsetY = 0;
+  state.dragClientX = 0;
+  state.dragClientY = 0;
+  state.dragSegments = [];
+  state.dragDropZones = [];
+  state.dragThresholds = [];
+  state.dragContainerRect = null;
   builderShell?.classList.remove("is-map-dragging");
   commandMapList.querySelectorAll(".command-drop-zone").forEach((zone) => {
     zone.classList.remove("is-drop-target");
@@ -1306,11 +3828,17 @@ function updateDragTarget(targetIndex) {
   }
 
   state.dragTargetIndex = targetIndex;
-  commandMapList.querySelectorAll(".command-drop-zone").forEach((zone) => {
+  const dropZones = state.dragDropZones.length
+    ? state.dragDropZones
+    : Array.from(commandMapList.querySelectorAll(".command-drop-zone"));
+  dropZones.forEach((zone) => {
     zone.classList.toggle("is-drop-target", Number(zone.dataset.targetIndex) === targetIndex);
   });
 
-  commandMapList.querySelectorAll(".command-flow-segment").forEach((segment) => {
+  const dragSegments = state.dragSegments.length
+    ? state.dragSegments
+    : Array.from(commandMapList.querySelectorAll(".command-flow-segment"));
+  dragSegments.forEach((segment) => {
     const order = Number(segment.dataset.order);
     segment.classList.toggle("is-drop-before", order === targetIndex);
     segment.classList.toggle("is-drop-after", order + 1 === targetIndex);
@@ -1340,6 +3868,26 @@ function getDragTargetIndexFromEvent(event) {
 }
 
 function getDragTargetIndexFromPoint(clientX, clientY) {
+  const thresholds = state.dragThresholds;
+  const containerRect = state.dragContainerRect || commandMapList.getBoundingClientRect();
+  const verticalTolerance = 160;
+
+  if (thresholds.length) {
+    if (clientY < containerRect.top - verticalTolerance || clientY > containerRect.bottom + verticalTolerance) {
+      return null;
+    }
+
+    const contentX = clientX - containerRect.left + commandMapList.scrollLeft;
+    for (const threshold of thresholds) {
+      if (contentX <= threshold.centerX) {
+        return threshold.order;
+      }
+    }
+
+    const lastThreshold = thresholds[thresholds.length - 1];
+    return lastThreshold ? lastThreshold.order + 1 : null;
+  }
+
   const target = document.elementFromPoint(clientX, clientY);
   if (!target) {
     return null;
@@ -1352,7 +3900,7 @@ function getDragTargetIndexFromPoint(clientX, clientY) {
 }
 
 function autoScrollCommandMap(clientX) {
-  const rect = commandMapList.getBoundingClientRect();
+  const rect = state.dragContainerRect || commandMapList.getBoundingClientRect();
   const edge = 72;
   const speed = 18;
 
@@ -1368,8 +3916,275 @@ function moveDragPreview(clientX, clientY) {
     return;
   }
 
-  state.dragPreviewEl.style.left = `${clientX - state.dragOffsetX}px`;
-  state.dragPreviewEl.style.top = `${clientY - state.dragOffsetY}px`;
+  const nextX = clientX - state.dragOffsetX;
+  const nextY = clientY - state.dragOffsetY;
+  state.dragPreviewEl.style.transform = `translate3d(${nextX}px, ${nextY}px, 0) scale(1.01)`;
+}
+
+function refreshDragGeometry() {
+  const containerRect = commandMapList.getBoundingClientRect();
+  const scrollLeft = commandMapList.scrollLeft;
+  const dragSegments = state.dragSegments.length
+    ? state.dragSegments
+    : Array.from(commandMapList.querySelectorAll(".command-flow-segment"));
+
+  state.dragContainerRect = containerRect;
+  state.dragThresholds = dragSegments
+    .map((segment) => {
+      const order = Number(segment.dataset.order);
+      if (!order) {
+        return null;
+      }
+
+      const rect = segment.getBoundingClientRect();
+      return {
+        order,
+        centerX: rect.left - containerRect.left + scrollLeft + rect.width / 2,
+      };
+    })
+    .filter(Boolean)
+    .sort((first, second) => first.order - second.order);
+}
+
+function scheduleDragUpdate(clientX, clientY) {
+  state.dragClientX = clientX;
+  state.dragClientY = clientY;
+
+  if (state.dragMoveFrame) {
+    return;
+  }
+
+  state.dragMoveFrame = requestAnimationFrame(() => {
+    state.dragMoveFrame = 0;
+
+    if (!state.draggingOrder) {
+      return;
+    }
+
+    moveDragPreview(state.dragClientX, state.dragClientY);
+    autoScrollCommandMap(state.dragClientX);
+
+    const targetIndex = getDragTargetIndexFromPoint(state.dragClientX, state.dragClientY);
+    if (targetIndex) {
+      updateDragTarget(targetIndex);
+    }
+  });
+}
+
+function getDropAnimationPosition(targetIndex, previewEl) {
+  const previewRect = previewEl?.getBoundingClientRect();
+  if (!previewRect) {
+    return null;
+  }
+
+  const zone = commandMapList.querySelector(`.command-drop-zone[data-target-index="${targetIndex}"]`);
+  if (zone) {
+    const zoneRect = zone.getBoundingClientRect();
+    const alignedTopSegment =
+      commandMapList.querySelector(`.command-flow-segment[data-order="${targetIndex}"]`) ||
+      commandMapList.querySelector(`.command-flow-segment[data-order="${Math.max(1, targetIndex - 1)}"]`);
+    const alignedTop = alignedTopSegment?.getBoundingClientRect().top ?? previewRect.top;
+    return {
+      left: zoneRect.left + zoneRect.width / 2 - previewRect.width / 2,
+      top: alignedTop,
+    };
+  }
+
+  const targetSegment = commandMapList.querySelector(`.command-flow-segment[data-order="${targetIndex}"]`);
+  if (targetSegment) {
+    const rect = targetSegment.getBoundingClientRect();
+    return {
+      left: rect.left,
+      top: rect.top,
+    };
+  }
+
+  return {
+    left: previewRect.left,
+    top: previewRect.top,
+  };
+}
+
+function animateDropPreviewToTarget(previewEl, targetIndex) {
+  if (!previewEl || !targetIndex) {
+    return Promise.resolve();
+  }
+
+  const destination = getDropAnimationPosition(targetIndex, previewEl);
+  if (!destination) {
+    return Promise.resolve();
+  }
+
+  previewEl.style.transition = "left 220ms cubic-bezier(0.22, 1, 0.36, 1), top 220ms cubic-bezier(0.22, 1, 0.36, 1)";
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    const finish = () => {
+      if (resolved) {
+        return;
+      }
+      resolved = true;
+      previewEl.style.transition = "";
+      resolve();
+    };
+
+    previewEl.addEventListener("transitionend", finish, { once: true });
+    setTimeout(finish, 260);
+
+    requestAnimationFrame(() => {
+      previewEl.style.left = `${destination.left}px`;
+      previewEl.style.top = `${destination.top}px`;
+    });
+  });
+}
+
+function buildOptimisticReorderResult(roadmap, order, targetIndex) {
+  if (!roadmap?.events?.length || !order || !targetIndex) {
+    return null;
+  }
+
+  const events = roadmap.events.map((event) => ({ ...event }));
+  const sourceIndex = events.findIndex((event) => Number(event.order) === Number(order));
+  if (sourceIndex < 0) {
+    return null;
+  }
+
+  const [draggedEvent] = events.splice(sourceIndex, 1);
+  const focusClientKey = String(draggedEvent?.clientKey || "").trim();
+  let insertionIndex = Math.max(0, Math.min(events.length, Number(targetIndex) - 1));
+  if (sourceIndex < insertionIndex) {
+    insertionIndex -= 1;
+  }
+  insertionIndex = Math.max(0, Math.min(events.length, insertionIndex));
+  events.splice(insertionIndex, 0, draggedEvent);
+
+  return {
+    focusClientKey,
+    focusOrder: insertionIndex + 1,
+    roadmap: {
+      ...roadmap,
+      events: events.map((event, index) => ({
+        ...event,
+        order: index + 1,
+      })),
+    },
+  };
+}
+
+function buildOptimisticDirectionalMoveResult(roadmap, order, direction) {
+  const events = roadmap?.events ?? [];
+  if (!events.length || !order || !direction) {
+    return null;
+  }
+
+  const sourceIndex = events.findIndex((event) => Number(event.order) === Number(order));
+  if (sourceIndex < 0) {
+    return null;
+  }
+
+  const step = direction === "up" ? -1 : direction === "down" ? 1 : 0;
+  const targetIndex = sourceIndex + step;
+  if (!step || targetIndex < 0 || targetIndex >= events.length) {
+    return null;
+  }
+
+  const nextEvents = events.map((event) => ({ ...event }));
+  const currentEvent = nextEvents[sourceIndex];
+  const adjacentEvent = nextEvents[targetIndex];
+  nextEvents[sourceIndex] = adjacentEvent;
+  nextEvents[targetIndex] = currentEvent;
+
+  return {
+    focusClientKey: String(currentEvent?.clientKey || "").trim(),
+    focusOrder: targetIndex + 1,
+    roadmap: {
+      ...roadmap,
+      events: nextEvents.map((event, index) => ({
+        ...event,
+        order: index + 1,
+      })),
+    },
+  };
+}
+
+function applyOptimisticCommandMapReorder(optimistic, layoutSnapshot = null) {
+  if (!optimistic?.roadmap) {
+    return;
+  }
+
+  state.roadmap = optimistic.roadmap;
+  state.commandMapFocusOrder = resolveCommandMapFocusByClientKey(
+    optimistic.roadmap,
+    optimistic.focusClientKey,
+    optimistic.focusOrder ?? state.commandMapFocusOrder
+  );
+  renderCommandMap({ layoutSnapshot });
+  if (state.activeTab === "assist") {
+    renderAssistExecutionMap();
+  }
+}
+
+async function commitCardReorder(order, targetIndex, layoutSnapshot = null) {
+  const previousRoadmap = state.roadmap;
+  const previousFocus = state.commandMapFocusOrder;
+  const optimistic = buildOptimisticReorderResult(previousRoadmap, order, targetIndex);
+
+  try {
+    setBusy("Reordenando");
+    if (optimistic) {
+      applyOptimisticCommandMapReorder(optimistic, layoutSnapshot);
+    }
+
+    const roadmap = await invoke("reorder_block", {
+      order,
+      targetIndex,
+    });
+
+    state.roadmap = decorateRoadmapForClient(roadmap, optimistic?.roadmap ?? previousRoadmap);
+    state.library.dirty = false;
+    state.commandMapFocusOrder = resolveCommandMapFocusByClientKey(
+      state.roadmap,
+      optimistic?.focusClientKey,
+      optimistic?.focusOrder ?? previousFocus
+    );
+    if (state.activeTab === "commands" && state.commandMapFocusOrder) {
+      requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
+    }
+    setBusy("Pronto");
+    setMessage("Bloco reordenado com sucesso.", "success");
+  } catch (error) {
+    if (previousRoadmap) {
+      state.roadmap = previousRoadmap;
+      state.commandMapFocusOrder = previousFocus;
+      renderCommandMap();
+      renderAssistExecutionMap();
+    }
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+}
+
+async function moveCommandMapCardByStep(order, direction) {
+  const visibleOrders = getCommandMapOrders();
+  const sourceIndex = visibleOrders.indexOf(Number(order));
+  const step = direction === "up" ? -1 : direction === "down" ? 1 : 0;
+  if (sourceIndex < 0 || !step) {
+    return;
+  }
+
+  const targetVisibleIndex = sourceIndex + step;
+  if (targetVisibleIndex < 0 || targetVisibleIndex >= visibleOrders.length) {
+    return;
+  }
+
+  const neighborOrder = Number(visibleOrders[targetVisibleIndex]);
+  if (!Number.isFinite(neighborOrder) || neighborOrder <= 0) {
+    return;
+  }
+
+  const layoutSnapshot = captureCommandMapCardPositions();
+  const targetIndex = direction === "up" ? neighborOrder : neighborOrder + 1;
+  await commitCardReorder(order, targetIndex, layoutSnapshot);
 }
 
 function beginCardDrag(handle, pointerEvent) {
@@ -1381,11 +4196,18 @@ function beginCardDrag(handle, pointerEvent) {
   const order = Number(handle.dataset.order);
   const rect = segment.getBoundingClientRect();
   const preview = segment.cloneNode(true);
+  const dragZoom = Math.max(0.01, Number(state.commandMapZoom) || 1);
+  const startX = Math.round(rect.left);
+  const startY = Math.round(rect.top);
 
   preview.classList.remove("is-drop-before", "is-drop-after");
   preview.classList.add("command-drag-preview");
-  preview.style.width = `${rect.width}px`;
-  preview.style.height = `${rect.height}px`;
+  preview.style.zoom = String(dragZoom);
+  preview.style.width = `${rect.width / dragZoom}px`;
+  preview.style.height = `${rect.height / dragZoom}px`;
+  preview.style.left = "0px";
+  preview.style.top = "0px";
+  preview.style.transform = `translate3d(${startX}px, ${startY}px, 0) scale(1.01)`;
 
   document.body.appendChild(preview);
 
@@ -1394,10 +4216,12 @@ function beginCardDrag(handle, pointerEvent) {
   state.dragPreviewEl = preview;
   state.dragOffsetX = pointerEvent.clientX - rect.left;
   state.dragOffsetY = pointerEvent.clientY - rect.top;
+  state.dragDropZones = Array.from(commandMapList.querySelectorAll(".command-drop-zone"));
+  state.dragSegments = Array.from(commandMapList.querySelectorAll(".command-flow-segment"));
+  refreshDragGeometry();
 
   segment.classList.add("is-drag-source");
   builderShell?.classList.add("is-map-dragging");
-  moveDragPreview(pointerEvent.clientX, pointerEvent.clientY);
 
   if (typeof handle.setPointerCapture === "function") {
     handle.setPointerCapture(pointerEvent.pointerId);
@@ -1417,16 +4241,15 @@ function finishCardDrag(shouldDrop = true) {
 
   const order = state.draggingOrder;
   const targetIndex = state.dragTargetIndex;
-  clearDragState();
-
   if (shouldDrop && targetIndex) {
-    runMutation("Bloco reordenado", () =>
-      invoke("reorder_block", {
-        order,
-        targetIndex,
-      })
-    );
+    const layoutSnapshot = captureCommandMapCardPositions();
+    const commitPromise = commitCardReorder(order, targetIndex, layoutSnapshot);
+    releaseDragInteraction();
+    void commitPromise;
+    return;
   }
+
+  clearDragState();
 }
 
 function createInsertPanelState(targetOrder, position) {
@@ -1446,14 +4269,23 @@ function createInsertPanelState(targetOrder, position) {
     timeout: 10,
     confidence: 0.8,
     searchProfile: "balanced",
+    searchAreaMode: "target_window",
+    searchAreaX: 0,
+    searchAreaY: 0,
+    searchAreaWidth: 0,
+    searchAreaHeight: 0,
+    recognitionTab: "base",
     windowTitle: "",
     recognitionClickMode: "single",
     failureAction: "parar",
     failureBlock: "",
+    failureSequence: "pagina_2",
     retryCount: 3,
     retryInterval: 1,
     successAction: "continuar",
     successBlock: "",
+    successSequence: "pagina_2",
+    successSequenceDelay: 0,
     chromeName: "Chrome / Elemento HTML",
     chromeHtml: "",
     chromeAnalysis: null,
@@ -1467,13 +4299,25 @@ function createInsertPanelState(targetOrder, position) {
     chromePressAfter: "",
     chromeSuccessAction: "continuar",
     chromeSuccessBlock: "",
+    chromeSuccessSequence: "pagina_2",
+    chromeSuccessSequenceDelay: 0,
     chromeFailureAction: "parar",
     chromeFailureBlock: "",
+    chromeFailureSequence: "pagina_2",
+    chromeFailureSequenceDelay: 0,
+    failureSequenceDelay: 0,
     chromeRetryCount: 1,
     chromeRetryInterval: 0.5,
     chromeClearBefore: true,
     chromeFallbackVisual: false,
     chromeFallbackImage: "",
+    openUrl: "",
+    openBrowser: "padrao",
+    openMode: "nova_janela",
+    openWait: 3,
+    programPath: "",
+    programParams: "",
+    programWait: 2,
     delay: 0.3,
     workbook: workbookId,
     sheet: workbookSheetsFor(workbookId)[0]?.name ?? "",
@@ -1490,6 +4334,21 @@ function setBusy(label) {
 function parseNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeTransitionDelay(value) {
+  return Math.max(0, parseNumber(value, 0));
+}
+
+function formatTransitionDelayValue(value) {
+  const normalized = normalizeTransitionDelay(value);
+  return Number.isInteger(normalized) ? String(normalized) : String(normalized);
+}
+
+function transitionSequenceDelayArg(action, delayValue) {
+  return ["ir_para_sequencia", "ir_para_bloco"].includes(String(action || "").trim())
+    ? normalizeTransitionDelay(delayValue)
+    : null;
 }
 
 function parseBoolean(value, fallback = true) {
@@ -1781,7 +4640,12 @@ function renderChromeBlockFields(event, mode = "card", currentOrder = null) {
             <span>Ao concluir</span>
             <select ${fieldAttr}="chromeSuccessAction">
               <option value="continuar" ${String(details.ao_sucesso ?? "continuar") === "continuar" ? "selected" : ""}>Continuar</option>
+              <option value="ir_para_sequencia" ${String(details.ao_sucesso ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para pagina</option>
               <option value="ir_para_bloco" ${String(details.ao_sucesso ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
+            </select>
+            <span>Pagina apos sucesso</span>
+            <select ${fieldAttr}="chromeSuccessSequence">
+              ${renderSequenceSuggestionsOptions(details.sequencia_sucesso ?? "pagina_2", "Escolha uma pagina")}
             </select>
           </label>
           <label>
@@ -1790,13 +4654,19 @@ function renderChromeBlockFields(event, mode = "card", currentOrder = null) {
               ${blockTargetOptions(details.bloco_sucesso ?? "", currentOrder, "Escolha um bloco")}
             </select>
           </label>
+          <input ${fieldAttr}="chromeSuccessSequenceDelay" type="hidden" value="${escapeHtml(formatTransitionDelayValue(details.atraso_antes_sequencia_sucesso ?? 0))}" />
           <label>
             <span>Falha</span>
             <select ${fieldAttr}="chromeFailureAction">
               <option value="parar" ${String(details.ao_falhar ?? "parar") === "parar" ? "selected" : ""}>Parar</option>
               <option value="continuar" ${String(details.ao_falhar ?? "") === "continuar" ? "selected" : ""}>Continuar</option>
               <option value="tentar_novamente" ${String(details.ao_falhar ?? "") === "tentar_novamente" ? "selected" : ""}>Tentar novamente</option>
+              <option value="ir_para_sequencia" ${String(details.ao_falhar ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para pagina</option>
               <option value="ir_para_bloco" ${String(details.ao_falhar ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
+            </select>
+            <span>Pagina em caso de falha</span>
+            <select ${fieldAttr}="chromeFailureSequence">
+              ${renderSequenceSuggestionsOptions(details.sequencia_falha ?? "pagina_2", "Escolha uma pagina")}
             </select>
           </label>
           <label>
@@ -1805,6 +4675,7 @@ function renderChromeBlockFields(event, mode = "card", currentOrder = null) {
               ${blockTargetOptions(details.bloco_falha ?? "", currentOrder, "Escolha um bloco")}
             </select>
           </label>
+          <input ${fieldAttr}="chromeFailureSequenceDelay" type="hidden" value="${escapeHtml(formatTransitionDelayValue(details.atraso_antes_sequencia_falha ?? 0))}" />
           <label>
             <span>Tentativas</span>
             <input ${fieldAttr}="chromeRetryCount" type="number" min="1" step="1" value="${escapeHtml(details.quantidade_tentativas ?? 1)}" />
@@ -1876,8 +4747,12 @@ function buildChromeDetailsFromAnalysisAndValues(analysis, values) {
     fallback_imagem: values.chromeFallbackImage || "",
     ao_sucesso: values.chromeSuccessAction || "continuar",
     bloco_sucesso: optionalPositiveInt(values.chromeSuccessBlock),
+    sequencia_sucesso: optionalSequenceValue(values.chromeSuccessSequence),
+    atraso_antes_sequencia_sucesso: normalizeTransitionDelay(values.chromeSuccessSequenceDelay),
     ao_falhar: values.chromeFailureAction || "parar",
     bloco_falha: optionalPositiveInt(values.chromeFailureBlock),
+    sequencia_falha: optionalSequenceValue(values.chromeFailureSequence),
+    atraso_antes_sequencia_falha: normalizeTransitionDelay(values.chromeFailureSequenceDelay),
     quantidade_tentativas: Math.max(1, Math.trunc(Number(values.chromeRetryCount) || 1)),
     intervalo_tentativas: Number(values.chromeRetryInterval) || 0,
   };
@@ -1962,8 +4837,10 @@ function composerChromeValues() {
     chromePressAfter: chromePressAfterInput?.value || "",
     chromeSuccessAction: chromeSuccessActionInput?.value || "continuar",
     chromeSuccessBlock: chromeSuccessBlockInput?.value || "",
+    chromeSuccessSequence: chromeSuccessSequenceInput?.value || "pagina_2",
     chromeFailureAction: chromeFailureActionInput?.value || "parar",
     chromeFailureBlock: chromeFailureBlockInput?.value || "",
+    chromeFailureSequence: chromeFailureSequenceInput?.value || "pagina_2",
     chromeRetryCount: Math.max(1, Math.trunc(parseNumber(chromeRetryCountInput?.value, 1))),
     chromeRetryInterval: parseNumber(chromeRetryIntervalInput?.value, 0.5),
     chromeClearBefore: Boolean(chromeClearBeforeInput?.checked),
@@ -2054,42 +4931,678 @@ function availableBlockTargets(currentOrder = null) {
   });
 }
 
-function blockTargetLabel(event) {
+function getCommandMapEventByOrder(order, roadmap = state.roadmap) {
+  return (roadmap?.events ?? []).find((item) => Number(item.order) === Number(order)) || null;
+}
+
+function getCommandMapBlockLocalNumber(order, sequenceName, roadmap = state.roadmap) {
+  const normalizedSequence = normalizeSequenceName(sequenceName);
+  const pageEvents = getCommandMapEvents(normalizedSequence, roadmap);
+  const targetIndex = pageEvents.findIndex((event) => Number(event?.order) === Number(order));
+  return targetIndex >= 0 ? targetIndex + 1 : null;
+}
+
+function blockTargetLabel(event, options = {}) {
+  const { includePage = true, includeOrder = true } = options;
   const order = Number(event?.order);
+  const sequence = normalizeSequenceName(event?.sequence || event?.sequencia);
+  const pageLabel = getCommandMapPageLabel(sequence);
+  const localNumber = getCommandMapBlockLocalNumber(order, sequence);
   const title = String(event?.title || event?.type || "Bloco").trim();
-  return `Bloco ${Number.isFinite(order) ? order : "?"} - ${title}`;
+  const labelParts = [];
+  if (includePage) {
+    labelParts.push(pageLabel);
+  }
+  labelParts.push(`Bloco ${localNumber || (Number.isFinite(order) ? order : "?")}`);
+  if (title) {
+    labelParts.push(title);
+  }
+
+  let label = labelParts.join(" - ");
+  if (includeOrder && Number.isFinite(order)) {
+    label += ` (#${order})`;
+  }
+  return label;
+}
+
+function blockTargetLabelByOrder(order, options = {}) {
+  const event = getCommandMapEventByOrder(order);
+  if (event) {
+    return blockTargetLabel(event, options);
+  }
+  const numericOrder = Number(order);
+  return Number.isFinite(numericOrder) ? `Bloco ${numericOrder}` : "Bloco";
 }
 
 function blockTargetOptions(selectedValue = "", currentOrder = null, placeholder = "Escolha um bloco") {
   const selected = String(selectedValue ?? "").trim();
   const options = [`<option value="">${escapeHtml(placeholder)}</option>`];
+
+  const groupedTargets = new Map();
   for (const event of availableBlockTargets(currentOrder)) {
-    const order = Number(event.order);
-    const selectedAttr = String(order) === selected ? " selected" : "";
-    options.push(
-      `<option value="${escapeHtml(order)}"${selectedAttr}>${escapeHtml(blockTargetLabel(event))}</option>`
-    );
+    const sequence = normalizeSequenceName(event?.sequence || event?.sequencia);
+    if (!groupedTargets.has(sequence)) {
+      groupedTargets.set(sequence, []);
+    }
+    groupedTargets.get(sequence).push(event);
+  }
+
+  for (const page of getCommandMapPageDefinitions()) {
+    const events = groupedTargets.get(page.sequence) || [];
+    if (!events.length) {
+      continue;
+    }
+    options.push(`<optgroup label="${escapeHtml(page.label)}">`);
+    for (const event of events) {
+      const order = Number(event.order);
+      const selectedAttr = String(order) === selected ? " selected" : "";
+      options.push(
+        `<option value="${escapeHtml(order)}"${selectedAttr}>${escapeHtml(blockTargetLabel(event, { includePage: false, includeOrder: true }))}</option>`
+      );
+    }
+    options.push(`</optgroup>`);
+    groupedTargets.delete(page.sequence);
+  }
+
+  for (const [sequence, events] of groupedTargets.entries()) {
+    options.push(`<optgroup label="${escapeHtml(getCommandMapPageLabel(sequence))}">`);
+    for (const event of events) {
+      const order = Number(event.order);
+      const selectedAttr = String(order) === selected ? " selected" : "";
+      options.push(
+        `<option value="${escapeHtml(order)}"${selectedAttr}>${escapeHtml(blockTargetLabel(event, { includePage: false, includeOrder: true }))}</option>`
+      );
+    }
+    options.push(`</optgroup>`);
   }
   return options.join("");
 }
 
-function renderSuccessFlowFields(fieldAttr, successAction = "continuar", successBlock = "", currentOrder = null) {
+function renderActionTargetFields(
+  fieldAttr,
+  actionFieldName,
+  actionValue,
+  sequenceFieldName,
+  sequenceValue,
+  blockFieldName,
+  blockValue,
+  currentOrder,
+  labels = {},
+) {
+  const action = String(actionValue || "").trim();
+  const sequenceLabel = labels.sequenceLabel || "Escolha a pagina";
+  const blockLabel = labels.blockLabel || "Escolha o bloco";
+  const sequencePlaceholder = labels.sequencePlaceholder || "Escolha uma pagina";
+  const blockPlaceholder = labels.blockPlaceholder || "Escolha um bloco";
+  const delayFieldName = labels.delayFieldName || "";
+  const delayValue = normalizeTransitionDelay(labels.delayValue ?? 0);
+  const delayLabel = labels.delayLabel || "Esperar antes de abrir";
+  const showSequence = action === "ir_para_sequencia";
+  const showBlock = action === "ir_para_bloco";
+
+  return `
+    <div
+      class="action-target-field"
+      data-action-visibility-source="${escapeHtml(actionFieldName)}"
+      data-action-visibility-kind="sequence"
+      ${showSequence ? "" : "hidden"}
+    >
+      <label>
+        <span>${escapeHtml(sequenceLabel)}</span>
+        <select ${fieldAttr}="${escapeHtml(sequenceFieldName)}">
+          ${renderSequenceSuggestionsOptions(sequenceValue || "pagina_2", sequencePlaceholder)}
+        </select>
+      </label>
+      ${delayFieldName ? `
+      <label>
+        <span>${escapeHtml(delayLabel)}</span>
+        <input
+          ${fieldAttr}="${escapeHtml(delayFieldName)}"
+          type="number"
+          min="0"
+          step="0.1"
+          value="${escapeHtml(formatTransitionDelayValue(delayValue))}"
+        />
+      </label>
+      ` : ""}
+    </div>
+    <div
+      class="action-target-field"
+      data-action-visibility-source="${escapeHtml(actionFieldName)}"
+      data-action-visibility-kind="block"
+      ${showBlock ? "" : "hidden"}
+    >
+      <label>
+        <span>${escapeHtml(blockLabel)}</span>
+        <select ${fieldAttr}="${escapeHtml(blockFieldName)}">
+          ${blockTargetOptions(blockValue, currentOrder, blockPlaceholder)}
+        </select>
+      </label>
+      ${delayFieldName ? `
+        <input
+          ${fieldAttr}="${escapeHtml(delayFieldName)}"
+          type="hidden"
+          value="${escapeHtml(formatTransitionDelayValue(delayValue))}"
+        />
+        <p class="action-target-hint">O tempo deste pulo fica na linha azul do caminho.</p>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderSuccessFlowFields(
+  fieldAttr,
+  successAction = "continuar",
+  successBlock = "",
+  successSequence = "",
+  successSequenceDelay = 0,
+  currentOrder = null,
+) {
   const action = String(successAction || "continuar");
   const block = String(successBlock ?? "");
+  const sequence = String(successSequence ?? "");
   return `
     <label>
       <span>Ao concluir</span>
       <select ${fieldAttr}="successAction">
         <option value="continuar" ${action === "continuar" ? "selected" : ""}>Continuar</option>
+        <option value="ir_para_sequencia" ${action === "ir_para_sequencia" ? "selected" : ""}>Ir para pagina</option>
         <option value="ir_para_bloco" ${action === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
       </select>
     </label>
-    <label>
-      <span>Bloco apos sucesso</span>
-      <select ${fieldAttr}="successBlock">
-        ${blockTargetOptions(block, currentOrder, "Escolha um bloco")}
-      </select>
-    </label>
+    ${renderActionTargetFields(
+      fieldAttr,
+      "successAction",
+      action,
+      "successSequence",
+      sequence,
+      "successBlock",
+      block,
+      currentOrder,
+      {
+        sequenceLabel: "Abrir esta pagina",
+        blockLabel: "Abrir este bloco",
+        delayFieldName: "successSequenceDelay",
+        delayValue: successSequenceDelay,
+        delayLabel: "Esperar antes de ir (s)",
+      }
+    )}
+  `;
+}
+
+function resolveDestinationPage(preferredValue = "") {
+  const pages = getCommandMapPageDefinitions();
+  if (!pages.length) {
+    return "";
+  }
+
+  const normalizedPreferred = normalizeSequenceName(preferredValue || "");
+  if (pages.some((page) => page.sequence === normalizedPreferred)) {
+    return normalizedPreferred;
+  }
+
+  const currentSequence = normalizeSequenceName(currentSequenceName());
+  return pages.find((page) => page.sequence !== currentSequence)?.sequence || pages[0]?.sequence || "";
+}
+
+function applyActionVisibilityState(container) {
+  if (!container) {
+    return;
+  }
+
+  container.querySelectorAll("[data-action-visibility-source]").forEach((wrapper) => {
+    const source = String(wrapper.dataset.actionVisibilitySource || "").trim();
+    const kind = String(wrapper.dataset.actionVisibilityKind || "").trim();
+    if (!source || !kind) {
+      return;
+    }
+
+    const control = container.querySelector(
+      `[data-tree-field="${source}"], [data-insert-field="${source}"], [data-field="${source}"]`
+    );
+    const action = String(control?.value || "").trim();
+    const shouldShow =
+      (kind === "sequence" && action === "ir_para_sequencia") ||
+      (kind === "block" && action === "ir_para_bloco");
+
+    wrapper.hidden = !shouldShow;
+    wrapper.classList.toggle("is-visible", shouldShow);
+  });
+}
+
+function normalizeRecognitionTreeTab(tabName) {
+  const normalized = String(tabName || "base").trim().toLowerCase();
+  return ["base", "preview", "action", "advanced"].includes(normalized) ? normalized : "base";
+}
+
+function normalizeSpreadsheetTreeTab(tabName) {
+  const normalized = String(tabName || "planilha").trim().toLowerCase();
+  return ["planilha", "fluxo"].includes(normalized) ? normalized : "planilha";
+}
+
+function applyRecognitionTreeTabState(card, tabName) {
+  if (!card) {
+    return;
+  }
+
+  const activeTab = normalizeRecognitionTreeTab(tabName);
+  card.querySelectorAll("[data-recognition-tab-target]").forEach((button) => {
+    const isActive = button.dataset.recognitionTabTarget === activeTab;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+
+  card.querySelectorAll("[data-recognition-tab-panel]").forEach((panel) => {
+    const isActive = panel.dataset.recognitionTabPanel === activeTab;
+    panel.classList.toggle("is-active", isActive);
+    panel.hidden = !isActive;
+  });
+}
+
+function applySpreadsheetTreeTabState(card, tabName) {
+  if (!card) {
+    return;
+  }
+
+  const activeTab = normalizeSpreadsheetTreeTab(tabName);
+  card.querySelectorAll("[data-spreadsheet-tab-target]").forEach((button) => {
+    const isActive = button.dataset.spreadsheetTabTarget === activeTab;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+
+  card.querySelectorAll("[data-spreadsheet-tab-panel]").forEach((panel) => {
+    const isActive = panel.dataset.spreadsheetTabPanel === activeTab;
+    panel.classList.toggle("is-active", isActive);
+    panel.hidden = !isActive;
+  });
+}
+
+function setRecognitionTreeTab(order, tabName) {
+  const activeTab = normalizeRecognitionTreeTab(tabName);
+  state.recognitionTreeTabs = {
+    ...state.recognitionTreeTabs,
+    [order]: activeTab,
+  };
+
+  commandMapList.querySelectorAll(`.command-tree-card[data-order="${order}"]`).forEach((card) => {
+    applyRecognitionTreeTabState(card, activeTab);
+    hydrateRecognitionPreviewCards(card);
+  });
+  scheduleCommandConnectorLayout();
+}
+
+function setSpreadsheetTreeTab(order, tabName) {
+  const activeTab = normalizeSpreadsheetTreeTab(tabName);
+  state.spreadsheetTreeTabs = {
+    ...state.spreadsheetTreeTabs,
+    [order]: activeTab,
+  };
+
+  commandMapList.querySelectorAll(`.command-tree-card[data-order="${order}"]`).forEach((card) => {
+    applySpreadsheetTreeTabState(card, activeTab);
+  });
+  scheduleCommandConnectorLayout();
+}
+
+function animateExpandedTreeCardOpen() {
+  const panel = commandMapList.querySelector(".command-card-overlay-panel");
+  const backdrop = commandMapList.querySelector(".command-card-overlay-backdrop");
+  if (!panel) {
+    return;
+  }
+
+  const origin = state.expandedTreeCardOrigin;
+  const panelRect = panel.getBoundingClientRect();
+  const panelCenterX = panelRect.left + panelRect.width / 2;
+  const panelCenterY = panelRect.top + panelRect.height / 2;
+
+  let startTransform = "perspective(1200px) rotateX(-8deg) scale(0.92)";
+  if (origin) {
+    const originCenterX = origin.left + origin.width / 2;
+    const originCenterY = origin.top + origin.height / 2;
+    const deltaX = originCenterX - panelCenterX;
+    const deltaY = originCenterY - panelCenterY;
+    const scaleX = Math.max(0.34, Math.min(1, origin.width / panelRect.width));
+    const scaleY = Math.max(0.28, Math.min(1, origin.height / panelRect.height));
+    startTransform = `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`;
+  }
+
+  backdrop?.animate(
+    [
+      { opacity: 0 },
+      { opacity: 1 },
+    ],
+    {
+      duration: 220,
+      easing: "ease-out",
+      fill: "both",
+    }
+  );
+
+  panel.animate(
+    [
+      {
+        opacity: 0.78,
+        transform: startTransform,
+      },
+      {
+        opacity: 1,
+        transform: "translate(0px, 0px) scale(1, 1)",
+      },
+    ],
+    {
+      duration: 260,
+      easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+      fill: "both",
+    }
+  );
+}
+
+function openExpandedTreeCard(order, sourceElement = null) {
+  const sourceCard =
+    sourceElement?.closest(".command-tree-card") ||
+    commandMapList.querySelector(`.command-tree-card[data-order="${order}"]`);
+  const sourceRect = sourceCard?.getBoundingClientRect();
+  state.expandedTreeCardOrigin = sourceRect
+    ? {
+        left: sourceRect.left,
+        top: sourceRect.top,
+        width: sourceRect.width,
+        height: sourceRect.height,
+      }
+    : null;
+  state.expandedTreeCardOrder = Number(order) || null;
+  builderShell?.classList.add("has-command-card-overlay");
+  renderCommandMap();
+  requestAnimationFrame(() => {
+    animateExpandedTreeCardOpen();
+  });
+}
+
+function closeExpandedTreeCard() {
+  state.expandedTreeCardOrder = null;
+  state.expandedTreeCardOrigin = null;
+  builderShell?.classList.remove("has-command-card-overlay");
+  renderCommandMap();
+}
+
+function renderRecognitionTreeHiddenFields(details = {}, currentOrder = null) {
+  const clickMode = recognitionClickModeFromDetails(details);
+  const successAction = String(details.ao_sucesso ?? "continuar");
+  const successBlock = String(details.bloco_sucesso ?? "");
+  const failureAction = String(details.ao_nao_encontrar ?? "parar");
+  const failureBlock = String(details.bloco_nao_encontrar ?? "");
+  const failureSequence = String(details.sequencia_nao_encontrar ?? "");
+  return `
+    <input data-tree-field="imagePath" type="hidden" value="${escapeHtml(details.imagem ?? "")}" />
+    <input data-tree-field="timeout" type="hidden" value="${escapeHtml(details.timeout ?? 10)}" />
+    <input data-tree-field="confidence" type="hidden" value="${escapeHtml(details.confianca ?? 0.8)}" />
+    <input data-tree-field="searchProfile" type="hidden" value="${escapeHtml(normalizeRecognitionProfile(details.perfil_busca, "balanced"))}" />
+    <input data-tree-field="windowTitle" type="hidden" value="${escapeHtml(details.janela_alvo ?? "")}" />
+    <input data-tree-field="clickOnFind" type="hidden" value="${escapeHtml(clickMode)}" />
+    <input data-tree-field="successAction" type="hidden" value="${escapeHtml(successAction)}" />
+    <input data-tree-field="successBlock" type="hidden" value="${escapeHtml(successBlock)}" />
+    <input data-tree-field="failureAction" type="hidden" value="${escapeHtml(failureAction)}" />
+    <input data-tree-field="failureBlock" type="hidden" value="${escapeHtml(failureBlock)}" />
+    <input data-tree-field="failureSequence" type="hidden" value="${escapeHtml(failureSequence)}" />
+    <input data-tree-field="retryCount" type="hidden" value="${escapeHtml(details.quantidade_tentativas ?? 1)}" />
+    <input data-tree-field="retryInterval" type="hidden" value="${escapeHtml(details.intervalo_tentativas ?? 1)}" />
+    <input data-tree-field="delay" type="hidden" value="${escapeHtml(details.delay ?? "")}" data-recognition-hidden-order="${escapeHtml(currentOrder ?? "")}" />
+  `;
+}
+
+function renderRecognitionCompactTreeEditor(event) {
+  const details = event.details ?? {};
+  const hasReference = Boolean(normalizeRecognitionImagePath(details.imagem));
+  const tested = isRecognitionTestedForEvent(event);
+  const profileLabel = {
+    fast: "Rapido",
+    balanced: "Equilibrado",
+    precise: "Preciso",
+  }[normalizeRecognitionProfile(details.perfil_busca, "balanced")] || "Equilibrado";
+  const clickLabel = {
+    single: "1 clique",
+    double: "2 cliques",
+    identify: "Identificar",
+  }[recognitionClickModeFromDetails(details)] || "1 clique";
+  const failureLabel = {
+    parar: "Parar",
+    continuar: "Continuar",
+    pular: "Continuar",
+    tentar_novamente: "Tentar novamente",
+    ir_para_bloco: details.bloco_nao_encontrar
+      ? `Ir para ${blockTargetLabelByOrder(details.bloco_nao_encontrar, { includePage: true, includeOrder: false })}`
+      : "Ir para bloco",
+    ir_para_sequencia: `Ir para ${getCommandMapPageLabel(details.sequencia_nao_encontrar || "pagina_2")}`,
+  }[String(details.ao_nao_encontrar ?? "parar")] || "Parar";
+  const windowLabel = normalizeRecognitionWindowTitle(details.janela_alvo || "");
+
+  return `
+    <div class="recognition-compact-body">
+      <div class="recognition-compact-hero">
+        <div class="recognition-compact-statuses">
+          <span class="recognition-compact-state ${hasReference ? "is-ready" : "is-missing"}" data-recognition-state="true">
+            ${hasReference ? "Reconhecimento feito" : "Sem referencia"}
+          </span>
+          <span class="recognition-compact-test ${tested ? "is-tested" : "is-pending"}" data-recognition-test="true">
+            ${tested ? "Testado" : "Nao testado"}
+          </span>
+        </div>
+        <button class="tree-open-button recognition-test-inline" data-tree-action="test-image-recognition" type="button">Testar</button>
+      </div>
+      <div class="recognition-compact-metrics">
+        <span><small>Timeout</small><strong>${escapeHtml(details.timeout ?? 10)}s</strong></span>
+        <span><small>Confianca</small><strong>${escapeHtml(details.confianca ?? 0.8)}</strong></span>
+        <span><small>Perfil</small><strong>${escapeHtml(profileLabel)}</strong></span>
+      </div>
+      <div class="recognition-compact-summary">
+        <span>Ao reconhecer: <strong>${escapeHtml(clickLabel)}</strong></span>
+        <span>Se falhar: <strong>${escapeHtml(failureLabel)}</strong></span>
+        <span>Janela: <strong>${escapeHtml(windowLabel || "Sem janela fixa")}</strong></span>
+      </div>
+      ${renderRecognitionTreeHiddenFields(details, event.order)}
+    </div>
+  `;
+}
+
+function renderRecognitionExpandedTreeEditor(event) {
+  const details = event.details ?? {};
+  const activeRecognitionTab = normalizeRecognitionTreeTab(state.recognitionTreeTabs?.[event.order] ?? "base");
+  return `
+    <div class="field-stack field-stack-recognition recognition-expanded-editor">
+      <div class="recognition-card-tabs has-preview" role="tablist" aria-label="Configuracoes do reconhecimento visual">
+        <button class="recognition-card-tab ${activeRecognitionTab === "base" ? "is-active" : ""}" data-recognition-tab-target="base" type="button" aria-pressed="${activeRecognitionTab === "base" ? "true" : "false"}">Base</button>
+        <button class="recognition-card-tab ${activeRecognitionTab === "preview" ? "is-active" : ""}" data-recognition-tab-target="preview" type="button" aria-pressed="${activeRecognitionTab === "preview" ? "true" : "false"}">Preview</button>
+        <button class="recognition-card-tab ${activeRecognitionTab === "action" ? "is-active" : ""}" data-recognition-tab-target="action" type="button" aria-pressed="${activeRecognitionTab === "action" ? "true" : "false"}">Acao</button>
+        <button class="recognition-card-tab ${activeRecognitionTab === "advanced" ? "is-active" : ""}" data-recognition-tab-target="advanced" type="button" aria-pressed="${activeRecognitionTab === "advanced" ? "true" : "false"}">Avancado</button>
+      </div>
+
+      <div class="recognition-card-panel ${activeRecognitionTab === "base" ? "is-active" : ""}" data-recognition-tab-panel="base" ${activeRecognitionTab === "base" ? "" : "hidden"}>
+        <label class="recognition-reference-field">
+          <span>Referencia visual</span>
+          <div class="capture-inline">
+            <input data-tree-field="imagePath" type="text" value="${escapeHtml(details.imagem ?? "")}" placeholder="imagens/botao_salvar.png, painel_erro.png..." />
+            <button class="tree-open-button" data-tree-action="capture-image" type="button">Capturar nova imagem</button>
+            <button class="tree-open-button" data-tree-action="select-image" type="button">Selecionar referencia</button>
+          </div>
+        </label>
+        <button class="tree-open-button recognition-test-inline" data-tree-action="test-image-recognition" type="button">Testar imagem</button>
+        <div class="tree-inline-fields tree-inline-fields-recognition recognition-panel-grid">
+          <label class="recognition-cell recognition-cell-sm">
+            <span>Timeout</span>
+            <input data-tree-field="timeout" type="number" min="0.1" step="0.5" value="${escapeHtml(details.timeout ?? 10)}" />
+          </label>
+          <label class="recognition-cell recognition-cell-sm">
+            <span>Confianca</span>
+            <input data-tree-field="confidence" type="number" min="0.1" max="1" step="0.05" value="${escapeHtml(details.confianca ?? 0.8)}" />
+          </label>
+          <label class="recognition-cell recognition-cell-sm">
+            <span>Perfil</span>
+            <select data-tree-field="searchProfile">
+              <option value="fast" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "fast" ? "selected" : ""}>Rapido</option>
+              <option value="balanced" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "balanced" ? "selected" : ""}>Equilibrado</option>
+              <option value="precise" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "precise" ? "selected" : ""}>Preciso</option>
+            </select>
+          </label>
+          <label class="recognition-cell recognition-cell-full">
+            <span>Janela deste bloco</span>
+            <select data-tree-field="windowTitle">
+              ${recognitionWindowOptionsMarkup(details.janela_alvo ?? "", "Sem janela fixa neste bloco")}
+            </select>
+          </label>
+          <button class="tree-open-button recognition-window-refresh" data-tree-action="refresh-recognition-windows" type="button">Atualizar janelas</button>
+        </div>
+      </div>
+
+      <div class="recognition-card-panel ${activeRecognitionTab === "preview" ? "is-active" : ""}" data-recognition-tab-panel="preview" ${activeRecognitionTab === "preview" ? "" : "hidden"}>
+        ${renderRecognitionPreviewPanel(details.imagem ?? "")}
+        <p class="recognition-card-helper">Essa e a imagem atualmente salva nesse bloco para o FlowDetect procurar na tela.</p>
+      </div>
+
+      <div class="recognition-card-panel ${activeRecognitionTab === "action" ? "is-active" : ""}" data-recognition-tab-panel="action" ${activeRecognitionTab === "action" ? "" : "hidden"}>
+        <div class="insert-outcome-groups">
+          <section class="insert-outcome-group is-success">
+            <div class="insert-outcome-header">
+              <strong>Se der certo</strong>
+              <p>Quando a imagem for encontrada, escolha o que acontece em seguida.</p>
+            </div>
+            <div class="tree-inline-fields recognition-panel-grid recognition-panel-grid-actions">
+              <label class="recognition-cell recognition-cell-full">
+                <span>Quando encontrar a imagem</span>
+                <select data-tree-field="clickOnFind">
+                  <option value="single" ${recognitionClickModeFromDetails(details) === "single" ? "selected" : ""}>Dar 1 clique</option>
+                  <option value="double" ${recognitionClickModeFromDetails(details) === "double" ? "selected" : ""}>Dar 2 cliques</option>
+                  <option value="identify" ${recognitionClickModeFromDetails(details) === "identify" ? "selected" : ""}>So identificar</option>
+                </select>
+              </label>
+              <label class="recognition-cell recognition-cell-sm">
+                <span>Depois disso</span>
+                <select data-tree-field="successAction">
+                  <option value="continuar" ${String(details.ao_sucesso ?? "continuar") === "continuar" ? "selected" : ""}>Continuar a sequencia</option>
+                  <option value="ir_para_sequencia" ${String(details.ao_sucesso ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para outra pagina</option>
+                  <option value="ir_para_bloco" ${String(details.ao_sucesso ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para outro bloco</option>
+                </select>
+              </label>
+              ${renderActionTargetFields(
+                "data-tree-field",
+                "successAction",
+                details.ao_sucesso ?? "continuar",
+                "successSequence",
+                details.sequencia_sucesso ?? "pagina_2",
+                "successBlock",
+                details.bloco_sucesso ?? "",
+                event.order,
+                {
+                  sequenceLabel: "Abrir esta pagina",
+                  blockLabel: "Abrir este bloco",
+                  delayFieldName: "successSequenceDelay",
+                  delayValue: details.atraso_antes_sequencia_sucesso ?? 0,
+                  delayLabel: "Esperar antes da troca (s)",
+                }
+              )}
+            </div>
+          </section>
+
+          <section class="insert-outcome-group is-failure">
+            <div class="insert-outcome-header">
+              <strong>Se falhar</strong>
+              <p>Se a imagem nao aparecer, escolha como o fluxo deve continuar.</p>
+            </div>
+            <div class="tree-inline-fields recognition-panel-grid recognition-panel-grid-actions">
+              <label class="recognition-cell recognition-cell-sm">
+                <span>O que fazer na falha</span>
+                <select data-tree-field="failureAction">
+                  <option value="parar" ${String(details.ao_nao_encontrar ?? "parar") === "parar" ? "selected" : ""}>Parar a automacao</option>
+                  <option value="continuar" ${String(details.ao_nao_encontrar ?? "") === "continuar" || String(details.ao_nao_encontrar ?? "") === "pular" ? "selected" : ""}>Continuar a sequencia</option>
+                  <option value="tentar_novamente" ${String(details.ao_nao_encontrar ?? "") === "tentar_novamente" ? "selected" : ""}>Tentar novamente</option>
+                  <option value="ir_para_sequencia" ${String(details.ao_nao_encontrar ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para outra pagina</option>
+                  <option value="ir_para_bloco" ${String(details.ao_nao_encontrar ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para outro bloco</option>
+                </select>
+              </label>
+              ${renderActionTargetFields(
+                "data-tree-field",
+                "failureAction",
+                details.ao_nao_encontrar ?? "parar",
+                "failureSequence",
+                details.sequencia_nao_encontrar ?? "pagina_2",
+                "failureBlock",
+                details.bloco_nao_encontrar ?? "",
+                event.order,
+                {
+                  sequenceLabel: "Abrir esta pagina",
+                  blockLabel: "Abrir este bloco",
+                  delayFieldName: "failureSequenceDelay",
+                  delayValue: details.atraso_antes_sequencia_nao_encontrar ?? 0,
+                  delayLabel: "Esperar antes da troca (s)",
+                }
+              )}
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="recognition-card-panel ${activeRecognitionTab === "advanced" ? "is-active" : ""}" data-recognition-tab-panel="advanced" ${activeRecognitionTab === "advanced" ? "" : "hidden"}>
+        <p class="recognition-card-helper">Essas opcoes costumam ser ajustadas uma vez e depois quase nao mudam.</p>
+        <div class="tree-inline-fields tree-inline-fields-recognition recognition-panel-grid">
+          <label class="recognition-cell recognition-cell-sm">
+            <span>Tentativas</span>
+            <input data-tree-field="retryCount" type="number" min="1" step="1" value="${escapeHtml(details.quantidade_tentativas ?? 1)}" />
+          </label>
+          <label class="recognition-cell recognition-cell-sm">
+            <span>Intervalo entre tentativas</span>
+            <input data-tree-field="retryInterval" type="number" min="0" step="0.5" value="${escapeHtml(details.intervalo_tentativas ?? 1)}" />
+          </label>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderExpandedCommandCardOverlay(events = []) {
+  const order = Number(state.expandedTreeCardOrder);
+  if (!order) {
+    return "";
+  }
+
+  const event = events.find((item) => Number(item.order) === order && item.type === "clicar_imagem");
+  if (!event) {
+    return "";
+  }
+
+  return `
+    <div class="command-card-overlay">
+      <div class="command-card-overlay-backdrop" data-close-expanded-card="true"></div>
+      <div class="command-card-overlay-panel">
+        <article class="command-tree-card command-tree-card-overlay-card is-visual-recognition" data-order="${event.order}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}">
+          <div class="command-tree-top">
+            <div class="command-tree-main">
+              <span class="command-index">${String(event.order).padStart(2, "0")}</span>
+              <div>
+                <h3>${escapeHtml(event.title)}</h3>
+                <p data-recognition-subtitle="true">${escapeHtml(recognitionSubtitleLabel(event))}</p>
+              </div>
+            </div>
+            <div class="command-tree-side">
+              <span class="type-chip ${escapeHtml(event.type)}">${escapeHtml(typeChipLabel(event.type))}</span>
+              <button class="tree-open-button" data-tree-action="close-card-details" type="button">Fechar</button>
+            </div>
+          </div>
+          <div class="command-tree-grid command-tree-grid-overlay">
+            <div class="tree-editor">
+              ${renderRecognitionExpandedTreeEditor(event)}
+            </div>
+          </div>
+          <div class="command-tree-actions command-tree-actions-overlay">
+            <div class="command-action-group command-action-group-primary has-recognition-button">
+              <button class="tree-save-button" data-tree-action="save">Salvar</button>
+              <button class="tree-open-button" data-tree-action="test-image-recognition">Testar</button>
+              <button class="tree-open-button" data-tree-action="close-card-details">Fechar</button>
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
   `;
 }
 
@@ -2104,6 +5617,15 @@ function populateImageFailureBlockSelect() {
   }
 }
 
+function populateImageFailureSequenceSelect() {
+  if (!imageFailureSequenceInput) {
+    return;
+  }
+  const currentValue = normalizeSequenceName(imageFailureSequenceInput.value || "pagina_2");
+  imageFailureSequenceInput.innerHTML = renderSequenceSuggestionsOptions(currentValue, "Escolha uma pagina");
+  imageFailureSequenceInput.value = currentValue;
+}
+
 function populateChromeFailureBlockSelect() {
   if (!chromeFailureBlockInput) {
     return;
@@ -2113,6 +5635,15 @@ function populateChromeFailureBlockSelect() {
   if (currentValue) {
     chromeFailureBlockInput.value = currentValue;
   }
+}
+
+function populateChromeFailureSequenceSelect() {
+  if (!chromeFailureSequenceInput) {
+    return;
+  }
+  const currentValue = normalizeSequenceName(chromeFailureSequenceInput.value || "pagina_2");
+  chromeFailureSequenceInput.innerHTML = renderSequenceSuggestionsOptions(currentValue, "Escolha uma pagina");
+  chromeFailureSequenceInput.value = currentValue;
 }
 
 function populateChromeSuccessBlockSelect() {
@@ -2126,6 +5657,15 @@ function populateChromeSuccessBlockSelect() {
   }
 }
 
+function populateChromeSuccessSequenceSelect() {
+  if (!chromeSuccessSequenceInput) {
+    return;
+  }
+  const currentValue = normalizeSequenceName(chromeSuccessSequenceInput.value || "pagina_2");
+  chromeSuccessSequenceInput.innerHTML = renderSequenceSuggestionsOptions(currentValue, "Escolha uma pagina");
+  chromeSuccessSequenceInput.value = currentValue;
+}
+
 function typeChipLabel(type) {
   switch (type) {
     case "clicar_imagem":
@@ -2134,15 +5674,840 @@ function typeChipLabel(type) {
       return "ESTADO DO BOTAO";
     case "chrome_elemento_html":
       return "CHROME HTML";
+    case "abrir_url":
+      return "ABRIR URL";
+    case "abrir_programa":
+      return "ABRIR PROGRAMA";
     case "sequencia_planilha":
       return "SEQUENCIA PLANILHA";
+    case "inicio_loop":
+      return "INICIO LOOP";
+    case "fim_loop":
+      return "FIM LOOP";
     default:
       return String(type || "").replaceAll("_", " ");
   }
 }
 
+const COMMAND_PAGE_DEFINITIONS = Object.freeze([
+  { sequence: "principal", label: "Pagina 1", shortLabel: "1", number: 1, theme: "principal" },
+  { sequence: "pagina_2", label: "Pagina 2", shortLabel: "2", number: 2, theme: "pagina_2" },
+  { sequence: "pagina_3", label: "Pagina 3", shortLabel: "3", number: 3, theme: "pagina_3" },
+  { sequence: "pagina_4", label: "Pagina 4", shortLabel: "4", number: 4, theme: "pagina_4" },
+]);
+
+function sequenceLabel(sequenceName) {
+  const normalized = normalizeSequenceName(sequenceName);
+  return COMMAND_PAGE_DEFINITIONS.find((page) => page.sequence === normalized)?.label || normalized || "Pagina 1";
+}
+
+function normalizeSequenceName(sequenceName) {
+  const normalized = String(sequenceName || "").trim();
+  if (!normalized) {
+    return "principal";
+  }
+
+  const lowered = normalized
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  if (["principal", "pagina_1", "pagina 1", "pagina1", "p1"].includes(lowered)) {
+    return "principal";
+  }
+  if (["pagina_2", "pagina 2", "pagina2", "p2"].includes(lowered)) {
+    return "pagina_2";
+  }
+  if (["pagina_3", "pagina 3", "pagina3", "p3"].includes(lowered)) {
+    return "pagina_3";
+  }
+  if (["pagina_4", "pagina 4", "pagina4", "p4"].includes(lowered)) {
+    return "pagina_4";
+  }
+
+  return normalized;
+}
+
+function normalizeSequenceExecutionMode(mode) {
+  return String(mode || "").trim().toLowerCase() === "loop_planilha" ? "loop_planilha" : "normal";
+}
+
+function getRoadmapSequenceSettings(roadmap = state.roadmap) {
+  const settings = roadmap?.sequence_settings;
+  return settings && typeof settings === "object" ? settings : {};
+}
+
+function getSequenceExecutionSettings(sequenceName, roadmap = state.roadmap) {
+  const normalized = normalizeSequenceName(sequenceName);
+  const settings = getRoadmapSequenceSettings(roadmap);
+  const raw = settings[normalized] || {};
+  const executionMode = normalizeSequenceExecutionMode(
+    raw.execution_mode ?? raw.executionMode ?? raw.modo_execucao
+  );
+  const afterLoopSequence = executionMode === "loop_planilha"
+    ? (optionalSequenceValue(raw.after_loop_sequence ?? raw.afterLoopSequence ?? raw.sequencia_apos_loop) || "")
+    : "";
+  return {
+    executionMode,
+    afterLoopSequence: afterLoopSequence === normalized ? "" : afterLoopSequence,
+  };
+}
+
+function getConfiguredLoopSequences(roadmap = state.roadmap) {
+  return getCommandMapPageDefinitions(roadmap)
+    .filter((page) => getSequenceExecutionSettings(page.sequence, roadmap).executionMode === "loop_planilha")
+    .map((page) => page.sequence);
+}
+
+function getConfiguredLoopSequence(roadmap = state.roadmap) {
+  const loopSequence = getConfiguredLoopSequences(roadmap)[0];
+  return loopSequence ? getCommandMapPageDefinition(loopSequence, roadmap) : null;
+}
+
+function resolveRoadmapInitialSequence(roadmap = state.roadmap) {
+  const preferred = normalizeSequenceName(roadmap?.initial_sequence || roadmap?.sequencia_inicial || "principal");
+  const pages = getCommandMapPageDefinitions(roadmap);
+  if (pages.some((page) => page.sequence === preferred)) {
+    return preferred;
+  }
+  if ((roadmap?.events ?? []).some((event) => normalizeSequenceName(event.sequence || event.sequencia) === "principal")) {
+    return "principal";
+  }
+  return normalizeSequenceName(roadmap?.events?.[0]?.sequence || roadmap?.events?.[0]?.sequencia || "principal");
+}
+
+function getCommandMapPageDefinitions(roadmap = state.roadmap) {
+  const basePages = COMMAND_PAGE_DEFINITIONS.map((page) => ({ ...page, isExtra: false }));
+  const knownSequences = new Set(basePages.map((page) => page.sequence));
+  const extraPages = Array.from(new Set(roadmap?.sequences ?? []))
+    .map((sequence) => normalizeSequenceName(sequence))
+    .filter((sequence) => !knownSequences.has(sequence))
+    .map((sequence, index) => ({
+      sequence,
+      label: sequence,
+      shortLabel: String(basePages.length + index + 1),
+      number: basePages.length + index + 1,
+      theme: "principal",
+      isExtra: true,
+    }));
+  return [...basePages, ...extraPages];
+}
+
+function getCommandMapPageDefinition(sequenceName, roadmap = state.roadmap) {
+  const normalized = normalizeSequenceName(sequenceName);
+  return (
+    getCommandMapPageDefinitions(roadmap).find((page) => page.sequence === normalized)
+    || getCommandMapPageDefinitions(roadmap)[0]
+    || COMMAND_PAGE_DEFINITIONS[0]
+  );
+}
+
+function resolveCommandMapPageTheme(sequenceName) {
+  const normalized = normalizeSequenceName(sequenceName);
+  return COMMAND_PAGE_DEFINITIONS.some((page) => page.sequence === normalized)
+    ? normalized
+    : "principal";
+}
+
+function syncCommandMapPageTheme() {
+  if (!commandMapShell) {
+    return;
+  }
+
+  commandMapShell.dataset.pageTheme = resolveCommandMapPageTheme(state.commandMapPageSequence);
+}
+
+function getCommandMapPageLabel(sequenceName, roadmap = state.roadmap) {
+  return getCommandMapPageDefinition(sequenceName, roadmap)?.label || "Pagina 1";
+}
+
+function getCommandMapEvents(sequenceName = state.commandMapPageSequence, roadmap = state.roadmap) {
+  const normalized = normalizeSequenceName(sequenceName);
+  return (roadmap?.events ?? []).filter(
+    (event) => normalizeSequenceName(event.sequence || event.sequencia) === normalized
+  );
+}
+
+function getCommandMapEventSequenceByOrder(order, roadmap = state.roadmap) {
+  const event = (roadmap?.events ?? []).find((item) => Number(item.order) === Number(order));
+  return event ? normalizeSequenceName(event.sequence || event.sequencia) : "";
+}
+
+function getCommandMapFirstOrderForSequence(sequenceName, roadmap = state.roadmap) {
+  const orders = getCommandMapEvents(sequenceName, roadmap)
+    .map((event) => Number(event.order ?? event.ordem))
+    .filter((order) => Number.isFinite(order))
+    .sort((firstOrder, secondOrder) => firstOrder - secondOrder);
+  return orders[0] ?? null;
+}
+
+function getCommandMapSuccessRoute(event, roadmap = state.roadmap) {
+  const details = event?.details || event?.detalhes || {};
+  const action = String(details.ao_sucesso || "continuar").trim().toLowerCase();
+  const sequence = optionalSequenceValue(details.sequencia_sucesso || "");
+  const block = Number(details.bloco_sucesso || 0);
+  const delay = Math.max(0, parseNumber(details.atraso_antes_sequencia_sucesso, 0));
+  return {
+    action,
+    sequence: sequence || "",
+    block: Number.isFinite(block) && block > 0 ? block : null,
+    delay,
+  };
+}
+
+function traceCommandMapExecutionFlow({
+  roadmap = state.roadmap,
+  startSequence = resolveRoadmapInitialSequence(roadmap),
+  startIndex = 0,
+  stopBeforeSequence = "",
+  limitSequence = "",
+  blockBoundarySequence = "",
+  minBlockOrder = 0,
+  stopBeforeBlockOrder = 0,
+} = {}) {
+  const events = [];
+  let currentSequence = normalizeSequenceName(startSequence);
+  let currentIndex = Math.max(0, Number(startIndex) || 0);
+  const targetStopSequence = stopBeforeSequence ? normalizeSequenceName(stopBeforeSequence) : "";
+  const boundedSequence = limitSequence ? normalizeSequenceName(limitSequence) : "";
+  const boundedBlockSequence = blockBoundarySequence ? normalizeSequenceName(blockBoundarySequence) : "";
+  const minimumBlockOrder = Math.max(0, Number(minBlockOrder) || 0);
+  const maximumBlockOrderExclusive = Math.max(0, Number(stopBeforeBlockOrder) || 0);
+  let guard = 0;
+
+  if (targetStopSequence && currentSequence === targetStopSequence) {
+    return { status: "before_target", events, exit: null };
+  }
+
+  while (guard < 1000) {
+    guard += 1;
+    const pageEvents = getCommandMapEvents(currentSequence, roadmap);
+    if (currentIndex >= pageEvents.length) {
+      return { status: "completed", events, exit: null };
+    }
+
+    const event = pageEvents[currentIndex];
+    const eventOrder = Number(event.order || 0);
+    if (boundedBlockSequence && currentSequence === boundedBlockSequence) {
+      if (minimumBlockOrder && eventOrder < minimumBlockOrder) {
+        return {
+          status: "block_exit",
+          events,
+          exit: {
+            action: "ir_para_bloco",
+            block: eventOrder,
+            sequence: currentSequence,
+          },
+        };
+      }
+      if (maximumBlockOrderExclusive && eventOrder >= maximumBlockOrderExclusive) {
+        return {
+          status: "before_block",
+          events,
+          exit: null,
+          sequence: currentSequence,
+          blockOrder: eventOrder,
+        };
+      }
+    }
+    events.push(event);
+    const route = getCommandMapSuccessRoute(event, roadmap);
+
+    if (route.action === "ir_para_sequencia" && route.sequence) {
+      if (boundedSequence && currentSequence === boundedSequence && route.sequence !== boundedSequence) {
+        return { status: "sequence_exit", events, exit: route };
+      }
+      currentSequence = route.sequence;
+      currentIndex = 0;
+      if (targetStopSequence && currentSequence === targetStopSequence) {
+        return { status: "before_target", events, exit: route };
+      }
+      continue;
+    }
+
+    if (route.action === "ir_para_bloco" && route.block) {
+      const blockEvent = getCommandMapEventByOrder(route.block, roadmap);
+      if (!blockEvent) {
+        return { status: "completed", events, exit: null };
+      }
+      const destinationSequence = getCommandMapEventSequenceByOrder(route.block, roadmap);
+      const destinationEvents = getCommandMapEvents(destinationSequence, roadmap);
+      const destinationIndex = destinationEvents.findIndex((item) => Number(item.order) === Number(route.block));
+      if (boundedBlockSequence && destinationSequence === boundedBlockSequence) {
+        if (minimumBlockOrder && Number(route.block) < minimumBlockOrder) {
+          return {
+            status: "block_exit",
+            events,
+            exit: {
+              ...route,
+              sequence: destinationSequence,
+            },
+          };
+        }
+        if (maximumBlockOrderExclusive && Number(route.block) >= maximumBlockOrderExclusive) {
+          return {
+            status: "block_exit",
+            events,
+            exit: {
+              ...route,
+              sequence: destinationSequence,
+            },
+          };
+        }
+      }
+      if (boundedSequence && currentSequence === boundedSequence && destinationSequence !== boundedSequence) {
+        return {
+          status: "block_exit",
+          events,
+          exit: {
+            ...route,
+            sequence: destinationSequence,
+          },
+        };
+      }
+      currentSequence = destinationSequence;
+      currentIndex = Math.max(0, destinationIndex);
+      if (targetStopSequence && currentSequence === targetStopSequence && currentIndex === 0) {
+        return { status: "before_target", events, exit: route };
+      }
+      continue;
+    }
+
+    if (route.action === "parar") {
+      return { status: "stopped", events, exit: route };
+    }
+
+    currentIndex += 1;
+  }
+
+  return { status: "completed", events, exit: null };
+}
+
+function getLoopMarkerRange(roadmap = state.roadmap) {
+  let startMarker = null;
+  let endMarker = null;
+  let foundMarker = false;
+
+  getCommandMapPageDefinitions(roadmap).forEach((page) => {
+    const events = getCommandMapEvents(page.sequence, roadmap);
+    events.forEach((event, index) => {
+      if (!isLoopMarkerType(event.type)) {
+        return;
+      }
+      foundMarker = true;
+      if (!startMarker && event.type === "inicio_loop") {
+        startMarker = {
+          sequence: page.sequence,
+          index,
+          event,
+        };
+        return;
+      }
+      if (
+        startMarker
+        && !endMarker
+        && event.type === "fim_loop"
+        && page.sequence === startMarker.sequence
+        && index > startMarker.index
+      ) {
+        endMarker = {
+          sequence: page.sequence,
+          index,
+          event,
+        };
+      }
+    });
+  });
+
+  if (!foundMarker) {
+    return null;
+  }
+  if (!startMarker || !endMarker) {
+    throw new Error("Use os blocos Inicio do loop e Fim do loop na mesma pagina para limitar o trecho em loop.");
+  }
+
+  const loopEvents = getCommandMapEvents(startMarker.sequence, roadmap).slice(startMarker.index + 1, endMarker.index);
+  const spreadsheetEvent = loopEvents.find((event) => event.type === "sequencia_planilha");
+  if (!loopEvents.length) {
+    throw new Error("Adicione ao menos um bloco entre Inicio do loop e Fim do loop.");
+  }
+  if (!spreadsheetEvent) {
+    throw new Error("O trecho entre Inicio do loop e Fim do loop precisa ter ao menos um bloco de planilha.");
+  }
+
+  return {
+    sequence: startMarker.sequence,
+    startIndex: startMarker.index,
+    endIndex: endMarker.index,
+    startOrder: Number(startMarker.event.order || 0),
+    endOrder: Number(endMarker.event.order || 0),
+    spreadsheetEvent,
+  };
+}
+
+function traceCommandMapUntilLoopEntry({
+  roadmap = state.roadmap,
+  startSequence = resolveRoadmapInitialSequence(roadmap),
+  loopSequences = getConfiguredLoopSequences(roadmap),
+} = {}) {
+  const events = [];
+  const loopSet = new Set(loopSequences.map((sequence) => normalizeSequenceName(sequence)));
+  let currentSequence = normalizeSequenceName(startSequence);
+  let currentIndex = 0;
+  let guard = 0;
+
+  if (loopSet.has(currentSequence)) {
+    return { status: "before_loop", events, loopSequence: currentSequence, startIndex: 0, exit: null };
+  }
+
+  while (guard < 1000) {
+    guard += 1;
+    const pageEvents = getCommandMapEvents(currentSequence, roadmap);
+    if (currentIndex >= pageEvents.length) {
+      return { status: "completed", events, loopSequence: "", startIndex: 0, exit: null };
+    }
+
+    const event = pageEvents[currentIndex];
+    events.push(event);
+    const route = getCommandMapSuccessRoute(event, roadmap);
+
+    if (route.action === "ir_para_sequencia" && route.sequence) {
+      const destinationSequence = normalizeSequenceName(route.sequence);
+      if (loopSet.has(destinationSequence)) {
+        return {
+          status: "before_loop",
+          events,
+          loopSequence: destinationSequence,
+          startIndex: 0,
+          exit: route,
+        };
+      }
+      currentSequence = destinationSequence;
+      currentIndex = 0;
+      continue;
+    }
+
+    if (route.action === "ir_para_bloco" && route.block) {
+      const destinationEvent = getCommandMapEventByOrder(route.block, roadmap);
+      if (!destinationEvent) {
+        return { status: "completed", events, loopSequence: "", startIndex: 0, exit: null };
+      }
+      const destinationSequence = getCommandMapEventSequenceByOrder(route.block, roadmap);
+      const destinationEvents = getCommandMapEvents(destinationSequence, roadmap);
+      const destinationIndex = Math.max(
+        0,
+        destinationEvents.findIndex((item) => Number(item.order) === Number(route.block))
+      );
+      if (loopSet.has(destinationSequence)) {
+        return {
+          status: "before_loop",
+          events,
+          loopSequence: destinationSequence,
+          startIndex: destinationIndex,
+          exit: {
+            ...route,
+            sequence: destinationSequence,
+          },
+        };
+      }
+      currentSequence = destinationSequence;
+      currentIndex = destinationIndex;
+      continue;
+    }
+
+    if (route.action === "parar") {
+      return { status: "stopped", events, loopSequence: "", startIndex: 0, exit: route };
+    }
+
+    currentIndex += 1;
+  }
+
+  return { status: "completed", events, loopSequence: "", startIndex: 0, exit: null };
+}
+
+function traceCommandMapLoopRegion({
+  roadmap = state.roadmap,
+  startSequence = resolveRoadmapInitialSequence(roadmap),
+  startIndex = 0,
+  loopSequences = getConfiguredLoopSequences(roadmap),
+} = {}) {
+  const events = [];
+  const loopSet = new Set(loopSequences.map((sequence) => normalizeSequenceName(sequence)));
+  let currentSequence = normalizeSequenceName(startSequence);
+  let currentIndex = Math.max(0, Number(startIndex) || 0);
+  let guard = 0;
+
+  while (guard < 1000) {
+    guard += 1;
+    const pageEvents = getCommandMapEvents(currentSequence, roadmap);
+    if (currentIndex >= pageEvents.length) {
+      return { status: "completed", events, exit: null, exitSequence: currentSequence };
+    }
+
+    const event = pageEvents[currentIndex];
+    events.push(event);
+    const route = getCommandMapSuccessRoute(event, roadmap);
+
+    if (route.action === "ir_para_sequencia" && route.sequence) {
+      const destinationSequence = normalizeSequenceName(route.sequence);
+      if (!loopSet.has(destinationSequence)) {
+        return {
+          status: "loop_exit",
+          events,
+          exit: route,
+          exitSequence: currentSequence,
+        };
+      }
+      currentSequence = destinationSequence;
+      currentIndex = 0;
+      continue;
+    }
+
+    if (route.action === "ir_para_bloco" && route.block) {
+      const destinationEvent = getCommandMapEventByOrder(route.block, roadmap);
+      if (!destinationEvent) {
+        return { status: "completed", events, exit: null, exitSequence: currentSequence };
+      }
+      const destinationSequence = getCommandMapEventSequenceByOrder(route.block, roadmap);
+      const destinationEvents = getCommandMapEvents(destinationSequence, roadmap);
+      const destinationIndex = Math.max(
+        0,
+        destinationEvents.findIndex((item) => Number(item.order) === Number(route.block))
+      );
+      if (!loopSet.has(destinationSequence)) {
+        return {
+          status: "loop_exit",
+          events,
+          exit: {
+            ...route,
+            sequence: destinationSequence,
+          },
+          exitSequence: currentSequence,
+        };
+      }
+      currentSequence = destinationSequence;
+      currentIndex = destinationIndex;
+      continue;
+    }
+
+    if (route.action === "parar") {
+      return { status: "stopped", events, exit: route, exitSequence: currentSequence };
+    }
+
+    currentIndex += 1;
+  }
+
+  return { status: "completed", events, exit: null, exitSequence: currentSequence };
+}
+
+function resolveAssistPostLoopStart(loopTrace, roadmap = state.roadmap) {
+  const route = loopTrace?.exit || null;
+  if (route?.action === "ir_para_bloco" && route.block) {
+    const destinationSequence = getCommandMapEventSequenceByOrder(route.block, roadmap);
+    const destinationEvents = getCommandMapEvents(destinationSequence, roadmap);
+    const destinationIndex = destinationEvents.findIndex((item) => Number(item.order) === Number(route.block));
+    return {
+      sequence: destinationSequence,
+      startIndex: Math.max(0, destinationIndex),
+    };
+  }
+
+  if (route?.action === "ir_para_sequencia" && route.sequence) {
+    return {
+      sequence: normalizeSequenceName(route.sequence),
+      startIndex: 0,
+    };
+  }
+
+  const fallbackSequence = getSequenceExecutionSettings(loopTrace?.exitSequence || "", roadmap).afterLoopSequence;
+  if (fallbackSequence) {
+    return {
+      sequence: fallbackSequence,
+      startIndex: 0,
+    };
+  }
+
+  return null;
+}
+
+function syncSequenceContextInput() {
+  if (sequenceContextInput) {
+    sequenceContextInput.value = normalizeSequenceName(state.commandMapPageSequence);
+  }
+}
+
+function lockCommandMapPageSequence(sequenceName, durationMs = 1800) {
+  const sequence = normalizeSequenceName(sequenceName);
+  if (!sequence) {
+    state.commandMapPageSequenceLock = null;
+    return;
+  }
+  state.commandMapPageSequenceLock = {
+    sequence,
+    until: Date.now() + durationMs,
+  };
+}
+
+function activeCommandMapPageSequenceLock() {
+  const lock = state.commandMapPageSequenceLock;
+  if (!lock?.sequence || Date.now() > Number(lock.until || 0)) {
+    state.commandMapPageSequenceLock = null;
+    return "";
+  }
+  return normalizeSequenceName(lock.sequence);
+}
+
+function ensureCommandMapPageSelection(roadmap = state.roadmap) {
+  const pages = getCommandMapPageDefinitions(roadmap);
+  const lockedSequence = activeCommandMapPageSequenceLock();
+  const currentSequence = normalizeSequenceName(lockedSequence || state.commandMapPageSequence);
+  const hasCurrent = pages.some((page) => page.sequence === currentSequence);
+  state.commandMapPageSequence = hasCurrent
+    ? currentSequence
+    : normalizeSequenceName(pages[0]?.sequence || "principal");
+  syncSequenceContextInput();
+}
+
+function renderSequenceSuggestionsOptions(selectedValue = "", placeholder = "Escolha uma pagina") {
+  const normalizedSelected = normalizeSequenceName(selectedValue || "");
+  const options = [
+    `<option value="">${escapeHtml(placeholder)}</option>`,
+    ...getCommandMapPageDefinitions().map((page) => `
+      <option value="${escapeHtml(page.sequence)}" ${page.sequence === normalizedSelected ? "selected" : ""}>
+        ${escapeHtml(page.label)}
+      </option>
+    `),
+  ];
+  return options.join("");
+}
+
+function renderAssistSequenceSettings(roadmap = state.roadmap) {
+  if (!assistInitialSequenceSelect || !assistSequenceModeList) {
+    return;
+  }
+
+  const pages = getCommandMapPageDefinitions(roadmap);
+  const initialSequence = resolveRoadmapInitialSequence(roadmap);
+  assistInitialSequenceSelect.innerHTML = pages
+    .map((page) => `
+      <option value="${escapeHtml(page.sequence)}" ${page.sequence === initialSequence ? "selected" : ""}>
+        ${escapeHtml(page.label)}
+      </option>
+    `)
+    .join("");
+  assistInitialSequenceSelect.value = initialSequence;
+
+  assistSequenceModeList.innerHTML = pages
+    .map((page) => {
+      const settings = getSequenceExecutionSettings(page.sequence, roadmap);
+      const isLoop = settings.executionMode === "loop_planilha";
+      const hasSpreadsheetBlock = getCommandMapEvents(page.sequence, roadmap).some((event) => event.type === "sequencia_planilha");
+      const modeLabel = isLoop
+        ? (hasSpreadsheetBlock ? "Loop da planilha" : "Loop")
+        : "Executar uma vez";
+      return `
+        <label class="assist-sequence-chip ${isLoop ? "is-loop" : ""}">
+          <span class="assist-sequence-chip-label">
+            <strong class="assist-sequence-chip-title">${escapeHtml(page.label)}</strong>
+            <span class="assist-sequence-chip-mode">${escapeHtml(modeLabel)}</span>
+          </span>
+          <span class="assist-sequence-switch">
+            <input
+              type="checkbox"
+              data-assist-sequence-toggle="${escapeHtml(page.sequence)}"
+              aria-label="${escapeHtml(`${page.label} em loop da planilha`)}"
+              ${isLoop ? "checked" : ""}
+            />
+            <span class="assist-sequence-switch-track">
+              <span class="assist-sequence-switch-thumb"></span>
+            </span>
+          </span>
+        </label>
+      `;
+    })
+    .join("");
+}
+
+async function runAssistExecutionSettingsMutation(label, promiseFactory) {
+  try {
+    setBusy(label);
+    const roadmap = await promiseFactory();
+    applyRoadmap(roadmap);
+    await refreshAutomationLibrary();
+    setBusy("Pronto");
+    setMessage(`${label} com sucesso.`, "success");
+  } catch (error) {
+    setBusy("Erro");
+    renderAssistSequenceSettings();
+    setMessage(String(error), "error");
+  }
+}
+
+async function saveAssistInitialSequence(sequenceName) {
+  const sequence = normalizeSequenceName(sequenceName);
+  if (sequence === resolveRoadmapInitialSequence()) {
+    renderAssistSequenceSettings();
+    return;
+  }
+  await runAssistExecutionSettingsMutation("Pagina inicial atualizada", () =>
+    invoke("update_initial_sequence", { sequence })
+  );
+}
+
+async function saveAssistSequenceExecutionMode(sequenceName, enabled) {
+  const sequence = normalizeSequenceName(sequenceName);
+  const currentSettings = getSequenceExecutionSettings(sequence);
+  const executionMode = enabled ? "loop_planilha" : "normal";
+  if (executionMode === currentSettings.executionMode) {
+    renderAssistSequenceSettings();
+    return;
+  }
+  await runAssistExecutionSettingsMutation("Configuracao da execucao salva", () =>
+    invoke("update_sequence_settings", {
+      sequence,
+      executionMode,
+      afterLoopSequence: enabled ? (currentSettings.afterLoopSequence || null) : null,
+    })
+  );
+}
+
+function renderCommandMapPageExecutionSettings() {
+  if (!commandMapPageModeSelect || !commandMapPageAfterLoopSelect || !commandMapPageModeHint) {
+    return;
+  }
+
+  const currentSequence = normalizeSequenceName(state.commandMapPageSequence);
+  const pageDefinition = getCommandMapPageDefinition(currentSequence);
+  const settings = getSequenceExecutionSettings(currentSequence);
+  const hasSpreadsheetBlock = getCommandMapEvents(currentSequence).some((event) => event.type === "sequencia_planilha");
+
+  commandMapPageModeSelect.value = settings.executionMode;
+  const afterLoopValue = settings.afterLoopSequence || "";
+  commandMapPageAfterLoopSelect.innerHTML = [
+    `<option value="">Concluir sem abrir outra pagina</option>`,
+    ...getCommandMapPageDefinitions()
+      .filter((page) => page.sequence !== currentSequence)
+      .map((page) => `
+        <option value="${escapeHtml(page.sequence)}" ${page.sequence === afterLoopValue ? "selected" : ""}>
+          ${escapeHtml(page.label)}
+        </option>
+      `),
+  ].join("");
+  commandMapPageAfterLoopSelect.hidden = settings.executionMode !== "loop_planilha";
+  commandMapPageAfterLoopSelect.value = afterLoopValue;
+
+  if (settings.executionMode === "loop_planilha") {
+    const afterLoopLabel = afterLoopValue ? getCommandMapPageLabel(afterLoopValue) : "nenhuma pagina extra";
+    commandMapPageModeHint.textContent = hasSpreadsheetBlock
+      ? `${pageDefinition.label} roda a cada linha da planilha. O que vem antes executa uma vez, e depois do loop segue para ${afterLoopLabel}.`
+      : `${pageDefinition.label} esta marcada para loop, mas ainda precisa de um bloco de planilha nesta pagina.`;
+    return;
+  }
+
+  commandMapPageModeHint.textContent = `${pageDefinition.label} segue o fluxo normal da automacao e executa uma vez por percurso.`;
+}
+
+function updateCommandMapHeaderSummary() {
+  const pageDefinition = getCommandMapPageDefinition(state.commandMapPageSequence);
+  const pageEvents = getCommandMapEvents();
+  const total = pageEvents.length;
+  const settings = getSequenceExecutionSettings(pageDefinition.sequence);
+  syncCommandMapPageTheme();
+
+  if (commandMapStepBadge) {
+    commandMapStepBadge.textContent = `${total} etapa${total === 1 ? "" : "s"}`;
+  }
+
+  if (commandMapMeta) {
+    if (settings.executionMode === "loop_planilha") {
+      const afterLoopLabel = settings.afterLoopSequence ? getCommandMapPageLabel(settings.afterLoopSequence) : "encerrar o loop aqui";
+      commandMapMeta.textContent = total
+        ? `${total} bloco${total === 1 ? "" : "s"} nesta ${pageDefinition.label.toLowerCase()}. Essa pagina roda em loop da planilha e depois segue para ${afterLoopLabel}.`
+        : `${pageDefinition.label} esta reservada para loop da planilha. Adicione os blocos desta etapa aqui.`;
+    } else {
+      commandMapMeta.textContent = total
+        ? `${total} bloco${total === 1 ? "" : "s"} nesta ${pageDefinition.label.toLowerCase()}. Use a falha de um comando para enviar o fluxo para outra pagina quando precisar.`
+        : `${pageDefinition.label} vazia no momento. Crie uma sequencia nova aqui e use as outras paginas para separar fluxos de erro, apoio ou caminhos alternativos.`;
+    }
+  }
+
+  renderCommandMapPageExecutionSettings();
+}
+
+function renderCommandMapPageTabs() {
+  if (!commandMapPageTabs) {
+    return;
+  }
+
+  syncCommandMapPageTheme();
+  const currentSequence = normalizeSequenceName(state.commandMapPageSequence);
+  const counts = new Map();
+  (state.roadmap?.events ?? []).forEach((event) => {
+    const sequence = normalizeSequenceName(event.sequence || event.sequencia);
+    counts.set(sequence, (counts.get(sequence) || 0) + 1);
+  });
+
+  commandMapPageTabs.innerHTML = getCommandMapPageDefinitions()
+    .map((page, index) => {
+      const total = counts.get(page.sequence) || 0;
+      const pageNumber = page.number || index + 1;
+      const isActive = page.sequence === currentSequence;
+      const pageSettings = getSequenceExecutionSettings(page.sequence);
+      const isLoopPage = pageSettings.executionMode === "loop_planilha";
+      const totalLabel = `${total} bloco${total === 1 ? "" : "s"}`;
+      const actionLabel = isActive ? "Pagina atual" : "Abrir pagina";
+      const loopLabel = isLoopPage ? " Pagina configurada para loop da planilha." : "";
+      return `
+        <button
+          class="command-page-tab ${isActive ? "is-active" : ""} ${isLoopPage ? "is-loop-page" : ""}"
+          type="button"
+          data-command-page="${escapeHtml(page.sequence)}"
+          data-page-number="${escapeHtml(String(pageNumber))}"
+          aria-pressed="${isActive ? "true" : "false"}"
+          aria-current="${isActive ? "page" : "false"}"
+          aria-label="${escapeHtml(`${page.label}. ${totalLabel}. ${actionLabel}.${loopLabel}`)}"
+          title="${escapeHtml(`${page.label} - ${totalLabel}${isLoopPage ? " - Loop da planilha" : ""}`)}"
+        >
+          <span class="command-page-tab-number">${escapeHtml(String(pageNumber))}</span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function switchCommandMapPage(sequenceName, options = {}) {
+  const { skipAutoSave = false } = options;
+  const nextSequence = normalizeSequenceName(sequenceName);
+  if (nextSequence === normalizeSequenceName(state.commandMapPageSequence)) {
+    return Promise.resolve(true);
+  }
+
+  if (!skipAutoSave) {
+    syncVisibleCommandMapDrafts();
+    syncCommandMapSaveStateWithPending();
+  }
+
+  state.insertPanel = null;
+  state.expandedTreeCardOrder = null;
+  state.expandedTreeCardOrigin = null;
+  state.commandMapPageSequenceLock = null;
+  state.commandMapPageSequence = nextSequence;
+  syncCommandMapPageTheme();
+  syncSequenceContextInput();
+  renderCommandMapPageTabs();
+  updateCommandMapHeaderSummary();
+  state.commandMapFocusOrder = getCommandMapEvents(nextSequence)[0]?.order ?? null;
+  renderCommandMap();
+  return Promise.resolve(true);
+}
+
 function currentSequenceName() {
-  return (sequenceContextInput?.value || "").trim() || "principal";
+  return normalizeSequenceName(state.commandMapPageSequence || sequenceContextInput?.value);
+}
+
+function optionalSequenceValue(value) {
+  const normalized = String(value ?? "").trim();
+  return normalized ? normalizeSequenceName(normalized) : null;
 }
 
 function refreshSequenceSuggestions() {
@@ -2150,8 +6515,38 @@ function refreshSequenceSuggestions() {
   if (!list) {
     return;
   }
-  const names = Array.from(new Set(["principal", ...(state.roadmap?.sequences ?? [])])).filter(Boolean);
-  list.innerHTML = names.map((name) => `<option value="${escapeHtml(name)}"></option>`).join("");
+  list.innerHTML = getCommandMapPageDefinitions()
+    .map((page) => `<option value="${escapeHtml(page.sequence)}">${escapeHtml(page.label)}</option>`)
+    .join("");
+}
+
+async function saveCurrentPageExecutionSettings() {
+  if (!state.roadmap || !commandMapPageModeSelect || !commandMapPageAfterLoopSelect) {
+    return;
+  }
+
+  const sequence = normalizeSequenceName(state.commandMapPageSequence);
+  const executionMode = normalizeSequenceExecutionMode(commandMapPageModeSelect.value);
+  const afterLoopSequence = executionMode === "loop_planilha"
+    ? (optionalSequenceValue(commandMapPageAfterLoopSelect.value) || "")
+    : "";
+  const currentSettings = getSequenceExecutionSettings(sequence);
+
+  if (
+    executionMode === currentSettings.executionMode
+    && afterLoopSequence === currentSettings.afterLoopSequence
+  ) {
+    renderCommandMapPageExecutionSettings();
+    return;
+  }
+
+  await runMutation("Configuracao da pagina salva", () =>
+    invoke("update_sequence_settings", {
+      sequence,
+      executionMode,
+      afterLoopSequence: afterLoopSequence || null,
+    })
+  );
 }
 
 function openImagePicker(target) {
@@ -2159,9 +6554,83 @@ function openImagePicker(target) {
   imageFileInput.click();
 }
 
+function normalizeCaptureImageName(value) {
+  const fileName = String(value || "").trim().split(/[\\/]/).pop() || "";
+  const baseName = fileName.replace(/\.[^.]+$/, "");
+  const normalized = baseName
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]\d{3,4}$/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  return normalized || "imagem_capturada";
+}
+
+function promptCapturedImageName(defaultFileName) {
+  const baseName = String(defaultFileName || "")
+    .replace(/^.*[\\/]/, "")
+    .replace(/\.[^.]+$/, "")
+    .trim();
+  return window.prompt(
+    "Digite um nome para identificar essa imagem capturada:",
+    baseName || "imagem_capturada"
+  );
+}
+
+function readCurrentImagePathFromTarget(target) {
+  if (!target) {
+    return "";
+  }
+
+  if (target.scope === "composer-image") {
+    return imagePathInput?.value || "";
+  }
+
+  if (target.scope === "update-editor") {
+    return timelineList
+      ?.querySelector(`.flow-card[data-order="${target.order}"] [data-field="imagePath"]`)
+      ?.value || "";
+  }
+
+  if (target.scope === "update-tree") {
+    return (
+      commandMapList
+        ?.querySelector(`.command-tree-card-overlay-card[data-order="${target.order}"] [data-tree-field="imagePath"]`)
+        ?.value
+      || commandMapList
+        ?.querySelector(`.command-tree-card[data-order="${target.order}"] [data-tree-field="imagePath"]`)
+        ?.value
+      || ""
+    );
+  }
+
+  if (target.scope === "insert-panel") {
+    return commandMapList
+      ?.querySelector(`.insert-card-panel[data-target-order="${target.order}"] [data-insert-field="imagePath"]`)
+      ?.value || state.insertPanel?.imagePath || "";
+  }
+
+  return "";
+}
+
+function inferCaptureImageNameHint(target) {
+  return normalizeCaptureImageName(readCurrentImagePathFromTarget(target));
+}
+
 async function importImageToProject(file) {
   const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-  return invoke("import_image_asset", {
+  const result = await invoke("import_image_asset", {
+    fileName: file.name,
+    bytes,
+  });
+  clearRecognitionPreviewCache(String(result?.image_id || ""));
+  return result;
+}
+
+async function importAutomationZipToProject(file) {
+  const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+  return invoke("import_saved_automation_zip", {
     fileName: file.name,
     bytes,
   });
@@ -2198,6 +6667,7 @@ function writeImportedImagePath(target, imageId) {
     if (input) {
       input.value = imageId;
     }
+    setRecognitionTestStatusForOrder(target.order, imageId, false);
     return;
   }
 
@@ -2229,11 +6699,15 @@ function writeImportedImagePath(target, imageId) {
   }
 
   if (target.scope === "update-tree") {
-    const card = commandMapList.querySelector(`.command-tree-card[data-order="${target.order}"]`);
+    const card =
+      commandMapList.querySelector(`.command-tree-card-overlay-card[data-order="${target.order}"]`) ||
+      commandMapList.querySelector(`.command-tree-card[data-order="${target.order}"]`);
     const input = card?.querySelector('[data-tree-field="imagePath"]');
     if (input) {
       input.value = imageId;
     }
+    setRecognitionTestStatusForOrder(target.order, imageId, false);
+    hydrateRecognitionPreviewCards(card, imageId);
     return;
   }
 
@@ -2273,6 +6747,7 @@ function writeImportedImagePath(target, imageId) {
     if (state.insertPanel) {
       state.insertPanel.imagePath = imageId;
     }
+    hydrateRecognitionPreviewCards(panel, imageId);
     return;
   }
 
@@ -2285,6 +6760,109 @@ function writeImportedImagePath(target, imageId) {
     if (state.insertPanel) {
       state.insertPanel.chromeFallbackImage = imageId;
     }
+  }
+}
+
+async function persistCapturedRecognitionImage(target) {
+  if (!target) {
+    return false;
+  }
+
+  if (target.scope === "update-editor") {
+    const card = timelineList?.querySelector(`.flow-card[data-order="${target.order}"]`);
+    if (!card) {
+      return false;
+    }
+    const roadmap = await invokeCommandCardUpdate({
+      order: Number(card.dataset.order),
+      type: String(card.dataset.type || ""),
+      values: formValuesFromCard(card),
+    });
+    if (roadmap) {
+      state.commandMapFocusOrder = Number(card.dataset.order);
+      applyRoadmap(roadmap);
+      await refreshAutomationLibrary();
+      return true;
+    }
+  }
+
+  if (target.scope === "update-tree") {
+    const card =
+      commandMapList?.querySelector(`.command-tree-card-overlay-card[data-order="${target.order}"]`)
+      || commandMapList?.querySelector(`.command-tree-card[data-order="${target.order}"]`);
+    if (!card) {
+      return false;
+    }
+    const roadmap = await invokeCommandCardUpdate({
+      order: Number(card.dataset.order),
+      type: String(card.dataset.type || ""),
+      values: treeValuesFromCard(card),
+    });
+    if (roadmap) {
+      applyRoadmap(roadmap);
+      await refreshAutomationLibrary();
+      setCommandMapFocus(Number(card.dataset.order));
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function captureImageToProject(target) {
+  if (!target) {
+    return;
+  }
+
+  try {
+    setBusy("Capturando imagem");
+    setMessage("Selecione a area da tela que deseja usar no reconhecimento.", "info");
+    const result = await invoke("capture_image_asset", {
+      baseNameHint: inferCaptureImageNameHint(target) || null,
+    });
+
+    if (result?.cancelled) {
+      setBusy("Pronto");
+      setMessage(result?.message || "Captura cancelada.", "info");
+      return;
+    }
+
+    let imageId = String(result?.image_id || "");
+    if (!imageId) {
+      throw new Error("A captura foi concluida, mas o caminho da imagem nao voltou para a interface.");
+    }
+
+    const typedName = promptCapturedImageName(result?.file_name || imageId);
+    if (typedName !== null && String(typedName).trim()) {
+      clearRecognitionPreviewCache(imageId);
+      const renamed = await invoke("rename_image_asset", {
+        imageId,
+        newName: String(typedName).trim(),
+      });
+      imageId = String(renamed?.image_id || imageId);
+      if (renamed?.file_name) {
+        result.file_name = renamed.file_name;
+      }
+    }
+
+    clearRecognitionPreviewCache(imageId);
+    writeImportedImagePath(target, imageId);
+    const savedInBlock = await persistCapturedRecognitionImage(target);
+    const sizeLabel =
+      Number(result?.width) > 0 && Number(result?.height) > 0
+        ? ` (${result.width}x${result.height})`
+        : "";
+
+    setBusy("Pronto");
+    setMessage(
+      savedInBlock
+        ? `Imagem ${result?.file_name || imageId}${sizeLabel} capturada e salva no bloco.`
+        : `Imagem ${result?.file_name || imageId}${sizeLabel} capturada e vinculada ao bloco atual.`,
+      "success"
+    );
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
   }
 }
 
@@ -2318,6 +6896,70 @@ async function refreshTestLoopData() {
     state.testLoopData = null;
   }
   updateTestLoopHint();
+}
+
+function syncWorkbookSelectionAfterRowRemoval(rowNumber) {
+  const selectedCell = state.workbookSelectedCell;
+  if (!selectedCell || selectedCell.sheet !== state.workbookSelectedSheet) {
+    return;
+  }
+
+  const currentRow = Number(selectedCell.rowNumber);
+  if (!Number.isFinite(currentRow)) {
+    state.workbookSelectedCell = null;
+    return;
+  }
+
+  if (currentRow === rowNumber) {
+    state.workbookSelectedCell = null;
+    return;
+  }
+
+  if (currentRow > rowNumber) {
+    state.workbookSelectedCell = {
+      ...selectedCell,
+      rowNumber: currentRow - 1,
+    };
+  }
+}
+
+async function removeWorkbookPreviewRow(rowNumber) {
+  const workbookId = state.previewWorkbookId || state.workbookPreview?.workbook_id || "";
+  const sheetName = state.workbookSelectedSheet || state.workbookPreview?.sheet || "";
+  if (!workbookId || !sheetName) {
+    setMessage("Selecione uma planilha valida antes de excluir a linha.", "error");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Excluir a linha ${rowNumber} da aba ${sheetName}? Ela nao vai mais participar do loop.`
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    setBusy("Excluindo linha");
+    const result = await invoke("remove_workbook_preview_row", {
+      workbook: workbookId,
+      sheet: sheetName,
+      rowNumber,
+    });
+    syncWorkbookSelectionAfterRowRemoval(rowNumber);
+    if (result?.roadmap) {
+      applyRoadmap(result.roadmap);
+    } else {
+      const roadmap = await invoke("get_roadmap");
+      applyRoadmap(roadmap);
+    }
+    await refreshTestLoopData();
+    await loadWorkbookPreview(sheetName, workbookId);
+    setBusy("Pronto");
+    setMessage(`Linha ${rowNumber} removida da planilha com sucesso.`, "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
 }
 
 function workbookSheets() {
@@ -2460,26 +7102,45 @@ function updateWorkbookSelectionLabels() {
   const preview = state.workbookPreview;
   const selectedCell = state.workbookSelectedCell;
   const selectedColumn = state.workbookSelectedColumn;
+  const hasSelectedCell =
+    selectedCell &&
+    selectedCell.value !== undefined &&
+    selectedCell.value !== null &&
+    `${selectedCell.value}`.trim() !== "";
 
-  if (selectedCell?.value) {
-    selectedWorkbookTitle.textContent = `${selectedCell.header} • linha ${selectedCell.rowNumber}`;
-    selectedWorkbookSubtitle.textContent = `Valor pronto para entrar como texto no mapa a partir da aba ${selectedCell.sheet}.`;
+  if (hasSelectedCell) {
+    selectedWorkbookTitle.textContent = `${selectedCell.header} | linha ${selectedCell.rowNumber}`;
+    selectedWorkbookSubtitle.textContent = `Esse valor sera enviado como texto para o mapa a partir da aba ${selectedCell.sheet}.`;
     selectedWorkbookValue.textContent = selectedCell.value;
+    selectedWorkbookStatus.textContent = "Pronto";
+    workbookSelectedValueBlock.classList.add("is-ready");
+    workbookSelectedValueBlock.classList.remove("is-empty");
     addWorkbookCellButton.disabled = false;
   } else {
-    selectedWorkbookTitle.textContent = "Nada selecionado";
-    selectedWorkbookSubtitle.textContent = "Clique em uma celula da tabela para enviar esse valor como texto ao mapa.";
+    selectedWorkbookTitle.textContent = "Escolha uma celula";
+    selectedWorkbookSubtitle.textContent = "Clique em qualquer celula da tabela para mandar aquele valor direto para o mapa.";
     selectedWorkbookValue.textContent = "-";
+    selectedWorkbookStatus.textContent = "Aguardando";
+    workbookSelectedValueBlock.classList.remove("is-ready");
+    workbookSelectedValueBlock.classList.add("is-empty");
     addWorkbookCellButton.disabled = true;
   }
 
   if (selectedColumn && preview?.headers?.includes(selectedColumn)) {
-    selectedWorkbookColumnTitle.textContent = selectedColumn;
-    selectedWorkbookColumnSubtitle.textContent = `Coluna pronta para virar um loop da aba ${preview.sheet}.`;
+    selectedWorkbookColumnTitle.textContent = `${selectedColumn} | aba ${preview.sheet}`;
+    selectedWorkbookColumnSubtitle.textContent = "Cada linha dessa coluna vai virar um item do loop quando voce enviar para o mapa.";
+    selectedWorkbookColumnPreview.textContent = `${selectedColumn} | ${preview.rows?.length || 0} linhas prontas para o loop`;
+    selectedWorkbookColumnStatus.textContent = "Pronto";
+    workbookSelectedColumnBlock.classList.add("is-ready");
+    workbookSelectedColumnBlock.classList.remove("is-empty");
     addWorkbookColumnButton.disabled = false;
   } else {
-    selectedWorkbookColumnTitle.textContent = "Nenhuma coluna";
-    selectedWorkbookColumnSubtitle.textContent = "Clique no cabecalho de uma coluna para adicionar esse loop ao mapa.";
+    selectedWorkbookColumnTitle.textContent = "Escolha uma coluna";
+    selectedWorkbookColumnSubtitle.textContent = "Clique no nome de uma coluna para transformar cada linha dela em um item do loop.";
+    selectedWorkbookColumnPreview.textContent = "Nenhuma coluna escolhida ainda.";
+    selectedWorkbookColumnStatus.textContent = "Aguardando";
+    workbookSelectedColumnBlock.classList.remove("is-ready");
+    workbookSelectedColumnBlock.classList.add("is-empty");
     addWorkbookColumnButton.disabled = true;
   }
 }
@@ -2546,7 +7207,24 @@ function renderWorkbookPreview() {
               `;
             })
             .join("");
-          return `<tr><td class="workbook-row-number">${row.row_number}</td>${cells}</tr>`;
+          return `
+            <tr>
+              <td class="workbook-row-number">
+                <div class="workbook-row-number-inner">
+                  <span>${row.row_number}</span>
+                  <button
+                    class="micro-button workbook-row-remove"
+                    type="button"
+                    data-workbook-row-remove="${row.row_number}"
+                    title="Excluir linha ${row.row_number}"
+                  >
+                    Excluir
+                  </button>
+                </div>
+              </td>
+              ${cells}
+            </tr>
+          `;
         })
         .join("")
     : `<tr><td class="workbook-empty-row" colspan="${preview.headers.length + 1}">Nenhuma linha encontrada para esse filtro.</td></tr>`;
@@ -2577,9 +7255,7 @@ function updateStats() {
   timelineMeta.textContent = total
     ? `${total} blocos conectados no fluxo. Edite qualquer card e salve no proprio lugar.`
     : "Sem blocos no momento. Comece adicionando um texto, atalho, clique, reconhecimento ou loop.";
-  commandMapMeta.textContent = total
-    ? `${total} etapas no caminho. Use esta aba para enxergar toda a sequencia e editar a trilha sem perder o contexto.`
-    : "Sem comandos ainda. A arvore completa vai aparecer aqui.";
+  updateCommandMapHeaderSummary();
 }
 
 function setLauncherCreateOpen(open) {
@@ -2625,7 +7301,7 @@ async function createAutomationFromDraft() {
       descricao: String(state.library.createDraft?.descricao || "").trim(),
       categoria: String(state.library.createDraft?.categoria || "").trim() || "Outros",
     });
-    applyRoadmap(result);
+    applyPersistedRoadmap(result);
     state.library.items = result.library?.items || state.library.items;
     state.library.categories = result.library?.categories || state.library.categories;
     state.library.activeId = result.library?.active_id || "";
@@ -2669,6 +7345,7 @@ function renderLauncherCreateCard() {
               </label>
             </div>
             <div class="automation-library-actions automation-library-actions--create">
+              <button class="ghost-button secondary-inline-action" data-library-action="import">Importar ZIP</button>
               <button class="ghost-button secondary-inline-action" data-library-action="create-cancel">Cancelar</button>
               <button class="primary-button primary-inline-action" data-library-action="create-confirm">Criar automacao</button>
             </div>
@@ -2687,6 +7364,7 @@ function renderLauncherCreateCard() {
           <p class="automation-library-description">Inicie outra automacao sem sair da biblioteca.</p>
           <div class="automation-library-actions">
             <button class="primary-button primary-inline-action" data-library-action="create">+ Nova automacao</button>
+            <button class="ghost-button secondary-inline-action" data-library-action="import">Importar ZIP</button>
           </div>
         </section>
       </div>
@@ -2778,6 +7456,31 @@ function compareAutomationItems(a, b) {
   return String(b.atualizado_em || "").localeCompare(String(a.atualizado_em || ""));
 }
 
+function systemStatusLabel(status) {
+  switch (String(status || "").toLowerCase()) {
+    case "ok":
+      return "Pronto";
+    case "warning":
+      return "Atencao";
+    case "error":
+      return "Corrigir";
+    default:
+      return "Verificando";
+  }
+}
+
+function renderSystemDiagnostics() {
+  return;
+}
+
+async function refreshSystemDiagnostics() {
+  return null;
+}
+
+async function runSystemAutofix() {
+  return null;
+}
+
 function filteredAutomationItems() {
   const search = (state.library.search || "").trim().toLowerCase();
   const category = (state.library.category || "").trim();
@@ -2810,9 +7513,15 @@ function renderLauncherLibrary() {
     return;
   }
   const items = filteredAutomationItems();
+  const hasItems = items.length > 0;
   launcherMeta.textContent = items.length
     ? `${items.length} automacoes encontradas. Abra, execute e organize sua biblioteca.`
-    : "Nenhuma automacao encontrada.";
+    : "Biblioteca vazia. Crie a primeira automacao ou importe um ZIP.";
+
+  if (newAutomationButton) {
+    newAutomationButton.hidden = false;
+    newAutomationButton.textContent = hasItems ? "+ Nova automacao" : "Criar primeira automacao";
+  }
 
   launcherCategoryFilter.innerHTML = [
     '<option value="">Todas</option>',
@@ -2832,10 +7541,34 @@ function renderLauncherLibrary() {
 
   const createCard = renderLauncherCreateCard();
 
-  if (!items.length) {
+  if (!hasItems) {
+    const emptyStatePanel = state.library.createOpen
+      ? `
+        <section class="launcher-empty-library-panel" data-automation-id="__empty__">
+          <div class="launcher-empty-library-copy">
+            <p class="panel-kicker">Biblioteca vazia</p>
+            <h3>Preencha os dados da sua primeira automacao</h3>
+            <p>O FlowDetect foi aberto limpo para voce comecar do zero. O formulario ja esta no card acima.</p>
+          </div>
+          <div class="launcher-empty-library-tip">Depois de criar, ela ja abre pronta para editar no mapa dos comandos.</div>
+        </section>
+      `
+      : `
+        <section class="launcher-empty-library-panel" data-automation-id="__empty__">
+          <div class="launcher-empty-library-copy">
+            <p class="panel-kicker">Biblioteca vazia</p>
+            <h3>Crie sua primeira automacao</h3>
+            <p>Este setup foi gerado limpo, sem automacoes, imagens ou planilhas. Comece uma nova automacao agora ou importe um ZIP pronto.</p>
+          </div>
+          <div class="launcher-empty-library-actions">
+            <button class="primary-button primary-inline-action" data-library-action="create">Criar primeira automacao</button>
+            <button class="ghost-button secondary-inline-action" data-library-action="import">Importar ZIP</button>
+          </div>
+        </section>
+      `;
     launcherList.innerHTML = `
       ${createCard}
-      <div class="empty-state">Nenhuma automacao encontrada.</div>
+      ${emptyStatePanel}
     `;
     return;
   }
@@ -2984,6 +7717,7 @@ function renderLauncherLibrary() {
 
                     <div class="automation-library-actions">
                       <button class="ghost-button secondary-inline-action" data-library-action="edit-meta">Editar dados</button>
+                      <button class="ghost-button secondary-inline-action" data-library-action="export-zip">Exportar ZIP</button>
                       <button class="danger-button secondary-inline-action" data-library-action="delete">Excluir</button>
                     </div>
                   `
@@ -2994,6 +7728,521 @@ function renderLauncherLibrary() {
       `;
     })
     .join("");
+}
+
+function studioControlSelectedAutomation() {
+  return state.remoteControl.library.find((item) => String(item.id) === String(state.remoteControl.selectedId)) || null;
+}
+
+function studioControlAutomationSummary(item) {
+  const commands = Number(item.command_count ?? item.commands ?? item.total_blocos ?? 0);
+  const sequences = Number(item.sequence_count ?? item.sequences ?? 1);
+  const updated = item.atualizado_em || item.updated_at || item.updatedAt || "";
+  const parts = [`${commands} bloco${commands === 1 ? "" : "s"}`, `${sequences || 1} pagina${sequences === 1 ? "" : "s"}`];
+  if (updated) {
+    parts.push(`Atualizada em ${formatDateLabel(updated)}`);
+  }
+  return parts.join(" | ");
+}
+
+function studioControlEvents() {
+  return Array.isArray(state.remoteControl.roadmap?.events) ? state.remoteControl.roadmap.events : [];
+}
+
+function studioControlSequenceEvents(sequence = state.remoteControl.currentSequence) {
+  const normalized = normalizeSequenceName(sequence);
+  return studioControlEvents()
+    .filter((event) => normalizeSequenceName(event.sequence || event.sequencia || "principal") === normalized)
+    .sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+}
+
+function studioControlVisiblePages() {
+  const events = studioControlEvents();
+  const used = new Set(events.map((event) => normalizeSequenceName(event.sequence || event.sequencia || "principal")));
+  return COMMAND_PAGE_DEFINITIONS.filter((page) => used.has(page.sequence) || page.sequence === "principal");
+}
+
+function studioControlFirstOrder(sequence = state.remoteControl.currentSequence) {
+  return studioControlSequenceEvents(sequence)[0]?.order ?? null;
+}
+
+function studioControlCurrentEvent() {
+  return studioControlEvents().find((event) => Number(event.order) === Number(state.remoteControl.currentOrder)) || null;
+}
+
+function studioControlEventTitle(event = {}) {
+  const details = event.details || event.detalhes || {};
+  if (event.title) {
+    return String(event.title);
+  }
+  if (event.type === "texto_livre") {
+    return "Texto livre";
+  }
+  if (event.type === "tecla" || event.type === "atalho") {
+    return "Tecla";
+  }
+  if (event.type === "mouse_click") {
+    return "Mouse";
+  }
+  if (event.type === "clicar_imagem") {
+    return "Reconhecimento visual";
+  }
+  if (event.type === "sequencia_planilha") {
+    return "Loop da planilha";
+  }
+  if (event.type === "abrir_url") {
+    return "Abrir URL";
+  }
+  if (event.type === "abrir_programa") {
+    return "Abrir Programa";
+  }
+  if (event.type === "inicio_loop") {
+    return "Inicio do loop";
+  }
+  if (event.type === "fim_loop") {
+    return "Fim do loop";
+  }
+  return details.nome || typeChipLabel(event.type || "bloco");
+}
+
+function studioControlEventSubtitle(event = {}) {
+  const details = event.details || event.detalhes || {};
+  if (event.type === "texto_livre") {
+    return details.texto || details.text || "Texto configurado";
+  }
+  if (event.type === "tecla" || event.type === "atalho") {
+    return `${details.teclas || details.keys || details.tecla || "tecla"}${details.repeticoes ? ` x${details.repeticoes}` : ""}`;
+  }
+  if (event.type === "mouse_click") {
+    return `${details.botao || "click"} em ${details.x ?? "-"}, ${details.y ?? "-"}`;
+  }
+  if (event.type === "clicar_imagem") {
+    return details.imagem || details.image || "Imagem de referencia";
+  }
+  if (event.type === "sequencia_planilha") {
+    return `${details.arquivo || "planilha"} -> ${details.coluna || "coluna"}`;
+  }
+  if (event.type === "abrir_url") {
+    return details.url || "URL configurada";
+  }
+  if (event.type === "abrir_programa") {
+    return details.caminho || "Executavel configurado";
+  }
+  return `Atraso ${Number(event.delay || 0).toLocaleString("pt-BR")}s`;
+}
+
+function studioControlEventDetails(event = {}) {
+  const details = event.details || event.detalhes || {};
+  const rows = [
+    ["Tipo", typeChipLabel(event.type || "bloco")],
+    ["Pagina", sequenceLabel(event.sequence || event.sequencia || "principal")],
+    ["Atraso", `${Number(event.delay || 0).toLocaleString("pt-BR")}s`],
+  ];
+  if (event.type === "texto_livre") {
+    rows.push(["Texto", details.texto || details.text || "-"]);
+  } else if (event.type === "tecla" || event.type === "atalho") {
+    rows.push(["Teclas", details.teclas || details.keys || details.tecla || "-"]);
+    rows.push(["Repeticoes", details.repeticoes || details.repeat || "1"]);
+  } else if (event.type === "clicar_imagem") {
+    rows.push(["Imagem", details.imagem || details.image || "-"]);
+    rows.push(["Precisao", `${details.confianca || details.confidence || "80%"}`]);
+  } else if (event.type === "sequencia_planilha") {
+    rows.push(["Arquivo", details.arquivo || "-"]);
+    rows.push(["Aba", details.aba || "-"]);
+    rows.push(["Coluna", details.coluna || "-"]);
+  } else if (event.type === "abrir_url") {
+    rows.push(["URL", details.url || "-"]);
+    rows.push(["Navegador", details.navegador || "padrao"]);
+  } else if (event.type === "abrir_programa") {
+    rows.push(["Executavel", details.caminho || "-"]);
+    rows.push(["Parametros", details.parametros || "-"]);
+  } else if (event.type === "mouse_click") {
+    rows.push(["Coordenadas", `${details.x ?? "-"}, ${details.y ?? "-"}`]);
+    rows.push(["Botao", details.botao || "left"]);
+  }
+  return rows;
+}
+
+function studioControlThemeClass(sequence) {
+  const theme = resolveCommandMapPageTheme(normalizeSequenceName(sequence));
+  return `theme-${String(theme || "principal").replace(/[^a-z0-9_-]/gi, "")}`;
+}
+
+function renderStudioControlFlowCard(event, index, stateClass) {
+  const flipped = Number(state.remoteControl.detailOpenOrder) === Number(event.order);
+  const themeClass = studioControlThemeClass(event.sequence || state.remoteControl.currentSequence);
+  const isLoop = getSequenceExecutionSettings(event.sequence || state.remoteControl.currentSequence, state.remoteControl.roadmap).executionMode === "loop_planilha";
+  return `
+    <article class="studio-control-flow-card ${stateClass} ${themeClass} ${isLoop ? "is-loop" : ""} ${flipped ? "is-flipped" : ""}" data-studio-control-order="${Number(event.order)}">
+      <div class="studio-control-flow-card-flip">
+        <div class="studio-control-flow-card-face studio-control-flow-card-front">
+          <span class="studio-control-flow-index">${String(index + 1).padStart(2, "0")}</span>
+          <small>${escapeHtml(isLoop ? `Loop | ${typeChipLabel(event.type || "bloco")}` : typeChipLabel(event.type || "bloco"))}</small>
+          <div class="studio-control-flow-card-copy">
+            <strong>${escapeHtml(studioControlEventTitle(event))}</strong>
+            <p>${escapeHtml(studioControlEventSubtitle(event))}</p>
+            <em>${Number(event.delay || 0).toLocaleString("pt-BR")}s antes</em>
+          </div>
+          <button class="studio-control-detail-button" type="button" data-studio-control-action="details" data-id="${Number(event.order)}">Ver detalhes</button>
+        </div>
+        <div class="studio-control-flow-card-face studio-control-flow-card-back">
+          <div class="studio-control-flow-card-back-head">
+            <strong>${escapeHtml(studioControlEventTitle(event))}</strong>
+            <button class="studio-control-detail-button" type="button" data-studio-control-action="back" data-id="${Number(event.order)}">Voltar</button>
+          </div>
+          <div class="studio-control-flow-detail-list">
+            ${studioControlEventDetails(event).map(([label, value]) => `
+              <span>
+                <small>${escapeHtml(label)}</small>
+                <strong>${escapeHtml(value)}</strong>
+              </span>
+            `).join("")}
+          </div>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderStudioControlFlow() {
+  const events = studioControlSequenceEvents();
+  const hasEvents = events.length > 0;
+  if (studioControlPageChips) {
+    const pages = studioControlVisiblePages();
+    studioControlPageChips.innerHTML = pages.map((page) => `
+      <button class="${normalizeSequenceName(state.remoteControl.currentSequence) === page.sequence ? "is-active" : ""}" type="button" data-studio-control-page="${escapeHtml(page.sequence)}">
+        <strong>${escapeHtml(page.label)}</strong>
+        <span>${escapeHtml(getSequenceExecutionSettings(page.sequence, state.remoteControl.roadmap).executionMode === "loop_planilha" ? "Loop" : "Executar uma vez")}</span>
+      </button>
+    `).join("");
+  }
+  if (studioControlFlowList) {
+    if (!hasEvents) {
+      studioControlFlowList.innerHTML = `<div class="empty-state">Abra uma automacao remota para ver os blocos aqui.</div>`;
+    } else {
+      const currentIndex = events.findIndex((entry) => Number(entry.order) === Number(state.remoteControl.currentOrder));
+      const cards = events.map((event, index) => {
+        const isCurrent = Number(event.order) === Number(state.remoteControl.currentOrder);
+        const stateClass = isCurrent
+          ? "is-current"
+          : currentIndex >= 0 && index < currentIndex
+            ? "is-done"
+            : "is-upcoming";
+        const connectorClass = stateClass === "is-done" ? "is-done" : isCurrent ? "is-current" : "";
+        return `
+          ${renderStudioControlFlowCard(event, index, stateClass)}
+          ${index < events.length - 1 ? `<div class="studio-control-flow-connector ${connectorClass}"><span></span></div>` : '<div class="studio-control-flow-end">Fim</div>'}
+        `;
+      }).join("");
+      const activeTheme = studioControlThemeClass(state.remoteControl.currentSequence);
+      const activeLoop = getSequenceExecutionSettings(state.remoteControl.currentSequence, state.remoteControl.roadmap).executionMode === "loop_planilha";
+      studioControlFlowList.innerHTML = `<div class="studio-control-flow-row ${activeTheme} ${activeLoop ? "is-loop" : ""}">${cards}</div>`;
+    }
+  }
+  if (studioControlPrevBlockButton) {
+    studioControlPrevBlockButton.disabled = !hasEvents || events.findIndex((event) => Number(event.order) === Number(state.remoteControl.currentOrder)) <= 0;
+  }
+  if (studioControlNextBlockButton) {
+    const index = events.findIndex((event) => Number(event.order) === Number(state.remoteControl.currentOrder));
+    studioControlNextBlockButton.disabled = !hasEvents || index < 0 || index >= events.length - 1;
+  }
+  const shouldCenter = Number(state.remoteControl.lastCenteredOrder) !== Number(state.remoteControl.currentOrder);
+  if (shouldCenter) {
+    state.remoteControl.lastCenteredOrder = state.remoteControl.currentOrder;
+  }
+  requestAnimationFrame(() => {
+    if (!shouldCenter) {
+      return;
+    }
+    const selected = studioControlFlowList?.querySelector(".studio-control-flow-card.is-current");
+    if (!selected || !studioControlFlowList) {
+      return;
+    }
+    const containerRect = studioControlFlowList.getBoundingClientRect();
+    const targetRect = selected.getBoundingClientRect();
+    const delta = (targetRect.left + targetRect.width / 2) - (containerRect.left + containerRect.width / 2);
+    studioControlFlowList.scrollTo({
+      left: Math.max(0, studioControlFlowList.scrollLeft + delta),
+      behavior: "auto",
+    });
+  });
+}
+
+function renderStudioControl() {
+  const remote = state.remoteControl;
+  const selected = studioControlSelectedAutomation();
+  const percent = Math.max(0, Math.min(100, Number(remote.progress.percent || 0)));
+  studioControlViewButtons.forEach((button) => {
+    const active = button.dataset.studioControlView === remote.activeView;
+    button.classList.toggle("is-active", active);
+  });
+  studioControlViewPanels.forEach((panel) => {
+    const active = panel.dataset.studioControlPanel === remote.activeView;
+    panel.classList.toggle("is-active", active);
+    panel.hidden = !active;
+  });
+  if (studioControlStatus) {
+    studioControlStatus.textContent = !remote.connected ? "Desconectado" : remote.running ? "Executando" : "Conectado";
+    studioControlStatus.className = `studio-control-status ${remote.connected ? (remote.running ? "is-running" : "is-online") : "is-offline"}`;
+  }
+  if (studioControlAddressInput && document.activeElement !== studioControlAddressInput) {
+    studioControlAddressInput.value = remote.address;
+  }
+  if (studioControlHint) {
+    studioControlHint.textContent = remote.connected
+      ? "Agent conectado. Escolha uma automacao remota para executar no outro computador."
+      : "Conecte no Agent do outro PC para importar, visualizar e executar automacoes.";
+  }
+  if (studioControlAgentLabel) {
+    studioControlAgentLabel.textContent = remote.agentLabel;
+  }
+  if (studioControlMeta) {
+    studioControlMeta.textContent = `${remote.library.length} automacao${remote.library.length === 1 ? "" : "es"}`;
+  }
+  if (studioControlStopButton) {
+    studioControlStopButton.disabled = !remote.connected || !remote.running;
+  }
+  if (studioControlImportButton) {
+    studioControlImportButton.disabled = !remote.connected;
+  }
+  if (studioControlRunButton) {
+    studioControlRunButton.disabled = !remote.connected || !remote.selectedId || remote.running;
+  }
+  if (studioControlRefreshButton) {
+    studioControlRefreshButton.disabled = !remote.connected;
+  }
+  if (studioControlEmpty) {
+    studioControlEmpty.hidden = remote.connected && remote.library.length > 0;
+    studioControlEmpty.textContent = remote.connected
+      ? "Nenhuma automacao no Agent conectado. Importe um ZIP para comecar."
+      : "Conecte no Agent para carregar as automacoes remotas.";
+  }
+  if (studioControlList) {
+    studioControlList.innerHTML = remote.library.map((item) => {
+      const isSelected = String(item.id) === String(remote.selectedId);
+      const name = item.nome || item.name || "Automacao sem nome";
+      const description = item.descricao || item.description || "Automacao disponivel no Agent conectado.";
+      const commands = Number(item.command_count ?? item.commands ?? item.total_blocos ?? 0);
+      const sequences = Number(item.sequence_count ?? item.sequences ?? 1);
+      return `
+        <article class="studio-control-card ${isSelected ? "is-selected" : ""}" data-remote-automation-id="${escapeHtml(item.id)}">
+          <div class="studio-control-card-head">
+            <span class="studio-control-card-badge">${escapeHtml(item.categoria || item.category || "Remota")}</span>
+            ${isSelected ? '<span class="studio-control-card-live">Aberta</span>' : ""}
+          </div>
+          <h3>${escapeHtml(name)}</h3>
+          <p>${escapeHtml(description)}</p>
+          <div class="studio-control-card-summary">${escapeHtml(studioControlAutomationSummary(item))}</div>
+          <div class="studio-control-card-stats">
+            <span><strong>${commands}</strong> comandos</span>
+            <span><strong>${sequences || 1}</strong> paginas</span>
+          </div>
+          <div class="studio-control-card-actions">
+            <button class="ghost-button" type="button" data-studio-control-action="select" data-id="${escapeHtml(item.id)}">Abrir</button>
+            <button class="primary-button" type="button" data-studio-control-action="run" data-id="${escapeHtml(item.id)}" ${remote.running ? "disabled" : ""}>Executar</button>
+          </div>
+        </article>
+      `;
+    }).join("");
+  }
+  if (studioControlSelectedTitle) {
+    studioControlSelectedTitle.textContent = selected?.nome || selected?.name || "Nenhuma automacao selecionada";
+  }
+  if (studioControlProgressPercent) {
+    studioControlProgressPercent.textContent = `${Math.round(percent)}%`;
+  }
+  if (studioControlProgressFill) {
+    studioControlProgressFill.style.width = `${percent}%`;
+  }
+  if (studioControlProgressText) {
+    studioControlProgressText.textContent = remote.progress.description || "A execucao remota vai aparecer aqui.";
+  }
+  if (studioControlCompanyText) {
+    studioControlCompanyText.textContent = remote.progress.company || "-";
+  }
+  if (studioControlPageText) {
+    studioControlPageText.textContent = sequenceLabel(remote.progress.sequence || "principal");
+  }
+  if (studioControlBlockText) {
+    studioControlBlockText.textContent = studioControlCurrentEvent()?.title || (remote.progress.order ? `Bloco ${remote.progress.order}` : "Aguardando");
+  }
+  renderStudioControlFlow();
+  if (studioControlLogList) {
+    studioControlLogList.innerHTML = remote.logs.length
+      ? remote.logs.slice(0, 12).map((line) => `<article>${escapeHtml(line)}</article>`).join("")
+      : `<article>Logs do Agent aparecem aqui quando a execucao iniciar.</article>`;
+  }
+}
+
+async function refreshStudioControlLibrary(options = {}) {
+  if (!state.remoteControl.connected) {
+    renderStudioControl();
+    return;
+  }
+  const result = await invoke("remote_agent_list_automations", { address: state.remoteControl.address });
+  state.remoteControl.library = Array.isArray(result?.items) ? result.items : [];
+  if (options.preferredId) {
+    state.remoteControl.selectedId = String(options.preferredId);
+  } else if (!state.remoteControl.selectedId && state.remoteControl.library[0]?.id) {
+    state.remoteControl.selectedId = String(state.remoteControl.library[0].id);
+  }
+  renderStudioControl();
+}
+
+function applyStudioControlStatus(payload = {}) {
+  const snapshot = payload?.snapshot || {};
+  const progress = snapshot.progress || {};
+  const automationId = String(snapshot.automation_id || snapshot.automationId || "").trim();
+  const incomingLogs = Array.isArray(snapshot.logs)
+    ? snapshot.logs.map((line) => String(line || "").trim()).filter(Boolean).reverse()
+    : state.remoteControl.logs;
+  const statusSignature = JSON.stringify({
+    running: Boolean(snapshot.running),
+    automationId,
+    percent: Number(progress.percent || 0),
+    description: String(progress.description || ""),
+    company: String(progress.company || ""),
+    sequence: normalizeSequenceName(progress.sequence || "principal"),
+    order: Number(progress.order || 0),
+    logs: incomingLogs.slice(0, 12),
+  });
+  const statusChanged = statusSignature !== state.remoteControl.lastStatusSignature;
+  const wasRunning = state.remoteControl.running;
+  state.remoteControl.lastStatusSignature = statusSignature;
+  if (automationId) {
+    state.remoteControl.selectedId = automationId;
+  }
+  state.remoteControl.running = Boolean(snapshot.running);
+  state.remoteControl.progress = {
+    percent: Number(progress.percent || 0),
+    description: String(progress.description || (state.remoteControl.running ? "Automacao remota em execucao." : "Agent pronto.")),
+    company: String(progress.company || ""),
+    sequence: normalizeSequenceName(progress.sequence || "principal"),
+    order: Number(progress.order || 0),
+  };
+  const shouldSyncRemotePosition = state.remoteControl.running || Boolean(snapshot.running);
+  if (shouldSyncRemotePosition && progress.sequence) {
+    state.remoteControl.currentSequence = normalizeSequenceName(progress.sequence);
+  }
+  if (shouldSyncRemotePosition && Number(progress.order || 0) > 0) {
+    state.remoteControl.currentOrder = Number(progress.order);
+    state.remoteControl.lastCenteredOrder = null;
+    const current = studioControlCurrentEvent();
+    if (current?.sequence || current?.sequencia) {
+      state.remoteControl.currentSequence = normalizeSequenceName(current.sequence || current.sequencia);
+    }
+  }
+  state.remoteControl.logs = incomingLogs;
+  if (!statusChanged && !state.remoteControl.running && !wasRunning) {
+    return;
+  }
+  renderStudioControl();
+}
+
+async function refreshStudioControlStatus(options = {}) {
+  if (!state.remoteControl.connected || state.remoteControl.statusRefreshing) {
+    return;
+  }
+  state.remoteControl.statusRefreshing = true;
+  try {
+    const result = await invoke("remote_agent_status", { address: state.remoteControl.address });
+    applyStudioControlStatus(result);
+  } catch (error) {
+    if (!options.silent) {
+      setMessage(String(error), "error");
+    }
+  } finally {
+    state.remoteControl.statusRefreshing = false;
+  }
+}
+
+function startStudioControlPolling() {
+  if (state.remoteControl.pollTimer) {
+    window.clearInterval(state.remoteControl.pollTimer);
+  }
+  state.remoteControl.pollTimer = window.setInterval(() => {
+    refreshStudioControlStatus({ silent: true }).catch(() => null);
+  }, 1800);
+}
+
+async function connectStudioControl() {
+  const address = String(studioControlAddressInput?.value || "").trim() || "127.0.0.1:18452";
+  state.remoteControl.address = address;
+  const ping = await invoke("remote_agent_ping", { address });
+  state.remoteControl.connected = true;
+  state.remoteControl.agentLabel = `${ping?.agent || "FlowDetect Agent"} | ${ping?.address || address}`;
+  setMessage(`Controle remoto conectado em ${address}.`, "success");
+  await refreshStudioControlLibrary();
+  await refreshStudioControlStatus({ silent: true });
+  startStudioControlPolling();
+  renderStudioControl();
+}
+
+async function openStudioControlAutomation(id) {
+  const normalizedId = String(id || "").trim();
+  if (!normalizedId) {
+    return;
+  }
+  const roadmap = await invoke("remote_agent_open_automation", {
+    address: state.remoteControl.address,
+    id: normalizedId,
+  });
+  state.remoteControl.selectedId = normalizedId;
+  state.remoteControl.roadmap = roadmap;
+  state.remoteControl.currentSequence = normalizeSequenceName(roadmap?.initial_sequence || roadmap?.sequencia_inicial || "principal");
+  state.remoteControl.currentOrder = studioControlFirstOrder(state.remoteControl.currentSequence) ?? roadmap?.events?.[0]?.order ?? null;
+  state.remoteControl.detailOpenOrder = null;
+  state.remoteControl.lastCenteredOrder = null;
+  await refreshStudioControlStatus({ silent: true });
+  renderStudioControl();
+}
+
+async function runStudioControlAutomation(id = "") {
+  const normalizedId = String(id || state.remoteControl.selectedId || "").trim();
+  if (!normalizedId) {
+    throw new Error("Escolha uma automacao remota antes de executar.");
+  }
+  if (!state.remoteControl.connected) {
+    throw new Error("Conecte no Agent antes de executar.");
+  }
+  if (!state.remoteControl.roadmap || String(state.remoteControl.selectedId) !== normalizedId) {
+    await openStudioControlAutomation(normalizedId);
+  }
+  const result = await invoke("remote_agent_execute", {
+    address: state.remoteControl.address,
+    id: normalizedId,
+    delay: Number(testDelayInput?.value || 3),
+    loopStart: Math.max(1, Math.trunc(parseNumber(studioControlLoopStartInput?.value || testLoopStartInput?.value, 1))),
+    startCompany: String(studioControlCompanyStartInput?.value || "").trim(),
+    minimizeAgent: String(studioControlAgentWindowMode?.value || "minimize") === "minimize",
+  });
+  applyStudioControlStatus(result);
+  setMessage("Execucao remota iniciada no Agent.", "success");
+}
+
+async function stopStudioControlAutomation() {
+  const result = await invoke("remote_agent_stop", { address: state.remoteControl.address });
+  applyStudioControlStatus(result);
+  setMessage("Parada enviada ao Agent.", "info");
+}
+
+async function importStudioControlZip(file) {
+  if (!file) {
+    return;
+  }
+  if (!state.remoteControl.connected) {
+    throw new Error("Conecte no Agent antes de importar o ZIP.");
+  }
+  const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+  const result = await invoke("remote_agent_import_automation_zip", {
+    address: state.remoteControl.address,
+    fileName: file.name,
+    bytes,
+  });
+  const importedId = String(result?.imported_id || result?.importedId || result?.active_automation?.id || "").trim();
+  await refreshStudioControlLibrary({ preferredId: importedId });
+  await refreshStudioControlStatus({ silent: true });
+  setMessage(`ZIP enviado ao Agent: ${file.name}`, "success");
 }
 
 async function refreshAutomationLibrary(feedbackMessage = "") {
@@ -3019,13 +8268,90 @@ async function refreshAutomationLibrary(feedbackMessage = "") {
   }
 }
 
+function renderOpenUrlFields(fieldAttr, details = {}, currentOrder = null) {
+  const browser = String(details.navegador ?? "padrao");
+  const openMode = String(details.modo_abertura ?? "nova_janela");
+  return `
+    <div class="field-stack">
+      <label>
+        <span>URL para abrir</span>
+        <input ${fieldAttr}="openUrl" type="text" value="${escapeHtml(details.url ?? "")}" placeholder="https://sistema.com.br" />
+      </label>
+      <div class="tree-inline-fields">
+        <label>
+          <span>Navegador</span>
+          <select ${fieldAttr}="openBrowser">
+            <option value="padrao" ${browser === "padrao" ? "selected" : ""}>Padrao</option>
+            <option value="chrome" ${browser === "chrome" ? "selected" : ""}>Chrome</option>
+            <option value="edge" ${browser === "edge" ? "selected" : ""}>Edge</option>
+          </select>
+        </label>
+        <label>
+          <span>Abrir em</span>
+          <select ${fieldAttr}="openMode">
+            <option value="nova_janela" ${openMode !== "nova_aba" ? "selected" : ""}>Nova janela</option>
+            <option value="nova_aba" ${openMode === "nova_aba" ? "selected" : ""}>Nova aba</option>
+          </select>
+        </label>
+        <label>
+          <span>Aguardar apos abrir (s)</span>
+          <input ${fieldAttr}="openWait" type="number" min="0" step="0.5" value="${escapeHtml(details.aguardar_segundos ?? 3)}" />
+        </label>
+      </div>
+      <div class="tree-inline-fields">
+        ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
+      </div>
+    </div>
+  `;
+}
+
+function renderOpenProgramFields(fieldAttr, details = {}, currentOrder = null) {
+  return `
+    <div class="field-stack">
+      <label>
+        <span>Caminho do executavel</span>
+        <input ${fieldAttr}="programPath" type="text" value="${escapeHtml(details.caminho ?? "")}" placeholder="C:\\Program Files\\App\\app.exe" />
+      </label>
+      <label>
+        <span>Parametros opcionais</span>
+        <input ${fieldAttr}="programParams" type="text" value="${escapeHtml(details.parametros ?? "")}" placeholder="--new-window https://site.com.br" />
+      </label>
+      <div class="tree-inline-fields">
+        <label>
+          <span>Aguardar apos abrir (s)</span>
+          <input ${fieldAttr}="programWait" type="number" min="0" step="0.5" value="${escapeHtml(details.aguardar_segundos ?? 2)}" />
+        </label>
+        ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
+      </div>
+    </div>
+  `;
+}
+
 function renderEditorFields(event) {
+  const details = event.details ?? {};
   const delayField = `
     <label>
       <span>Tempo antes do bloco</span>
       <input data-field="delay" type="number" min="0" step="0.1" value="${escapeHtml(event.delay)}" />
     </label>
   `;
+
+  if (isLoopMarkerType(event.type)) {
+    const title = event.type === "inicio_loop" ? "Inicio do loop" : "Fim do loop";
+    const copy = event.type === "inicio_loop"
+      ? "Esse marcador define onde a repeticao por linha da planilha comeca."
+      : "Esse marcador fecha o trecho que sera repetido para cada linha da planilha.";
+    return `
+      <div class="field-stack loop-marker-note">
+        <p class="muted-copy"><strong>${title}.</strong> ${copy}</p>
+        ${event.type === "fim_loop" ? `
+          <div class="tree-inline-fields">
+            ${renderSuccessFlowFields("data-field", details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, event.order)}
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
 
   if (event.type === "texto_livre") {
     return `
@@ -3047,7 +8373,7 @@ function renderEditorFields(event) {
           <span>Tecla ou atalho</span>
           <div class="capture-inline">
             <input data-field="keys" type="text" value="${escapeHtml(event.keys.join("+"))}" />
-            <button class="tree-open-button" data-action="record-key">Gravar tecla</button>
+            <button class="tree-open-button record-key-button" data-action="record-key">Gravar tecla</button>
           </div>
         </label>
         <label>
@@ -3060,7 +8386,6 @@ function renderEditorFields(event) {
   }
 
   if (event.type === "mouse_click") {
-    const details = event.details ?? {};
     const clicks = Number(details.clicks ?? details.cliques ?? 1);
     return `
       <div class="field-stack">
@@ -3096,17 +8421,17 @@ function renderEditorFields(event) {
   }
 
   if (event.type === "clicar_imagem") {
-    const details = event.details ?? {};
     return `
       <div class="field-stack">
         <label>
           <span>Referencia visual</span>
           <div class="capture-inline">
             <input data-field="imagePath" type="text" value="${escapeHtml(details.imagem ?? "")}" placeholder="imagens/botao_salvar.png, painel_erro.png..." />
+            <button class="tree-open-button" data-action="capture-image" type="button">Capturar nova imagem</button>
             <button class="tree-open-button" data-action="select-image" type="button">Selecionar referencia</button>
           </div>
         </label>
-        <button class="tree-open-button" data-action="test-image-recognition" type="button">Testar reconhecimento</button>
+        <button class="tree-open-button" data-action="test-image-recognition" type="button">Testar imagem</button>
         <div class="triple-grid">
           <label>
             <span>Timeout</span>
@@ -3125,9 +8450,12 @@ function renderEditorFields(event) {
             </select>
           </label>
           <label>
-            <span>Janela alvo</span>
-            <input data-field="windowTitle" type="text" list="windowSuggestions" value="${escapeHtml(details.janela_alvo ?? "")}" placeholder="Ex.: Alterdata, painel, navegador..." />
+            <span>Janela deste bloco</span>
+            <select data-field="windowTitle">
+              ${recognitionWindowOptionsMarkup(details.janela_alvo ?? "", "Sem janela fixa neste bloco")}
+            </select>
           </label>
+          <button class="tree-open-button recognition-window-refresh" data-action="refresh-recognition-windows" type="button">Atualizar janelas</button>
           <label>
             <span>Ao reconhecer</span>
             <select data-field="clickOnFind">
@@ -3142,7 +8470,14 @@ function renderEditorFields(event) {
               <option value="parar" ${String(details.ao_nao_encontrar ?? "parar") === "parar" ? "selected" : ""}>Parar</option>
               <option value="continuar" ${String(details.ao_nao_encontrar ?? "") === "continuar" || String(details.ao_nao_encontrar ?? "") === "pular" ? "selected" : ""}>Continuar</option>
               <option value="tentar_novamente" ${String(details.ao_nao_encontrar ?? "") === "tentar_novamente" ? "selected" : ""}>Tentar novamente</option>
+              <option value="ir_para_sequencia" ${String(details.ao_nao_encontrar ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para pagina</option>
               <option value="ir_para_bloco" ${String(details.ao_nao_encontrar ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
+            </select>
+          </label>
+          <label>
+            <span>Ir para esta pagina</span>
+            <select data-field="failureSequence">
+              ${renderSequenceSuggestionsOptions(details.sequencia_nao_encontrar ?? "pagina_2", "Escolha uma pagina")}
             </select>
           </label>
           <label>
@@ -3169,8 +8504,21 @@ function renderEditorFields(event) {
     return renderChromeBlockFields(event, "card", event.order);
   }
 
+  if (event.type === "abrir_url") {
+    return `
+      ${renderOpenUrlFields("data-field", details, event.order)}
+      ${delayField}
+    `;
+  }
+
+  if (event.type === "abrir_programa") {
+    return `
+      ${renderOpenProgramFields("data-field", details, event.order)}
+      ${delayField}
+    `;
+  }
+
   if (event.type === "verificar_estado_botao") {
-    const details = event.details ?? {};
     const activeAction = details.se_ativo?.acao ?? "continuar";
     const inactiveAction = details.se_desativado?.acao ?? "ir_para_sequencia";
     const missingAction = details.se_nao_encontrar?.acao ?? "parar";
@@ -3217,120 +8565,6 @@ function renderEditorFields(event) {
     `;
   }
 
-  if (event.type === "clicar_imagem") {
-    const details = event.details ?? {};
-    return `
-      <div class="field-stack field-stack-recognition">
-        <label class="recognition-reference-field">
-          <span>Referencia visual</span>
-          <div class="capture-inline">
-            <input data-tree-field="imagePath" type="text" value="${escapeHtml(details.imagem ?? "")}" placeholder="imagens/botao_salvar.png, painel_erro.png..." />
-            <button class="tree-open-button" data-tree-action="select-image" type="button">Selecionar referencia</button>
-          </div>
-        </label>
-        <button class="tree-open-button recognition-test-inline" data-tree-action="test-image-recognition" type="button">Testar reconhecimento</button>
-        <div class="tree-inline-fields tree-inline-fields-recognition">
-          <label class="recognition-cell recognition-cell-sm">
-            <span>Timeout</span>
-            <input data-tree-field="timeout" type="number" min="0.1" step="0.5" value="${escapeHtml(details.timeout ?? 10)}" />
-          </label>
-          <label class="recognition-cell recognition-cell-sm">
-            <span>Confianca</span>
-            <input data-tree-field="confidence" type="number" min="0.1" max="1" step="0.05" value="${escapeHtml(details.confianca ?? 0.8)}" />
-          </label>
-          <label class="recognition-cell recognition-cell-sm">
-            <span>Perfil</span>
-            <select data-tree-field="searchProfile">
-              <option value="fast" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "fast" ? "selected" : ""}>Rapido</option>
-              <option value="balanced" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "balanced" ? "selected" : ""}>Equilibrado</option>
-              <option value="precise" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "precise" ? "selected" : ""}>Preciso</option>
-            </select>
-          </label>
-          <label class="recognition-cell recognition-cell-wide">
-            <span>Janela alvo</span>
-            <input data-tree-field="windowTitle" type="text" list="windowSuggestions" value="${escapeHtml(details.janela_alvo ?? "")}" placeholder="Ex.: Alterdata, painel, navegador..." />
-          </label>
-          <label class="recognition-cell recognition-cell-sm">
-            <span>Ao reconhecer</span>
-            <select data-tree-field="clickOnFind">
-              <option value="single" ${recognitionClickModeFromDetails(details) === "single" ? "selected" : ""}>1 clique</option>
-              <option value="double" ${recognitionClickModeFromDetails(details) === "double" ? "selected" : ""}>2 cliques</option>
-              <option value="identify" ${recognitionClickModeFromDetails(details) === "identify" ? "selected" : ""}>Identificar</option>
-            </select>
-          </label>
-          ${renderSuccessFlowFields("data-tree-field", details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", event.order)}
-          <label class="recognition-cell recognition-cell-wide">
-            <span>Se nao encontrar</span>
-            <select data-tree-field="failureAction">
-              <option value="parar" ${String(details.ao_nao_encontrar ?? "parar") === "parar" ? "selected" : ""}>Parar</option>
-              <option value="continuar" ${String(details.ao_nao_encontrar ?? "") === "continuar" || String(details.ao_nao_encontrar ?? "") === "pular" ? "selected" : ""}>Continuar</option>
-              <option value="tentar_novamente" ${String(details.ao_nao_encontrar ?? "") === "tentar_novamente" ? "selected" : ""}>Tentar novamente</option>
-              <option value="ir_para_bloco" ${String(details.ao_nao_encontrar ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
-            </select>
-          </label>
-          <label class="recognition-cell recognition-cell-sm">
-            <span>Ir para este bloco</span>
-            <select data-tree-field="failureBlock">
-              ${blockTargetOptions(details.bloco_nao_encontrar ?? "", event.order)}
-            </select>
-          </label>
-          <label class="recognition-cell recognition-cell-sm">
-            <span>Tentativas</span>
-            <input data-tree-field="retryCount" type="number" min="1" step="1" value="${escapeHtml(details.quantidade_tentativas ?? 1)}" />
-          </label>
-          <label class="recognition-cell recognition-cell-sm">
-            <span>Intervalo entre tentativas</span>
-            <input data-tree-field="retryInterval" type="number" min="0" step="0.5" value="${escapeHtml(details.intervalo_tentativas ?? 1)}" />
-          </label>
-        </div>
-      </div>
-    `;
-  }
-
-  if (event.type === "chrome_elemento_html") {
-    return renderChromeBlockFields(event, "tree", event.order);
-  }
-
-  if (event.type === "verificar_estado_botao") {
-    const details = event.details ?? {};
-    const activeAction = details.se_ativo?.acao ?? "continuar";
-    const inactiveAction = details.se_desativado?.acao ?? "ir_para_sequencia";
-    const missingAction = details.se_nao_encontrar?.acao ?? "parar";
-    return `
-      <div class="field-stack">
-        <label>
-          <span>Nome do bloco</span>
-          <input data-tree-field="verifyName" type="text" value="${escapeHtml(details.nome ?? "Verificar botao")}" />
-        </label>
-        <label>
-          <span>Referencia ativa</span>
-          <div class="capture-inline">
-            <input data-tree-field="verifyActiveImage" type="text" value="${escapeHtml(details.imagem_ativo ?? "")}" />
-            <button class="tree-open-button" data-tree-action="select-verify-active-image" type="button">Selecionar ativa</button>
-          </div>
-        </label>
-        <label>
-          <span>Referencia desativada</span>
-          <div class="capture-inline">
-            <input data-tree-field="verifyInactiveImage" type="text" value="${escapeHtml(details.imagem_desativado ?? "")}" />
-            <button class="tree-open-button" data-tree-action="select-verify-inactive-image" type="button">Selecionar desativada</button>
-          </div>
-        </label>
-        <div class="tree-inline-fields">
-          <label><span>Timeout</span><input data-tree-field="verifyTimeout" type="number" min="0.1" step="0.5" value="${escapeHtml(details.timeout ?? 5)}" /></label>
-          <label><span>Confianca</span><input data-tree-field="verifyConfidence" type="number" min="0.1" max="1" step="0.05" value="${escapeHtml(details.confianca ?? 0.85)}" /></label>
-          <label><span>Se ativo</span><select data-tree-field="verifyActiveAction"><option value="continuar" ${activeAction === "continuar" ? "selected" : ""}>Continuar</option><option value="pular_card" ${activeAction === "pular_card" ? "selected" : ""}>Pular card</option><option value="ir_para_sequencia" ${activeAction === "ir_para_sequencia" ? "selected" : ""}>Ir para sequencia</option><option value="parar" ${activeAction === "parar" ? "selected" : ""}>Parar</option></select></label>
-          <label><span>Sequencia se ativo</span><input data-tree-field="verifyActiveSequence" type="text" list="sequenceSuggestions" value="${escapeHtml(details.se_ativo?.sequencia ?? "")}" /></label>
-          <label><span>Se desativado</span><select data-tree-field="verifyInactiveAction"><option value="ir_para_sequencia" ${inactiveAction === "ir_para_sequencia" ? "selected" : ""}>Ir para sequencia</option><option value="continuar" ${inactiveAction === "continuar" ? "selected" : ""}>Continuar</option><option value="pular_card" ${inactiveAction === "pular_card" ? "selected" : ""}>Pular card</option><option value="parar" ${inactiveAction === "parar" ? "selected" : ""}>Parar</option></select></label>
-          <label><span>Sequencia se desativado</span><input data-tree-field="verifyInactiveSequence" type="text" list="sequenceSuggestions" value="${escapeHtml(details.se_desativado?.sequencia ?? "")}" /></label>
-          <label><span>Se nao encontrar</span><select data-tree-field="verifyMissingAction"><option value="parar" ${missingAction === "parar" ? "selected" : ""}>Parar</option><option value="ir_para_sequencia" ${missingAction === "ir_para_sequencia" ? "selected" : ""}>Ir para sequencia</option><option value="continuar" ${missingAction === "continuar" ? "selected" : ""}>Continuar</option><option value="pular_card" ${missingAction === "pular_card" ? "selected" : ""}>Pular card</option></select></label>
-          <label><span>Sequencia se nao encontrar</span><input data-tree-field="verifyMissingSequence" type="text" list="sequenceSuggestions" value="${escapeHtml(details.se_nao_encontrar?.sequencia ?? "")}" /></label>
-        </div>
-      </div>
-    `;
-  }
-
-  const details = event.details ?? {};
   const workbookId = details.arquivo || state.composerWorkbookId || state.workbook?.default_workbook || "";
   const workbookOptions = availableWorkbooks()
     .map(
@@ -3378,7 +8612,7 @@ function renderEditorFields(event) {
           <span>Acao apos item</span>
           <div class="capture-inline">
             <input data-field="afterAction" type="text" value="${escapeHtml(details.acao_apos_item_texto ?? "nenhuma")}" />
-            <button class="tree-open-button" data-action="record-after-action" type="button">Gravar tecla</button>
+            <button class="tree-open-button record-key-button" data-action="record-after-action" type="button">Gravar tecla</button>
           </div>
         </label>
         <label>
@@ -3387,12 +8621,28 @@ function renderEditorFields(event) {
         </label>
       </div>
       ${delayField}
-      <p class="muted-copy">${(details.valores ?? []).length} itens encontrados nessa coluna.</p>
     </div>
   `;
 }
 
 function renderTreeEditorFields(event) {
+  const details = event.details ?? {};
+  if (isLoopMarkerType(event.type)) {
+    const copy = event.type === "inicio_loop"
+      ? "A automacao entra no trecho repetido logo apos este bloco."
+      : "A automacao encerra o trecho repetido imediatamente antes deste bloco.";
+    return `
+      <div class="field-stack loop-marker-note">
+        <p class="muted-copy">${copy}</p>
+        ${event.type === "fim_loop" ? `
+          <div class="tree-inline-fields">
+            ${renderSuccessFlowFields("data-tree-field", details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, event.order)}
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }
+
   if (event.type === "texto_livre") {
     return `
       <div class="field-stack">
@@ -3401,7 +8651,7 @@ function renderTreeEditorFields(event) {
           <textarea data-tree-field="text" rows="3">${escapeHtml(event.text)}</textarea>
         </label>
         <div class="tree-inline-fields">
-          ${renderSuccessFlowFields("data-tree-field", event.details?.ao_sucesso ?? "continuar", event.details?.bloco_sucesso ?? "", event.order)}
+          ${renderSuccessFlowFields("data-tree-field", event.details?.ao_sucesso ?? "continuar", event.details?.bloco_sucesso ?? "", event.details?.sequencia_sucesso ?? "", event.details?.atraso_antes_sequencia_sucesso ?? 0, event.order)}
         </div>
       </div>
     `;
@@ -3420,14 +8670,13 @@ function renderTreeEditorFields(event) {
           <input data-tree-field="repeat" type="number" min="1" step="1" value="${escapeHtml(repeatCount)}" />
         </label>
         <div class="tree-inline-fields">
-          ${renderSuccessFlowFields("data-tree-field", event.details?.ao_sucesso ?? "continuar", event.details?.bloco_sucesso ?? "", event.order)}
+          ${renderSuccessFlowFields("data-tree-field", event.details?.ao_sucesso ?? "continuar", event.details?.bloco_sucesso ?? "", event.details?.sequencia_sucesso ?? "", event.details?.atraso_antes_sequencia_sucesso ?? 0, event.order)}
         </div>
       </div>
     `;
   }
 
   if (event.type === "mouse_click") {
-    const details = event.details ?? {};
     const clicks = Number(details.clicks ?? details.cliques ?? 1);
     return `
       <div class="field-stack">
@@ -3458,83 +8707,29 @@ function renderTreeEditorFields(event) {
         </div>
         <button class="tree-open-button capture-mouse-inline-button" data-tree-action="record-mouse" type="button">Capturar mouse</button>
         <div class="tree-inline-fields">
-          ${renderSuccessFlowFields("data-tree-field", details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", event.order)}
+          ${renderSuccessFlowFields("data-tree-field", details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, event.order)}
         </div>
       </div>
     `;
   }
 
   if (event.type === "clicar_imagem") {
-    const details = event.details ?? {};
-    return `
-      <div class="field-stack">
-        <label>
-          <span>Referencia visual</span>
-          <div class="capture-inline">
-            <input data-tree-field="imagePath" type="text" value="${escapeHtml(details.imagem ?? "")}" placeholder="imagens/botao_salvar.png, painel_erro.png..." />
-            <button class="tree-open-button" data-tree-action="select-image" type="button">Selecionar referencia</button>
-          </div>
-        </label>
-        <div class="tree-inline-fields">
-          <label>
-            <span>Timeout</span>
-            <input data-tree-field="timeout" type="number" min="0.1" step="0.5" value="${escapeHtml(details.timeout ?? 10)}" />
-          </label>
-          <label>
-            <span>Confianca</span>
-            <input data-tree-field="confidence" type="number" min="0.1" max="1" step="0.05" value="${escapeHtml(details.confianca ?? 0.8)}" />
-          </label>
-          <label>
-            <span>Perfil de busca</span>
-            <select data-tree-field="searchProfile">
-              <option value="fast" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "fast" ? "selected" : ""}>Rapido</option>
-              <option value="balanced" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "balanced" ? "selected" : ""}>Equilibrado</option>
-              <option value="precise" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "precise" ? "selected" : ""}>Preciso</option>
-            </select>
-          </label>
-          <label>
-            <span>Janela alvo</span>
-            <input data-tree-field="windowTitle" type="text" list="windowSuggestions" value="${escapeHtml(details.janela_alvo ?? "")}" placeholder="Ex.: Alterdata, painel, navegador..." />
-          </label>
-          <label>
-            <span>Ao reconhecer</span>
-            <select data-tree-field="clickOnFind">
-              <option value="single" ${recognitionClickModeFromDetails(details) === "single" ? "selected" : ""}>1 clique</option>
-              <option value="double" ${recognitionClickModeFromDetails(details) === "double" ? "selected" : ""}>2 cliques</option>
-              <option value="identify" ${recognitionClickModeFromDetails(details) === "identify" ? "selected" : ""}>Identificar</option>
-            </select>
-          </label>
-          ${renderSuccessFlowFields("data-tree-field", details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", event.order)}
-          <label>
-            <span>Se nao encontrar</span>
-            <select data-tree-field="failureAction">
-              <option value="parar" ${String(details.ao_nao_encontrar ?? "parar") === "parar" ? "selected" : ""}>Parar</option>
-              <option value="continuar" ${String(details.ao_nao_encontrar ?? "") === "continuar" || String(details.ao_nao_encontrar ?? "") === "pular" ? "selected" : ""}>Continuar</option>
-              <option value="tentar_novamente" ${String(details.ao_nao_encontrar ?? "") === "tentar_novamente" ? "selected" : ""}>Tentar novamente</option>
-              <option value="ir_para_bloco" ${String(details.ao_nao_encontrar ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
-            </select>
-          </label>
-          <label>
-            <span>Ir para este bloco</span>
-            <select data-tree-field="failureBlock">
-              ${blockTargetOptions(details.bloco_nao_encontrar ?? "", event.order)}
-            </select>
-          </label>
-          <label>
-            <span>Tentativas</span>
-            <input data-tree-field="retryCount" type="number" min="1" step="1" value="${escapeHtml(details.quantidade_tentativas ?? 1)}" />
-          </label>
-          <label>
-            <span>Intervalo entre tentativas</span>
-            <input data-tree-field="retryInterval" type="number" min="0" step="0.5" value="${escapeHtml(details.intervalo_tentativas ?? 1)}" />
-          </label>
-        </div>
-      </div>
-    `;
+    return renderRecognitionExpandedTreeEditor(event);
+  }
+
+  if (event.type === "chrome_elemento_html") {
+    return renderChromeBlockFields(event, "tree", event.order);
+  }
+
+  if (event.type === "abrir_url") {
+    return renderOpenUrlFields("data-tree-field", details, event.order);
+  }
+
+  if (event.type === "abrir_programa") {
+    return renderOpenProgramFields("data-tree-field", details, event.order);
   }
 
   if (event.type === "verificar_estado_botao") {
-    const details = event.details ?? {};
     const activeAction = details.se_ativo?.acao ?? "continuar";
     const inactiveAction = details.se_desativado?.acao ?? "ir_para_sequencia";
     const missingAction = details.se_nao_encontrar?.acao ?? "parar";
@@ -3572,7 +8767,6 @@ function renderTreeEditorFields(event) {
     `;
   }
 
-  const details = event.details ?? {};
   const workbookId = details.arquivo || state.composerWorkbookId || state.workbook?.default_workbook || "";
   const workbookOptions = availableWorkbooks()
     .map(
@@ -3598,33 +8792,259 @@ function renderTreeEditorFields(event) {
         `<option value="${escapeHtml(column)}" ${column === selectedColumn ? "selected" : ""}>${escapeHtml(column)}</option>`
     )
     .join("");
+  const activeSpreadsheetTab = normalizeSpreadsheetTreeTab(state.spreadsheetTreeTabs?.[event.order] ?? "planilha");
 
   return `
-    <div class="tree-inline-fields">
-      <label>
-        <span>Arquivo</span>
-        <select data-tree-field="workbook">${workbookOptions}</select>
-      </label>
-      <label>
-        <span>Aba</span>
-        <select data-tree-field="sheet">${sheetOptions}</select>
-      </label>
-      <label>
-        <span>Coluna</span>
-        <select data-tree-field="column">${columnOptions}</select>
-      </label>
-      <label>
-        <span>Acao apos item</span>
-        <div class="capture-inline">
-          <input data-tree-field="afterAction" type="text" value="${escapeHtml(details.acao_apos_item_texto ?? "nenhuma")}" />
-          <button class="tree-open-button" data-tree-action="record-after-action" type="button">Gravar tecla</button>
+    <div class="field-stack spreadsheet-card-editor">
+      <div class="recognition-card-tabs spreadsheet-card-tabs" role="tablist" aria-label="Configuracoes do bloco de planilha">
+        <button
+          class="recognition-card-tab ${activeSpreadsheetTab === "planilha" ? "is-active" : ""}"
+          data-spreadsheet-tab-target="planilha"
+          type="button"
+          aria-pressed="${activeSpreadsheetTab === "planilha" ? "true" : "false"}"
+        >Planilha</button>
+        <button
+          class="recognition-card-tab ${activeSpreadsheetTab === "fluxo" ? "is-active" : ""}"
+          data-spreadsheet-tab-target="fluxo"
+          type="button"
+          aria-pressed="${activeSpreadsheetTab === "fluxo" ? "true" : "false"}"
+        >Fluxo</button>
+      </div>
+
+      <div
+        class="recognition-card-panel ${activeSpreadsheetTab === "planilha" ? "is-active" : ""}"
+        data-spreadsheet-tab-panel="planilha"
+        ${activeSpreadsheetTab === "planilha" ? "" : "hidden"}
+      >
+        <div class="tree-inline-fields spreadsheet-tree-inline-fields">
+          <label class="spreadsheet-tree-inline-field-full">
+            <span>Arquivo</span>
+            <select data-tree-field="workbook">${workbookOptions}</select>
+          </label>
+          <label>
+            <span>Aba</span>
+            <select data-tree-field="sheet">${sheetOptions}</select>
+          </label>
+          <label>
+            <span>Coluna</span>
+            <select data-tree-field="column">${columnOptions}</select>
+          </label>
+          <label>
+            <span>Acao apos item</span>
+            <input data-tree-field="afterAction" type="text" value="${escapeHtml(details.acao_apos_item_texto ?? "nenhuma")}" />
+          </label>
+          <label>
+            <span>Intervalo entre itens</span>
+            <input data-tree-field="intervalBetween" type="number" min="0" step="0.1" value="${escapeHtml(details.intervalo_entre_itens ?? 0.5)}" />
+          </label>
+          <div class="spreadsheet-tree-inline-actions">
+            <button class="tree-open-button record-key-button" data-tree-action="record-after-action" type="button">Gravar tecla</button>
+          </div>
         </div>
-      </label>
-      <label>
-        <span>Intervalo entre itens</span>
-        <input data-tree-field="intervalBetween" type="number" min="0" step="0.1" value="${escapeHtml(details.intervalo_entre_itens ?? 0.5)}" />
-      </label>
-      ${renderSuccessFlowFields("data-tree-field", details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", event.order)}
+      </div>
+
+      <div
+        class="recognition-card-panel ${activeSpreadsheetTab === "fluxo" ? "is-active" : ""}"
+        data-spreadsheet-tab-panel="fluxo"
+        ${activeSpreadsheetTab === "fluxo" ? "" : "hidden"}
+      >
+        <p class="recognition-card-helper">Defina o que acontece quando esse loop terminar de preencher o item atual.</p>
+        <div class="tree-inline-fields spreadsheet-flow-inline-fields">
+          ${renderSuccessFlowFields("data-tree-field", details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, event.order)}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderInsertRecognitionPanel(panel, order) {
+  const activeTab = normalizeRecognitionTreeTab(panel.recognitionTab ?? "base");
+  return `
+    <div class="field-stack field-stack-recognition insert-recognition-editor">
+      <div class="recognition-card-tabs has-preview insert-recognition-tabs" role="tablist" aria-label="Configuracoes do novo reconhecimento">
+        <button
+          class="recognition-card-tab ${activeTab === "base" ? "is-active" : ""}"
+          data-insert-recognition-tab-target="base"
+          type="button"
+          aria-pressed="${activeTab === "base" ? "true" : "false"}"
+        >Base</button>
+        <button
+          class="recognition-card-tab ${activeTab === "preview" ? "is-active" : ""}"
+          data-insert-recognition-tab-target="preview"
+          type="button"
+          aria-pressed="${activeTab === "preview" ? "true" : "false"}"
+        >Preview</button>
+        <button
+          class="recognition-card-tab ${activeTab === "action" ? "is-active" : ""}"
+          data-insert-recognition-tab-target="action"
+          type="button"
+          aria-pressed="${activeTab === "action" ? "true" : "false"}"
+        >Acao</button>
+        <button
+          class="recognition-card-tab ${activeTab === "advanced" ? "is-active" : ""}"
+          data-insert-recognition-tab-target="advanced"
+          type="button"
+          aria-pressed="${activeTab === "advanced" ? "true" : "false"}"
+        >Avancado</button>
+      </div>
+
+      <div
+        class="recognition-card-panel ${activeTab === "base" ? "is-active" : ""}"
+        data-insert-recognition-tab-panel="base"
+        ${activeTab === "base" ? "" : "hidden"}
+      >
+        <label class="recognition-reference-field">
+          <span>Referencia visual</span>
+          <input
+            data-insert-field="imagePath"
+            type="text"
+            value="${escapeHtml(panel.imagePath ?? "")}"
+            placeholder="imagens/botao_salvar.png, painel_erro.png..."
+          />
+        </label>
+        <div class="recognition-utility-row insert-recognition-actions">
+          <button class="tree-open-button" data-insert-action="capture-image" type="button">Capturar nova imagem</button>
+          <button class="tree-open-button" data-insert-action="select-image" type="button">Selecionar referencia</button>
+        </div>
+        <div class="tree-inline-fields tree-inline-fields-recognition recognition-panel-grid insert-recognition-grid">
+          <label class="recognition-cell">
+            <span>Timeout</span>
+            <input data-insert-field="timeout" type="number" min="0.1" step="0.5" value="${escapeHtml(panel.timeout ?? 10)}" />
+          </label>
+          <label class="recognition-cell">
+            <span>Confianca</span>
+            <input data-insert-field="confidence" type="number" min="0.1" max="1" step="0.05" value="${escapeHtml(panel.confidence ?? 0.8)}" />
+          </label>
+          <label class="recognition-cell">
+            <span>Perfil</span>
+            <select data-insert-field="searchProfile">
+              <option value="fast" ${normalizeRecognitionProfile(panel.searchProfile, "balanced") === "fast" ? "selected" : ""}>Rapido</option>
+              <option value="balanced" ${normalizeRecognitionProfile(panel.searchProfile, "balanced") === "balanced" ? "selected" : ""}>Equilibrado</option>
+              <option value="precise" ${normalizeRecognitionProfile(panel.searchProfile, "balanced") === "precise" ? "selected" : ""}>Preciso</option>
+            </select>
+          </label>
+          <label class="recognition-cell recognition-cell-full">
+            <span>Janela deste bloco</span>
+            <select data-insert-field="windowTitle">
+              ${recognitionWindowOptionsMarkup(panel.windowTitle ?? "", "Sem janela fixa neste bloco")}
+            </select>
+          </label>
+          <button class="tree-open-button recognition-window-refresh" data-insert-action="refresh-recognition-windows" type="button">Atualizar janelas</button>
+        </div>
+      </div>
+
+      <div
+        class="recognition-card-panel ${activeTab === "preview" ? "is-active" : ""}"
+        data-insert-recognition-tab-panel="preview"
+        ${activeTab === "preview" ? "" : "hidden"}
+      >
+        ${renderRecognitionPreviewPanel(panel.imagePath ?? "")}
+        <p class="recognition-card-helper">Use essa aba para conferir exatamente qual imagem o novo bloco vai guardar.</p>
+      </div>
+
+      <div
+        class="recognition-card-panel ${activeTab === "action" ? "is-active" : ""}"
+        data-insert-recognition-tab-panel="action"
+        ${activeTab === "action" ? "" : "hidden"}
+      >
+        <div class="insert-outcome-groups">
+          <section class="insert-outcome-group is-success">
+            <div class="insert-outcome-header">
+              <strong>Se der certo</strong>
+              <p>Quando a imagem for encontrada, escolha o que esse bloco deve fazer.</p>
+            </div>
+            <div class="tree-inline-fields recognition-panel-grid recognition-panel-grid-actions insert-recognition-grid-actions">
+              <label>
+                <span>Quando encontrar a imagem</span>
+                <select data-insert-field="clickOnFind">
+                  <option value="single" ${String(panel.recognitionClickMode ?? "single") === "single" ? "selected" : ""}>Dar 1 clique</option>
+                  <option value="double" ${String(panel.recognitionClickMode ?? "single") === "double" ? "selected" : ""}>Dar 2 cliques</option>
+                  <option value="identify" ${String(panel.recognitionClickMode ?? "single") === "identify" ? "selected" : ""}>So identificar</option>
+                </select>
+              </label>
+              <label>
+                <span>Depois disso</span>
+                <select data-insert-field="successAction">
+                  <option value="continuar" ${String(panel.successAction ?? "continuar") === "continuar" ? "selected" : ""}>Continuar a sequencia</option>
+                  <option value="ir_para_sequencia" ${String(panel.successAction ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para outra pagina</option>
+                  <option value="ir_para_bloco" ${String(panel.successAction ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para outro bloco</option>
+                </select>
+              </label>
+              ${renderActionTargetFields(
+                "data-insert-field",
+                "successAction",
+                panel.successAction ?? "continuar",
+                "successSequence",
+                panel.successSequence ?? "pagina_2",
+                "successBlock",
+                panel.successBlock ?? "",
+                order,
+                {
+                  sequenceLabel: "Abrir esta pagina",
+                  blockLabel: "Abrir este bloco",
+                  delayFieldName: "successSequenceDelay",
+                  delayValue: panel.successSequenceDelay ?? 0,
+                  delayLabel: "Esperar antes da troca (s)",
+                }
+              )}
+            </div>
+          </section>
+
+          <section class="insert-outcome-group is-failure">
+            <div class="insert-outcome-header">
+              <strong>Se falhar</strong>
+              <p>Se a imagem nao aparecer, escolha como o fluxo deve reagir.</p>
+            </div>
+            <div class="tree-inline-fields recognition-panel-grid recognition-panel-grid-actions insert-recognition-grid-actions">
+              <label>
+                <span>O que fazer na falha</span>
+                <select data-insert-field="failureAction">
+                  <option value="parar" ${String(panel.failureAction ?? "parar") === "parar" ? "selected" : ""}>Parar a automacao</option>
+                  <option value="continuar" ${String(panel.failureAction ?? "") === "continuar" || String(panel.failureAction ?? "") === "pular" ? "selected" : ""}>Continuar a sequencia</option>
+                  <option value="tentar_novamente" ${String(panel.failureAction ?? "") === "tentar_novamente" ? "selected" : ""}>Tentar novamente</option>
+                  <option value="ir_para_sequencia" ${String(panel.failureAction ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para outra pagina</option>
+                  <option value="ir_para_bloco" ${String(panel.failureAction ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para outro bloco</option>
+                </select>
+              </label>
+              ${renderActionTargetFields(
+                "data-insert-field",
+                "failureAction",
+                panel.failureAction ?? "parar",
+                "failureSequence",
+                panel.failureSequence ?? "pagina_2",
+                "failureBlock",
+                panel.failureBlock ?? "",
+                order,
+                {
+                  sequenceLabel: "Abrir esta pagina",
+                  blockLabel: "Abrir este bloco",
+                  delayFieldName: "failureSequenceDelay",
+                  delayValue: panel.failureSequenceDelay ?? 0,
+                  delayLabel: "Esperar antes da troca (s)",
+                }
+              )}
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div
+        class="recognition-card-panel ${activeTab === "advanced" ? "is-active" : ""}"
+        data-insert-recognition-tab-panel="advanced"
+        ${activeTab === "advanced" ? "" : "hidden"}
+      >
+        <p class="recognition-card-helper">Ajuste quantas tentativas o novo reconhecimento deve fazer antes de seguir a regra de falha.</p>
+        <div class="tree-inline-fields tree-inline-fields-recognition recognition-panel-grid insert-recognition-grid">
+          <label class="recognition-cell">
+            <span>Tentativas</span>
+            <input data-insert-field="retryCount" type="number" min="1" step="1" value="${escapeHtml(panel.retryCount ?? 1)}" />
+          </label>
+          <label class="recognition-cell">
+            <span>Intervalo</span>
+            <input data-insert-field="retryInterval" type="number" min="0" step="0.5" value="${escapeHtml(panel.retryInterval ?? 1)}" />
+          </label>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -3668,7 +9088,7 @@ function renderInsertPanel(order) {
           <textarea data-insert-field="text" rows="3">${escapeHtml(panel.text)}</textarea>
         </label>
         <div class="tree-inline-fields">
-          ${renderSuccessFlowFields("data-insert-field", panel.successAction ?? "continuar", panel.successBlock ?? "", order)}
+          ${renderSuccessFlowFields("data-insert-field", panel.successAction ?? "continuar", panel.successBlock ?? "", panel.successSequence ?? "", panel.successSequenceDelay ?? 0, order)}
         </div>
       </div>
     `;
@@ -3679,7 +9099,7 @@ function renderInsertPanel(order) {
           <span>Tecla ou atalho</span>
           <div class="capture-inline">
             <input data-insert-field="keys" type="text" value="${escapeHtml(panel.keys)}" placeholder="tab, enter, alt+f..." />
-            <button class="tree-open-button" data-insert-action="record-key">Gravar tecla</button>
+            <button class="tree-open-button record-key-button" data-insert-action="record-key">Gravar tecla</button>
           </div>
         </label>
         <label>
@@ -3687,7 +9107,7 @@ function renderInsertPanel(order) {
           <input data-insert-field="repeat" type="number" min="1" step="1" value="${escapeHtml(panel.repeat ?? 1)}" />
         </label>
         <div class="tree-inline-fields">
-          ${renderSuccessFlowFields("data-insert-field", panel.successAction ?? "continuar", panel.successBlock ?? "", order)}
+          ${renderSuccessFlowFields("data-insert-field", panel.successAction ?? "continuar", panel.successBlock ?? "", panel.successSequence ?? "", panel.successSequenceDelay ?? 0, order)}
         </div>
       </div>
     `;
@@ -3721,76 +9141,27 @@ function renderInsertPanel(order) {
         </div>
         <button class="tree-open-button capture-mouse-inline-button" data-insert-action="record-mouse" type="button">Capturar mouse</button>
         <div class="tree-inline-fields">
-          ${renderSuccessFlowFields("data-insert-field", panel.successAction ?? "continuar", panel.successBlock ?? "", order)}
+          ${renderSuccessFlowFields("data-insert-field", panel.successAction ?? "continuar", panel.successBlock ?? "", panel.successSequence ?? "", panel.successSequenceDelay ?? 0, order)}
         </div>
+      </div>
+    `;
+  } else if (panel.type === "loop_start" || panel.type === "loop_end") {
+    body = `
+      <div class="field-stack loop-marker-note">
+        <p class="muted-copy">
+          ${panel.type === "loop_start"
+            ? "Use este marcador para indicar onde o trecho repetido comeca. O loop passa a valer logo apos este bloco."
+            : "Use este marcador para fechar o trecho repetido. Tudo o que estiver entre os dois marcadores roda para cada linha da planilha."}
+        </p>
+        ${panel.type === "loop_end" ? `
+          <div class="tree-inline-fields">
+            ${renderSuccessFlowFields("data-insert-field", panel.successAction ?? "continuar", panel.successBlock ?? "", panel.successSequence ?? "", panel.successSequenceDelay ?? 0, order)}
+          </div>
+        ` : ""}
       </div>
     `;
   } else if (panel.type === "image") {
-    body = `
-      <div class="field-stack">
-        <label>
-          <span>Referencia visual</span>
-          <div class="capture-inline">
-            <input data-insert-field="imagePath" type="text" value="${escapeHtml(panel.imagePath ?? "")}" placeholder="imagens/botao_salvar.png, painel_erro.png..." />
-            <button class="tree-open-button" data-insert-action="select-image" type="button">Selecionar referencia</button>
-          </div>
-        </label>
-        <div class="tree-inline-fields">
-          <label>
-            <span>Timeout</span>
-            <input data-insert-field="timeout" type="number" min="0.1" step="0.5" value="${escapeHtml(panel.timeout ?? 10)}" />
-          </label>
-          <label>
-            <span>Confianca</span>
-            <input data-insert-field="confidence" type="number" min="0.1" max="1" step="0.05" value="${escapeHtml(panel.confidence ?? 0.8)}" />
-          </label>
-          <label>
-            <span>Perfil de busca</span>
-            <select data-insert-field="searchProfile">
-              <option value="fast" ${normalizeRecognitionProfile(panel.searchProfile, "balanced") === "fast" ? "selected" : ""}>Rapido</option>
-              <option value="balanced" ${normalizeRecognitionProfile(panel.searchProfile, "balanced") === "balanced" ? "selected" : ""}>Equilibrado</option>
-              <option value="precise" ${normalizeRecognitionProfile(panel.searchProfile, "balanced") === "precise" ? "selected" : ""}>Preciso</option>
-            </select>
-          </label>
-          <label>
-            <span>Janela alvo</span>
-            <input data-insert-field="windowTitle" type="text" list="windowSuggestions" value="${escapeHtml(panel.windowTitle ?? "")}" placeholder="Ex.: Alterdata, painel, navegador..." />
-          </label>
-          <label>
-            <span>Ao reconhecer</span>
-            <select data-insert-field="clickOnFind">
-              <option value="single" ${String(panel.recognitionClickMode ?? "single") === "single" ? "selected" : ""}>1 clique</option>
-              <option value="double" ${String(panel.recognitionClickMode ?? "single") === "double" ? "selected" : ""}>2 cliques</option>
-              <option value="identify" ${String(panel.recognitionClickMode ?? "single") === "identify" ? "selected" : ""}>Identificar</option>
-            </select>
-          </label>
-          ${renderSuccessFlowFields("data-insert-field", panel.successAction ?? "continuar", panel.successBlock ?? "", order)}
-          <label>
-            <span>Se nao encontrar</span>
-            <select data-insert-field="failureAction">
-              <option value="parar" ${String(panel.failureAction ?? "parar") === "parar" ? "selected" : ""}>Parar</option>
-              <option value="continuar" ${String(panel.failureAction ?? "") === "continuar" || String(panel.failureAction ?? "") === "pular" ? "selected" : ""}>Continuar</option>
-              <option value="tentar_novamente" ${String(panel.failureAction ?? "") === "tentar_novamente" ? "selected" : ""}>Tentar novamente</option>
-              <option value="ir_para_bloco" ${String(panel.failureAction ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
-            </select>
-          </label>
-          <label>
-            <span>Ir para este bloco</span>
-            <select data-insert-field="failureBlock">
-              ${blockTargetOptions(panel.failureBlock ?? "", order)}
-            </select>
-          </label>
-          <label>
-            <span>Tentativas</span>
-            <input data-insert-field="retryCount" type="number" min="1" step="1" value="${escapeHtml(panel.retryCount ?? 1)}" />
-          </label>
-          <label>
-            <span>Intervalo entre tentativas</span>
-            <input data-insert-field="retryInterval" type="number" min="0" step="0.5" value="${escapeHtml(panel.retryInterval ?? 1)}" />
-          </label>
-        </div>
-      </div>
-    `;
+    body = renderInsertRecognitionPanel(panel, order);
   } else if (panel.type === "chrome") {
     const analysis = panel.chromeAnalysis || {};
     body = `
@@ -3859,30 +9230,54 @@ function renderInsertPanel(order) {
             <span>Ao concluir</span>
             <select data-insert-field="chromeSuccessAction">
               <option value="continuar" ${String(panel.chromeSuccessAction ?? "continuar") === "continuar" ? "selected" : ""}>Continuar</option>
+              <option value="ir_para_sequencia" ${String(panel.chromeSuccessAction ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para pagina</option>
               <option value="ir_para_bloco" ${String(panel.chromeSuccessAction ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
             </select>
           </label>
-          <label>
-            <span>Bloco apos sucesso</span>
-            <select data-insert-field="chromeSuccessBlock">
-              ${blockTargetOptions(panel.chromeSuccessBlock ?? "", order)}
-            </select>
-          </label>
+          ${renderActionTargetFields(
+            "data-insert-field",
+            "chromeSuccessAction",
+            panel.chromeSuccessAction ?? "continuar",
+            "chromeSuccessSequence",
+            panel.chromeSuccessSequence ?? "pagina_2",
+            "chromeSuccessBlock",
+            panel.chromeSuccessBlock ?? "",
+            order,
+            {
+              sequenceLabel: "Pagina apos sucesso",
+              blockLabel: "Bloco apos sucesso",
+              delayFieldName: "chromeSuccessSequenceDelay",
+              delayValue: panel.chromeSuccessSequenceDelay ?? 0,
+              delayLabel: "Esperar antes da troca (s)",
+            }
+          )}
           <label>
             <span>Falha</span>
             <select data-insert-field="chromeFailureAction">
               <option value="parar" ${String(panel.chromeFailureAction ?? "parar") === "parar" ? "selected" : ""}>Parar</option>
               <option value="continuar" ${String(panel.chromeFailureAction ?? "") === "continuar" ? "selected" : ""}>Continuar</option>
               <option value="tentar_novamente" ${String(panel.chromeFailureAction ?? "") === "tentar_novamente" ? "selected" : ""}>Tentar novamente</option>
+              <option value="ir_para_sequencia" ${String(panel.chromeFailureAction ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para pagina</option>
               <option value="ir_para_bloco" ${String(panel.chromeFailureAction ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
             </select>
           </label>
-          <label>
-            <span>Ir para bloco</span>
-            <select data-insert-field="chromeFailureBlock">
-              ${blockTargetOptions(panel.chromeFailureBlock ?? "", order)}
-            </select>
-          </label>
+          ${renderActionTargetFields(
+            "data-insert-field",
+            "chromeFailureAction",
+            panel.chromeFailureAction ?? "parar",
+            "chromeFailureSequence",
+            panel.chromeFailureSequence ?? "pagina_2",
+            "chromeFailureBlock",
+            panel.chromeFailureBlock ?? "",
+            order,
+            {
+              sequenceLabel: "Pagina em caso de falha",
+              blockLabel: "Ir para bloco",
+              delayFieldName: "chromeFailureSequenceDelay",
+              delayValue: panel.chromeFailureSequenceDelay ?? 0,
+              delayLabel: "Esperar antes da troca (s)",
+            }
+          )}
           <label>
             <span>Tentativas</span>
             <input data-insert-field="chromeRetryCount" type="number" min="1" step="1" value="${escapeHtml(panel.chromeRetryCount ?? 1)}" />
@@ -3908,6 +9303,27 @@ function renderInsertPanel(order) {
         </div>
       </div>
     `;
+  } else if (panel.type === "open_url") {
+    body = renderOpenUrlFields("data-insert-field", {
+      url: panel.openUrl,
+      navegador: panel.openBrowser,
+      modo_abertura: panel.openMode,
+      aguardar_segundos: panel.openWait,
+      ao_sucesso: panel.successAction,
+      bloco_sucesso: panel.successBlock,
+      sequencia_sucesso: panel.successSequence,
+      atraso_antes_sequencia_sucesso: panel.successSequenceDelay,
+    }, order);
+  } else if (panel.type === "open_program") {
+    body = renderOpenProgramFields("data-insert-field", {
+      caminho: panel.programPath,
+      parametros: panel.programParams,
+      aguardar_segundos: panel.programWait,
+      ao_sucesso: panel.successAction,
+      bloco_sucesso: panel.successBlock,
+      sequencia_sucesso: panel.successSequence,
+      atraso_antes_sequencia_sucesso: panel.successSequenceDelay,
+    }, order);
   } else {
     body = `
       <div class="tree-inline-fields">
@@ -3927,14 +9343,14 @@ function renderInsertPanel(order) {
           <span>Acao apos item</span>
           <div class="capture-inline">
             <input data-insert-field="afterAction" type="text" value="${escapeHtml(panel.afterAction)}" />
-            <button class="tree-open-button" data-insert-action="record-after-action" type="button">Gravar tecla</button>
+            <button class="tree-open-button record-key-button" data-insert-action="record-after-action" type="button">Gravar tecla</button>
           </div>
         </label>
         <label>
           <span>Intervalo entre itens</span>
           <input data-insert-field="intervalBetween" type="number" min="0" step="0.1" value="${escapeHtml(panel.intervalBetween)}" />
         </label>
-        ${renderSuccessFlowFields("data-insert-field", panel.successAction ?? "continuar", panel.successBlock ?? "", order)}
+        ${renderSuccessFlowFields("data-insert-field", panel.successAction ?? "continuar", panel.successBlock ?? "", panel.successSequence ?? "", panel.successSequenceDelay ?? 0, order)}
       </div>
     `;
   }
@@ -3954,7 +9370,11 @@ function renderInsertPanel(order) {
         <button class="insert-type-button ${panel.type === "mouse" ? "is-active" : ""}" data-insert-type="mouse">Mouse</button>
         <button class="insert-type-button ${panel.type === "image" ? "is-active" : ""}" data-insert-type="image">Reconhecimento</button>
         <button class="insert-type-button ${panel.type === "chrome" ? "is-active" : ""}" data-insert-type="chrome">Chrome HTML</button>
+        <button class="insert-type-button ${panel.type === "open_url" ? "is-active" : ""}" data-insert-type="open_url">Abrir URL</button>
+        <button class="insert-type-button ${panel.type === "open_program" ? "is-active" : ""}" data-insert-type="open_program">Abrir Programa</button>
         <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet">Planilha</button>
+        <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start">Inicio loop</button>
+        <button class="insert-type-button ${panel.type === "loop_end" ? "is-active" : ""}" data-insert-type="loop_end">Fim loop</button>
       </div>
       <div class="insert-card-body">
         ${body}
@@ -3971,13 +9391,17 @@ function renderInsertPanel(order) {
 }
 
 function renderEmptyCommandMapStarter() {
+  const pageDefinition = getCommandMapPageDefinition(state.commandMapPageSequence);
+  const hasAnyEvent = Boolean(state.roadmap?.events?.length);
   if (!state.insertPanel || state.insertPanel.targetOrder !== 0) {
     return `
       <div class="empty-command-map-state">
         <div class="empty-command-map-copy">
-          <p class="panel-kicker">Mapa vazio</p>
-          <h3>Crie o primeiro bloco por aqui</h3>
-          <p>A automacao ainda nao tem comandos. Escolha um tipo abaixo para comecar direto no mapa.</p>
+          <p class="panel-kicker">${escapeHtml(pageDefinition.label)}</p>
+          <h3>${hasAnyEvent ? "Esta pagina ainda esta vazia" : "Crie o primeiro bloco por aqui"}</h3>
+          <p>${hasAnyEvent
+            ? `Adicione uma sequencia nesta ${escapeHtml(pageDefinition.label.toLowerCase())} para separar esse fluxo do restante da automacao.`
+            : "A automacao ainda nao tem comandos. Escolha um tipo abaixo para comecar direto no mapa."}</p>
         </div>
         <div class="empty-command-map-actions">
           <button class="insert-type-button is-active" data-empty-insert-type="key" type="button">Tecla</button>
@@ -3985,7 +9409,11 @@ function renderEmptyCommandMapStarter() {
           <button class="insert-type-button" data-empty-insert-type="mouse" type="button">Mouse</button>
           <button class="insert-type-button" data-empty-insert-type="image" type="button">Reconhecimento</button>
           <button class="insert-type-button" data-empty-insert-type="chrome" type="button">Chrome HTML</button>
+          <button class="insert-type-button" data-empty-insert-type="open_url" type="button">Abrir URL</button>
+          <button class="insert-type-button" data-empty-insert-type="open_program" type="button">Abrir Programa</button>
           <button class="insert-type-button" data-empty-insert-type="spreadsheet" type="button">Planilha</button>
+          <button class="insert-type-button" data-empty-insert-type="loop_start" type="button">Inicio loop</button>
+          <button class="insert-type-button" data-empty-insert-type="loop_end" type="button">Fim loop</button>
         </div>
       </div>
     `;
@@ -4158,6 +9586,18 @@ window.addEventListener("focus", () => {
 });
 
 window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.assistTarget.modalOpen) {
+    event.preventDefault();
+    closeAssistWindowPicker();
+    return;
+  }
+
+  if (event.key === "Escape" && state.expandedTreeCardOrder) {
+    event.preventDefault();
+    closeExpandedTreeCard();
+    return;
+  }
+
   if (state.activeTab !== "commands" || state.captureTarget) {
     return;
   }
@@ -4203,7 +9643,7 @@ function renderTimeline() {
               <div>
                 <p class="panel-kicker">Bloco ${event.order}</p>
                 <h3>${escapeHtml(event.title)}</h3>
-                <p>${escapeHtml(event.subtitle)}</p>
+                <p data-recognition-subtitle="true">${escapeHtml(recognitionSubtitleLabel(event))}</p>
               </div>
               <span class="type-chip ${escapeHtml(event.type)}">${escapeHtml(typeChipLabel(event.type))}</span>
             </div>
@@ -4231,9 +9671,14 @@ function renderTimeline() {
     .join("");
 }
 
-function renderCommandMap() {
-  const events = state.roadmap?.events ?? [];
+function renderCommandMap(options = {}) {
+  const { layoutSnapshot = null } = options;
+  const events = getCommandMapEvents().map((event) => applyCommandMapDraftToEvent(event));
+  const pageDefinition = getCommandMapPageDefinition(state.commandMapPageSequence);
   builderShell?.classList.toggle("has-insert-panel", Boolean(state.insertPanel));
+  builderShell?.classList.toggle("has-command-card-overlay", Boolean(state.expandedTreeCardOrder));
+  updateCommandMapHeaderSummary();
+  renderCommandMapPageTabs();
   if (!events.length) {
     commandMapList.innerHTML = renderEmptyCommandMapStarter();
     applyCommandMapZoom();
@@ -4243,22 +9688,38 @@ function renderCommandMap() {
 
   const segments = events.map((event, index) => {
     const nextEvent = events[index + 1];
+    const isFirstCard = index === 0;
+    const isLastCard = index === events.length - 1;
     const hasRecordButton = event.type === "tecla" || event.type === "atalho";
     const isRecognitionCard = event.type === "clicar_imagem";
+    const isSpreadsheetCard = event.type === "sequencia_planilha";
+    const isLoopMarkerCard = isLoopMarkerType(event.type);
     const primaryActionClass = isRecognitionCard
       ? "has-recognition-button"
       : hasRecordButton
         ? "has-record-button"
         : "";
+    const primaryActions = isRecognitionCard
+      ? `
+        <button class="tree-save-button" data-tree-action="save">Salvar</button>
+        <button class="tree-open-button" data-tree-action="test-image-recognition">Testar</button>
+        <button class="tree-open-button" data-tree-action="capture-image">Capturar</button>
+      `
+      : `
+        <button class="tree-save-button" data-tree-action="save">Salvar</button>
+        <button class="tree-open-button" data-tree-action="open-editor">Editor</button>
+        ${hasRecordButton ? '<button class="tree-open-button" data-tree-action="record-key">Gravar</button>' : ""}
+      `;
     const card = `
-      <div class="command-flow-segment ${isRecognitionCard ? "visual-recognition-segment" : ""}" data-order="${event.order}">
-      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""}" data-order="${event.order}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
+      <div class="command-flow-segment ${isRecognitionCard ? "visual-recognition-segment" : ""} ${isSpreadsheetCard ? "spreadsheet-segment" : ""} ${state.insertPanel?.targetOrder === event.order ? "has-insert-panel" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}">
+      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarkerCard ? "is-loop-marker" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
         <div class="command-tree-top">
           <div class="command-tree-main">
             <span class="command-index">${String(event.order).padStart(2, "0")}</span>
             <div>
+              ${event.type === "sequencia_planilha" ? `<span class="command-tree-loop-badge">${escapeHtml(getSpreadsheetLoopBadgeLabel(event))}</span>` : ""}
               <h3>${escapeHtml(event.title)}</h3>
-              <p>${escapeHtml(event.subtitle)}</p>
+              <p data-recognition-subtitle="true">${escapeHtml(recognitionSubtitleLabel(event))}</p>
             </div>
           </div>
           <div class="command-tree-side">
@@ -4278,17 +9739,30 @@ function renderCommandMap() {
 
         <div class="command-tree-actions">
           <div class="command-action-group command-action-group-primary ${primaryActionClass}">
-            <button class="tree-save-button" data-tree-action="save">Salvar</button>
-            <button class="tree-open-button" data-tree-action="open-editor">Editor</button>
-            ${isRecognitionCard ? '<button class="tree-open-button" data-tree-action="test-image-recognition">Testar</button>' : ""}
-            ${hasRecordButton ? '<button class="tree-open-button" data-tree-action="record-key">Gravar</button>' : ""}
+            ${primaryActions}
           </div>
           <div class="command-action-group command-action-group-secondary">
             <button class="micro-button" data-tree-action="insert-before">Antes</button>
             <button class="micro-button" data-tree-action="insert-after">Depois</button>
-            <button class="micro-button" data-tree-action="up">Subir</button>
-            <button class="micro-button" data-tree-action="down">Descer</button>
             <button class="micro-button" data-tree-action="remove">Excluir</button>
+          </div>
+          <div class="command-action-group command-action-group-reorder">
+            <button
+              class="tree-shift-button"
+              data-tree-action="up"
+              type="button"
+              title="Mover para a esquerda"
+              aria-label="Mover card para a esquerda"
+              ${isFirstCard ? "disabled" : ""}
+            >&larr;</button>
+            <button
+              class="tree-shift-button"
+              data-tree-action="down"
+              type="button"
+              title="Mover para a direita"
+              aria-label="Mover card para a direita"
+              ${isLastCard ? "disabled" : ""}
+            >&rarr;</button>
           </div>
         </div>
       </article>
@@ -4297,7 +9771,7 @@ function renderCommandMap() {
     `;
 
     if (!nextEvent) {
-      return `${card}<div class="command-flow-end">Fim da sequencia</div>`;
+      return `${card}<div class="command-flow-end">Fim da ${escapeHtml(pageDefinition.label.toLowerCase())}</div>`;
     }
 
     return `
@@ -4321,39 +9795,71 @@ function renderCommandMap() {
   });
 
   commandMapList.innerHTML = `<div class="command-flow-row">${events
-    .map((_event, index) => {
-      const zone = `<div class="command-drop-zone" data-target-index="${index + 1}" aria-label="Soltar na posicao ${index + 1}"></div>`;
+    .map((event, index) => {
+      const zone = `<div class="command-drop-zone" data-target-index="${event.order}" aria-label="Soltar antes do bloco ${event.order}"></div>`;
       return `${zone}${segments[index]}`;
     })
-    .join("")}<div class="command-drop-zone command-drop-zone-end" data-target-index="${events.length + 1}" aria-label="Soltar no final"></div></div>`;
+    .join("")}<div class="command-drop-zone command-drop-zone-end" data-target-index="${Number(events.at(-1)?.order ?? 0) + 1}" aria-label="Soltar no final de ${escapeHtml(pageDefinition.label.toLowerCase())}"></div></div>`;
+  hydrateRecognitionPreviewCards(commandMapList);
   applyCommandMapZoom();
+  scheduleCommandMapAutoFit();
   applyCommandMapFocus();
+  if (layoutSnapshot) {
+    requestAnimationFrame(() => {
+      animateCommandMapLayoutShift(layoutSnapshot);
+    });
+  }
 }
 
-function applyRoadmap(roadmap) {
-  state.roadmap = roadmap;
+function applyRoadmap(roadmap, options = {}) {
+  const resetCommandMapDrafts = Boolean(options.resetCommandMapDrafts);
+  const preserveCommandMapSequence = options.preserveCommandMapSequence
+    ? normalizeSequenceName(options.preserveCommandMapSequence)
+    : "";
+  if (resetCommandMapDrafts) {
+    state.commandMapDrafts = {};
+  }
+  const decoratedRoadmap = decorateRoadmapForClient(roadmap, state.roadmap);
+  state.roadmap = decoratedRoadmap;
+  syncCommandMapDraftsWithRoadmap(decoratedRoadmap);
+  if (preserveCommandMapSequence) {
+    const pageExists = getCommandMapPageDefinitions(decoratedRoadmap)
+      .some((page) => page.sequence === preserveCommandMapSequence);
+    if (pageExists) {
+      state.commandMapPageSequence = preserveCommandMapSequence;
+    }
+  }
+  ensureCommandMapPageSelection(decoratedRoadmap);
+  syncCommandMapPageTheme();
+  syncRecognitionTestStatusWithRoadmap(decoratedRoadmap);
   state.library.dirty = false;
+  syncSequenceContextInput();
   refreshSequenceSuggestions();
+  renderCommandMapPageTabs();
   populateImageFailureBlockSelect();
+  populateImageFailureSequenceSelect();
   populateChromeFailureBlockSelect();
+  populateChromeFailureSequenceSelect();
   populateChromeSuccessBlockSelect();
+  populateChromeSuccessSequenceSelect();
   state.commandMapFocusOrder = resolveNearestCommandMapFocus(
-    roadmap,
-    state.commandMapFocusOrder ?? roadmap?.events?.[0]?.order ?? null
+    decoratedRoadmap,
+    state.commandMapFocusOrder ?? decoratedRoadmap?.events?.[0]?.order ?? null
   );
-  syncWorkbook(roadmap.workbook);
+  syncWorkbook(decoratedRoadmap.workbook);
+  renderAssistSequenceSettings(decoratedRoadmap);
   renderTimeline();
   renderCommandMap();
   if (state.assist.mode === "idle" && !state.assist.currentOrder) {
-    state.assist.currentOrder = roadmap?.events?.[0]?.order ?? null;
+    state.assist.currentOrder = getAssistInitialOrder(decoratedRoadmap);
   }
+  syncAssistTheme();
   renderAssistExecutionMap();
-  if (!state.commandMapSave.running && !state.commandMapSave.dirty) {
-    setCommandMapSaveState({
-      percent: 100,
-      status: "Mapa sincronizado e pronto para o loop.",
-    });
-  }
+  syncCommandMapSaveStateWithPending();
+}
+
+function applyPersistedRoadmap(roadmap) {
+  applyRoadmap(roadmap, { resetCommandMapDrafts: true });
 }
 
 async function refreshRoadmap(message = "Roteiro atualizado.") {
@@ -4426,13 +9932,22 @@ async function loadWorkbookPreview(
 }
 
 async function runMutation(label, promiseFactory, focusResolver = null) {
+  const activeCommandMapSequence = normalizeSequenceName(state.commandMapPageSequence);
   try {
     setBusy(label);
+    lockCommandMapPageSequence(activeCommandMapSequence);
     const roadmap = await promiseFactory();
+    const pageExists = getCommandMapPageDefinitions(roadmap)
+      .some((page) => page.sequence === activeCommandMapSequence);
+    if (pageExists) {
+      state.commandMapPageSequence = activeCommandMapSequence;
+      syncSequenceContextInput();
+      lockCommandMapPageSequence(activeCommandMapSequence, 2500);
+    }
     if (typeof focusResolver === "function") {
       state.commandMapFocusOrder = focusResolver(roadmap);
     }
-    applyRoadmap(roadmap);
+    applyRoadmap(roadmap, { preserveCommandMapSequence: activeCommandMapSequence });
     await refreshAutomationLibrary();
     setBusy("Pronto");
     setMessage(`${label} com sucesso.`, "success");
@@ -4448,6 +9963,8 @@ function formValuesFromCard(card) {
     delay: parseNumber(get("delay")?.value, 0),
     successAction: get("successAction")?.value ?? "continuar",
     successBlock: get("successBlock")?.value ?? "",
+    successSequence: get("successSequence")?.value ?? "",
+    successSequenceDelay: normalizeTransitionDelay(get("successSequenceDelay")?.value),
     text: get("text")?.value ?? "",
     keys: get("keys")?.value ?? "",
     repeat: Math.max(1, Math.trunc(parseNumber(get("repeat")?.value, 1))),
@@ -4459,10 +9976,17 @@ function formValuesFromCard(card) {
     timeout: parseNumber(get("timeout")?.value, 10),
     confidence: parseNumber(get("confidence")?.value, 0.8),
     searchProfile: normalizeRecognitionProfile(get("searchProfile")?.value, "balanced"),
-    windowTitle: get("windowTitle")?.value ?? "",
+    searchAreaMode: "target_window",
+    searchAreaX: 0,
+    searchAreaY: 0,
+    searchAreaWidth: 0,
+    searchAreaHeight: 0,
+    windowTitle: normalizeRecognitionWindowTitle(get("windowTitle")?.value ?? ""),
     recognitionClickMode: get("clickOnFind")?.value ?? "single",
     failureAction: get("failureAction")?.value ?? "parar",
     failureBlock: get("failureBlock")?.value ?? "",
+    failureSequence: get("failureSequence")?.value ?? "",
+    failureSequenceDelay: normalizeTransitionDelay(get("failureSequenceDelay")?.value),
     retryCount: Math.max(1, Math.trunc(parseNumber(get("retryCount")?.value, 1))),
     retryInterval: parseNumber(get("retryInterval")?.value, 1),
     verifyName: get("verifyName")?.value ?? "",
@@ -4489,13 +10013,24 @@ function formValuesFromCard(card) {
     chromePressAfter: get("chromePressAfter")?.value ?? "",
     chromeSuccessAction: get("chromeSuccessAction")?.value ?? "continuar",
     chromeSuccessBlock: get("chromeSuccessBlock")?.value ?? "",
+    chromeSuccessSequence: get("chromeSuccessSequence")?.value ?? "",
+    chromeSuccessSequenceDelay: normalizeTransitionDelay(get("chromeSuccessSequenceDelay")?.value),
     chromeFailureAction: get("chromeFailureAction")?.value ?? "parar",
     chromeFailureBlock: get("chromeFailureBlock")?.value ?? "",
+    chromeFailureSequence: get("chromeFailureSequence")?.value ?? "",
+    chromeFailureSequenceDelay: normalizeTransitionDelay(get("chromeFailureSequenceDelay")?.value),
     chromeRetryCount: Math.max(1, Math.trunc(parseNumber(get("chromeRetryCount")?.value, 1))),
     chromeRetryInterval: parseNumber(get("chromeRetryInterval")?.value, 0.5),
     chromeClearBefore: Boolean(get("chromeClearBefore")?.checked),
     chromeFallbackVisual: Boolean(get("chromeFallbackVisual")?.checked),
     chromeFallbackImage: get("chromeFallbackImage")?.value ?? "",
+    openUrl: get("openUrl")?.value ?? "",
+    openBrowser: get("openBrowser")?.value ?? "padrao",
+    openMode: get("openMode")?.value ?? "nova_janela",
+    openWait: parseNumber(get("openWait")?.value, 3),
+    programPath: get("programPath")?.value ?? "",
+    programParams: get("programParams")?.value ?? "",
+    programWait: parseNumber(get("programWait")?.value, 2),
     workbook: get("workbook")?.value ?? "",
     sheet: get("sheet")?.value ?? "",
     column: get("column")?.value ?? "",
@@ -4510,6 +10045,8 @@ function treeValuesFromCard(card) {
     delay: parseNumber(card.dataset.delay, 0),
     successAction: get("successAction")?.value ?? "continuar",
     successBlock: get("successBlock")?.value ?? "",
+    successSequence: get("successSequence")?.value ?? "",
+    successSequenceDelay: normalizeTransitionDelay(get("successSequenceDelay")?.value),
     text: get("text")?.value ?? "",
     keys: get("keys")?.value ?? "",
     repeat: Math.max(1, Math.trunc(parseNumber(get("repeat")?.value, 1))),
@@ -4521,10 +10058,17 @@ function treeValuesFromCard(card) {
     timeout: parseNumber(get("timeout")?.value, 10),
     confidence: parseNumber(get("confidence")?.value, 0.8),
     searchProfile: normalizeRecognitionProfile(get("searchProfile")?.value, "balanced"),
-    windowTitle: get("windowTitle")?.value ?? "",
+    searchAreaMode: "target_window",
+    searchAreaX: 0,
+    searchAreaY: 0,
+    searchAreaWidth: 0,
+    searchAreaHeight: 0,
+    windowTitle: normalizeRecognitionWindowTitle(get("windowTitle")?.value ?? ""),
     recognitionClickMode: get("clickOnFind")?.value ?? "single",
     failureAction: get("failureAction")?.value ?? "parar",
     failureBlock: get("failureBlock")?.value ?? "",
+    failureSequence: get("failureSequence")?.value ?? "",
+    failureSequenceDelay: normalizeTransitionDelay(get("failureSequenceDelay")?.value),
     retryCount: Math.max(1, Math.trunc(parseNumber(get("retryCount")?.value, 1))),
     retryInterval: parseNumber(get("retryInterval")?.value, 1),
     verifyName: get("verifyName")?.value ?? "",
@@ -4551,13 +10095,24 @@ function treeValuesFromCard(card) {
     chromePressAfter: get("chromePressAfter")?.value ?? "",
     chromeSuccessAction: get("chromeSuccessAction")?.value ?? "continuar",
     chromeSuccessBlock: get("chromeSuccessBlock")?.value ?? "",
+    chromeSuccessSequence: get("chromeSuccessSequence")?.value ?? "",
+    chromeSuccessSequenceDelay: normalizeTransitionDelay(get("chromeSuccessSequenceDelay")?.value),
     chromeFailureAction: get("chromeFailureAction")?.value ?? "parar",
     chromeFailureBlock: get("chromeFailureBlock")?.value ?? "",
+    chromeFailureSequence: get("chromeFailureSequence")?.value ?? "",
+    chromeFailureSequenceDelay: normalizeTransitionDelay(get("chromeFailureSequenceDelay")?.value),
     chromeRetryCount: Math.max(1, Math.trunc(parseNumber(get("chromeRetryCount")?.value, 1))),
     chromeRetryInterval: parseNumber(get("chromeRetryInterval")?.value, 0.5),
     chromeClearBefore: Boolean(get("chromeClearBefore")?.checked),
     chromeFallbackVisual: Boolean(get("chromeFallbackVisual")?.checked),
     chromeFallbackImage: get("chromeFallbackImage")?.value ?? "",
+    openUrl: get("openUrl")?.value ?? "",
+    openBrowser: get("openBrowser")?.value ?? "padrao",
+    openMode: get("openMode")?.value ?? "nova_janela",
+    openWait: parseNumber(get("openWait")?.value, 3),
+    programPath: get("programPath")?.value ?? "",
+    programParams: get("programParams")?.value ?? "",
+    programWait: parseNumber(get("programWait")?.value, 2),
     workbook: get("workbook")?.value ?? "",
     sheet: get("sheet")?.value ?? "",
     column: get("column")?.value ?? "",
@@ -4582,15 +10137,140 @@ function successFlowChanged(values, details = {}) {
   return (
     normalizeStringValue(values.successAction) !== normalizeStringValue(details.ao_sucesso ?? "continuar")
     || Number(optionalPositiveInt(values.successBlock) || 0) !== Number(details.bloco_sucesso ?? 0)
+    || normalizeStringValue(values.successSequence) !== normalizeStringValue(details.sequencia_sucesso ?? "")
+    || !approxEqual(
+      normalizeTransitionDelay(values.successSequenceDelay),
+      normalizeTransitionDelay(details.atraso_antes_sequencia_sucesso ?? 0),
+    )
   );
 }
 
 function commandCardSnapshot(card) {
   return {
+    clientKey: String(card.dataset.clientKey || "").trim(),
     order: Number(card.dataset.order),
     type: String(card.dataset.type || ""),
     values: treeValuesFromCard(card),
   };
+}
+
+function setCommandCardRouteDelay(card, routeKind, delayValue) {
+  if (!card) {
+    return false;
+  }
+  const normalizedDelay = formatTransitionDelayValue(normalizeTransitionDelay(delayValue));
+  const normalizedKind = routeKind === "failure" ? "failure" : "success";
+  const selector = normalizedKind === "failure"
+    ? '[data-tree-field="failureSequenceDelay"], [data-tree-field="chromeFailureSequenceDelay"]'
+    : '[data-tree-field="successSequenceDelay"], [data-tree-field="chromeSuccessSequenceDelay"]';
+  const delayField = card.querySelector(selector);
+  if (!delayField) {
+    return false;
+  }
+  delayField.value = normalizedDelay;
+  return true;
+}
+
+function setRoadmapEventRouteDelay(sourceOrder, routeKind, delayValue) {
+  const event = findRoadmapEventByOrder(sourceOrder);
+  if (!event) {
+    return false;
+  }
+  const details = event.details || event.detalhes || {};
+  event.details = details;
+  const normalizedDelay = normalizeTransitionDelay(delayValue);
+  const normalizedKind = routeKind === "failure" ? "failure" : "success";
+
+  if (normalizedKind === "failure") {
+    if (event.type === "chrome_elemento_html") {
+      details.atraso_antes_sequencia_falha = normalizedDelay;
+      return true;
+    }
+    details.atraso_antes_sequencia_nao_encontrar = normalizedDelay;
+    return true;
+  }
+
+  details.atraso_antes_sequencia_sucesso = normalizedDelay;
+  return true;
+}
+
+function saveCommandJumpDelayFromInput(input) {
+  const sourceOrder = Number(input?.dataset?.sourceOrder || 0);
+  const routeKind = input?.dataset?.routeKind === "failure" ? "failure" : "success";
+  if (!sourceOrder) {
+    return;
+  }
+  const cards = Array.from(commandMapList?.querySelectorAll(`.command-tree-card[data-order="${sourceOrder}"]`) || []);
+  const card = cards[cards.length - 1] || null;
+  const updatedCards = cards.reduce((count, item) => (
+    setCommandCardRouteDelay(item, routeKind, input.value) ? count + 1 : count
+  ), 0);
+  if (!card || !updatedCards) {
+    setMessage("Nao foi possivel atualizar o tempo deste caminho.", "error");
+    return;
+  }
+
+  setRoadmapEventRouteDelay(sourceOrder, routeKind, input.value);
+  const snapshot = commandCardSnapshot(card);
+  const clientKey = String(snapshot.clientKey || "").trim();
+  if (clientKey) {
+    state.commandMapDrafts[clientKey] = {
+      type: snapshot.type,
+      values: snapshot.values,
+    };
+  }
+  runMutation("Tempo do caminho atualizado", () =>
+    invokeCommandCardUpdate(snapshot)
+  , () => sourceOrder);
+}
+
+function syncCommandMapDraftFromSnapshot(snapshot) {
+  const clientKey = String(snapshot?.clientKey || "").trim();
+  if (!clientKey || !Number.isFinite(snapshot?.order) || snapshot.order <= 0) {
+    return;
+  }
+
+  if (commandCardHasUnsavedChanges(snapshot)) {
+    state.commandMapDrafts[clientKey] = {
+      type: snapshot.type,
+      values: snapshot.values,
+    };
+    return;
+  }
+
+  delete state.commandMapDrafts[clientKey];
+}
+
+function syncCommandMapDraftFromCard(card) {
+  if (!card) {
+    return;
+  }
+  syncCommandMapDraftFromSnapshot(commandCardSnapshot(card));
+}
+
+function syncVisibleCommandMapDrafts() {
+  getDistinctCommandTreeCards().forEach((card) => {
+    syncCommandMapDraftFromCard(card);
+  });
+}
+
+function getDistinctCommandTreeCards(selector = ".command-tree-card") {
+  const cards = Array.from(commandMapList?.querySelectorAll(selector) || []);
+  if (!cards.length) {
+    return [];
+  }
+
+  const cardsByOrder = new Map();
+  for (const card of cards) {
+    const order = Number(card?.dataset?.order);
+    if (!Number.isFinite(order) || order <= 0) {
+      continue;
+    }
+    // When the same block exists twice in the DOM, keep the latest instance.
+    cardsByOrder.set(order, card);
+  }
+
+  return Array.from(cardsByOrder.values());
 }
 
 function commandCardHasUnsavedChanges(snapshot) {
@@ -4636,11 +10316,16 @@ function commandCardHasUnsavedChanges(snapshot) {
       || !approxEqual(values.timeout, details.timeout ?? 10)
       || !approxEqual(values.confidence, details.confianca ?? 0.8)
       || normalizeRecognitionProfile(values.searchProfile, "balanced") !== normalizeRecognitionProfile(details.perfil_busca, "balanced")
-      || normalizeStringValue(values.windowTitle) !== normalizeStringValue(details.janela_alvo)
+      || normalizeRecognitionWindowTitle(values.windowTitle || "") !== normalizeRecognitionWindowTitle(details.janela_alvo ?? "")
       || normalizeStringValue(values.recognitionClickMode) !== normalizeStringValue(recognitionClickModeFromDetails(details))
       || successFlowChanged(values, details)
       || normalizeStringValue(values.failureAction) !== normalizeStringValue(details.ao_nao_encontrar ?? "parar")
       || Number(optionalPositiveInt(values.failureBlock) || 0) !== Number(details.bloco_nao_encontrar ?? 0)
+      || normalizeStringValue(values.failureSequence) !== normalizeStringValue(details.sequencia_nao_encontrar ?? "")
+      || !approxEqual(
+        normalizeTransitionDelay(values.failureSequenceDelay),
+        normalizeTransitionDelay(details.atraso_antes_sequencia_nao_encontrar ?? 0),
+      )
       || Number(values.retryCount || 1) !== Number(details.quantidade_tentativas ?? 1)
       || !approxEqual(values.retryInterval, details.intervalo_tentativas ?? 1)
     );
@@ -4662,13 +10347,42 @@ function commandCardHasUnsavedChanges(snapshot) {
       || normalizeStringValue(values.chromePressAfter) !== normalizeStringValue(action.pressionar_depois ?? "")
       || normalizeStringValue(values.chromeSuccessAction) !== normalizeStringValue(details.ao_sucesso ?? "continuar")
       || Number(optionalPositiveInt(values.chromeSuccessBlock) || 0) !== Number(details.bloco_sucesso ?? 0)
+      || normalizeStringValue(values.chromeSuccessSequence) !== normalizeStringValue(details.sequencia_sucesso ?? "")
+      || !approxEqual(
+        normalizeTransitionDelay(values.chromeSuccessSequenceDelay),
+        normalizeTransitionDelay(details.atraso_antes_sequencia_sucesso ?? 0),
+      )
       || normalizeStringValue(values.chromeFailureAction) !== normalizeStringValue(details.ao_falhar ?? "parar")
       || Number(optionalPositiveInt(values.chromeFailureBlock) || 0) !== Number(details.bloco_falha ?? 0)
+      || normalizeStringValue(values.chromeFailureSequence) !== normalizeStringValue(details.sequencia_falha ?? "")
+      || !approxEqual(
+        normalizeTransitionDelay(values.chromeFailureSequenceDelay),
+        normalizeTransitionDelay(details.atraso_antes_sequencia_falha ?? 0),
+      )
       || Number(values.chromeRetryCount || 1) !== Number(details.quantidade_tentativas ?? 1)
       || !approxEqual(values.chromeRetryInterval, details.intervalo_tentativas ?? 0.5)
       || Boolean(values.chromeClearBefore) !== Boolean(action.limpar_antes ?? true)
       || Boolean(values.chromeFallbackVisual) !== Boolean(details.fallback_visual ?? false)
       || normalizeStringValue(values.chromeFallbackImage) !== normalizeStringValue(details.fallback_imagem ?? "")
+    );
+  }
+
+  if (snapshot.type === "abrir_url") {
+    return (
+      normalizeStringValue(values.openUrl) !== normalizeStringValue(details.url)
+      || normalizeStringValue(values.openBrowser) !== normalizeStringValue(details.navegador ?? "padrao")
+      || normalizeStringValue(values.openMode) !== normalizeStringValue(details.modo_abertura ?? "nova_janela")
+      || !approxEqual(values.openWait, details.aguardar_segundos ?? 3)
+      || successFlowChanged(values, details)
+    );
+  }
+
+  if (snapshot.type === "abrir_programa") {
+    return (
+      normalizeStringValue(values.programPath) !== normalizeStringValue(details.caminho)
+      || normalizeStringValue(values.programParams) !== normalizeStringValue(details.parametros ?? "")
+      || !approxEqual(values.programWait, details.aguardar_segundos ?? 2)
+      || successFlowChanged(values, details)
     );
   }
 
@@ -4699,6 +10413,10 @@ function commandCardHasUnsavedChanges(snapshot) {
     );
   }
 
+  if (isLoopMarkerType(snapshot.type)) {
+    return snapshot.type === "fim_loop" && successFlowChanged(values, details);
+  }
+
   return false;
 }
 
@@ -4712,6 +10430,10 @@ async function invokeCommandCardUpdate(snapshot) {
       delay: values.delay,
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
     });
   }
 
@@ -4723,6 +10445,10 @@ async function invokeCommandCardUpdate(snapshot) {
       delay: values.delay,
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
     });
   }
 
@@ -4736,6 +10462,10 @@ async function invokeCommandCardUpdate(snapshot) {
       delay: values.delay,
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
     });
   }
 
@@ -4749,18 +10479,31 @@ async function invokeCommandCardUpdate(snapshot) {
       timeout: values.timeout,
       confianca: values.confidence,
       perfilBusca: values.searchProfile,
+      modoAreaBusca: "target_window",
+      areaBuscaX: 0,
+      areaBuscaY: 0,
+      areaBuscaLargura: 0,
+      areaBuscaAltura: 0,
+      janelaAlvo: values.windowTitle?.trim() || null,
       clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
       clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
       offsetX: 0,
       offsetY: 0,
-      janelaAlvo: values.windowTitle.trim() || null,
       aoNaoEncontrar: values.failureAction,
+      sequenciaNaoEncontrar: values.failureAction === "ir_para_sequencia"
+        ? values.failureSequence.trim() || null
+        : null,
+      atrasoSequenciaNaoEncontrar: transitionSequenceDelayArg(values.failureAction, values.failureSequenceDelay),
       blocoNaoEncontrar: optionalPositiveInt(values.failureBlock),
       quantidadeTentativas: values.retryCount,
       intervaloTentativas: values.retryInterval,
       delay: values.delay,
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
     });
   }
 
@@ -4782,11 +10525,58 @@ async function invokeCommandCardUpdate(snapshot) {
       fallbackImagem: details.fallback_imagem || null,
       aoSucesso: details.ao_sucesso,
       blocoSucesso: optionalPositiveInt(details.bloco_sucesso),
+      sequenciaSucesso: details.ao_sucesso === "ir_para_sequencia"
+        ? optionalSequenceValue(details.sequencia_sucesso)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(details.ao_sucesso, details.atraso_antes_sequencia_sucesso),
       aoFalhar: details.ao_falhar,
       blocoFalha: optionalPositiveInt(details.bloco_falha),
+      sequenciaFalha: details.ao_falhar === "ir_para_sequencia"
+        ? optionalSequenceValue(details.sequencia_falha)
+        : null,
+      atrasoSequenciaFalha: transitionSequenceDelayArg(details.ao_falhar, details.atraso_antes_sequencia_falha),
       quantidadeTentativas: details.quantidade_tentativas,
       intervaloTentativas: details.intervalo_tentativas,
       delay: values.delay,
+    });
+  }
+
+  if (type === "abrir_url") {
+    if (!normalizeStringValue(values.openUrl)) {
+      throw new Error(`O bloco ${order} de Abrir URL esta sem URL.`);
+    }
+    return invoke("update_open_url_block", {
+      order,
+      url: values.openUrl,
+      navegador: values.openBrowser || "padrao",
+      modoAbertura: values.openMode || "nova_janela",
+      aguardarSegundos: values.openWait,
+      delay: values.delay,
+      aoSucesso: values.successAction,
+      blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
+    });
+  }
+
+  if (type === "abrir_programa") {
+    if (!normalizeStringValue(values.programPath)) {
+      throw new Error(`O bloco ${order} de Abrir Programa esta sem executavel.`);
+    }
+    return invoke("update_open_program_block", {
+      order,
+      caminho: values.programPath,
+      parametros: values.programParams || null,
+      aguardarSegundos: values.programWait,
+      delay: values.delay,
+      aoSucesso: values.successAction,
+      blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
     });
   }
 
@@ -4802,11 +10592,11 @@ async function invokeCommandCardUpdate(snapshot) {
       timeout: values.verifyTimeout,
       confianca: values.verifyConfidence,
       acaoAtivo: values.verifyActiveAction,
-      sequenciaAtivo: values.verifyActiveSequence.trim() || null,
+      sequenciaAtivo: optionalSequenceValue(values.verifyActiveSequence),
       acaoDesativado: values.verifyInactiveAction,
-      sequenciaDesativado: values.verifyInactiveSequence.trim() || null,
+      sequenciaDesativado: optionalSequenceValue(values.verifyInactiveSequence),
       acaoNaoEncontrar: values.verifyMissingAction,
-      sequenciaNaoEncontrar: values.verifyMissingSequence.trim() || null,
+      sequenciaNaoEncontrar: optionalSequenceValue(values.verifyMissingSequence),
       delay: values.delay,
     });
   }
@@ -4822,6 +10612,24 @@ async function invokeCommandCardUpdate(snapshot) {
       delay: values.delay,
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
+    });
+  }
+
+  if (isLoopMarkerType(type)) {
+    return invoke("update_loop_marker_block", {
+      order,
+      delay: values.delay,
+      sequencia: currentSequenceName(),
+      aoSucesso: values.successAction,
+      blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
     });
   }
 
@@ -4829,16 +10637,31 @@ async function invokeCommandCardUpdate(snapshot) {
 }
 
 function getPendingCommandMapSnapshots() {
-  const cards = Array.from(commandMapList?.querySelectorAll(".command-tree-card") || []);
-  if (!cards.length) {
-    return [];
+  syncVisibleCommandMapDrafts();
+
+  const pending = [];
+  for (const [clientKey, draft] of Object.entries(state.commandMapDrafts || {})) {
+    const event = findRoadmapEventByClientKey(clientKey);
+    if (!event) {
+      delete state.commandMapDrafts[clientKey];
+      continue;
+    }
+
+    const snapshot = {
+      clientKey,
+      order: Number(event.order),
+      type: String(event.type || draft.type || ""),
+      values: draft.values || {},
+    };
+
+    if (commandCardHasUnsavedChanges(snapshot)) {
+      pending.push(snapshot);
+    } else {
+      delete state.commandMapDrafts[clientKey];
+    }
   }
 
-  const snapshots = cards
-    .map((card) => commandCardSnapshot(card))
-    .filter((snapshot) => Number.isFinite(snapshot.order) && snapshot.order > 0);
-
-  return snapshots.filter((snapshot) => commandCardHasUnsavedChanges(snapshot));
+  return pending;
 }
 
 async function persistCommandMapDraftsForExecution(options = {}) {
@@ -4894,6 +10717,51 @@ async function persistCommandMapDraftsForExecution(options = {}) {
   };
 }
 
+async function autoSaveCommandMapPageSwitch() {
+  const pending = getPendingCommandMapSnapshots();
+  if (!pending.length) {
+    return true;
+  }
+
+  try {
+    setCommandMapSaveState({
+      running: true,
+      dirty: true,
+      percent: 0,
+      status: "Salvando pagina automaticamente...",
+    });
+
+    const result = await persistCommandMapDraftsForExecution({
+      onProgress: ({ current, total, percent }) => {
+        setCommandMapSaveState({
+          running: total > 0 && current < total,
+          dirty: true,
+          percent,
+          status: total
+            ? `Salvando pagina automaticamente ${current}/${total}...`
+            : "Nenhuma alteracao pendente nesta pagina.",
+        });
+      },
+    });
+
+    setCommandMapSaveState({
+      running: false,
+      dirty: false,
+      percent: 100,
+      status: result.total ? "Pagina salva automaticamente." : "Mapa sincronizado e pronto para o loop.",
+    });
+    return true;
+  } catch (error) {
+    setCommandMapSaveState({
+      running: false,
+      dirty: true,
+      status: `Falha ao salvar a pagina automaticamente: ${String(error)}`,
+    });
+    setMessage(`Nao foi possivel salvar a pagina automaticamente: ${String(error)}`, "error");
+    return false;
+  }
+}
+
 function insertValuesFromPanel(panelElement) {
   const get = (field) => panelElement.querySelector(`[data-insert-field="${field}"]`);
   return {
@@ -4911,14 +10779,23 @@ function insertValuesFromPanel(panelElement) {
     timeout: parseNumber(get("timeout")?.value, state.insertPanel?.timeout ?? 10),
     confidence: parseNumber(get("confidence")?.value, state.insertPanel?.confidence ?? 0.8),
     searchProfile: normalizeRecognitionProfile(get("searchProfile")?.value, state.insertPanel?.searchProfile ?? "balanced"),
-    windowTitle: get("windowTitle")?.value ?? state.insertPanel?.windowTitle ?? "",
+    searchAreaMode: "target_window",
+    searchAreaX: 0,
+    searchAreaY: 0,
+    searchAreaWidth: 0,
+    searchAreaHeight: 0,
+    windowTitle: normalizeRecognitionWindowTitle(get("windowTitle")?.value ?? state.insertPanel?.windowTitle ?? ""),
     recognitionClickMode: get("clickOnFind")?.value ?? state.insertPanel?.recognitionClickMode ?? "single",
     failureAction: get("failureAction")?.value ?? state.insertPanel?.failureAction ?? "parar",
     failureBlock: get("failureBlock")?.value ?? state.insertPanel?.failureBlock ?? "",
+    failureSequence: get("failureSequence")?.value ?? state.insertPanel?.failureSequence ?? "pagina_2",
+    failureSequenceDelay: normalizeTransitionDelay(get("failureSequenceDelay")?.value ?? state.insertPanel?.failureSequenceDelay ?? 0),
     retryCount: Math.max(1, Math.trunc(parseNumber(get("retryCount")?.value, state.insertPanel?.retryCount ?? 1))),
     retryInterval: parseNumber(get("retryInterval")?.value, state.insertPanel?.retryInterval ?? 1),
     successAction: get("successAction")?.value ?? state.insertPanel?.successAction ?? "continuar",
     successBlock: get("successBlock")?.value ?? state.insertPanel?.successBlock ?? "",
+    successSequence: get("successSequence")?.value ?? state.insertPanel?.successSequence ?? "pagina_2",
+    successSequenceDelay: normalizeTransitionDelay(get("successSequenceDelay")?.value ?? state.insertPanel?.successSequenceDelay ?? 0),
     chromeName: get("chromeName")?.value ?? state.insertPanel?.chromeName ?? "Chrome / Elemento HTML",
     chromeHtml: get("chromeHtml")?.value ?? state.insertPanel?.chromeHtml ?? "",
     chromeAnalysis: parseChromeAnalysisJson(get("chromeAnalysis")?.value ?? state.insertPanel?.chromeAnalysis ?? ""),
@@ -4932,13 +10809,24 @@ function insertValuesFromPanel(panelElement) {
     chromePressAfter: get("chromePressAfter")?.value ?? state.insertPanel?.chromePressAfter ?? "",
     chromeSuccessAction: get("chromeSuccessAction")?.value ?? state.insertPanel?.chromeSuccessAction ?? "continuar",
     chromeSuccessBlock: get("chromeSuccessBlock")?.value ?? state.insertPanel?.chromeSuccessBlock ?? "",
+    chromeSuccessSequence: get("chromeSuccessSequence")?.value ?? state.insertPanel?.chromeSuccessSequence ?? "pagina_2",
+    chromeSuccessSequenceDelay: normalizeTransitionDelay(get("chromeSuccessSequenceDelay")?.value ?? state.insertPanel?.chromeSuccessSequenceDelay ?? 0),
     chromeFailureAction: get("chromeFailureAction")?.value ?? state.insertPanel?.chromeFailureAction ?? "parar",
     chromeFailureBlock: get("chromeFailureBlock")?.value ?? state.insertPanel?.chromeFailureBlock ?? "",
+    chromeFailureSequence: get("chromeFailureSequence")?.value ?? state.insertPanel?.chromeFailureSequence ?? "pagina_2",
+    chromeFailureSequenceDelay: normalizeTransitionDelay(get("chromeFailureSequenceDelay")?.value ?? state.insertPanel?.chromeFailureSequenceDelay ?? 0),
     chromeRetryCount: Math.max(1, Math.trunc(parseNumber(get("chromeRetryCount")?.value, state.insertPanel?.chromeRetryCount ?? 1))),
     chromeRetryInterval: parseNumber(get("chromeRetryInterval")?.value, state.insertPanel?.chromeRetryInterval ?? 0.5),
     chromeClearBefore: Boolean(get("chromeClearBefore")?.checked ?? state.insertPanel?.chromeClearBefore),
     chromeFallbackVisual: Boolean(get("chromeFallbackVisual")?.checked ?? state.insertPanel?.chromeFallbackVisual),
     chromeFallbackImage: get("chromeFallbackImage")?.value ?? state.insertPanel?.chromeFallbackImage ?? "",
+    openUrl: get("openUrl")?.value ?? state.insertPanel?.openUrl ?? "",
+    openBrowser: get("openBrowser")?.value ?? state.insertPanel?.openBrowser ?? "padrao",
+    openMode: get("openMode")?.value ?? state.insertPanel?.openMode ?? "nova_janela",
+    openWait: parseNumber(get("openWait")?.value, state.insertPanel?.openWait ?? 3),
+    programPath: get("programPath")?.value ?? state.insertPanel?.programPath ?? "",
+    programParams: get("programParams")?.value ?? state.insertPanel?.programParams ?? "",
+    programWait: parseNumber(get("programWait")?.value, state.insertPanel?.programWait ?? 2),
     delay: parseNumber(get("delay")?.value, 0),
     workbook: get("workbook")?.value ?? state.insertPanel?.workbook ?? "",
     sheet: get("sheet")?.value ?? "",
@@ -4962,115 +10850,7 @@ async function persistCommandMapDrafts() {
   const order = Number(card.dataset.order);
   const type = card.dataset.type;
   const values = treeValuesFromCard(card);
-  let roadmap = null;
-
-  if (type === "texto_livre") {
-    roadmap = await invoke("update_text_block", {
-      order,
-      text: values.text,
-      delay: values.delay,
-      aoSucesso: values.successAction,
-      blocoSucesso: optionalPositiveInt(values.successBlock),
-    });
-  } else if (type === "tecla" || type === "atalho") {
-    roadmap = await invoke("update_key_block", {
-      order,
-      keys: values.keys,
-      repeat: values.repeat,
-      delay: values.delay,
-      aoSucesso: values.successAction,
-      blocoSucesso: optionalPositiveInt(values.successBlock),
-    });
-  } else if (type === "mouse_click") {
-    roadmap = await invoke("update_mouse_block", {
-      order,
-      x: values.x,
-      y: values.y,
-      button: values.button,
-      clicks: values.clicks,
-      delay: values.delay,
-      aoSucesso: values.successAction,
-      blocoSucesso: optionalPositiveInt(values.successBlock),
-    });
-  } else if (type === "clicar_imagem") {
-    if (!values.imagePath.trim()) {
-      throw new Error(`O bloco ${order} de reconhecimento esta sem referencia visual.`);
-    }
-    roadmap = await invoke("update_image_click_block", {
-      order,
-      imagem: values.imagePath,
-      timeout: values.timeout,
-      confianca: values.confidence,
-      perfilBusca: values.searchProfile,
-      clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
-      clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
-      offsetX: 0,
-      offsetY: 0,
-      janelaAlvo: values.windowTitle.trim() || null,
-      aoNaoEncontrar: values.failureAction,
-      blocoNaoEncontrar: optionalPositiveInt(values.failureBlock),
-      quantidadeTentativas: values.retryCount,
-      intervaloTentativas: values.retryInterval,
-      delay: values.delay,
-      aoSucesso: values.successAction,
-      blocoSucesso: optionalPositiveInt(values.successBlock),
-    });
-  } else if (type === "chrome_elemento_html") {
-    if (!values.chromeHtml.trim()) {
-      throw new Error(`O bloco ${order} de Chrome HTML esta sem o elemento colado.`);
-    }
-    const analysis = values.chromeAnalysis || await invoke("analyze_html_element", { html: values.chromeHtml });
-    const details = buildChromeDetailsFromAnalysisAndValues(analysis, values);
-    roadmap = await invoke("update_chrome_html_block", {
-      order,
-      nome: details.nome,
-      htmlOriginal: details.html_original,
-      elemento: details.elemento,
-      alvo: details.alvo,
-      acao: details.acao,
-      timeout: details.timeout,
-      fallbackVisual: details.fallback_visual,
-      fallbackImagem: details.fallback_imagem || null,
-      aoSucesso: details.ao_sucesso,
-      blocoSucesso: optionalPositiveInt(details.bloco_sucesso),
-      aoFalhar: details.ao_falhar,
-      blocoFalha: optionalPositiveInt(details.bloco_falha),
-      quantidadeTentativas: details.quantidade_tentativas,
-      intervaloTentativas: details.intervalo_tentativas,
-      delay: values.delay,
-    });
-  } else if (type === "verificar_estado_botao") {
-    if (!values.verifyActiveImage.trim() || !values.verifyInactiveImage.trim()) {
-      throw new Error(`O bloco ${order} de verificacao esta sem as referencias ativa e desativada.`);
-    }
-    roadmap = await invoke("update_verify_button_state_block", {
-      order,
-      nome: values.verifyName || "Verificar botao",
-      imagemAtivo: values.verifyActiveImage,
-      imagemDesativado: values.verifyInactiveImage,
-      timeout: values.verifyTimeout,
-      confianca: values.verifyConfidence,
-      acaoAtivo: values.verifyActiveAction,
-      sequenciaAtivo: values.verifyActiveSequence.trim() || null,
-      acaoDesativado: values.verifyInactiveAction,
-      sequenciaDesativado: values.verifyInactiveSequence.trim() || null,
-      acaoNaoEncontrar: values.verifyMissingAction,
-      sequenciaNaoEncontrar: values.verifyMissingSequence.trim() || null,
-      delay: values.delay,
-    });
-  } else if (type === "sequencia_planilha") {
-    roadmap = await invoke("update_spreadsheet_block", {
-      order,
-      workbook: values.workbook || null,
-      sheet: values.sheet,
-      column: values.column,
-      afterAction: values.afterAction,
-      intervalBetween: values.intervalBetween,
-      delay: values.delay,
-      aoSucesso: values.successAction,
-      blocoSucesso: optionalPositiveInt(values.successBlock),
-    });
-  }
+  const roadmap = await invokeCommandCardUpdate({ order, type, values });
 
   if (roadmap) {
     applyRoadmap(roadmap);
@@ -5130,9 +10910,7 @@ async function saveEntireCommandMap() {
 }
 
 async function persistVisibleRecognitionDrafts() {
-  const cards = Array.from(
-    commandMapList?.querySelectorAll('.command-tree-card[data-type="clicar_imagem"]') || []
-  );
+  const cards = getDistinctCommandTreeCards('.command-tree-card[data-type="clicar_imagem"]');
   if (!cards.length) {
     return;
   }
@@ -5154,12 +10932,20 @@ async function persistVisibleRecognitionDrafts() {
       timeout: values.timeout,
       confianca: values.confidence,
       perfilBusca: values.searchProfile,
+      modoAreaBusca: "target_window",
+      areaBuscaX: 0,
+      areaBuscaY: 0,
+      areaBuscaLargura: 0,
+      areaBuscaAltura: 0,
+      janelaAlvo: values.windowTitle?.trim() || null,
       clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
       clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
       offsetX: 0,
       offsetY: 0,
-      janelaAlvo: values.windowTitle.trim() || null,
       aoNaoEncontrar: values.failureAction,
+      sequenciaNaoEncontrar: values.failureAction === "ir_para_sequencia"
+        ? values.failureSequence.trim() || null
+        : null,
       blocoNaoEncontrar: optionalPositiveInt(values.failureBlock),
       quantidadeTentativas: values.retryCount,
       intervaloTentativas: values.retryInterval,
@@ -5177,7 +10963,7 @@ async function persistVisibleRecognitionDrafts() {
 function focusEditorBlock(order) {
   setWorkspaceTab("commands");
   requestAnimationFrame(() => {
-    setCommandMapFocus(order, { scroll: true, force: true });
+    setCommandMapFocus(order, "auto");
     const target = commandMapList?.querySelector(`.command-tree-card[data-order="${order}"]`);
     if (target) {
       target.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -5218,12 +11004,81 @@ mapZoomInButton.addEventListener("click", () => {
   setCommandMapZoom(Math.round((state.commandMapZoom + 0.05) * 100) / 100);
 });
 
+window.addEventListener("resize", () => {
+  if (state.activeTab === "commands") {
+    scheduleCommandMapAutoFit();
+    scheduleCommandConnectorLayout();
+  }
+  if (state.activeTab === "assist") {
+    requestAnimationFrame(() => {
+      syncAssistEdgeSpacers();
+      if (state.assist.mode === "running" && state.assist.currentOrder != null) {
+        centerAssistOrder(state.assist.currentOrder, "auto");
+      } else {
+        centerFirstAssistOrder("auto");
+      }
+    });
+  }
+});
+
+commandMapList?.addEventListener("scroll", () => {
+  if (state.activeTab === "commands") {
+    scheduleCommandConnectorLayout();
+  }
+}, { passive: true });
+
 mapPrevButton?.addEventListener("click", () => {
   moveCommandMapFocus(-1);
 });
 
 mapNextButton?.addEventListener("click", () => {
   moveCommandMapFocus(1);
+});
+
+commandMapPageTabs?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-command-page]");
+  if (!button) {
+    return;
+  }
+  void switchCommandMapPage(button.dataset.commandPage || "principal");
+});
+
+assistInitialSequenceSelect?.addEventListener("change", () => {
+  saveAssistInitialSequence(assistInitialSequenceSelect.value).catch((error) => {
+    renderAssistSequenceSettings();
+    setMessage(String(error), "error");
+  });
+});
+
+assistSequenceModeList?.addEventListener("change", (event) => {
+  const toggle = event.target.closest("[data-assist-sequence-toggle]");
+  if (!toggle) {
+    return;
+  }
+  saveAssistSequenceExecutionMode(toggle.dataset.assistSequenceToggle || "principal", Boolean(toggle.checked)).catch((error) => {
+    renderAssistSequenceSettings();
+    setMessage(String(error), "error");
+  });
+});
+
+assistControlTabs?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-assist-control-tab]");
+  if (!button) {
+    return;
+  }
+  setAssistControlTab(button.dataset.assistControlTab || "target");
+});
+
+commandMapPageModeSelect?.addEventListener("change", () => {
+  if (commandMapPageModeSelect.value !== "loop_planilha" && commandMapPageAfterLoopSelect) {
+    commandMapPageAfterLoopSelect.value = "";
+  }
+  renderCommandMapPageExecutionSettings();
+  saveCurrentPageExecutionSettings().catch((error) => setMessage(String(error), "error"));
+});
+
+commandMapPageAfterLoopSelect?.addEventListener("change", () => {
+  saveCurrentPageExecutionSettings().catch((error) => setMessage(String(error), "error"));
 });
 
 document.getElementById("addKeyButton").addEventListener("click", () => {
@@ -5271,12 +11126,20 @@ document.getElementById("addImageButton").addEventListener("click", () => {
       timeout: parseNumber(imageTimeoutInput.value, 10),
       confianca: parseNumber(imageConfidenceInput.value, 0.8),
       perfilBusca: normalizeRecognitionProfile(imageSearchProfileInput.value, "balanced"),
+      modoAreaBusca: "target_window",
+      areaBuscaX: 0,
+      areaBuscaY: 0,
+      areaBuscaLargura: 0,
+      areaBuscaAltura: 0,
+      janelaAlvo: null,
       clicar: recognitionClicksFromMode(imageClickModeInput.value, 1) > 0,
       clicks: recognitionClicksFromMode(imageClickModeInput.value, 1),
       offsetX: 0,
       offsetY: 0,
-      janelaAlvo: imageWindowTitleInput.value.trim() || null,
       aoNaoEncontrar: imageFailureActionInput.value || "parar",
+      sequenciaNaoEncontrar: (imageFailureActionInput.value || "parar") === "ir_para_sequencia"
+        ? normalizeSequenceName(imageFailureSequenceInput?.value || "pagina_2")
+        : null,
       blocoNaoEncontrar: optionalPositiveInt(imageFailureBlockInput.value),
       quantidadeTentativas: Math.max(1, Math.trunc(parseNumber(imageRetryCountInput.value, 1))),
       intervaloTentativas: parseNumber(imageRetryIntervalInput.value, 1),
@@ -5330,8 +11193,16 @@ addChromeHtmlButton?.addEventListener("click", () => {
       fallbackImagem: details.fallback_imagem || null,
       aoSucesso: details.ao_sucesso,
       blocoSucesso: optionalPositiveInt(details.bloco_sucesso),
+      sequenciaSucesso: details.ao_sucesso === "ir_para_sequencia"
+        ? optionalSequenceValue(details.sequencia_sucesso)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(details.ao_sucesso, details.atraso_antes_sequencia_sucesso),
       aoFalhar: details.ao_falhar,
       blocoFalha: optionalPositiveInt(details.bloco_falha),
+      sequenciaFalha: details.ao_falhar === "ir_para_sequencia"
+        ? optionalSequenceValue(details.sequencia_falha)
+        : null,
+      atrasoSequenciaFalha: transitionSequenceDelayArg(details.ao_falhar, details.atraso_antes_sequencia_falha),
       quantidadeTentativas: details.quantidade_tentativas,
       intervaloTentativas: details.intervalo_tentativas,
       delay: values.delay,
@@ -5353,11 +11224,11 @@ document.getElementById("addVerifyButton").addEventListener("click", () => {
       timeout: parseNumber(verifyTimeoutInput.value, 5),
       confianca: parseNumber(verifyConfidenceInput.value, 0.85),
       acaoAtivo: verifyActiveActionInput.value,
-      sequenciaAtivo: verifyActiveSequenceInput.value.trim() || null,
+      sequenciaAtivo: optionalSequenceValue(verifyActiveSequenceInput.value),
       acaoDesativado: verifyInactiveActionInput.value,
-      sequenciaDesativado: verifyInactiveSequenceInput.value.trim() || null,
+      sequenciaDesativado: optionalSequenceValue(verifyInactiveSequenceInput.value),
       acaoNaoEncontrar: verifyMissingActionInput.value,
-      sequenciaNaoEncontrar: verifyMissingSequenceInput.value.trim() || null,
+      sequenciaNaoEncontrar: optionalSequenceValue(verifyMissingSequenceInput.value),
       delay: parseNumber(verifyDelayInput.value, 0),
       sequencia: currentSequenceName(),
     })
@@ -5366,6 +11237,28 @@ document.getElementById("addVerifyButton").addEventListener("click", () => {
 
 captureMouseButton.addEventListener("click", () => {
   beginMouseCapture({ scope: "composer-mouse" });
+});
+
+captureImageButton?.addEventListener("click", () => {
+  captureImageToProject({ scope: "composer-image" });
+});
+
+openImagesFolderButton?.addEventListener("click", async () => {
+  try {
+    const openedPath = await invoke("open_images_folder");
+    setMessage(`Pasta de imagens aberta: ${openedPath}`, "success");
+  } catch (error) {
+    setMessage(String(error), "error");
+  }
+});
+
+openRecognitionDiagnosticsButton?.addEventListener("click", async () => {
+  try {
+    const openedPath = await invoke("open_recognition_diagnostics_folder");
+    setMessage(`Pasta de diagnosticos aberta: ${openedPath}`, "success");
+  } catch (error) {
+    setMessage(String(error), "error");
+  }
 });
 
 selectImageButton.addEventListener("click", () => {
@@ -5377,7 +11270,6 @@ testImageRecognitionButton?.addEventListener("click", () => {
     imagePath: imagePathInput.value.trim(),
     timeout: parseNumber(imageTimeoutInput.value, 10),
     confidence: parseNumber(imageConfidenceInput.value, 0.8),
-    windowTitle: imageWindowTitleInput.value.trim(),
     searchProfile: normalizeRecognitionProfile(imageSearchProfileInput.value, "balanced"),
   }, { inheritWindowFallback: true });
 });
@@ -5410,6 +11302,24 @@ document.getElementById("addSpreadsheetButton").addEventListener("click", () => 
   , focusLastCommandMapCard);
 });
 
+addLoopStartButton?.addEventListener("click", () => {
+  runMutation("Inicio do loop adicionado", () =>
+    invoke("add_loop_start_block", {
+      delay: 0,
+      sequencia: currentSequenceName(),
+    })
+  , focusLastCommandMapCard);
+});
+
+addLoopEndButton?.addEventListener("click", () => {
+  runMutation("Fim do loop adicionado", () =>
+    invoke("add_loop_end_block", {
+      delay: 0,
+      sequencia: currentSequenceName(),
+    })
+  , focusLastCommandMapCard);
+});
+
 afterActionCaptureButton.addEventListener("click", () => {
   beginKeyCapture({ scope: "composer-after-action", field: "afterAction" });
 });
@@ -5428,7 +11338,15 @@ assistTabButton.addEventListener("click", () => setWorkspaceTab("assist"));
 commandTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
 workbookTabButton.addEventListener("click", () => setWorkspaceTab("workbook"));
 launcherTabButton.addEventListener("click", () => setWorkspaceTab("launcher"));
+remoteControlTabButton?.addEventListener("click", () => setWorkspaceTab("remote-control"));
 document.getElementById("openEditorFromMap").addEventListener("click", () => setWorkspaceTab("commands"));
+commandMapChromeToggleButton?.addEventListener("click", () => {
+  state.commandMapChromeCollapsed = !state.commandMapChromeCollapsed;
+  applyCommandMapChromeMode();
+  if (state.activeTab === "commands" && state.commandMapFocusOrder) {
+    requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
+  }
+});
 
 newAutomationButton.addEventListener("click", () => {
   setLauncherCreateOpen(true);
@@ -5494,6 +11412,41 @@ launcherList.addEventListener("click", async (event) => {
       return;
     }
 
+    if (action === "import") {
+      if (!confirmLeaveEditorIfDirty()) {
+        return;
+      }
+      const selectedPath = await openNativeFileDialog({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Automacao FlowDetect", extensions: ["zip"] }],
+      });
+      if (!selectedPath || Array.isArray(selectedPath)) {
+        return;
+      }
+      setBusy("Importando ZIP");
+      const result = await invoke("import_saved_automation_zip_from_file_path", {
+        filePath: selectedPath,
+      });
+      applyPersistedRoadmap(result);
+      await refreshTestLoopData();
+      state.library.items = result.library?.items || state.library.items;
+      state.library.categories = result.library?.categories || state.library.categories;
+      state.library.activeId = result.library?.active_id || result.active_automation?.id || state.library.activeId;
+      if (result.active_automation?.nome) {
+        exportNameInput.value = result.active_automation.nome;
+      }
+      setLauncherCreateOpen(false);
+      renderLauncherLibrary();
+      setWorkspaceTab("commands");
+      setBusy("Pronto");
+      setMessage(
+        `Automacao "${result.active_automation?.nome || "importada"}" importada do ZIP com sucesso.`,
+        "success"
+      );
+      return;
+    }
+
     if (action === "create-cancel") {
       setLauncherCreateOpen(false);
       return;
@@ -5515,7 +11468,7 @@ launcherList.addEventListener("click", async (event) => {
       }
       setBusy("Abrindo");
       const result = await invoke("open_saved_automation", { id: automationId });
-      applyRoadmap(result);
+      applyPersistedRoadmap(result);
       await refreshTestLoopData();
       state.library.items = result.library?.items || state.library.items;
       state.library.categories = result.library?.categories || state.library.categories;
@@ -5531,10 +11484,17 @@ launcherList.addEventListener("click", async (event) => {
     }
 
     if (action === "run") {
-      if (!window.confirm("Deseja executar esta automacao agora?")) {
+      const item = state.library.items.find((entry) => String(entry.id) === String(automationId));
+      if (!item) {
+        setMessage("Automacao nao encontrada para executar.", "error");
+        return;
+      }
+      if (Number(item.command_count || 0) <= 0) {
+        setMessage("Essa automacao ainda nao tem blocos para executar.", "error");
         return;
       }
       setBusy("Executando");
+      setMessage(`Iniciando a automacao "${item.nome || "sem nome"}"...`, "info");
       const result = await invoke("execute_saved_automation", {
         id: automationId,
         delay: parseNumber(testDelayInput.value, 3),
@@ -5551,6 +11511,52 @@ launcherList.addEventListener("click", async (event) => {
       await invoke("duplicate_saved_automation", { id: automationId });
       await refreshAutomationLibrary("Automacao duplicada.");
       setBusy("Pronto");
+      return;
+    }
+
+    if (action === "export-zip") {
+      const isActiveAutomation = String(automationId || "") === String(state.library.activeId || "");
+      if (isActiveAutomation && !ensureCommandMapSavedBefore("exportar a automacao em ZIP")) {
+        return;
+      }
+      const item = state.library.items.find((entry) => String(entry.id) === String(automationId));
+      const defaultZipName = `${String(item?.nome || exportNameInput.value.trim() || "Automacao").trim() || "Automacao"}.zip`;
+      setBusy("Escolhendo local");
+      let pickedPath = null;
+      try {
+        pickedPath = await saveNativeFileDialog({
+          defaultPath: defaultZipName,
+          filters: [{ name: "Automacao FlowDetect", extensions: ["zip"] }],
+        });
+      } catch (dialogError) {
+        console.warn("Nao foi possivel abrir o seletor de destino do ZIP.", dialogError);
+        setMessage("Nao consegui abrir a janela de escolher pasta. Vou exportar para a pasta padrao do FlowDetect.", "info");
+      }
+      if (!pickedPath) {
+        setBusy("Exportando ZIP");
+        const result = await invoke("export_saved_automation_zip", {
+          id: automationId,
+          destino: null,
+          destinationPath: null,
+        });
+        setBusy("Pronto");
+        setMessage(
+          `Automacao "${result.automation?.nome || "sem nome"}" exportada em ${result.zip_path}.`,
+          "success"
+        );
+        return;
+      }
+      setBusy("Exportando ZIP");
+      const result = await invoke("export_saved_automation_zip", {
+        id: automationId,
+        destino: pickedPath,
+        destinationPath: pickedPath,
+      });
+      setBusy("Pronto");
+      setMessage(
+        `Automacao "${result.automation?.nome || "sem nome"}" exportada em ${result.zip_path}.`,
+        "success"
+      );
       return;
     }
 
@@ -5628,6 +11634,164 @@ launcherList.addEventListener("input", (event) => {
   state.library.createDraft[key] = field.value;
 });
 
+studioControlConnectButton?.addEventListener("click", async () => {
+  try {
+    setBusy("Conectando Agent");
+    await connectStudioControl();
+    setBusy("Pronto");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+    state.remoteControl.connected = false;
+    renderStudioControl();
+  }
+});
+
+studioControlRefreshButton?.addEventListener("click", async () => {
+  try {
+    setBusy("Atualizando remoto");
+    await refreshStudioControlLibrary();
+    await refreshStudioControlStatus({ silent: true });
+    setBusy("Pronto");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+});
+
+studioControlImportButton?.addEventListener("click", () => {
+  studioControlZipInput?.click();
+});
+
+studioControlZipInput?.addEventListener("change", async () => {
+  const file = studioControlZipInput.files?.[0] || null;
+  studioControlZipInput.value = "";
+  if (!file) {
+    return;
+  }
+  try {
+    setBusy("Enviando ZIP");
+    await importStudioControlZip(file);
+    setBusy("Pronto");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+});
+
+studioControlRunButton?.addEventListener("click", async () => {
+  try {
+    setBusy("Executando remoto");
+    await runStudioControlAutomation();
+    setBusy("Pronto");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+});
+
+studioControlStopButton?.addEventListener("click", async () => {
+  try {
+    setBusy("Parando remoto");
+    await stopStudioControlAutomation();
+    setBusy("Pronto");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+});
+
+studioControlViewButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    state.remoteControl.activeView = button.dataset.studioControlView || "execution";
+    renderStudioControl();
+  });
+});
+
+studioControlList?.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-studio-control-action]");
+  if (!button) {
+    return;
+  }
+  const action = button.dataset.studioControlAction || "";
+  const id = button.dataset.id || "";
+  try {
+    if (action === "select") {
+      setBusy("Abrindo remoto");
+      await openStudioControlAutomation(id);
+    } else if (action === "run") {
+      setBusy("Executando remoto");
+      await runStudioControlAutomation(id);
+    }
+    setBusy("Pronto");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+});
+
+studioControlPageChips?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-studio-control-page]");
+  if (!button) {
+    return;
+  }
+  state.remoteControl.currentSequence = normalizeSequenceName(button.dataset.studioControlPage || "principal");
+  state.remoteControl.currentOrder = studioControlFirstOrder(state.remoteControl.currentSequence);
+  state.remoteControl.detailOpenOrder = null;
+  state.remoteControl.lastCenteredOrder = null;
+  renderStudioControl();
+});
+
+studioControlFlowList?.addEventListener("click", (event) => {
+  const actionButton = event.target.closest("[data-studio-control-action]");
+  if (actionButton) {
+    const order = Number(actionButton.dataset.id || 0);
+    const action = actionButton.dataset.studioControlAction || "";
+    if (action === "details") {
+      state.remoteControl.detailOpenOrder = order;
+    } else if (action === "back") {
+      state.remoteControl.detailOpenOrder = null;
+    }
+    renderStudioControl();
+    return;
+  }
+  const card = event.target.closest("[data-studio-control-order]");
+  if (!card) {
+    return;
+  }
+  const order = Number(card.dataset.studioControlOrder || 0);
+  state.remoteControl.currentOrder = order || state.remoteControl.currentOrder;
+  state.remoteControl.detailOpenOrder = null;
+  state.remoteControl.lastCenteredOrder = null;
+  const current = studioControlCurrentEvent();
+  if (current?.sequence || current?.sequencia) {
+    state.remoteControl.currentSequence = normalizeSequenceName(current.sequence || current.sequencia);
+  }
+  renderStudioControl();
+});
+
+studioControlPrevBlockButton?.addEventListener("click", () => {
+  const events = studioControlSequenceEvents();
+  const index = events.findIndex((event) => Number(event.order) === Number(state.remoteControl.currentOrder));
+  if (index > 0) {
+    state.remoteControl.currentOrder = events[index - 1].order;
+    state.remoteControl.detailOpenOrder = null;
+    state.remoteControl.lastCenteredOrder = null;
+    renderStudioControl();
+  }
+});
+
+studioControlNextBlockButton?.addEventListener("click", () => {
+  const events = studioControlSequenceEvents();
+  const index = events.findIndex((event) => Number(event.order) === Number(state.remoteControl.currentOrder));
+  if (index >= 0 && index < events.length - 1) {
+    state.remoteControl.currentOrder = events[index + 1].order;
+    state.remoteControl.detailOpenOrder = null;
+    state.remoteControl.lastCenteredOrder = null;
+    renderStudioControl();
+  }
+});
+
 [editorPanel, commandsPanel, workbookPanel].forEach((panel) => {
   panel?.addEventListener("input", () => {
     state.library.dirty = true;
@@ -5636,6 +11800,21 @@ launcherList.addEventListener("input", (event) => {
 
 commandsPanel?.addEventListener("input", () => {
   markCommandMapSaveDirty();
+});
+
+commandMapList?.addEventListener("input", (event) => {
+  const target = event.target;
+  if (
+    target?.matches?.('[data-tree-field="imagePath"], [data-insert-field="imagePath"]')
+  ) {
+    const previewHost = target.closest(".command-tree-card, .insert-card-panel");
+    hydrateRecognitionPreviewCards(previewHost, target.value);
+  }
+  const card = event.target.closest(".command-tree-card");
+  if (!card) {
+    return;
+  }
+  syncCommandMapDraftFromCard(card);
 });
 
 mapSaveButton?.addEventListener("click", async () => {
@@ -5651,10 +11830,54 @@ mapSaveButton?.addEventListener("click", async () => {
 
 testDelayInput.addEventListener("input", () => syncTestInputsFrom("top"));
 testLoopStartInput.addEventListener("input", () => syncTestInputsFrom("top"));
-testWindowTitleInput.addEventListener("input", () => syncTestInputsFrom("top"));
 assistDelayInput.addEventListener("input", () => syncTestInputsFrom("assist"));
 assistLoopStartInput.addEventListener("input", () => syncTestInputsFrom("assist"));
-assistWindowTitleInput.addEventListener("input", () => syncTestInputsFrom("assist"));
+testWindowModeSelect?.addEventListener("change", () => syncExecutionWindowModeFrom("top"));
+assistWindowModeSelect?.addEventListener("change", () => syncExecutionWindowModeFrom("assist"));
+registerExecutionActionButtons();
+assistSelectWindowButton?.addEventListener("click", () => {
+  openAssistWindowPicker().catch((error) => setMessage(String(error), "error"));
+});
+assistClearWindowButton?.addEventListener("click", () => {
+  clearAssistTargetWindow().catch((error) => setMessage(String(error), "error"));
+});
+assistWindowPickerCloseButton?.addEventListener("click", closeAssistWindowPicker);
+assistWindowPickerRefreshButton?.addEventListener("click", () => {
+  refreshAssistWindowPicker().catch((error) => setMessage(String(error), "error"));
+});
+assistWindowPickerOverlay?.addEventListener("click", (event) => {
+  if (event.target === assistWindowPickerOverlay) {
+    closeAssistWindowPicker();
+  }
+});
+assistWindowPickerList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-window-picker-hwnd]");
+  if (!button) {
+    return;
+  }
+  const hwnd = Number(button.dataset.windowPickerHwnd || 0);
+  const item = (state.assistTarget.windows || []).find((entry) => Number(entry.hwnd) === hwnd);
+  if (!item) {
+    setMessage("Essa janela nao esta mais na lista. Atualize e tente novamente.", "error");
+    return;
+  }
+  applyAssistTargetWindow(item).catch((error) => setMessage(String(error), "error"));
+});
+
+devAdminEmailInput?.addEventListener("input", () => setLoginError(""));
+devAdminPasswordInput?.addEventListener("input", () => setLoginError(""));
+devAdminLoginButton?.addEventListener("click", () => {
+  submitDevAdminLogin().catch((error) => setLoginError(String(error)));
+});
+loginOverlay?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    const target = event.target;
+    if (target === devAdminEmailInput || target === devAdminPasswordInput || state.login.step === "admin") {
+      submitDevAdminLogin().catch((error) => setLoginError(String(error)));
+    }
+  }
+});
 
 workbookSheetSelect.addEventListener("change", async () => {
   try {
@@ -5695,39 +11918,6 @@ workbookFilesTabs.addEventListener("click", async (event) => {
 
 addWorkbookButton.addEventListener("click", () => {
   workbookFileInput.click();
-});
-
-refreshWindowsButton?.addEventListener("click", async () => {
-  try {
-    setBusy("Lendo janelas");
-    await refreshOpenWindows("Janelas abertas atualizadas.");
-    setBusy("Pronto");
-  } catch (error) {
-    setBusy("Erro");
-    setMessage(String(error), "error");
-  }
-});
-
-refreshAssistWindowsButton?.addEventListener("click", async () => {
-  try {
-    setBusy("Lendo janelas");
-    await refreshOpenWindows("Janelas abertas atualizadas.");
-    setBusy("Pronto");
-  } catch (error) {
-    setBusy("Erro");
-    setMessage(String(error), "error");
-  }
-});
-
-refreshImageWindowsButton?.addEventListener("click", async () => {
-  try {
-    setBusy("Lendo janelas");
-    await refreshOpenWindows("Janelas abertas atualizadas.");
-    setBusy("Pronto");
-  } catch (error) {
-    setBusy("Erro");
-    setMessage(String(error), "error");
-  }
 });
 
 workbookFileInput.addEventListener("change", async () => {
@@ -5778,11 +11968,50 @@ imageFileInput.addEventListener("change", async () => {
   }
 });
 
-workbookTableWrap.addEventListener("click", (event) => {
+automationZipFileInput?.addEventListener("change", async () => {
+  const file = automationZipFileInput.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  try {
+    setBusy("Importando ZIP");
+    const result = await importAutomationZipToProject(file);
+    applyPersistedRoadmap(result);
+    await refreshTestLoopData();
+    state.library.items = result.library?.items || state.library.items;
+    state.library.categories = result.library?.categories || state.library.categories;
+    state.library.activeId = result.library?.active_id || result.active_automation?.id || state.library.activeId;
+    if (result.active_automation?.nome) {
+      exportNameInput.value = result.active_automation.nome;
+    }
+    setLauncherCreateOpen(false);
+    renderLauncherLibrary();
+    setWorkspaceTab("commands");
+    setBusy("Pronto");
+    setMessage(
+      `Automacao "${result.active_automation?.nome || file.name}" importada do ZIP com sucesso.`,
+      "success"
+    );
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  } finally {
+    automationZipFileInput.value = "";
+  }
+});
+
+workbookTableWrap.addEventListener("click", async (event) => {
   const columnButton = event.target.closest("[data-workbook-column-action]");
   if (columnButton) {
     state.workbookSelectedColumn = columnButton.dataset.column || "";
     renderWorkbookPreview();
+    return;
+  }
+
+  const removeRowButton = event.target.closest("[data-workbook-row-remove]");
+  if (removeRowButton) {
+    await removeWorkbookPreviewRow(Number(removeRowButton.dataset.workbookRowRemove || 0));
     return;
   }
 
@@ -5918,6 +12147,11 @@ document.getElementById("clearButton").addEventListener("click", () => {
 
 timelineList.addEventListener("change", (event) => {
   const target = event.target;
+  if (target.matches('[data-field="imagePath"]')) {
+    const card = target.closest(".flow-card");
+    setRecognitionTestStatusForOrder(Number(card?.dataset.order), target.value, false);
+    return;
+  }
   if (target.matches('[data-field="chromeTargetMethod"]')) {
     const card = target.closest(".flow-card");
     const analysis = parseChromeAnalysisJson(card?.querySelector('[data-field="chromeAnalysis"]')?.value);
@@ -5955,6 +12189,7 @@ timelineList.addEventListener("change", (event) => {
       .map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`)
       .join("");
     columnField.value = columns[0] ?? "";
+    return;
   }
 });
 
@@ -5994,6 +12229,18 @@ timelineList.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "capture-image") {
+    state.commandMapFocusOrder = order;
+    captureImageToProject({ scope: "update-editor", order });
+    return;
+  }
+
+  if (action === "refresh-recognition-windows") {
+    state.commandMapFocusOrder = order;
+    refreshRecognitionWindowCatalog({ root: card }).catch((error) => setMessage(String(error), "error"));
+    return;
+  }
+
   if (action === "analyze-chrome-html") {
     state.commandMapFocusOrder = order;
     analyzeChromeHtmlInContainer(card, "data-field");
@@ -6008,7 +12255,7 @@ timelineList.addEventListener("click", (event) => {
 
   if (action === "test-image-recognition") {
       state.commandMapFocusOrder = order;
-      runImageRecognitionTest(values, { inheritWindowFallback: false });
+      runImageRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
       return;
     }
 
@@ -6025,16 +12272,12 @@ timelineList.addEventListener("click", (event) => {
   }
 
   if (action === "up") {
-    runMutation("Bloco movido", () => invoke("move_block", { order, direction: "up" }), (roadmap) =>
-      resolveNearestCommandMapFocus(roadmap, order - 1)
-    );
+    void moveCommandMapCardByStep(order, "up");
     return;
   }
 
   if (action === "down") {
-    runMutation("Bloco movido", () => invoke("move_block", { order, direction: "down" }), (roadmap) =>
-      resolveNearestCommandMapFocus(roadmap, order + 1)
-    );
+    void moveCommandMapCardByStep(order, "down");
     return;
   }
 
@@ -6046,151 +12289,69 @@ timelineList.addEventListener("click", (event) => {
   }
 
   if (action === "save") {
-    if (type === "texto_livre") {
-      runMutation("Bloco salvo", () =>
-        invoke("update_text_block", {
-          order,
-          text: values.text,
-          delay: values.delay,
-          aoSucesso: values.successAction,
-          blocoSucesso: optionalPositiveInt(values.successBlock),
-        })
-      , () => order);
-      return;
-    }
-
-    if (type === "tecla" || type === "atalho") {
-      runMutation("Bloco salvo", () =>
-        invoke("update_key_block", {
-          order,
-          keys: values.keys,
-          repeat: values.repeat,
-          delay: values.delay,
-          aoSucesso: values.successAction,
-          blocoSucesso: optionalPositiveInt(values.successBlock),
-        })
-      , () => order);
-      return;
-    }
-
-    if (type === "mouse_click") {
-      runMutation("Bloco salvo", () =>
-        invoke("update_mouse_block", {
-          order,
-          x: values.x,
-          y: values.y,
-          button: values.button,
-          clicks: values.clicks,
-          delay: values.delay,
-          aoSucesso: values.successAction,
-          blocoSucesso: optionalPositiveInt(values.successBlock),
-        })
-      , () => order);
-      return;
-    }
-
-    if (type === "clicar_imagem") {
-      if (!values.imagePath.trim()) {
-        setMessage("Selecione uma referencia visual antes de salvar esse bloco.", "error");
-        return;
-      }
-      runMutation("Bloco salvo", () =>
-        invoke("update_image_click_block", {
-          order,
-          imagem: values.imagePath,
-          timeout: values.timeout,
-          confianca: values.confidence,
-          perfilBusca: values.searchProfile,
-          clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
-          clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
-          offsetX: 0,
-          offsetY: 0,
-          janelaAlvo: values.windowTitle.trim() || null,
-          aoNaoEncontrar: values.failureAction,
-          blocoNaoEncontrar: optionalPositiveInt(values.failureBlock),
-          quantidadeTentativas: values.retryCount,
-          intervaloTentativas: values.retryInterval,
-          delay: values.delay,
-          aoSucesso: values.successAction,
-          blocoSucesso: optionalPositiveInt(values.successBlock),
-        })
-      , () => order);
-      return;
-    }
-
-    if (type === "chrome_elemento_html") {
-      if (!values.chromeHtml.trim()) {
-        setMessage("Cole o HTML do elemento antes de salvar esse bloco.", "error");
-        return;
-      }
-      runMutation("Bloco salvo", async () => {
-        const analysis = values.chromeAnalysis || await invoke("analyze_html_element", { html: values.chromeHtml });
-        const details = buildChromeDetailsFromAnalysisAndValues(analysis, values);
-        return invoke("update_chrome_html_block", {
-          order,
-          nome: details.nome,
-          htmlOriginal: details.html_original,
-          elemento: details.elemento,
-          alvo: details.alvo,
-          acao: details.acao,
-          timeout: details.timeout,
-          fallbackVisual: details.fallback_visual,
-          fallbackImagem: details.fallback_imagem || null,
-          aoSucesso: details.ao_sucesso,
-          blocoSucesso: optionalPositiveInt(details.bloco_sucesso),
-          aoFalhar: details.ao_falhar,
-          blocoFalha: optionalPositiveInt(details.bloco_falha),
-          quantidadeTentativas: details.quantidade_tentativas,
-          intervaloTentativas: details.intervalo_tentativas,
-          delay: values.delay,
-        });
-      }, () => order);
-      return;
-    }
-
-    if (type === "verificar_estado_botao") {
-      if (!values.verifyActiveImage.trim() || !values.verifyInactiveImage.trim()) {
-        setMessage("Selecione as referencias ativa e desativada antes de salvar esse bloco.", "error");
-        return;
-      }
-      runMutation("Bloco salvo", () =>
-        invoke("update_verify_button_state_block", {
-          order,
-          nome: values.verifyName || "Verificar botao",
-          imagemAtivo: values.verifyActiveImage,
-          imagemDesativado: values.verifyInactiveImage,
-          timeout: values.verifyTimeout,
-          confianca: values.verifyConfidence,
-          acaoAtivo: values.verifyActiveAction,
-          sequenciaAtivo: values.verifyActiveSequence.trim() || null,
-          acaoDesativado: values.verifyInactiveAction,
-          sequenciaDesativado: values.verifyInactiveSequence.trim() || null,
-          acaoNaoEncontrar: values.verifyMissingAction,
-          sequenciaNaoEncontrar: values.verifyMissingSequence.trim() || null,
-          delay: values.delay,
-        })
-      , () => order);
-      return;
-    }
-
     runMutation("Bloco salvo", () =>
-      invoke("update_spreadsheet_block", {
-        order,
-        workbook: values.workbook || null,
-        sheet: values.sheet,
-        column: values.column,
-        afterAction: values.afterAction,
-        intervalBetween: values.intervalBetween,
-        delay: values.delay,
-        aoSucesso: values.successAction,
-        blocoSucesso: optionalPositiveInt(values.successBlock),
-      })
+      invokeCommandCardUpdate({ order, type, values })
     , () => order);
   }
 });
 
 commandMapList.addEventListener("change", (event) => {
   const target = event.target;
+  if (target.matches("[data-jump-delay]")) {
+    saveCommandJumpDelayFromInput(target);
+    return;
+  }
+
+  if (
+    target.matches('[data-tree-field="successAction"], [data-tree-field="failureAction"], [data-tree-field="chromeSuccessAction"], [data-tree-field="chromeFailureAction"], [data-insert-field="successAction"], [data-insert-field="failureAction"], [data-insert-field="chromeSuccessAction"], [data-insert-field="chromeFailureAction"], [data-field="successAction"], [data-field="failureAction"], [data-field="chromeSuccessAction"], [data-field="chromeFailureAction"]')
+  ) {
+    const container = target.closest(".command-tree-card, .insert-card-panel, .flow-card");
+    applyActionVisibilityState(container);
+    if (state.insertPanel && container?.classList.contains("insert-card-panel")) {
+      if (target.matches('[data-insert-field="successAction"]')) {
+        state.insertPanel.successAction = target.value;
+      }
+      if (target.matches('[data-insert-field="failureAction"]')) {
+        state.insertPanel.failureAction = target.value;
+      }
+      if (target.matches('[data-insert-field="chromeSuccessAction"]')) {
+        state.insertPanel.chromeSuccessAction = target.value;
+      }
+      if (target.matches('[data-insert-field="chromeFailureAction"]')) {
+        state.insertPanel.chromeFailureAction = target.value;
+      }
+    }
+    if (container?.classList.contains("command-tree-card")) {
+      syncCommandMapDraftFromCard(container);
+      scheduleCommandConnectorLayout();
+    }
+    return;
+  }
+
+  if (
+    target.matches('[data-tree-field="successBlock"], [data-tree-field="successSequenceDelay"], [data-tree-field="chromeSuccessBlock"], [data-tree-field="chromeSuccessSequenceDelay"], [data-tree-field="failureBlock"], [data-tree-field="failureSequenceDelay"], [data-tree-field="chromeFailureBlock"], [data-tree-field="chromeFailureSequenceDelay"]')
+  ) {
+    const card = target.closest(".command-tree-card");
+    syncCommandMapDraftFromCard(card);
+    scheduleCommandConnectorLayout();
+    return;
+  }
+
+  if (target.matches('[data-tree-field="imagePath"]')) {
+    const card = target.closest(".command-tree-card");
+    setRecognitionTestStatusForOrder(Number(card?.dataset.order), target.value, false);
+    hydrateRecognitionPreviewCards(card, target.value);
+    return;
+  }
+
+  if (target.matches('[data-insert-field="imagePath"]')) {
+    const panel = target.closest(".insert-card-panel");
+    if (state.insertPanel && panel) {
+      state.insertPanel.imagePath = target.value;
+    }
+    hydrateRecognitionPreviewCards(panel, target.value);
+    return;
+  }
   if (target.matches('[data-tree-field="chromeTargetMethod"]')) {
     const card = target.closest(".command-tree-card");
     const analysis = parseChromeAnalysisJson(card?.querySelector('[data-tree-field="chromeAnalysis"]')?.value);
@@ -6293,6 +12454,13 @@ commandMapList.addEventListener("change", (event) => {
       state.insertPanel.sheet = target.value;
       state.insertPanel.column = columns[0] ?? "";
     }
+    return;
+  }
+
+  const card = target.closest(".command-tree-card");
+  if (card && target.matches("input, textarea, select")) {
+    markCommandMapSaveDirty();
+    syncCommandMapDraftFromCard(card);
   }
 });
 
@@ -6324,13 +12492,7 @@ window.addEventListener("pointermove", (event) => {
   }
 
   event.preventDefault();
-  moveDragPreview(event.clientX, event.clientY);
-  autoScrollCommandMap(event.clientX);
-
-  const targetIndex = getDragTargetIndexFromPoint(event.clientX, event.clientY);
-  if (targetIndex) {
-    updateDragTarget(targetIndex);
-  }
+  scheduleDragUpdate(event.clientX, event.clientY);
 });
 
 window.addEventListener("pointerup", (event) => {
@@ -6355,6 +12517,26 @@ window.addEventListener("pointercancel", (event) => {
 });
 
 commandMapList.addEventListener("click", (event) => {
+  const recognitionTabButton = event.target.closest("button[data-recognition-tab-target]");
+  if (recognitionTabButton) {
+    const card = recognitionTabButton.closest(".command-tree-card");
+    const order = Number(card?.dataset.order);
+    if (order) {
+      setRecognitionTreeTab(order, recognitionTabButton.dataset.recognitionTabTarget || "base");
+    }
+    return;
+  }
+
+  const spreadsheetTabButton = event.target.closest("button[data-spreadsheet-tab-target]");
+  if (spreadsheetTabButton) {
+    const card = spreadsheetTabButton.closest(".command-tree-card");
+    const order = Number(card?.dataset.order);
+    if (order) {
+      setSpreadsheetTreeTab(order, spreadsheetTabButton.dataset.spreadsheetTabTarget || "planilha");
+    }
+    return;
+  }
+
   const button = event.target.closest("button[data-tree-action]");
   if (!button) {
     return;
@@ -6396,6 +12578,18 @@ commandMapList.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "capture-image") {
+    setCommandMapFocus(order);
+    captureImageToProject({ scope: "update-tree", order });
+    return;
+  }
+
+  if (action === "refresh-recognition-windows") {
+    setCommandMapFocus(order);
+    refreshRecognitionWindowCatalog({ root: card }).catch((error) => setMessage(String(error), "error"));
+    return;
+  }
+
   if (action === "analyze-chrome-html") {
     setCommandMapFocus(order);
     analyzeChromeHtmlInContainer(card, "data-tree-field");
@@ -6410,7 +12604,7 @@ commandMapList.addEventListener("click", (event) => {
 
   if (action === "test-image-recognition") {
       setCommandMapFocus(order);
-      runImageRecognitionTest(values, { inheritWindowFallback: false });
+      runImageRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
       return;
     }
 
@@ -6438,16 +12632,12 @@ commandMapList.addEventListener("click", (event) => {
   }
 
   if (action === "up") {
-    runMutation("Bloco movido", () => invoke("move_block", { order, direction: "up" }), (roadmap) =>
-      resolveNearestCommandMapFocus(roadmap, order - 1)
-    );
+    moveCommandMapCardByStep(order, "up");
     return;
   }
 
   if (action === "down") {
-    runMutation("Bloco movido", () => invoke("move_block", { order, direction: "down" }), (roadmap) =>
-      resolveNearestCommandMapFocus(roadmap, order + 1)
-    );
+    moveCommandMapCardByStep(order, "down");
     return;
   }
 
@@ -6459,143 +12649,8 @@ commandMapList.addEventListener("click", (event) => {
   }
 
   if (action === "save") {
-    if (type === "texto_livre") {
-      runMutation("Bloco salvo", () =>
-        invoke("update_text_block", {
-          order,
-          text: values.text,
-          delay: values.delay,
-          aoSucesso: values.successAction,
-          blocoSucesso: optionalPositiveInt(values.successBlock),
-        })
-      , () => order);
-      return;
-    }
-
-    if (type === "tecla" || type === "atalho") {
-      runMutation("Bloco salvo", () =>
-        invoke("update_key_block", {
-          order,
-          keys: values.keys,
-          repeat: values.repeat,
-          delay: values.delay,
-          aoSucesso: values.successAction,
-          blocoSucesso: optionalPositiveInt(values.successBlock),
-        })
-      , () => order);
-      return;
-    }
-
-    if (type === "mouse_click") {
-      runMutation("Bloco salvo", () =>
-        invoke("update_mouse_block", {
-          order,
-          x: values.x,
-          y: values.y,
-          button: values.button,
-          clicks: values.clicks,
-          delay: values.delay,
-          aoSucesso: values.successAction,
-          blocoSucesso: optionalPositiveInt(values.successBlock),
-        })
-      , () => order);
-      return;
-    }
-
-    if (type === "clicar_imagem") {
-      if (!values.imagePath.trim()) {
-        setMessage("Selecione uma referencia visual antes de salvar esse bloco.", "error");
-        return;
-      }
-      runMutation("Bloco salvo", () =>
-        invoke("update_image_click_block", {
-          order,
-          imagem: values.imagePath,
-          timeout: values.timeout,
-          confianca: values.confidence,
-          perfilBusca: values.searchProfile,
-          clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
-          clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
-          offsetX: 0,
-          offsetY: 0,
-          janelaAlvo: values.windowTitle.trim() || null,
-          aoNaoEncontrar: values.failureAction,
-          blocoNaoEncontrar: optionalPositiveInt(values.failureBlock),
-          quantidadeTentativas: values.retryCount,
-          intervaloTentativas: values.retryInterval,
-          delay: values.delay,
-          aoSucesso: values.successAction,
-          blocoSucesso: optionalPositiveInt(values.successBlock),
-        })
-      , () => order);
-      return;
-    }
-
-    if (type === "chrome_elemento_html") {
-      if (!values.chromeHtml.trim()) {
-        setMessage("Cole o HTML do elemento antes de salvar esse bloco.", "error");
-        return;
-      }
-      runMutation("Bloco salvo", async () => {
-        const analysis = values.chromeAnalysis || await invoke("analyze_html_element", { html: values.chromeHtml });
-        const details = buildChromeDetailsFromAnalysisAndValues(analysis, values);
-        return invoke("update_chrome_html_block", {
-          order,
-          nome: details.nome,
-          htmlOriginal: details.html_original,
-          elemento: details.elemento,
-          alvo: details.alvo,
-          acao: details.acao,
-          timeout: details.timeout,
-          fallbackVisual: details.fallback_visual,
-          fallbackImagem: details.fallback_imagem || null,
-          aoSucesso: details.ao_sucesso,
-          blocoSucesso: optionalPositiveInt(details.bloco_sucesso),
-          aoFalhar: details.ao_falhar,
-          blocoFalha: optionalPositiveInt(details.bloco_falha),
-          quantidadeTentativas: details.quantidade_tentativas,
-          intervaloTentativas: details.intervalo_tentativas,
-          delay: values.delay,
-        });
-      }, () => order);
-      return;
-    }
-
-    if (type === "verificar_estado_botao") {
-      if (!values.verifyActiveImage.trim() || !values.verifyInactiveImage.trim()) {
-        setMessage("Selecione as referencias ativa e desativada antes de salvar esse bloco.", "error");
-        return;
-      }
-      runMutation("Bloco salvo", () =>
-        invoke("update_verify_button_state_block", {
-          order,
-          nome: values.verifyName || "Verificar botao",
-          imagemAtivo: values.verifyActiveImage,
-          imagemDesativado: values.verifyInactiveImage,
-          timeout: values.verifyTimeout,
-          confianca: values.verifyConfidence,
-          acaoAtivo: values.verifyActiveAction,
-          sequenciaAtivo: values.verifyActiveSequence.trim() || null,
-          acaoDesativado: values.verifyInactiveAction,
-          sequenciaDesativado: values.verifyInactiveSequence.trim() || null,
-          acaoNaoEncontrar: values.verifyMissingAction,
-          sequenciaNaoEncontrar: values.verifyMissingSequence.trim() || null,
-          delay: values.delay,
-        })
-      , () => order);
-      return;
-    }
-
     runMutation("Bloco salvo", () =>
-      invoke("update_spreadsheet_block", {
-        order,
-        workbook: values.workbook || null,
-        sheet: values.sheet,
-        column: values.column,
-        afterAction: values.afterAction,
-        intervalBetween: values.intervalBetween,
-        delay: values.delay,
-      })
+      invokeCommandCardUpdate({ order, type, values })
     , () => order);
   }
 });
@@ -6610,6 +12665,26 @@ commandMapList.addEventListener("click", (event) => {
       state.insertPanel.sheet = state.insertPanel.sheet || workbookSheetsFor(state.insertPanel.workbook)[0]?.name || "";
       state.insertPanel.column = state.insertPanel.column || columnsForSheetInWorkbook(state.insertPanel.workbook, state.insertPanel.sheet)[0] || "";
     }
+    renderCommandMap();
+    return;
+  }
+
+  const insertRecognitionTabButton = event.target.closest("button[data-insert-recognition-tab-target]");
+  if (insertRecognitionTabButton) {
+    if (!state.insertPanel) {
+      return;
+    }
+    const panel = insertRecognitionTabButton.closest(".insert-card-panel");
+    if (panel) {
+      state.insertPanel = {
+        ...state.insertPanel,
+        ...insertValuesFromPanel(panel),
+      };
+    }
+    setCommandMapFocus(Number(panel?.dataset.targetOrder || state.insertPanel.targetOrder));
+    state.insertPanel.recognitionTab = normalizeRecognitionTreeTab(
+      insertRecognitionTabButton.dataset.insertRecognitionTabTarget || "base"
+    );
     renderCommandMap();
     return;
   }
@@ -6671,6 +12746,18 @@ commandMapList.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "capture-image") {
+    setCommandMapFocus(Number(panel.dataset.targetOrder));
+    captureImageToProject({ scope: "insert-panel", order: Number(panel.dataset.targetOrder) });
+    return;
+  }
+
+  if (action === "refresh-recognition-windows") {
+    setCommandMapFocus(Number(panel.dataset.targetOrder));
+    refreshRecognitionWindowCatalog({ root: panel }).catch((error) => setMessage(String(error), "error"));
+    return;
+  }
+
   if (action === "analyze-chrome-html") {
     setCommandMapFocus(Number(panel.dataset.targetOrder));
     analyzeChromeHtmlInContainer(panel, "data-insert-field");
@@ -6691,6 +12778,10 @@ commandMapList.addEventListener("click", (event) => {
       delay: values.delay,
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
     };
     const isFirstBlock = Number(common.targetOrder) <= 0;
 
@@ -6704,14 +12795,19 @@ commandMapList.addEventListener("click", (event) => {
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
               blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             })
           : invoke("insert_text_block", {
               targetOrder: common.targetOrder,
               position: common.position,
               text: values.text,
               delay: common.delay,
+              sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
               blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     } else if (values.type === "key") {
       promiseFactory = () =>
@@ -6723,6 +12819,8 @@ commandMapList.addEventListener("click", (event) => {
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
               blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             })
           : invoke("insert_key_block", {
               targetOrder: common.targetOrder,
@@ -6730,8 +12828,45 @@ commandMapList.addEventListener("click", (event) => {
               keys: values.keys,
               repeat: values.repeat,
               delay: common.delay,
+              sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
               blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            });
+    } else if (values.type === "loop_start") {
+      promiseFactory = () =>
+        isFirstBlock
+          ? invoke("add_loop_start_block", {
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+            })
+          : invoke("insert_loop_start_block", {
+              targetOrder: common.targetOrder,
+              position: common.position,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+            });
+    } else if (values.type === "loop_end") {
+      promiseFactory = () =>
+        isFirstBlock
+          ? invoke("add_loop_end_block", {
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            })
+          : invoke("insert_loop_end_block", {
+              targetOrder: common.targetOrder,
+              position: common.position,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     } else if (values.type === "mouse") {
       promiseFactory = () =>
@@ -6745,6 +12880,8 @@ commandMapList.addEventListener("click", (event) => {
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
               blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             })
           : invoke("insert_mouse_block", {
               targetOrder: common.targetOrder,
@@ -6754,8 +12891,11 @@ commandMapList.addEventListener("click", (event) => {
               button: values.button,
               clicks: values.clicks,
               delay: common.delay,
+              sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
               blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     } else if (values.type === "image") {
       if (!values.imagePath.trim()) {
@@ -6769,12 +12909,21 @@ commandMapList.addEventListener("click", (event) => {
               timeout: values.timeout,
               confianca: values.confidence,
               perfilBusca: values.searchProfile,
+              modoAreaBusca: "target_window",
+              areaBuscaX: 0,
+              areaBuscaY: 0,
+              areaBuscaLargura: 0,
+              areaBuscaAltura: 0,
+              janelaAlvo: values.windowTitle?.trim() || null,
               clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
               clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
               offsetX: 0,
               offsetY: 0,
-              janelaAlvo: values.windowTitle.trim() || null,
               aoNaoEncontrar: values.failureAction,
+              sequenciaNaoEncontrar: values.failureAction === "ir_para_sequencia"
+                ? values.failureSequence.trim() || null
+                : null,
+              atrasoSequenciaNaoEncontrar: transitionSequenceDelayArg(values.failureAction, values.failureSequenceDelay),
               blocoNaoEncontrar: optionalPositiveInt(values.failureBlock),
               quantidadeTentativas: values.retryCount,
               intervaloTentativas: values.retryInterval,
@@ -6782,6 +12931,8 @@ commandMapList.addEventListener("click", (event) => {
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
               blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             })
           : invoke("insert_image_click_block", {
               targetOrder: common.targetOrder,
@@ -6790,18 +12941,30 @@ commandMapList.addEventListener("click", (event) => {
               timeout: values.timeout,
               confianca: values.confidence,
               perfilBusca: values.searchProfile,
+              modoAreaBusca: "target_window",
+              areaBuscaX: 0,
+              areaBuscaY: 0,
+              areaBuscaLargura: 0,
+              areaBuscaAltura: 0,
+              janelaAlvo: values.windowTitle?.trim() || null,
               clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
               clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
               offsetX: 0,
               offsetY: 0,
-              janelaAlvo: values.windowTitle.trim() || null,
               aoNaoEncontrar: values.failureAction,
+              sequenciaNaoEncontrar: values.failureAction === "ir_para_sequencia"
+                ? values.failureSequence.trim() || null
+                : null,
+              atrasoSequenciaNaoEncontrar: transitionSequenceDelayArg(values.failureAction, values.failureSequenceDelay),
               blocoNaoEncontrar: optionalPositiveInt(values.failureBlock),
               quantidadeTentativas: values.retryCount,
               intervaloTentativas: values.retryInterval,
               delay: common.delay,
+              sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
               blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     } else if (values.type === "chrome") {
       if (!values.chromeHtml.trim()) {
@@ -6823,8 +12986,16 @@ commandMapList.addEventListener("click", (event) => {
               fallbackImagem: details.fallback_imagem || null,
               aoSucesso: details.ao_sucesso,
               blocoSucesso: optionalPositiveInt(details.bloco_sucesso),
+              sequenciaSucesso: details.ao_sucesso === "ir_para_sequencia"
+                ? optionalSequenceValue(details.sequencia_sucesso)
+                : null,
+              atrasoSequenciaSucesso: transitionSequenceDelayArg(details.ao_sucesso, details.atraso_antes_sequencia_sucesso),
               aoFalhar: details.ao_falhar,
               blocoFalha: optionalPositiveInt(details.bloco_falha),
+              sequenciaFalha: details.ao_falhar === "ir_para_sequencia"
+                ? optionalSequenceValue(details.sequencia_falha)
+                : null,
+              atrasoSequenciaFalha: transitionSequenceDelayArg(details.ao_falhar, details.atraso_antes_sequencia_falha),
               quantidadeTentativas: details.quantidade_tentativas,
               intervaloTentativas: details.intervalo_tentativas,
               delay: common.delay,
@@ -6843,13 +13014,86 @@ commandMapList.addEventListener("click", (event) => {
               fallbackImagem: details.fallback_imagem || null,
               aoSucesso: details.ao_sucesso,
               blocoSucesso: optionalPositiveInt(details.bloco_sucesso),
+              sequenciaSucesso: details.ao_sucesso === "ir_para_sequencia"
+                ? optionalSequenceValue(details.sequencia_sucesso)
+                : null,
+              atrasoSequenciaSucesso: transitionSequenceDelayArg(details.ao_sucesso, details.atraso_antes_sequencia_sucesso),
               aoFalhar: details.ao_falhar,
               blocoFalha: optionalPositiveInt(details.bloco_falha),
+              sequenciaFalha: details.ao_falhar === "ir_para_sequencia"
+                ? optionalSequenceValue(details.sequencia_falha)
+                : null,
+              atrasoSequenciaFalha: transitionSequenceDelayArg(details.ao_falhar, details.atraso_antes_sequencia_falha),
               quantidadeTentativas: details.quantidade_tentativas,
               intervaloTentativas: details.intervalo_tentativas,
               delay: common.delay,
+              sequencia: currentSequenceName(),
             });
       };
+    } else if (values.type === "open_url") {
+      if (!values.openUrl.trim()) {
+        setMessage("Informe a URL antes de inserir esse bloco.", "error");
+        return;
+      }
+      promiseFactory = () =>
+        isFirstBlock
+          ? invoke("add_open_url_block", {
+              url: values.openUrl,
+              navegador: values.openBrowser,
+              modoAbertura: values.openMode,
+              aguardarSegundos: values.openWait,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            })
+          : invoke("insert_open_url_block", {
+              targetOrder: common.targetOrder,
+              position: common.position,
+              url: values.openUrl,
+              navegador: values.openBrowser,
+              modoAbertura: values.openMode,
+              aguardarSegundos: values.openWait,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            });
+    } else if (values.type === "open_program") {
+      if (!values.programPath.trim()) {
+        setMessage("Informe o caminho do programa antes de inserir esse bloco.", "error");
+        return;
+      }
+      promiseFactory = () =>
+        isFirstBlock
+          ? invoke("add_open_program_block", {
+              caminho: values.programPath,
+              parametros: values.programParams || null,
+              aguardarSegundos: values.programWait,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            })
+          : invoke("insert_open_program_block", {
+              targetOrder: common.targetOrder,
+              position: common.position,
+              caminho: values.programPath,
+              parametros: values.programParams || null,
+              aguardarSegundos: values.programWait,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            });
     } else {
       promiseFactory = () =>
         isFirstBlock
@@ -6863,6 +13107,8 @@ commandMapList.addEventListener("click", (event) => {
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
               blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             })
           : invoke("insert_spreadsheet_block", {
               targetOrder: common.targetOrder,
@@ -6873,8 +13119,11 @@ commandMapList.addEventListener("click", (event) => {
               delay: common.delay,
               afterAction: values.afterAction,
               intervalBetween: values.intervalBetween,
+              sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
               blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     }
 
@@ -6895,7 +13144,13 @@ async function boot() {
   try {
     setBusy("Carregando");
     updateCommandMapSaveUI();
+    renderStudioControl();
+    syncExecutionWindowModeFrom("top");
+    setAssistControlTab(state.assistControlTab);
     setWorkspaceTab(state.activeTab);
+    await loadPersistedLoginSession({ preserveAuthenticated: true });
+    updateLoginResolutionPreview(state.login.resolution);
+    applyLoginStateUI();
     try {
       const executionState = await invoke("get_test_execution_state");
       setTestExecutionState(executionState?.running);
@@ -6927,13 +13182,24 @@ async function boot() {
             ? "success"
             : "info";
         pushAssistLog(text, kind);
-        if (text.toLowerCase().includes("janela alvo capturada:")) {
-          state.assist.windowTitle = text.split(":").slice(1).join(":").trim() || text;
-          updateAssistProgressUI();
+        if (lowered.includes("janela alvo perdida")) {
+          state.assistTarget = {
+            ...state.assistTarget,
+            status: "lost",
+          };
+          updateAssistTargetUI();
         }
         if (state.assist.mode === "running" && !state.assist.description) {
           state.assist.description = text;
           updateAssistProgressUI();
+        }
+        const updatedLoopRuntime = applyAssistLoopRuntimeHint(text, {
+          updateDescription: state.assist.mode === "running",
+        });
+        const movedAssistPosition = applyAssistPositionHint(text, { render: false });
+        if (updatedLoopRuntime || movedAssistPosition) {
+          updateAssistProgressUI();
+          renderAssistExecutionMap();
         }
         setMessage(text, "info");
       }
@@ -6946,8 +13212,28 @@ async function boot() {
       state.assist.total = Number(payload.total || 0);
       state.assist.percent = Number(payload.percent || 0);
       state.assist.description = String(payload.description || "");
-      state.assist.company = String(payload.company || "");
-      state.assist.currentOrder = extractOrderFromDescription(payload.description) ?? state.assist.currentOrder;
+      if (Number(payload.iteration_current || 0) > 0 && Number(payload.iteration_total || 0) > 0) {
+        state.assist.current = Number(payload.iteration_current || 0);
+        state.assist.total = Number(payload.iteration_total || 0);
+        state.assist.percent = state.assist.total > 0
+          ? (state.assist.current / state.assist.total) * 100
+          : Number(payload.percent || 0);
+      }
+      if (Number(payload.order || 0) > 0) {
+        state.assist.currentOrder = Number(payload.order || 0);
+      } else if (payload.sequence) {
+        const firstOrder = getCommandMapFirstOrderForSequence(payload.sequence);
+        if (firstOrder != null) {
+          state.assist.currentOrder = firstOrder;
+        }
+      }
+      const rowFromLine = resolveAssistLoopRowByLine(Number(payload.line || 0));
+      state.assist.company = String(payload.company || rowFromLine?.company || "");
+      applyAssistLoopRuntimeHint(payload.description, {
+        updateDescription: false,
+        updateCompany: !payload.company && !rowFromLine?.company,
+      });
+      applyAssistPositionHint(payload.description, { render: false });
       updateAssistProgressUI();
       pushAssistLog(state.assist.description, "info");
       renderAssistExecutionMap();
@@ -6970,12 +13256,12 @@ async function boot() {
       renderAssistExecutionMap();
     });
     await refreshAutomationLibrary();
-    await refreshOpenWindows();
     await refreshWorkbookMeta();
     await loadWorkbookPreview();
     const roadmap = await invoke("get_roadmap");
-    applyRoadmap(roadmap);
+    applyPersistedRoadmap(roadmap);
     await refreshTestLoopData();
+    refreshRecognitionWindowCatalog({ silent: true }).catch(() => {});
     resetAssistState("idle");
     setBusy("Pronto");
     setMessage("Gerador pronto para uso.", "success");
@@ -6985,4 +13271,7 @@ async function boot() {
   }
 }
 
+updateLoginResolutionPreview();
+applyLoginStateUI();
 boot();
+}

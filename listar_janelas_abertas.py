@@ -21,7 +21,6 @@ def listar_janelas():
 
     user32 = ctypes.windll.user32
     resultados = []
-    vistos = set()
 
     def callback(hwnd, _lparam):
         if not user32.IsWindowVisible(hwnd):
@@ -46,15 +45,27 @@ def listar_janelas():
         if largura <= 0 or altura <= 0:
             return True
 
-        chave = titulo.lower()
-        if chave in vistos:
-            return True
+        classe_buffer = ctypes.create_unicode_buffer(256)
+        try:
+            user32.GetClassNameW(hwnd, classe_buffer, 255)
+            classe = limpar_titulo(classe_buffer.value)
+        except Exception:
+            classe = ""
 
-        vistos.add(chave)
+        pid = wintypes.DWORD(0)
+        try:
+            user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), ctypes.byref(pid))
+        except Exception:
+            pid = wintypes.DWORD(0)
+
         resultados.append(
             {
                 "title": titulo,
                 "hwnd": int(hwnd),
+                "class_name": classe,
+                "pid": int(pid.value or 0),
+                "left": int(rect.left),
+                "top": int(rect.top),
                 "width": largura,
                 "height": altura,
             }
@@ -63,7 +74,7 @@ def listar_janelas():
 
     enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(callback)
     user32.EnumWindows(enum_proc, 0)
-    resultados.sort(key=lambda item: item["title"].lower())
+    resultados.sort(key=lambda item: (item["title"].lower(), int(item.get("hwnd", 0) or 0)))
     return {"items": resultados}
 
 

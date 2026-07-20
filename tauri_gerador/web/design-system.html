@@ -1,0 +1,1558 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FlowDetect Design System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Montserrat:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css" />
+    <style>
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body.design-system-page {
+        overflow: auto;
+      }
+
+      .design-system-page .builder-shell {
+        min-height: 100vh;
+        height: auto;
+        grid-template-rows: auto;
+        gap: 12px;
+      }
+
+      .design-system-page .hero-panel {
+        display: grid;
+        gap: 14px;
+      }
+
+      .design-system-page .hero-copy {
+        display: block;
+      }
+
+      .design-system-page .stats-strip {
+        display: grid;
+      }
+
+      .design-system-page .launcher-shell,
+      .design-system-page .assist-shell,
+      .design-system-page .command-map-shell,
+      .design-system-page .workbook-shell,
+      .design-system-page .timeline-column,
+      .design-system-page .assist-log-panel,
+      .design-system-page .workbook-side-card,
+      .design-system-page .workbook-table-card {
+        min-height: 0;
+        height: auto;
+      }
+
+      .design-system-page .insert-card-panel {
+        max-height: none;
+      }
+
+      .design-system-page .workspace-grid,
+      .design-system-page .workbook-layout,
+      .design-system-page .assist-body {
+        min-height: 0;
+        height: auto;
+      }
+
+      .design-system-page .composer-column,
+      .design-system-page .timeline-list,
+      .design-system-page .assist-map-list,
+      .design-system-page .assist-log-list,
+      .design-system-page .workbook-table-wrap,
+      .design-system-page .workbook-side-card {
+        overflow: visible;
+      }
+
+      .design-system-page .timeline-list,
+      .design-system-page .assist-log-list {
+        padding-right: 0;
+      }
+
+      .design-system-page .design-system-nav-shell {
+        position: sticky;
+        top: 14px;
+        z-index: 80;
+        grid-template-rows: none;
+        padding: 10px 12px;
+      }
+
+      .design-system-page .design-system-nav a.workspace-tab {
+        text-decoration: none;
+      }
+
+      .design-system-section {
+        display: grid;
+        gap: 10px;
+        scroll-margin-top: 96px;
+      }
+
+      .design-system-page .ds-section-head {
+        margin-bottom: 2px;
+      }
+
+      .design-system-page .ds-type-list,
+      .design-system-page .ds-grid-2,
+      .design-system-page .ds-grid-3,
+      .design-system-page .ds-grid-4,
+      .design-system-page .ds-grid-5,
+      .design-system-page .ds-stack,
+      .design-system-page .ds-state-grid,
+      .design-system-page .ds-layout-stack,
+      .design-system-page .ds-motion-grid,
+      .design-system-page .ds-theme-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .design-system-page .ds-grid-2,
+      .design-system-page .ds-motion-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .design-system-page .ds-grid-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .design-system-page .ds-grid-4,
+      .design-system-page .ds-theme-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .design-system-page .ds-grid-5,
+      .design-system-page .ds-state-grid {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+      }
+
+      .design-system-page .ds-type-row {
+        grid-template-columns: 170px minmax(0, 1fr) auto;
+        align-items: center;
+      }
+
+      .design-system-page .ds-type-preview {
+        min-width: 0;
+      }
+
+      .design-system-page .ds-type-preview .assist-copy {
+        justify-items: start;
+        text-align: left;
+        max-width: none;
+        margin: 0;
+      }
+
+      .design-system-page .ds-type-preview .assist-header {
+        padding: 0;
+        gap: 0;
+      }
+
+      .design-system-page .ds-type-preview .capture-modal,
+      .design-system-page .ds-type-preview .insert-card-panel,
+      .design-system-page .ds-type-preview .stat-card,
+      .design-system-page .ds-type-preview .assist-status-card {
+        width: 100%;
+        max-width: none;
+        min-height: 0;
+      }
+
+      .design-system-page .ds-type-preview .capture-modal {
+        padding: 16px 18px;
+        box-shadow: none;
+      }
+
+      .design-system-page .ds-size-chip {
+        white-space: nowrap;
+      }
+
+      .design-system-page .ds-state-card,
+      .design-system-page .ds-motion-card {
+        display: grid;
+        gap: 8px;
+        align-content: start;
+      }
+
+      .design-system-page .ds-state-card .stat-label,
+      .design-system-page .ds-motion-card .stat-label {
+        margin-bottom: 2px;
+      }
+
+      .design-system-page .ds-state-card .workspace-tab,
+      .design-system-page .ds-state-card .workbook-file-tab,
+      .design-system-page .ds-state-card .primary-button,
+      .design-system-page .ds-state-card .soft-button,
+      .design-system-page .ds-state-card .ghost-button,
+      .design-system-page .ds-state-card .danger-button,
+      .design-system-page .ds-state-card .micro-button,
+      .design-system-page .ds-state-card .tree-open-button {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .design-system-page .ds-page-swatch {
+        min-height: 190px;
+        display: grid;
+        align-content: end;
+        gap: 8px;
+        padding: 16px;
+        border-radius: 20px;
+        border: 1px solid rgba(230, 247, 255, 0.08);
+        background:
+          radial-gradient(circle at top, rgba(18, 181, 203, 0.16), transparent 30%),
+          radial-gradient(circle at right, rgba(94, 234, 212, 0.11), transparent 24%),
+          radial-gradient(circle at bottom left, rgba(34, 197, 94, 0.08), transparent 26%),
+          var(--bg);
+        box-shadow: var(--shadow);
+      }
+
+      .design-system-page .ds-theme-panel {
+        min-height: 200px;
+      }
+
+      .design-system-page .ds-theme-panel .assist-copy,
+      .design-system-page .ds-theme-panel .command-map-copy {
+        justify-items: start;
+        text-align: left;
+        margin: 0;
+      }
+
+      .design-system-page .ds-static-overlay {
+        position: relative;
+        inset: auto;
+        min-height: 230px;
+        border-radius: 20px;
+        overflow: hidden;
+      }
+
+      .design-system-page .ds-static-overlay .capture-modal {
+        margin: 20px;
+      }
+
+      .design-system-page .ds-force-hover:not(:disabled) {
+        filter: brightness(1.04);
+        transform: translateY(-2px) scale(1.01);
+      }
+
+      .design-system-page .ds-force-hover:not(:disabled)::after {
+        transform: translateX(135%) skewX(-16deg);
+      }
+
+      .design-system-page .ds-force-active:not(:disabled) {
+        transform: translateY(0) scale(0.97);
+        transition-duration: 90ms;
+      }
+
+      .design-system-page .ds-force-focus {
+        outline: none;
+        animation: subtlePulseGlow 520ms ease;
+        box-shadow:
+          0 0 0 3px rgba(18, 181, 203, 0.14),
+          0 14px 28px rgba(0, 0, 0, 0.18);
+      }
+
+      .design-system-page .composer-card input.ds-force-input-focus,
+      .design-system-page .composer-card select.ds-force-input-focus,
+      .design-system-page .composer-card textarea.ds-force-input-focus {
+        border-color: rgba(18, 181, 203, 0.44);
+        box-shadow: 0 0 0 4px rgba(18, 181, 203, 0.08);
+      }
+
+      .design-system-page .workbook-toolbar input.ds-force-input-focus,
+      .design-system-page .workbook-toolbar select.ds-force-input-focus,
+      .design-system-page .workbook-side-block input.ds-force-input-focus,
+      .design-system-page .workbook-side-block select.ds-force-input-focus {
+        border-color: rgba(18, 181, 203, 0.42);
+        box-shadow:
+          0 0 0 4px rgba(18, 181, 203, 0.08),
+          inset 0 1px 0 rgba(255, 255, 255, 0.04),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.18);
+      }
+
+      .design-system-page .login-card input.ds-force-input-focus {
+        border-color: rgba(18, 181, 203, 0.55);
+        box-shadow:
+          0 0 0 4px rgba(18, 181, 203, 0.1),
+          inset 0 1px 0 rgba(255, 255, 255, 0.03);
+        transform: translateY(-1px);
+      }
+
+      .design-system-page .ds-force-stat-hover {
+        transform: translateY(-2px);
+        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.18);
+      }
+
+      .design-system-page .ds-force-assist-hover {
+        transform: translateY(-2px);
+        box-shadow: 0 16px 32px rgba(0, 0, 0, 0.16);
+      }
+
+      .design-system-page .ds-force-shell-hover {
+        box-shadow:
+          0 28px 86px rgba(0, 0, 0, 0.38),
+          0 0 0 1px rgba(255, 255, 255, 0.02);
+      }
+
+      .design-system-page .ds-force-window-hover {
+        transform: translateY(-1px);
+        border-color: rgba(18, 181, 203, 0.34);
+        box-shadow: 0 18px 34px rgba(0, 0, 0, 0.2);
+      }
+
+      .design-system-page .ds-layout-shell .timeline-column {
+        min-height: 420px;
+      }
+
+      .design-system-page .ds-layout-shell .assist-map-list {
+        min-height: 310px;
+      }
+
+      .design-system-page .ds-layout-shell .workbook-table-wrap {
+        min-height: 340px;
+      }
+
+      .design-system-page .ds-progress-full {
+        width: 100%;
+      }
+
+      .design-system-page .ds-motion-card .insert-card-panel {
+        width: 100%;
+        max-width: none;
+      }
+
+      .design-system-page .ds-motion-card .capture-modal {
+        box-shadow: none;
+      }
+
+      .design-system-page .ds-motion-card .micro-button {
+        justify-self: start;
+      }
+
+      @media (max-width: 1400px) {
+        .design-system-page .ds-grid-4,
+        .design-system-page .ds-grid-5,
+        .design-system-page .ds-state-grid,
+        .design-system-page .ds-theme-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 1120px) {
+        .design-system-page .hero-actions,
+        .design-system-page .workspace-grid,
+        .design-system-page .workbook-layout,
+        .design-system-page .assist-body,
+        .design-system-page .ds-grid-2,
+        .design-system-page .ds-grid-3,
+        .design-system-page .ds-grid-4,
+        .design-system-page .ds-grid-5,
+        .design-system-page .ds-state-grid,
+        .design-system-page .ds-motion-grid,
+        .design-system-page .ds-theme-grid,
+        .design-system-page .ds-type-row {
+          grid-template-columns: 1fr;
+        }
+
+        .design-system-page .hero-button-row {
+          grid-template-columns: 1fr;
+        }
+
+        .design-system-page .stats-strip {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body class="design-system-page">
+    <main class="builder-shell">
+      <header class="launcher-shell design-system-nav-shell">
+        <nav class="workspace-tabs design-system-nav" aria-label="Navegacao do design system">
+          <a class="workspace-tab is-active" href="#hero">Hero</a>
+          <a class="workspace-tab" href="#typography">Typography</a>
+          <a class="workspace-tab" href="#colors">Colors &amp; Surfaces</a>
+          <a class="workspace-tab" href="#components">UI Components</a>
+          <a class="workspace-tab" href="#layout">Layout &amp; Spacing</a>
+          <a class="workspace-tab" href="#motion">Motion &amp; Interaction</a>
+          <span class="workspace-session-chip">FlowDetect Design System</span>
+        </nav>
+      </header>
+
+      <section id="hero" class="design-system-section">
+        <section class="hero-panel">
+          <div class="hero-noise"></div>
+          <div class="hero-copy">
+            <div class="brand-line">
+              <img src="./assets/logo-design.png" alt="Design" class="brand-logo" />
+              <span class="eyebrow">FlowDetect design system</span>
+            </div>
+            <h1>Explore o sistema visual em blocos vivos e componentes conectados</h1>
+            <p>
+              Use esta biblioteca para revisar tipografia, superfícies, padrões de layout
+              e interações com a mesma linguagem aplicada no FlowDetect em produção.
+            </p>
+          </div>
+
+          <div class="hero-actions">
+            <div class="hero-button-row">
+              <label class="export-name-field">
+                <span>Nome da automacao</span>
+                <input type="text" value="FlowDetect_Design_System" placeholder="Ex.: Geracao ISS Saida" />
+              </label>
+              <button class="ghost-button" type="button">Atualizar roteiro</button>
+              <button class="soft-button" type="button">Captura avancada</button>
+              <button class="primary-button" type="button">Gerar automacao</button>
+            </div>
+            <div class="hero-test-panel">
+              <p class="panel-kicker">Teste do loop</p>
+              <div class="hero-test-grid">
+                <label>
+                  <span>Atraso inicial</span>
+                  <input type="number" min="0" step="0.5" value="3" />
+                </label>
+                <label>
+                  <span>Linha inicial do loop</span>
+                  <input type="number" min="1" step="1" value="1" />
+                </label>
+              </div>
+              <p class="hero-test-hint">
+                O teste vai procurar a linha escolhida no primeiro loop de planilha do roteiro.
+              </p>
+              <div class="hero-bulk-delay-row">
+                <label class="hero-bulk-delay-field">
+                  <span>Atraso para todos os blocos</span>
+                  <div class="capture-inline">
+                    <input type="number" min="0" step="0.1" value="3" />
+                    <button class="tree-open-button" type="button">Aplicar em todos</button>
+                  </div>
+                </label>
+              </div>
+              <div class="hero-test-actions">
+                <button class="ghost-button hero-test-button" type="button">Testar uma vez</button>
+                <button class="soft-button hero-test-button" type="button">Testar com loop</button>
+                <button class="danger-button hero-test-button" type="button">Parar</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="stats-strip">
+          <article class="stat-card">
+            <span class="stat-label">Blocos</span>
+            <strong>36</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Textos</span>
+            <strong>08</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Teclas</span>
+            <strong>12</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">Planilha</span>
+            <strong>04</strong>
+          </article>
+          <article class="stat-card highlight">
+            <span class="stat-label">Estado</span>
+            <strong>Ativo</strong>
+          </article>
+        </section>
+      </section>
+
+      <section id="typography" class="design-system-section">
+        <section class="launcher-shell">
+          <header class="assist-copy ds-section-head">
+            <p class="panel-kicker">Typography</p>
+            <h2>Escala tipografica canonica</h2>
+            <p class="timeline-meta">
+              Cada amostra abaixo usa o elemento e a classe originais que ja existem no FlowDetect.
+            </p>
+          </header>
+
+          <div class="ds-type-list">
+            <article class="assist-status-card ds-type-row">
+              <span class="stat-label">Heading 1</span>
+              <div class="ds-type-preview hero-copy">
+                <h1>Roteiro visual conectado</h1>
+              </div>
+              <span class="assist-target-status-chip ds-size-chip">34px / 34px</span>
+            </article>
+
+            <article class="assist-status-card ds-type-row">
+              <span class="stat-label">Heading 2</span>
+              <div class="ds-type-preview">
+                <header class="assist-header">
+                  <div class="assist-copy">
+                    <h2>Execucao assistida em tempo real</h2>
+                  </div>
+                </header>
+              </div>
+              <span class="assist-target-status-chip ds-size-chip">27px / 28px</span>
+            </article>
+
+            <article class="assist-status-card ds-type-row">
+              <span class="stat-label">Heading 3</span>
+              <div class="ds-type-preview">
+                <div class="capture-modal">
+                  <div class="capture-header">
+                    <div>
+                      <p class="panel-kicker">Modal</p>
+                      <h3>Escolha a janela da automacao</h3>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <span class="assist-target-status-chip ds-size-chip">24px / 25px</span>
+            </article>
+
+            <article class="assist-status-card ds-type-row">
+              <span class="stat-label">Heading 4</span>
+              <div class="ds-type-preview">
+                <div class="insert-card-header">
+                  <div>
+                    <p class="panel-kicker">Compacto</p>
+                    <h4>Selecionar bloco de insercao</h4>
+                  </div>
+                </div>
+              </div>
+              <span class="assist-target-status-chip ds-size-chip">12px / 15px</span>
+            </article>
+
+            <article class="assist-status-card ds-type-row">
+              <span class="stat-label">Bold L</span>
+              <div class="ds-type-preview">
+                <article class="stat-card">
+                  <span class="stat-label">Estado</span>
+                  <strong>Pronto</strong>
+                </article>
+              </div>
+              <span class="assist-target-status-chip ds-size-chip">20px / 20px</span>
+            </article>
+
+            <article class="assist-status-card ds-type-row">
+              <span class="stat-label">Bold M</span>
+              <div class="ds-type-preview">
+                <article class="assist-status-card">
+                  <span class="stat-label">Status</span>
+                  <strong>Concluido</strong>
+                </article>
+              </div>
+              <span class="assist-target-status-chip ds-size-chip">16px / 16px</span>
+            </article>
+
+            <article class="assist-status-card ds-type-row">
+              <span class="stat-label">Bold S</span>
+              <div class="ds-type-preview">
+                <a class="workspace-tab" href="#components">Mapa dos comandos</a>
+              </div>
+              <span class="assist-target-status-chip ds-size-chip">13px / 13px</span>
+            </article>
+
+            <article class="assist-status-card ds-type-row">
+              <span class="stat-label">Paragraph</span>
+              <div class="ds-type-preview">
+                <p class="capture-copy">
+                  Biblioteca viva para revisar textos longos com o mesmo ritmo visual dos painéis e das modais.
+                </p>
+              </div>
+              <span class="assist-target-status-chip ds-size-chip">16px / 24px</span>
+            </article>
+
+            <article class="assist-status-card ds-type-row">
+              <span class="stat-label">Regular L</span>
+              <div class="ds-type-preview">
+                <p class="timeline-meta">Texto auxiliar para orientar a leitura, o fluxo e o contexto de cada painel.</p>
+              </div>
+              <span class="assist-target-status-chip ds-size-chip">14px / 20px</span>
+            </article>
+
+            <article class="assist-status-card ds-type-row">
+              <span class="stat-label">Regular M</span>
+              <div class="ds-type-preview">
+                <p class="workbook-side-copy">Clique em qualquer celula para enviar um valor real direto para o mapa.</p>
+              </div>
+              <span class="assist-target-status-chip ds-size-chip">13px / 19px</span>
+            </article>
+
+            <article class="assist-status-card ds-type-row">
+              <span class="stat-label">Regular S</span>
+              <div class="ds-type-preview">
+                <p class="assist-detail">Aguardando inicio de um teste para preencher a trilha.</p>
+              </div>
+              <span class="assist-target-status-chip ds-size-chip">12px / 16px</span>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <section id="colors" class="design-system-section">
+        <section class="launcher-shell">
+          <header class="assist-copy ds-section-head">
+            <p class="panel-kicker">Colors &amp; Surfaces</p>
+            <h2>Fundos, superfícies, bordas e gradientes reais</h2>
+            <p class="timeline-meta">
+              Os exemplos abaixo mostram a base de página, containers, sobreposições e acentos usados pelo app.
+            </p>
+          </header>
+
+          <div class="ds-grid-3">
+            <article class="ds-page-swatch">
+              <span class="stat-label">Page background</span>
+              <strong>Base radial</strong>
+              <p class="assist-detail">Camadas de brilho azul, verde e aqua sobre o fundo principal do FlowDetect.</p>
+            </article>
+
+            <section class="assist-target-panel">
+              <div class="assist-target-copy">
+                <span class="stat-label">Section surface</span>
+                <strong>Painel de janela alvo</strong>
+                <p class="assist-detail">Mistura de degradê profundo com contorno azul claro e brilho suave.</p>
+              </div>
+              <div class="assist-target-status-block">
+                <span class="assist-target-status-chip">Janela selecionada</span>
+                <div class="assist-target-meta">Borda, fundo e tipografia de alto contraste.</div>
+              </div>
+              <div class="assist-target-actions">
+                <button class="primary-button" type="button">Selecionar janela</button>
+                <button class="ghost-button" type="button">Limpar alvo</button>
+              </div>
+            </section>
+
+            <div class="capture-overlay ds-static-overlay">
+              <div class="capture-modal">
+                <div class="capture-header">
+                  <div>
+                    <p class="panel-kicker">Overlay</p>
+                    <h3>Camada com blur</h3>
+                  </div>
+                  <button class="micro-button" type="button">Fechar</button>
+                </div>
+                <p class="capture-copy">A modal usa vidro escuro, contorno aqua e brilho difuso com entrada suave.</p>
+                <p class="capture-hint">Usada para captura, escolhas e confirmações importantes.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="ds-theme-grid">
+            <section class="command-map-shell ds-theme-panel" data-page-theme="principal">
+              <div class="command-map-copy">
+                <span class="command-map-eyebrow">Tema principal</span>
+                <h2>Azul FlowDetect</h2>
+                <p class="timeline-meta">Cor-base da experiência principal, botões, chips e shells.</p>
+              </div>
+            </section>
+
+            <section class="command-map-shell ds-theme-panel" data-page-theme="pagina_2">
+              <div class="command-map-copy">
+                <span class="command-map-eyebrow">Tema pagina 2</span>
+                <h2>Roxo</h2>
+                <p class="timeline-meta">Variação de fluxo com acento lilás e brilho mais frio.</p>
+              </div>
+            </section>
+
+            <section class="command-map-shell ds-theme-panel" data-page-theme="pagina_3">
+              <div class="command-map-copy">
+                <span class="command-map-eyebrow">Tema pagina 3</span>
+                <h2>Verde</h2>
+                <p class="timeline-meta">Variação voltada a sucesso, estado concluído e loop observável.</p>
+              </div>
+            </section>
+
+            <section class="command-map-shell ds-theme-panel" data-page-theme="pagina_4">
+              <div class="command-map-copy">
+                <span class="command-map-eyebrow">Tema pagina 4</span>
+                <h2>Laranja</h2>
+                <p class="timeline-meta">Variação para saltos e alertas com acento quente e destaque forte.</p>
+              </div>
+            </section>
+          </div>
+
+          <div class="ds-grid-4">
+            <div class="message-bar">Borda neutra e superfície padrão.</div>
+            <div class="message-bar is-success">Feedback positivo com verde translúcido.</div>
+            <div class="message-bar is-error">Feedback de atenção com vermelho escuro translúcido.</div>
+            <div class="assist-status-card">
+              <span class="stat-label">Accent chips</span>
+              <div class="assist-target-status-block">
+                <span class="workspace-session-chip">Sessao ativa</span>
+                <span class="assist-target-status-chip">Info</span>
+                <span class="assist-window-picker-tag">Accent</span>
+                <span class="assist-window-picker-tag is-blocked">Bloqueado</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="ds-grid-4">
+            <span class="type-chip texto_livre">Texto livre</span>
+            <span class="type-chip tecla">Tecla</span>
+            <span class="type-chip sequencia_planilha">Planilha</span>
+            <span class="type-chip mouse_click">Mouse</span>
+          </div>
+        </section>
+      </section>
+
+      <section id="components" class="design-system-section">
+        <section class="launcher-shell">
+          <header class="assist-copy ds-section-head">
+            <p class="panel-kicker">UI Components</p>
+            <h2>Controles, campos, cards e estados</h2>
+            <p class="timeline-meta">
+              Os estados abaixo reutilizam os mesmos botões, campos e estruturas do FlowDetect sem trocar a linguagem visual.
+            </p>
+          </header>
+
+          <div class="ds-grid-2">
+            <article class="composer-card">
+              <header>
+                <p class="panel-kicker">Buttons</p>
+                <h2>Estados de botoes</h2>
+              </header>
+
+              <div class="ds-stack">
+                <div class="ds-state-grid">
+                  <div class="ds-state-card">
+                    <span class="stat-label">Default</span>
+                    <button class="primary-button" type="button">Primary</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Hover</span>
+                    <button class="primary-button ds-force-hover" type="button">Primary</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Active</span>
+                    <button class="primary-button ds-force-active" type="button">Primary</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Focus</span>
+                    <button class="primary-button ds-force-focus" type="button">Primary</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Disabled</span>
+                    <button class="primary-button" type="button" disabled>Primary</button>
+                  </div>
+                </div>
+
+                <div class="ds-state-grid">
+                  <div class="ds-state-card">
+                    <span class="stat-label">Default</span>
+                    <button class="soft-button" type="button">Soft</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Hover</span>
+                    <button class="soft-button ds-force-hover" type="button">Soft</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Active</span>
+                    <button class="soft-button ds-force-active" type="button">Soft</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Focus</span>
+                    <button class="soft-button ds-force-focus" type="button">Soft</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Disabled</span>
+                    <button class="soft-button" type="button" disabled>Soft</button>
+                  </div>
+                </div>
+
+                <div class="ds-state-grid">
+                  <div class="ds-state-card">
+                    <span class="stat-label">Default</span>
+                    <button class="ghost-button" type="button">Ghost</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Hover</span>
+                    <button class="ghost-button ds-force-hover" type="button">Ghost</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Active</span>
+                    <button class="ghost-button ds-force-active" type="button">Ghost</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Focus</span>
+                    <button class="ghost-button ds-force-focus" type="button">Ghost</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Disabled</span>
+                    <button class="ghost-button" type="button" disabled>Ghost</button>
+                  </div>
+                </div>
+
+                <div class="ds-state-grid">
+                  <div class="ds-state-card">
+                    <span class="stat-label">Default</span>
+                    <button class="danger-button" type="button">Danger</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Hover</span>
+                    <button class="danger-button ds-force-hover" type="button">Danger</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Active</span>
+                    <button class="danger-button ds-force-active" type="button">Danger</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Focus</span>
+                    <button class="danger-button ds-force-focus" type="button">Danger</button>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Disabled</span>
+                    <button class="danger-button" type="button" disabled>Danger</button>
+                  </div>
+                </div>
+
+                <div class="ds-state-grid">
+                  <div class="ds-state-card">
+                    <span class="stat-label">Default</span>
+                    <a class="workspace-tab" href="#layout">Workspace tab</a>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Hover</span>
+                    <a class="workspace-tab ds-force-hover" href="#layout">Workspace tab</a>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Active</span>
+                    <a class="workspace-tab is-active" href="#layout">Workspace tab</a>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Focus</span>
+                    <a class="workspace-tab ds-force-focus" href="#layout">Workspace tab</a>
+                  </div>
+                  <div class="ds-state-card">
+                    <span class="stat-label">Utility</span>
+                    <button class="micro-button" type="button">Micro</button>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article class="composer-card">
+              <header>
+                <p class="panel-kicker">Inputs</p>
+                <h2>Campos e seletores</h2>
+              </header>
+
+              <div class="ds-stack">
+                <div class="double-grid">
+                  <label>
+                    <span>Input default</span>
+                    <input type="text" value="Consulta de movimento de ISS" />
+                  </label>
+                  <label>
+                    <span>Input focus</span>
+                    <input class="ds-force-input-focus" type="text" value="Consulta de movimento de ISS" />
+                  </label>
+                </div>
+
+                <div class="double-grid">
+                  <label>
+                    <span>Select default</span>
+                    <select>
+                      <option>Pagina 1</option>
+                      <option>Pagina 2</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Select focus</span>
+                    <select class="ds-force-input-focus">
+                      <option>Pagina 1</option>
+                      <option>Pagina 2</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div class="double-grid">
+                  <label>
+                    <span>Textarea</span>
+                    <textarea rows="4">A automacao localiza a empresa, valida o estado do botao e exporta o arquivo.</textarea>
+                  </label>
+                  <label>
+                    <span>Disabled</span>
+                    <input type="text" value="Campo bloqueado" disabled />
+                  </label>
+                </div>
+
+                <div class="workbook-toolbar">
+                  <label>
+                    <span>Aba</span>
+                    <select class="ds-force-input-focus">
+                      <option>Empresas</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Buscar</span>
+                    <input type="text" value="FGTS Digital" />
+                  </label>
+                  <div class="workbook-toolbar-info">Barra compacta do painel de planilha.</div>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <div class="ds-grid-3">
+            <article class="stat-card">
+              <span class="stat-label">Card default</span>
+              <strong>Resumo</strong>
+              <p class="assist-detail">Superfície curta com contraste alto e borda leve.</p>
+            </article>
+
+            <article class="stat-card ds-force-stat-hover">
+              <span class="stat-label">Card hover</span>
+              <strong>Resumo</strong>
+              <p class="assist-detail">Elevação sutil e sombra mais aberta.</p>
+            </article>
+
+            <article class="assist-status-card ds-force-assist-hover">
+              <span class="stat-label">Assist card</span>
+              <strong>Concluido</strong>
+              <p class="assist-detail">Mesmo comportamento de lift usado na execucao assistida.</p>
+            </article>
+          </div>
+
+          <div class="ds-grid-2">
+            <article class="automation-library-card is-active">
+              <div class="automation-library-card-stage">
+                <section class="automation-library-card-face automation-library-card-front">
+                  <div class="automation-library-top">
+                    <div>
+                      <p class="panel-kicker">Fiscal</p>
+                      <h3>Consulta de movimento de ISS</h3>
+                    </div>
+                    <div class="automation-library-top-side">
+                      <span class="library-active-chip">Em edicao</span>
+                      <button class="launcher-flip-trigger" type="button">Virar</button>
+                    </div>
+                  </div>
+
+                  <div class="automation-library-front-summary">
+                    <p class="automation-library-description">
+                      Abre o sistema, localiza a empresa, reconhece o botão certo e exporta o arquivo com apoio visual.
+                    </p>
+                    <div class="automation-library-quick-meta">
+                      <span>
+                        <small>Comandos</small>
+                        <strong>18</strong>
+                      </span>
+                      <span>
+                        <small>Sequencias</small>
+                        <strong>4</strong>
+                      </span>
+                      <span>
+                        <small>Execucoes</small>
+                        <strong>22</strong>
+                      </span>
+                    </div>
+                    <div class="automation-library-front-footer">
+                      <span class="automation-library-front-note">Atualizada: hoje</span>
+                      <span class="automation-library-front-note">Ultima: agora</span>
+                    </div>
+                  </div>
+
+                  <div class="automation-library-actions">
+                    <button class="tree-open-button primary-inline-action" type="button">Editar</button>
+                    <button class="soft-button primary-inline-action" type="button">Executar</button>
+                    <button class="ghost-button secondary-inline-action" type="button">Duplicar</button>
+                  </div>
+                </section>
+              </div>
+            </article>
+
+            <div class="assist-window-picker-list">
+              <button class="assist-window-picker-item" type="button">
+                <div class="assist-window-picker-title-row">
+                  <strong>Extract HTML Design System.md - Bloco de notas</strong>
+                  <span class="assist-window-picker-tag">Janela alvo</span>
+                </div>
+                <div class="assist-window-picker-meta">hwnd 984584 | classe Notepad | 891x519 | x=251 y=224</div>
+              </button>
+
+              <button class="assist-window-picker-item is-blocked" type="button" disabled>
+                <div class="assist-window-picker-title-row">
+                  <strong>FlowDetect</strong>
+                  <span class="assist-window-picker-tag is-blocked">Bloqueado</span>
+                </div>
+                <div class="assist-window-picker-meta">A propria janela do FlowDetect fica bloqueada para evitar execucao errada.</div>
+              </button>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <section id="layout" class="design-system-section">
+        <section class="launcher-shell ds-layout-shell">
+          <header class="assist-copy ds-section-head">
+            <p class="panel-kicker">Layout &amp; Spacing</p>
+            <h2>Padroes reais de container, grid e composicao</h2>
+            <p class="timeline-meta">
+              Estes blocos repetem os arranjos centrais do produto: split editor, planilha lateral e trilha assistida.
+            </p>
+          </header>
+
+          <div class="ds-layout-stack">
+            <section class="workspace-grid">
+              <aside class="composer-column">
+                <article class="composer-card">
+                  <header>
+                    <p class="panel-kicker">Bloco de texto</p>
+                    <h2>Texto livre</h2>
+                  </header>
+                  <textarea rows="4">Digite o texto que a automacao deve escrever.</textarea>
+                  <div class="inline-field">
+                    <label>
+                      <span>Tempo antes</span>
+                      <input type="number" min="0" step="0.1" value="0.5" />
+                    </label>
+                    <button class="primary-button" type="button">Adicionar texto</button>
+                  </div>
+                </article>
+
+                <article class="composer-card">
+                  <header>
+                    <p class="panel-kicker">Bloco de teclado</p>
+                    <h2>Tecla ou atalho</h2>
+                  </header>
+                  <input type="text" value="ctrl+shift+s" />
+                  <div class="inline-field">
+                    <label>
+                      <span>Tempo antes</span>
+                      <input type="number" min="0" step="0.1" value="0.3" />
+                    </label>
+                    <button class="soft-button" type="button">Adicionar tecla</button>
+                  </div>
+                </article>
+              </aside>
+
+              <section class="timeline-column">
+                <header class="timeline-header">
+                  <div>
+                    <p class="panel-kicker">Fluxo visual</p>
+                    <h2>Roteiro da automacao</h2>
+                    <p class="timeline-meta">Split principal do editor: composer à esquerda e timeline à direita.</p>
+                  </div>
+                  <button class="danger-button" type="button">Limpar roteiro</button>
+                </header>
+
+                <div class="message-bar">Pronto para editar o roteiro.</div>
+
+                <div class="timeline-list">
+                  <div class="timeline-node">
+                    <article class="flow-card">
+                      <div class="card-top">
+                        <div>
+                          <p class="panel-kicker">Passo 01</p>
+                          <h3>Tecla TAB</h3>
+                          <p class="card-description">Avanca o foco para o próximo campo do formulário.</p>
+                        </div>
+                        <span class="type-chip tecla">Tecla</span>
+                      </div>
+                      <pre class="command-preview">pyautogui.press("tab")</pre>
+                      <div class="card-actions">
+                        <button class="save-button" type="button">Salvar</button>
+                        <button class="micro-button" type="button">Mover</button>
+                      </div>
+                    </article>
+                  </div>
+
+                  <div class="delay-bridge">
+                    <div class="delay-pill">0.5 s</div>
+                  </div>
+
+                  <div class="timeline-node">
+                    <article class="flow-card">
+                      <div class="card-top">
+                        <div>
+                          <p class="panel-kicker">Passo 02</p>
+                          <h3>Reconhecimento visual</h3>
+                          <p class="card-description">Localiza o botão “Salvar” antes de prosseguir.</p>
+                        </div>
+                        <span class="type-chip sequencia_planilha">Planilha</span>
+                      </div>
+                      <pre class="command-preview">localizar_imagem("imagens/botao_salvar.png")</pre>
+                      <div class="card-actions">
+                        <button class="save-button" type="button">Salvar</button>
+                        <button class="micro-button" type="button">Mover</button>
+                      </div>
+                    </article>
+                  </div>
+                </div>
+              </section>
+            </section>
+
+            <section class="workbook-shell">
+              <header class="workbook-header">
+                <div>
+                  <p class="panel-kicker">Base visual</p>
+                  <h2>Planilha da automacao</h2>
+                  <p class="timeline-meta">Tabela principal mais duas ações laterais prontas para valor e loop.</p>
+                </div>
+                <div class="workbook-header-actions">
+                  <button class="primary-button" type="button">Adicionar planilha</button>
+                </div>
+              </header>
+
+              <div class="workbook-files-tabs">
+                <button class="workbook-file-tab is-active" type="button">empresas.xlsx</button>
+                <button class="workbook-file-tab" type="button">db.xlsx</button>
+              </div>
+
+              <div class="workbook-toolbar">
+                <label>
+                  <span>Aba</span>
+                  <select>
+                    <option>Empresas</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Buscar</span>
+                  <input type="text" value="FGTS Digital" />
+                </label>
+                <div class="workbook-toolbar-info">74 linhas visiveis.</div>
+              </div>
+
+              <section class="workbook-layout">
+                <div class="workbook-table-card">
+                  <div class="workbook-table-wrap">
+                    <table class="workbook-table">
+                      <thead>
+                        <tr>
+                          <th class="workbook-row-number-head">#</th>
+                          <th class="workbook-col-head">
+                            <div class="workbook-col-head-inner">
+                              <span>Empresa</span>
+                            </div>
+                          </th>
+                          <th class="workbook-col-head is-selected">
+                            <div class="workbook-col-head-inner">
+                              <span>Codigo</span>
+                            </div>
+                          </th>
+                          <th class="workbook-col-head">
+                            <div class="workbook-col-head-inner">
+                              <span>Status</span>
+                            </div>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td class="workbook-row-number">1</td>
+                          <td class="workbook-cell">
+                            <div class="workbook-cell-inner">
+                              <span>FGTS Digital</span>
+                            </div>
+                          </td>
+                          <td class="workbook-cell is-selected">
+                            <div class="workbook-cell-inner">
+                              <span>15488</span>
+                            </div>
+                          </td>
+                          <td class="workbook-cell">
+                            <div class="workbook-cell-inner">
+                              <span>Concluido</span>
+                            </div>
+                          </td>
+                        </tr>
+                        <tr>
+                          <td class="workbook-row-number">2</td>
+                          <td class="workbook-cell">
+                            <div class="workbook-cell-inner">
+                              <span>Alterdata</span>
+                            </div>
+                          </td>
+                          <td class="workbook-cell is-column-selected">
+                            <div class="workbook-cell-inner">
+                              <span>15489</span>
+                            </div>
+                          </td>
+                          <td class="workbook-cell">
+                            <div class="workbook-cell-inner">
+                              <span>Pendente</span>
+                            </div>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <aside class="workbook-side-card">
+                  <div class="workbook-side-block is-ready">
+                    <div class="workbook-side-head">
+                      <div>
+                        <p class="panel-kicker">Passo 1</p>
+                        <h3>Enviar valor como texto</h3>
+                      </div>
+                      <span class="workbook-side-status">Pronto</span>
+                    </div>
+                    <div class="workbook-side-selection">
+                      <strong class="workbook-side-selection-title">Valor selecionado</strong>
+                      <p class="workbook-side-copy">Clique em qualquer célula para mandar o conteúdo diretamente para o mapa.</p>
+                    </div>
+                    <div class="selected-workbook-value-card">
+                      <span class="selected-workbook-value-label">Valor que sera enviado</span>
+                      <div class="selected-workbook-value">FGTS Digital</div>
+                    </div>
+                    <button class="primary-button workbook-side-cta" type="button">Enviar valor para o mapa</button>
+                  </div>
+
+                  <div class="workbook-side-block">
+                    <div class="workbook-side-head">
+                      <div>
+                        <p class="panel-kicker">Passo 2</p>
+                        <h3>Criar loop com coluna</h3>
+                      </div>
+                      <span class="workbook-side-status">Aguardando</span>
+                    </div>
+                    <div class="workbook-side-selection">
+                      <strong class="workbook-side-selection-title">Coluna que vai virar loop</strong>
+                      <p class="workbook-side-copy">Clique no cabeçalho para transformar cada linha em um item do fluxo.</p>
+                    </div>
+                    <div class="selected-workbook-value-card selected-workbook-value-card--column">
+                      <span class="selected-workbook-value-label">Coluna selecionada</span>
+                      <div class="selected-workbook-value">Codigo</div>
+                    </div>
+                    <button class="soft-button workbook-side-cta" type="button">Criar loop com esta coluna</button>
+                  </div>
+                </aside>
+              </section>
+            </section>
+
+            <section class="assist-shell" data-page-theme="principal">
+              <header class="assist-header">
+                <div class="assist-copy">
+                  <p class="panel-kicker">Execucao guiada</p>
+                  <h2>Acompanhe a automacao passando pelos blocos</h2>
+                  <p class="timeline-meta">Mapa horizontal com trilha, status no topo e log lateral em tempo real.</p>
+                </div>
+                <div class="assist-actions">
+                  <label>
+                    <span>Atraso inicial</span>
+                    <input type="number" min="0" step="0.5" value="3" />
+                  </label>
+                  <label>
+                    <span>Linha inicial do loop</span>
+                    <input type="number" min="1" step="1" value="1" />
+                  </label>
+                  <button class="ghost-button" type="button">Testar uma vez</button>
+                  <button class="soft-button" type="button">Testar com loop</button>
+                  <button class="danger-button" type="button">Parar</button>
+                </div>
+              </header>
+
+              <section class="assist-status-strip">
+                <article class="assist-status-card">
+                  <span class="stat-label">Status</span>
+                  <strong>Concluido</strong>
+                  <p class="assist-detail">Automacao finalizada com sucesso.</p>
+                </article>
+                <article class="assist-status-card">
+                  <span class="stat-label">Origem</span>
+                  <strong>Criador de automacoes</strong>
+                  <p class="assist-detail">Teste disparado pela aba de execucao assistida.</p>
+                </article>
+                <article class="assist-status-card">
+                  <span class="stat-label">Sessao</span>
+                  <strong>Dukaa</strong>
+                  <p class="assist-detail">Resolucao salva: 1920x1080.</p>
+                </article>
+                <article class="assist-status-card">
+                  <span class="stat-label">Empresa</span>
+                  <strong>FGTS Digital</strong>
+                  <p class="assist-detail">Ultimo teste finalizado com sucesso.</p>
+                </article>
+                <article class="assist-status-card progress">
+                  <div class="assist-progress-top">
+                    <span class="stat-label">Progresso</span>
+                    <strong>100%</strong>
+                  </div>
+                  <div class="assist-progress-track">
+                    <div class="assist-progress-fill ds-progress-full"></div>
+                  </div>
+                  <p class="assist-detail">5/5 passos observados.</p>
+                </article>
+              </section>
+
+              <section class="assist-target-panel">
+                <div class="assist-target-copy">
+                  <span class="stat-label">Janela alvo</span>
+                  <strong>Extract HTML Design System.md - Bloco de notas</strong>
+                  <p class="assist-detail">O contorno azul indica o alvo da execução desta sessão.</p>
+                </div>
+                <div class="assist-target-status-block">
+                  <span class="assist-target-status-chip">Executando nesta janela</span>
+                  <div class="assist-target-meta">hwnd 984584 | classe Notepad | 891x519</div>
+                </div>
+                <div class="assist-target-actions">
+                  <button class="primary-button" type="button">Selecionar janela</button>
+                  <button class="ghost-button" type="button">Limpar alvo</button>
+                </div>
+              </section>
+
+              <section class="assist-body">
+                <div class="assist-map-list">
+                  <div class="assist-flow-row">
+                    <article class="assist-card is-done">
+                      <div class="assist-card-top">
+                        <span class="assist-card-index">01</span>
+                        <span class="assist-card-chip">Tecla</span>
+                      </div>
+                      <h3>Tecla TAB</h3>
+                      <p>Avança o foco do formulário.</p>
+                    </article>
+                    <article class="assist-card is-current">
+                      <div class="assist-card-top">
+                        <span class="assist-card-index">02</span>
+                        <span class="assist-card-chip">Reconhecimento</span>
+                      </div>
+                      <h3>Botao salvar</h3>
+                      <p>Confirma o estado do botão e segue para exportação.</p>
+                    </article>
+                    <article class="assist-card is-upcoming">
+                      <div class="assist-card-top">
+                        <span class="assist-card-index">03</span>
+                        <span class="assist-card-chip">Texto</span>
+                      </div>
+                      <h3>Empresa</h3>
+                      <p>Envia o nome da empresa para o campo atual.</p>
+                    </article>
+                  </div>
+                </div>
+
+                <section class="assist-log-panel">
+                  <div class="assist-log-header">
+                    <span class="stat-label">Log da execucao</span>
+                    <strong>Tempo real</strong>
+                  </div>
+                  <div class="assist-log-list">
+                    <div class="assist-log-line">Janela alvo selecionada: Extract HTML Design System.md</div>
+                    <div class="assist-log-line">Captura usando janela alvo.</div>
+                    <div class="assist-log-line is-success">Bloco 1 concluído com sucesso.</div>
+                    <div class="assist-log-line">Redirecionando para a pagina 2.</div>
+                    <div class="assist-log-line is-success">Execucao finalizada com sucesso.</div>
+                  </div>
+                </section>
+              </section>
+            </section>
+          </div>
+        </section>
+      </section>
+
+      <section id="motion" class="design-system-section">
+        <section class="launcher-shell">
+          <header class="assist-copy ds-section-head">
+            <p class="panel-kicker">Motion &amp; Interaction</p>
+            <h2>Animacoes, lifts, pulses e entradas</h2>
+            <p class="timeline-meta">
+              A galeria abaixo documenta as classes e transições reais usadas pelo FlowDetect para foco, entrada e resposta visual.
+            </p>
+          </header>
+
+          <div class="ds-motion-grid">
+            <article class="composer-card ds-motion-card">
+              <header>
+                <p class="panel-kicker">Tab activate</p>
+                <h2>workspace-tab.is-active</h2>
+              </header>
+              <a id="motion-tab" class="workspace-tab is-active" href="#motion">Mapa dos comandos</a>
+              <button class="micro-button" type="button" data-replay-target="motion-tab" data-replay-animation="tabActivate 320ms cubic-bezier(0.22, 1, 0.36, 1)">
+                Repetir animacao
+              </button>
+            </article>
+
+            <article class="composer-card ds-motion-card">
+              <header>
+                <p class="panel-kicker">Pulse glow</p>
+                <h2>subtlePulseGlow</h2>
+              </header>
+              <button id="motion-focus" class="primary-button ds-force-focus" type="button">Botao em foco</button>
+              <button class="micro-button" type="button" data-replay-target="motion-focus" data-replay-animation="subtlePulseGlow 520ms ease">
+                Repetir animacao
+              </button>
+            </article>
+
+            <article class="composer-card ds-motion-card">
+              <header>
+                <p class="panel-kicker">Overlay fade</p>
+                <h2>overlayFadeIn + captureModalIn</h2>
+              </header>
+              <div id="motion-overlay" class="capture-overlay ds-static-overlay">
+                <div id="motion-modal" class="capture-modal">
+                  <div class="capture-header">
+                    <div>
+                      <p class="panel-kicker">Capturando</p>
+                      <h3>Aperte a tecla ou o atalho</h3>
+                    </div>
+                    <button class="micro-button" type="button">Cancelar</button>
+                  </div>
+                  <p class="capture-copy">A modal entra com deslocamento suave e o fundo dissolve com blur.</p>
+                  <p class="capture-hint">Mesmo padrão usado para captura e seleção de janela.</p>
+                </div>
+              </div>
+              <div class="card-actions">
+                <button class="micro-button" type="button" data-replay-target="motion-overlay" data-replay-animation="overlayFadeIn 180ms ease">
+                  Overlay
+                </button>
+                <button class="micro-button" type="button" data-replay-target="motion-modal" data-replay-animation="captureModalIn 240ms cubic-bezier(0.22, 1, 0.36, 1)">
+                  Modal
+                </button>
+              </div>
+            </article>
+
+            <article class="composer-card ds-motion-card">
+              <header>
+                <p class="panel-kicker">Insert panel</p>
+                <h2>insertPanelIn</h2>
+              </header>
+              <article id="motion-insert" class="insert-card-panel">
+                <div class="insert-card-header">
+                  <div>
+                    <p class="panel-kicker">Inserir</p>
+                    <h4>Novo bloco no fluxo</h4>
+                  </div>
+                  <button class="micro-button" type="button">Fechar</button>
+                </div>
+                <div class="insert-type-row">
+                  <button class="insert-type-button is-active" type="button">Texto</button>
+                  <button class="insert-type-button" type="button">Tecla</button>
+                </div>
+                <div class="insert-card-body">
+                  <label>
+                    <span>Texto</span>
+                    <textarea rows="3">Escreve o valor atual da empresa.</textarea>
+                  </label>
+                </div>
+                <div class="insert-card-actions">
+                  <button class="tree-save-button primary-button" type="button">Salvar bloco</button>
+                </div>
+              </article>
+              <button class="micro-button" type="button" data-replay-target="motion-insert" data-replay-animation="insertPanelIn 260ms cubic-bezier(0.22, 1, 0.36, 1)">
+                Repetir animacao
+              </button>
+            </article>
+
+            <article class="composer-card ds-motion-card">
+              <header>
+                <p class="panel-kicker">Confirm pulse</p>
+                <h2>loopConfirmPulse</h2>
+              </header>
+              <button id="motion-confirm" class="soft-button button-confirm-pulse" type="button">Testar com loop</button>
+              <button class="micro-button" type="button" data-replay-class-target="motion-confirm" data-replay-class="button-confirm-pulse">
+                Repetir animacao
+              </button>
+            </article>
+
+            <article class="composer-card ds-motion-card">
+              <header>
+                <p class="panel-kicker">Hover lift</p>
+                <h2>Cards e shells</h2>
+              </header>
+              <div class="ds-grid-2">
+                <article class="stat-card ds-force-stat-hover">
+                  <span class="stat-label">Card hover</span>
+                  <strong>Resumo</strong>
+                  <p class="assist-detail">Lift e sombra curta.</p>
+                </article>
+                <section class="assist-shell ds-force-shell-hover" data-page-theme="pagina_2">
+                  <header class="assist-header">
+                    <div class="assist-copy">
+                      <p class="panel-kicker">Shell hover</p>
+                      <h2>Tema roxo</h2>
+                    </div>
+                  </header>
+                </section>
+              </div>
+            </article>
+
+            <article class="composer-card ds-motion-card">
+              <header>
+                <p class="panel-kicker">Window list</p>
+                <h2>Hover + blocked state</h2>
+              </header>
+              <button class="assist-window-picker-item ds-force-window-hover" type="button">
+                <div class="assist-window-picker-title-row">
+                  <strong>Consulta de movimento de ISS</strong>
+                  <span class="assist-window-picker-tag">Selecionavel</span>
+                </div>
+                <div class="assist-window-picker-meta">Borda, brilho e leve translateY no hover.</div>
+              </button>
+              <button class="assist-window-picker-item is-blocked" type="button" disabled>
+                <div class="assist-window-picker-title-row">
+                  <strong>FlowDetect</strong>
+                  <span class="assist-window-picker-tag is-blocked">Bloqueado</span>
+                </div>
+                <div class="assist-window-picker-meta">Mesma estrutura com opacidade reduzida e aviso visual.</div>
+              </button>
+            </article>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      window.__FLOWDETECT_DESIGN_SYSTEM__ = true;
+    </script>
+    <script type="module" src="./main.js"></script>
+    <script type="module">
+      const navLinks = Array.from(document.querySelectorAll(".design-system-nav a.workspace-tab"));
+      const sections = navLinks
+        .map((link) => document.querySelector(link.getAttribute("href")))
+        .filter(Boolean);
+
+      const setActiveLink = (id) => {
+        navLinks.forEach((link) => {
+          const isActive = link.getAttribute("href") === `#${id}`;
+          link.classList.toggle("is-active", isActive);
+        });
+      };
+
+      const observer = new IntersectionObserver(
+        (entries) => {
+          const visible = entries
+            .filter((entry) => entry.isIntersecting)
+            .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+          if (visible?.target?.id) {
+            setActiveLink(visible.target.id);
+          }
+        },
+        {
+          root: null,
+          rootMargin: "-20% 0px -55% 0px",
+          threshold: [0.15, 0.4, 0.7],
+        }
+      );
+
+      sections.forEach((section) => observer.observe(section));
+
+      document.querySelectorAll("[data-replay-target]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const target = document.getElementById(button.dataset.replayTarget || "");
+          const animation = button.dataset.replayAnimation || "";
+          if (!target || !animation) {
+            return;
+          }
+          target.style.animation = "none";
+          void target.offsetWidth;
+          target.style.animation = animation;
+        });
+      });
+
+      document.querySelectorAll("[data-replay-class-target]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const target = document.getElementById(button.dataset.replayClassTarget || "");
+          const className = button.dataset.replayClass || "";
+          if (!target || !className) {
+            return;
+          }
+          target.classList.remove(className);
+          void target.offsetWidth;
+          target.classList.add(className);
+        });
+      });
+    </script>
+  </body>
+</html>

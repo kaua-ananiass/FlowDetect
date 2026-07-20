@@ -1,9 +1,14 @@
-# Node / Tauri
+# Node / Tauri / Rust
+node_modules/
 tauri_gerador/node_modules/
 tauri_ui/node_modules/
+flowdetect_agent/node_modules/
+flowdetect_control/node_modules/
 dist/
 build/
 target/
+**/target/
+**/dist/
 
 # Python
 __pycache__/
@@ -21,17 +26,24 @@ tauri_gerador_dev_stdout.log
 tauri_gerador_dev_stderr.log
 ultimo_log_launcher.txt
 .parar_automacao.flag
+.flowdetect_temp/
+.agents/
 
 # Build outputs / exported packages
 saida_exe/
 build_automacao/
+automacoes_exportadas/
 Versao_01/
 Versao_02/
 projeto_v1_final/
+final_02/
+desenvolvimento_teste/
+desenvolvimento_teste.zip
 *.exe
 *.msi
+*.zip
 
-# Sensitive spreadsheets and runtime data
+# Spreadsheets and local runtime data
 planilhas/
 db.xlsx
 *.xlsx
@@ -39,17 +51,21 @@ db.xlsx
 *.xlsm
 *.xltx
 *.xltm
+login_session.json
 
-# Private automations / local library
+# Private automations / local libraries
 automacoes/
 Automacao_Iss/
-Automação-Alterar-425/
-Automação-Alterar-4255/
+Automacao-*/
+Automação-*/
 
-# Diagnostics / captured artifacts
+# Captured images / recognition references / diagnostics
+Imagens/
+imagens/
 diagnosticos_reconhecimento/
 debug_screenshot*.png
 assist_*.png
+relatorios_loop/
 
 # OS / editor
 .DS_Store

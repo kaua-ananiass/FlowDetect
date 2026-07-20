@@ -12,8 +12,20 @@ Opcao 2 - Duplo clique:
 
 Resultado:
 
-- O pacote final sera criado em:
-  C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys\saida_exe\Gerador_de_Automacoes
+- As saidas finais serao criadas em:
+  C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys\saida_exe\FlowDetect_Instalador
+  C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys\saida_exe\FlowDetect_Portatil
+
+Novo fluxo de instalacao no pacote:
+
+- O instalador principal agora e um setup real do Windows:
+  saida_exe\FlowDetect_Instalador\FlowDetect_1.0.0_x64-setup.exe
+
+- Esse setup do FlowDetect:
+  - abre no estilo wizard de instalacao
+  - permite avancar, voltar e escolher a pasta
+  - instala o programa com identidade visual do FlowDetect
+  - tenta preparar dependencias basicas apos a instalacao
 
 Observacao:
 

@@ -1,0 +1,25 @@
+[package]
+name = "flowdetect_control"
+version = "1.0.0"
+description = "Controlador remoto do FlowDetect Agent"
+authors = ["OpenAI Codex"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2.7.1"
+
+[profile.dev]
+debug = 0
+incremental = false
+codegen-units = 8
+
+[profile.dev.build-override]
+debug = 0
+incremental = false

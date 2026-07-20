@@ -1,0 +1,81 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "FlowDetect Agent",
+  "version": "1.0.0",
+  "identifier": "com.kaua.flowdetectagent",
+  "mainBinaryName": "FlowDetectAgent",
+  "build": {
+    "frontendDist": "../web"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "FlowDetect Agent",
+        "width": 1360,
+        "height": 860,
+        "minWidth": 980,
+        "minHeight": 680,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "withGlobalTauri": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "../../tauri_gerador/src-tauri/icons/icon.ico"
+    ],
+    "resources": {
+      "../../capturar_cliques.py": "capturar_cliques.py",
+      "../../capturar_imagem_tela.py": "capturar_imagem_tela.py",
+      "../../capturar_mouse_global.py": "capturar_mouse_global.py",
+      "../../diagnostico_ambiente.py": "diagnostico_ambiente.py",
+      "../../executar_automacao.py": "executar_automacao.py",
+      "../../executar_automacao.bat": "executar_automacao.bat",
+      "../../gerenciar_roteiro.py": "gerenciar_roteiro.py",
+      "../../gerenciar_dados_planilha.py": "gerenciar_dados_planilha.py",
+      "../../listar_janelas_abertas.py": "listar_janelas_abertas.py",
+      "../../overlay_janela_alvo.py": "overlay_janela_alvo.py",
+      "../../overlay_automacao_tela.py": "overlay_automacao_tela.py",
+      "../../comandos_teclado.py": "comandos_teclado.py",
+      "../../validar_dependencias_instaladas.py": "validar_dependencias_instaladas.py",
+      "../../requirements.txt": "requirements.txt",
+      "../../instalar_dependencias_silencioso.bat": "instalar_dependencias_silencioso.bat",
+      "../../README.md": "README.md",
+      "../../README_AGENTE.md": "README_AGENTE.md",
+      "../../COMO USAR.txt": "COMO USAR.txt",
+      "../../COMO_COMPILAR_GERADOR.txt": "COMO_COMPILAR_GERADOR.txt",
+      "../../tauri_gerador/src-tauri/installer_support/python-installer.exe": "python-installer.exe",
+      "../../tauri_gerador/src-tauri/installer_support/python-wheels/": "python-wheels/",
+      "../../tauri_gerador/src-tauri/installer_support/runtime_seed/mapeamento_teclado.json": "mapeamento_teclado.json",
+      "../../tauri_gerador/src-tauri/installer_support/runtime_seed/resumo_teclado.txt": "resumo_teclado.txt",
+      "../../tauri_gerador/src-tauri/installer_support/runtime_seed/automacoes/": "automacoes/"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "displayLanguageSelector": false,
+        "languages": [
+          "PortugueseBR",
+          "English"
+        ],
+        "installMode": "currentUser",
+        "startMenuFolder": "FlowDetect Agent",
+        "installerIcon": "../../tauri_gerador/src-tauri/icons/icon.ico",
+        "uninstallerIcon": "../../tauri_gerador/src-tauri/icons/icon.ico",
+        "headerImage": "../../tauri_gerador/src-tauri/installer_assets/flowdetect_header.bmp",
+        "uninstallerHeaderImage": "../../tauri_gerador/src-tauri/installer_assets/flowdetect_header.bmp",
+        "sidebarImage": "../../tauri_gerador/src-tauri/installer_assets/flowdetect_sidebar.bmp",
+        "installerHooks": "../../tauri_gerador/src-tauri/installer_assets/flowdetect_hooks.nsh"
+      }
+    }
+  }
+}

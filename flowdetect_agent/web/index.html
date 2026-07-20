@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FlowDetect Agent</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main id="agentShell" class="agent-shell" data-page-theme="principal">
+      <section class="agent-hero">
+        <div class="agent-hero-copy">
+          <h1 class="agent-brand-title">
+            <span class="agent-brand-flow">FlowDetect</span>
+            <span class="agent-brand-agent">Agent</span>
+          </h1>
+        </div>
+
+        <div class="agent-hero-actions">
+          <span id="agentConnectionAddress" class="agent-connection-chip">Conectar: carregando...</span>
+          <button id="importZipButton" class="agent-primary-button" type="button">Importar ZIP</button>
+          <button id="refreshLibraryButton" class="agent-secondary-button" type="button">Atualizar</button>
+          <input id="automationZipInput" type="file" accept=".zip,application/zip" hidden />
+        </div>
+      </section>
+
+      <section class="agent-overview-grid agent-overview-grid-compact" hidden>
+        <article class="agent-overview-card">
+          <span class="agent-overview-label">Automacoes</span>
+          <strong id="overviewAutomationCount">0</strong>
+        </article>
+        <article class="agent-overview-card">
+          <span class="agent-overview-label">Execucao</span>
+          <strong id="overviewExecutionStatus">Pronta</strong>
+        </article>
+        <article class="agent-overview-card">
+          <span class="agent-overview-label">Janela alvo</span>
+          <strong id="overviewTargetStatus">Tela inteira</strong>
+        </article>
+        <article class="agent-overview-card agent-overview-card-highlight">
+          <span class="agent-overview-label">Progresso</span>
+          <strong id="overviewProgressText">0%</strong>
+        </article>
+      </section>
+
+      <nav class="agent-subtabs" aria-label="Areas do Agent">
+        <button class="is-active" type="button" data-agent-view="realtime">Tempo real</button>
+        <button type="button" data-agent-view="library">Biblioteca</button>
+      </nav>
+
+      <section class="agent-workspace agent-workspace-compact">
+        <aside class="agent-panel agent-library-panel" data-agent-panel="library" hidden>
+          <div class="agent-panel-header">
+            <div>
+              <p class="agent-panel-kicker">Biblioteca</p>
+              <h2>Automacoes</h2>
+            </div>
+            <span id="libraryMeta" class="agent-meta-chip">Vazia</span>
+          </div>
+
+          <div id="libraryEmptyState" class="agent-empty-state" hidden>
+            <strong>Nenhuma automacao importada</strong>
+            <p>Importe um ZIP gerado pelo FlowDetect Studio para o Agent ficar pronto para executar.</p>
+          </div>
+
+          <div id="automationList" class="agent-automation-list"></div>
+        </aside>
+
+        <section class="agent-panel agent-stage-panel agent-runner-panel" data-agent-panel="realtime">
+          <section class="agent-inline-monitor agent-monitor-panel">
+            <div class="agent-panel-header agent-inline-monitor-header">
+              <div>
+                <p class="agent-panel-kicker">Tempo real</p>
+                <h2>Monitor</h2>
+              </div>
+              <span id="statusChip" class="agent-status-chip is-idle">Pronto</span>
+            </div>
+
+            <div class="agent-runtime-grid">
+              <article class="agent-runtime-card">
+                <span>Empresa</span>
+                <strong id="currentCompanyText">-</strong>
+              </article>
+              <article class="agent-runtime-card">
+                <span>Pagina</span>
+                <strong id="currentPageText">Pagina 1</strong>
+              </article>
+              <article class="agent-runtime-card agent-runtime-card-wide">
+                <span>Bloco atual</span>
+                <strong id="currentBlockText">Aguardando execucao</strong>
+              </article>
+            </div>
+          </section>
+
+          <div class="agent-progress-block">
+            <div class="agent-progress-header">
+              <strong id="progressTitle">Aguardando execucao</strong>
+              <span id="progressPercent">0%</span>
+            </div>
+            <div class="agent-progress-track">
+              <div id="progressFill" class="agent-progress-fill"></div>
+            </div>
+            <p id="progressDescription" class="agent-progress-description">
+              O FlowDetect Agent fica pronto para rodar a automacao e acompanhar os blocos em tempo real.
+            </p>
+          </div>
+
+          <section class="agent-controls-inline">
+            <div class="agent-panel-header">
+              <div>
+                <p class="agent-panel-kicker">Controles</p>
+                <h2>Execucao</h2>
+              </div>
+            </div>
+
+            <div class="agent-control-strip">
+              <div class="agent-settings-grid">
+                <label class="agent-field">
+                  <span>Atraso inicial</span>
+                  <input id="delayInput" type="number" min="0" step="0.5" value="3" />
+                </label>
+
+                <label class="agent-field">
+                  <span>Linha inicial do loop</span>
+                  <input id="loopStartInput" type="number" min="1" step="1" value="1" />
+                </label>
+              </div>
+
+              <div class="agent-run-bar">
+                <button id="runAutomationButton" class="agent-primary-button agent-run-button" type="button">Executar</button>
+                <button id="stopAutomationButton" class="agent-danger-button" type="button">Parar</button>
+              </div>
+            </div>
+
+            <details class="agent-target-drawer">
+              <summary>
+                <div class="agent-target-summary-copy">
+                  <span class="agent-panel-kicker">Janela alvo</span>
+                  <strong id="targetSummaryText">Tela inteira</strong>
+                </div>
+                <span class="agent-meta-chip">Opcional</span>
+              </summary>
+
+              <div class="agent-target-body">
+                <div class="agent-target-copy">
+                  <h3 id="targetTitleText">Tela inteira</h3>
+                  <p id="targetDetailText" class="agent-target-detail">
+                    Sem janela fixa. O reconhecimento vai usar a tela inteira quando a automacao precisar.
+                  </p>
+                </div>
+
+                <div class="agent-target-actions">
+                  <button id="refreshWindowsButton" class="agent-secondary-button" type="button">Atualizar janelas</button>
+                  <button id="clearTargetButton" class="agent-ghost-button" type="button">Usar tela inteira</button>
+                </div>
+
+                <div id="windowList" class="agent-window-list"></div>
+              </div>
+            </details>
+          </section>
+
+          <details class="agent-monitor-drawer">
+            <summary>
+              <span class="agent-panel-kicker">Monitor expandido</span>
+              <strong>Trilha visual</strong>
+            </summary>
+
+            <div class="agent-monitor-drawer-body">
+              <div class="agent-preview-toolbar">
+                <span class="agent-preview-label">Navegue sem executar</span>
+                <div class="agent-preview-actions">
+                  <button id="previewPrevButton" class="agent-ghost-button agent-preview-button" type="button">Anterior</button>
+                  <button id="previewNextButton" class="agent-ghost-button agent-preview-button" type="button">Proximo</button>
+                </div>
+              </div>
+
+              <div id="pageChipList" class="agent-page-chip-list"></div>
+              <div id="assistMapList" class="agent-assist-map-list" tabindex="0"></div>
+            </div>
+          </details>
+
+          <details class="agent-monitor-drawer">
+            <summary>
+              <span class="agent-panel-kicker">Logs</span>
+              <strong>Execucao</strong>
+            </summary>
+
+            <div class="agent-monitor-drawer-body">
+              <div id="logList" class="agent-log-list"></div>
+            </div>
+          </details>
+        </section>
+      </section>
+    </main>
+
+    <script src="./main.js"></script>
+  </body>
+</html>
