@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="tauri_gerador/web/assets/flowdetect-welcome.png" alt="FlowDetect" width="820">
+  <img src="tauri_gerador/web/assets/flowdetect-welcome.png" alt="FlowDetect" width="620">
 </p>
 
 # FlowDetect
