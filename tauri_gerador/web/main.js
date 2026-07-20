@@ -58,8 +58,19 @@ const state = {
     running: false,
     pollTimer: null,
     statusRefreshing: false,
+    sheetRefreshing: false,
+    lastSheetRefreshAt: 0,
     lastStatusSignature: "",
     logs: [],
+    spreadsheetPreview: {
+      available: false,
+      message: "A planilha preenchida pelo Agent vai aparecer aqui.",
+      workbook_id: "",
+      sheet: "",
+      headers: [],
+      rows: [],
+      write_columns: [],
+    },
     progress: {
       percent: 0,
       description: "A execucao remota vai aparecer aqui.",
@@ -96,6 +107,7 @@ const state = {
     logs: [],
   },
   assistControlTab: "target",
+  editableTextOverrides: {},
   assistTarget: {
     enabled: false,
     status: "idle",
@@ -327,6 +339,11 @@ const studioControlNextBlockButton = document.getElementById("studioControlNextB
 const studioControlPageChips = document.getElementById("studioControlPageChips");
 const studioControlFlowList = document.getElementById("studioControlFlowList");
 const studioControlLogList = document.getElementById("studioControlLogList");
+const studioControlSheetRefreshButton = document.getElementById("studioControlSheetRefreshButton");
+const studioControlSheetTitle = document.getElementById("studioControlSheetTitle");
+const studioControlSheetMeta = document.getElementById("studioControlSheetMeta");
+const studioControlSheetStatus = document.getElementById("studioControlSheetStatus");
+const studioControlSheetTableWrap = document.getElementById("studioControlSheetTableWrap");
 const mapZoomOutButton = document.getElementById("mapZoomOutButton");
 const mapZoomInButton = document.getElementById("mapZoomInButton");
 const mapZoomRange = document.getElementById("mapZoomRange");
@@ -352,6 +369,7 @@ const assistLogList = document.getElementById("assistLogList");
 const assistControlTabs = document.getElementById("assistControlTabs");
 const assistInitialSequenceSelect = document.getElementById("assistInitialSequenceSelect");
 const assistSequenceModeList = document.getElementById("assistSequenceModeList");
+const assistEditableTextList = document.getElementById("assistEditableTextList");
 const assistTargetTitle = document.getElementById("assistTargetTitle");
 const assistTargetDetailText = document.getElementById("assistTargetDetailText");
 const assistTargetStatusChip = document.getElementById("assistTargetStatusChip");
@@ -992,7 +1010,8 @@ function getAssistCurrentSequence() {
 }
 
 function setAssistControlTab(tabName = "target") {
-  const nextTab = String(tabName || "").trim().toLowerCase() === "pages" ? "pages" : "target";
+  const requestedTab = String(tabName || "").trim().toLowerCase();
+  const nextTab = ["target", "pages", "texts"].includes(requestedTab) ? requestedTab : "target";
   state.assistControlTab = nextTab;
 
   document.querySelectorAll("[data-assist-control-tab]").forEach((button) => {
@@ -2156,6 +2175,75 @@ function formatAssistValue(value, max = 40) {
   return text.length > max ? `${text.slice(0, max)}...` : text;
 }
 
+function getEditableTextEvents(roadmap = state.roadmap) {
+  return getAssistRoadmapEvents()
+    .filter((event) => event?.type === "texto_livre" && Boolean(event?.details?.editavel_execucao));
+}
+
+function getEditableTextLabel(event) {
+  const customLabel = String(event?.details?.rotulo_execucao ?? "").trim();
+  if (customLabel) {
+    return customLabel;
+  }
+  const preview = formatAssistValue(event?.text ?? "", 28);
+  return preview ? `Bloco ${event.order} - ${preview}` : `Bloco ${event.order}`;
+}
+
+function renderAssistEditableTexts() {
+  if (!assistEditableTextList) {
+    return;
+  }
+
+  const events = getEditableTextEvents();
+  if (!events.length) {
+    assistEditableTextList.innerHTML = `
+      <div class="assist-editable-text-empty">
+        Nenhum bloco de texto marcado para alterar no inicio.
+      </div>
+    `;
+    return;
+  }
+
+  assistEditableTextList.innerHTML = events
+    .map((event) => {
+      const orderKey = String(event.order);
+      const currentValue = Object.prototype.hasOwnProperty.call(state.editableTextOverrides, orderKey)
+        ? state.editableTextOverrides[orderKey]
+        : event.text ?? "";
+      return `
+        <label class="assist-editable-text-item">
+          <span>
+            <strong>${escapeHtml(getEditableTextLabel(event))}</strong>
+            <small>Pagina ${escapeHtml(sequenceLabel(event.sequence ?? event.sequencia ?? "principal"))}</small>
+          </span>
+          <textarea data-editable-text-order="${escapeHtml(orderKey)}" rows="2">${escapeHtml(currentValue)}</textarea>
+        </label>
+      `;
+    })
+    .join("");
+}
+
+function collectAssistEditableTextOverrides() {
+  if (!assistEditableTextList) {
+    return {};
+  }
+
+  const overrides = {};
+  assistEditableTextList.querySelectorAll("[data-editable-text-order]").forEach((field) => {
+    const order = String(field.dataset.editableTextOrder || "").trim();
+    if (order) {
+      overrides[order] = field.value ?? "";
+    }
+  });
+  state.editableTextOverrides = { ...state.editableTextOverrides, ...overrides };
+  return overrides;
+}
+
+function editableTextOverridesJson() {
+  const overrides = collectAssistEditableTextOverrides();
+  return Object.keys(overrides).length ? JSON.stringify(overrides) : "";
+}
+
 function getSpreadsheetEventValues(event) {
   const values = event?.details?.valores ?? event?.details?.values ?? event?.detalhes?.valores ?? event?.detalhes?.values ?? [];
   return Array.isArray(values) ? values : [];
@@ -2514,6 +2602,7 @@ async function startQuickTestExecution(forceAssist = false) {
 
     const delay = parseNumber(fromAssist ? assistDelayInput.value : testDelayInput.value, 0);
     const minimizeWindow = shouldMinimizeExecutionWindow();
+    const textOverrides = editableTextOverridesJson();
     syncTestInputsFrom(fromAssist ? "assist" : "top");
     state.testLaunchPending = true;
     setMessage("Iniciando execucao...", "info");
@@ -2528,9 +2617,12 @@ async function startQuickTestExecution(forceAssist = false) {
       pushAssistLog("Nenhuma janela alvo selecionada. Captura e reconhecimento vao usar a tela inteira.", "info");
     }
     pushAssistLog(`Execucao iniciada. Atraso inicial: ${delay}s.`, "info");
+    if (textOverrides) {
+      pushAssistLog("Textos editaveis aplicados para esta execucao.", "info");
+    }
     const result = fromAssist
-      ? await invoke("launch_assisted_quick_test", { delay, minimizeWindow })
-      : await invoke("launch_quick_test", { delay, minimizeWindow });
+      ? await invoke("launch_assisted_quick_test", { delay, minimizeWindow, textOverrides })
+      : await invoke("launch_quick_test", { delay, minimizeWindow, textOverrides });
     triggerSuccessPulse(fromAssist ? assistQuickButton : testOnceButton);
     setBusy("Pronto");
     setMessage(normalizeExecutionFeedbackMessage(result), "success");
@@ -2590,6 +2682,7 @@ async function startLoopTestExecution(forceAssist = false) {
 
     const delay = parseNumber(fromAssist ? assistDelayInput.value : testDelayInput.value, 0);
     const minimizeWindow = shouldMinimizeExecutionWindow();
+    const textOverrides = editableTextOverridesJson();
     const loopStart = Math.max(
       1,
       Math.trunc(parseNumber(fromAssist ? assistLoopStartInput.value : testLoopStartInput.value, 1)),
@@ -2609,16 +2702,21 @@ async function startLoopTestExecution(forceAssist = false) {
       pushAssistLog("Nenhuma janela alvo selecionada. Captura e reconhecimento vao usar a tela inteira.", "info");
     }
     pushAssistLog(`Execucao iniciada com planilha. Linha inicial: ${loopStart}. Atraso: ${delay}s.`, "info");
+    if (textOverrides) {
+      pushAssistLog("Textos editaveis aplicados para esta execucao.", "info");
+    }
     const result = fromAssist
       ? await invoke("launch_assisted_loop_test", {
           delay,
           loopStart,
           minimizeWindow,
+          textOverrides,
         })
       : await invoke("launch_test_automation", {
           delay,
           loopStart,
           minimizeWindow,
+          textOverrides,
         });
     triggerSuccessPulse(fromAssist ? assistQuickButton : testOnceButton);
     setBusy("Pronto");
@@ -4322,6 +4420,7 @@ function createInsertPanelState(targetOrder, position) {
     workbook: workbookId,
     sheet: workbookSheetsFor(workbookId)[0]?.name ?? "",
     column: columnsForSheetInWorkbook(workbookId, workbookSheetsFor(workbookId)[0]?.name ?? "")?.[0] ?? "",
+    writeValue: "OK",
     afterAction: "nenhuma",
     intervalBetween: 0.5,
   };
@@ -5680,6 +5779,8 @@ function typeChipLabel(type) {
       return "ABRIR PROGRAMA";
     case "sequencia_planilha":
       return "SEQUENCIA PLANILHA";
+    case "escrever_planilha":
+      return "ESCREVER PLANILHA";
     case "inicio_loop":
       return "INICIO LOOP";
     case "fim_loop":
@@ -7790,6 +7891,9 @@ function studioControlEventTitle(event = {}) {
   if (event.type === "sequencia_planilha") {
     return "Loop da planilha";
   }
+  if (event.type === "escrever_planilha") {
+    return "Escrever na planilha";
+  }
   if (event.type === "abrir_url") {
     return "Abrir URL";
   }
@@ -7822,6 +7926,9 @@ function studioControlEventSubtitle(event = {}) {
   if (event.type === "sequencia_planilha") {
     return `${details.arquivo || "planilha"} -> ${details.coluna || "coluna"}`;
   }
+  if (event.type === "escrever_planilha") {
+    return `${details.aba || "aba"} -> ${details.coluna || "coluna"} = ${details.valor || ""}`;
+  }
   if (event.type === "abrir_url") {
     return details.url || "URL configurada";
   }
@@ -7850,6 +7957,12 @@ function studioControlEventDetails(event = {}) {
     rows.push(["Arquivo", details.arquivo || "-"]);
     rows.push(["Aba", details.aba || "-"]);
     rows.push(["Coluna", details.coluna || "-"]);
+  } else if (event.type === "escrever_planilha") {
+    rows.push(["Arquivo", details.arquivo || "-"]);
+    rows.push(["Aba", details.aba || "-"]);
+    rows.push(["Coluna", details.coluna || "-"]);
+    rows.push(["Valor", details.valor || "-"]);
+    rows.push(["Linha", "Linha atual do loop"]);
   } else if (event.type === "abrir_url") {
     rows.push(["URL", details.url || "-"]);
     rows.push(["Navegador", details.navegador || "padrao"]);
@@ -7968,6 +8081,77 @@ function renderStudioControlFlow() {
   });
 }
 
+function renderStudioControlSpreadsheet() {
+  const preview = state.remoteControl.spreadsheetPreview || {};
+  const headers = Array.isArray(preview.headers) ? preview.headers : [];
+  const rows = Array.isArray(preview.rows) ? preview.rows : [];
+  const writeColumns = new Set((Array.isArray(preview.write_columns) ? preview.write_columns : []).map((column) => String(column || "")));
+  const available = Boolean(preview.available);
+
+  if (studioControlSheetRefreshButton) {
+    studioControlSheetRefreshButton.disabled = !state.remoteControl.connected || state.remoteControl.sheetRefreshing;
+    studioControlSheetRefreshButton.textContent = state.remoteControl.sheetRefreshing ? "Atualizando..." : "Atualizar planilha";
+  }
+  if (studioControlSheetTitle) {
+    studioControlSheetTitle.textContent = available ? `${preview.workbook_id || "Planilha"}` : "Aguardando planilha";
+  }
+  if (studioControlSheetMeta) {
+    const sheetName = preview.sheet ? `Aba ${preview.sheet}` : "Nenhuma aba carregada";
+    const rowCount = Number(preview.row_count ?? rows.length ?? 0);
+    studioControlSheetMeta.textContent = available
+      ? `${sheetName} | ${rowCount} linha${rowCount === 1 ? "" : "s"} visivel${rowCount === 1 ? "" : "is"}`
+      : (preview.message || "Conecte no Agent para visualizar os dados do projeto.");
+  }
+  if (studioControlSheetStatus) {
+    if (!state.remoteControl.connected) {
+      studioControlSheetStatus.textContent = "Conecte no Agent para carregar a planilha remota.";
+    } else if (state.remoteControl.sheetRefreshing) {
+      studioControlSheetStatus.textContent = "Lendo planilha do Agent...";
+    } else if (!available) {
+      studioControlSheetStatus.textContent = preview.message || "Nenhuma planilha encontrada no projeto remoto.";
+    } else if (preview.limited) {
+      studioControlSheetStatus.textContent = "Mostrando uma previa das primeiras linhas para manter a tela leve.";
+    } else {
+      studioControlSheetStatus.textContent = "Dados atualizados a partir do Agent.";
+    }
+  }
+  if (!studioControlSheetTableWrap) {
+    return;
+  }
+  if (!available || !headers.length) {
+    studioControlSheetTableWrap.innerHTML = `
+      <div class="empty-state">${escapeHtml(preview.message || "A planilha preenchida pelo Agent vai aparecer aqui.")}</div>
+    `;
+    return;
+  }
+
+  studioControlSheetTableWrap.innerHTML = `
+    <table class="studio-control-sheet-table">
+      <thead>
+        <tr>
+          <th>Linha</th>
+          ${headers.map((header) => `
+            <th class="${writeColumns.has(String(header)) ? "is-write-column" : ""}">${escapeHtml(header)}</th>
+          `).join("")}
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => {
+          const values = Array.isArray(row.values) ? row.values : [];
+          return `
+            <tr>
+              <td class="studio-control-sheet-row-number">${escapeHtml(row.row_number ?? "")}</td>
+              ${headers.map((header, index) => `
+                <td class="${writeColumns.has(String(header)) ? "is-write-column" : ""}">${escapeHtml(values[index] ?? "")}</td>
+              `).join("")}
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
 function renderStudioControl() {
   const remote = state.remoteControl;
   const selected = studioControlSelectedAutomation();
@@ -8067,6 +8251,7 @@ function renderStudioControl() {
     studioControlBlockText.textContent = studioControlCurrentEvent()?.title || (remote.progress.order ? `Bloco ${remote.progress.order}` : "Aguardando");
   }
   renderStudioControlFlow();
+  renderStudioControlSpreadsheet();
   if (studioControlLogList) {
     studioControlLogList.innerHTML = remote.logs.length
       ? remote.logs.slice(0, 12).map((line) => `<article>${escapeHtml(line)}</article>`).join("")
@@ -8156,12 +8341,66 @@ async function refreshStudioControlStatus(options = {}) {
   }
 }
 
+async function refreshStudioControlSpreadsheet(options = {}) {
+  const { force = false, silent = false } = options;
+  if (!state.remoteControl.connected || state.remoteControl.sheetRefreshing) {
+    return;
+  }
+  const now = Date.now();
+  if (!force && now - Number(state.remoteControl.lastSheetRefreshAt || 0) < 2200) {
+    return;
+  }
+  state.remoteControl.sheetRefreshing = true;
+  renderStudioControlSpreadsheet();
+  try {
+    const result = await invoke("remote_agent_spreadsheet_preview", {
+      address: state.remoteControl.address,
+      limit: 80,
+    });
+    state.remoteControl.spreadsheetPreview = {
+      available: Boolean(result?.available),
+      message: String(result?.message || ""),
+      workbook_id: String(result?.workbook_id || ""),
+      sheet: String(result?.sheet || ""),
+      headers: Array.isArray(result?.headers) ? result.headers : [],
+      rows: Array.isArray(result?.rows) ? result.rows : [],
+      row_count: Number(result?.row_count ?? result?.rows?.length ?? 0),
+      limited: Boolean(result?.limited),
+      write_columns: Array.isArray(result?.write_columns) ? result.write_columns : [],
+    };
+    state.remoteControl.lastSheetRefreshAt = Date.now();
+  } catch (error) {
+    const errorText = String(error);
+    const friendlyMessage = errorText.includes("Endpoint nao encontrado") || errorText.includes("Endpoint não encontrado")
+      ? "O Agent conectado ainda nao tem a visualizacao de planilha. Feche e abra o Agent atualizado."
+      : errorText;
+    state.remoteControl.spreadsheetPreview = {
+      available: false,
+      message: friendlyMessage,
+      workbook_id: "",
+      sheet: "",
+      headers: [],
+      rows: [],
+      write_columns: [],
+    };
+    if (!silent) {
+      setMessage(friendlyMessage, "error");
+    }
+  } finally {
+    state.remoteControl.sheetRefreshing = false;
+    renderStudioControlSpreadsheet();
+  }
+}
+
 function startStudioControlPolling() {
   if (state.remoteControl.pollTimer) {
     window.clearInterval(state.remoteControl.pollTimer);
   }
   state.remoteControl.pollTimer = window.setInterval(() => {
     refreshStudioControlStatus({ silent: true }).catch(() => null);
+    if (state.remoteControl.running || state.remoteControl.activeView === "spreadsheet") {
+      refreshStudioControlSpreadsheet({ silent: true }).catch(() => null);
+    }
   }, 1800);
 }
 
@@ -8174,6 +8413,7 @@ async function connectStudioControl() {
   setMessage(`Controle remoto conectado em ${address}.`, "success");
   await refreshStudioControlLibrary();
   await refreshStudioControlStatus({ silent: true });
+  await refreshStudioControlSpreadsheet({ force: true, silent: true });
   startStudioControlPolling();
   renderStudioControl();
 }
@@ -8194,6 +8434,7 @@ async function openStudioControlAutomation(id) {
   state.remoteControl.detailOpenOrder = null;
   state.remoteControl.lastCenteredOrder = null;
   await refreshStudioControlStatus({ silent: true });
+  await refreshStudioControlSpreadsheet({ force: true, silent: true });
   renderStudioControl();
 }
 
@@ -8217,6 +8458,7 @@ async function runStudioControlAutomation(id = "") {
     minimizeAgent: String(studioControlAgentWindowMode?.value || "minimize") === "minimize",
   });
   applyStudioControlStatus(result);
+  refreshStudioControlSpreadsheet({ force: true, silent: true }).catch(() => null);
   setMessage("Execucao remota iniciada no Agent.", "success");
 }
 
@@ -8242,6 +8484,7 @@ async function importStudioControlZip(file) {
   const importedId = String(result?.imported_id || result?.importedId || result?.active_automation?.id || "").trim();
   await refreshStudioControlLibrary({ preferredId: importedId });
   await refreshStudioControlStatus({ silent: true });
+  await refreshStudioControlSpreadsheet({ force: true, silent: true });
   setMessage(`ZIP enviado ao Agent: ${file.name}`, "success");
 }
 
@@ -8327,6 +8570,55 @@ function renderOpenProgramFields(fieldAttr, details = {}, currentOrder = null) {
   `;
 }
 
+function renderWriteSpreadsheetFields(fieldAttr, details = {}, currentOrder = null) {
+  const workbookId = details.arquivo || details.workbook || state.composerWorkbookId || state.workbook?.default_workbook || "";
+  const workbookOptions = availableWorkbooks()
+    .map((workbook) => `<option value="${escapeHtml(workbook.id)}" ${workbook.id === workbookId ? "selected" : ""}>${escapeHtml(workbook.file_name)}</option>`)
+    .join("");
+  const availableSheets = workbookSheetsFor(workbookId);
+  const currentSheet = details.aba || details.sheet || "";
+  const selectedSheet = availableSheets.some((sheet) => sheet.name === currentSheet)
+    ? currentSheet
+    : availableSheets[0]?.name ?? "";
+  const sheetOptions = availableSheets
+    .map((sheet) => `<option value="${escapeHtml(sheet.name)}" ${sheet.name === selectedSheet ? "selected" : ""}>${escapeHtml(sheet.name)}</option>`)
+    .join("");
+  const columns = columnsForSheetInWorkbook(workbookId, selectedSheet);
+  const selectedColumn = details.coluna || details.column || columns[0] || "";
+  const suggestionId = `spreadsheetWriteColumns-${String(currentOrder ?? "new").replace(/[^a-z0-9_-]/gi, "")}`;
+  const columnSuggestions = columns
+    .map((column) => `<option value="${escapeHtml(column)}"></option>`)
+    .join("");
+
+  return `
+    <div class="field-stack spreadsheet-write-editor">
+      <div class="tree-inline-fields">
+        <label>
+          <span>Arquivo</span>
+          <select ${fieldAttr}="workbook">${workbookOptions}</select>
+        </label>
+        <label>
+          <span>Aba</span>
+          <select ${fieldAttr}="sheet">${sheetOptions}</select>
+        </label>
+        <label>
+          <span>Coluna</span>
+          <input ${fieldAttr}="column" type="text" list="${escapeHtml(suggestionId)}" value="${escapeHtml(selectedColumn)}" placeholder="Status" />
+          <datalist id="${escapeHtml(suggestionId)}">${columnSuggestions}</datalist>
+        </label>
+        <label>
+          <span>Escrever</span>
+          <input ${fieldAttr}="writeValue" type="text" value="${escapeHtml(details.valor ?? details.value ?? "OK")}" placeholder="OK, X, Concluido..." />
+        </label>
+      </div>
+      <p class="spreadsheet-write-hint">No loop atual: escreve na mesma linha que esta rodando.</p>
+      <div class="tree-inline-fields">
+        ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
+      </div>
+    </div>
+  `;
+}
+
 function renderEditorFields(event) {
   const details = event.details ?? {};
   const delayField = `
@@ -8354,11 +8646,23 @@ function renderEditorFields(event) {
   }
 
   if (event.type === "texto_livre") {
+    const editableAtRun = Boolean(details.editavel_execucao);
     return `
       <div class="field-stack">
         <label>
           <span>Texto que sera digitado</span>
           <textarea data-field="text" rows="5">${escapeHtml(event.text)}</textarea>
+        </label>
+        <label class="runtime-edit-switch-row">
+          <span>Bloco editavel</span>
+          <span class="runtime-edit-switch">
+            <input data-field="editableAtRun" type="checkbox" ${editableAtRun ? "checked" : ""} />
+            <i></i>
+          </span>
+        </label>
+        <label class="runtime-edit-name">
+          <span>Nome do bloco</span>
+          <input data-field="runtimeLabel" type="text" value="${escapeHtml(details.rotulo_execucao ?? "")}" placeholder="Ex.: Competencia, Mensagem, Observacao" />
         </label>
         ${delayField}
       </div>
@@ -8518,6 +8822,13 @@ function renderEditorFields(event) {
     `;
   }
 
+  if (event.type === "escrever_planilha") {
+    return `
+      ${renderWriteSpreadsheetFields("data-field", details, event.order)}
+      ${delayField}
+    `;
+  }
+
   if (event.type === "verificar_estado_botao") {
     const activeAction = details.se_ativo?.acao ?? "continuar";
     const inactiveAction = details.se_desativado?.acao ?? "ir_para_sequencia";
@@ -8644,11 +8955,16 @@ function renderTreeEditorFields(event) {
   }
 
   if (event.type === "texto_livre") {
+    const editableAtRun = Boolean(event.details?.editavel_execucao);
     return `
       <div class="field-stack">
         <label>
           <span>Texto do bloco</span>
           <textarea data-tree-field="text" rows="3">${escapeHtml(event.text)}</textarea>
+        </label>
+        <label class="runtime-edit-name">
+          <span>Nome do bloco</span>
+          <input data-tree-field="runtimeLabel" type="text" value="${escapeHtml(event.details?.rotulo_execucao ?? "")}" placeholder="Ex.: Competencia" />
         </label>
         <div class="tree-inline-fields">
           ${renderSuccessFlowFields("data-tree-field", event.details?.ao_sucesso ?? "continuar", event.details?.bloco_sucesso ?? "", event.details?.sequencia_sucesso ?? "", event.details?.atraso_antes_sequencia_sucesso ?? 0, event.order)}
@@ -8727,6 +9043,10 @@ function renderTreeEditorFields(event) {
 
   if (event.type === "abrir_programa") {
     return renderOpenProgramFields("data-tree-field", details, event.order);
+  }
+
+  if (event.type === "escrever_planilha") {
+    return renderWriteSpreadsheetFields("data-tree-field", details, event.order);
   }
 
   if (event.type === "verificar_estado_botao") {
@@ -9087,6 +9407,17 @@ function renderInsertPanel(order) {
           <span>Texto do novo bloco</span>
           <textarea data-insert-field="text" rows="3">${escapeHtml(panel.text)}</textarea>
         </label>
+        <label class="runtime-edit-switch-row">
+          <span>Bloco editavel</span>
+          <span class="runtime-edit-switch">
+            <input data-insert-field="editableAtRun" type="checkbox" ${panel.editableAtRun ? "checked" : ""} />
+            <i></i>
+          </span>
+        </label>
+        <label class="runtime-edit-name">
+          <span>Nome do bloco</span>
+          <input data-insert-field="runtimeLabel" type="text" value="${escapeHtml(panel.runtimeLabel ?? "")}" placeholder="Ex.: Competencia" />
+        </label>
         <div class="tree-inline-fields">
           ${renderSuccessFlowFields("data-insert-field", panel.successAction ?? "continuar", panel.successBlock ?? "", panel.successSequence ?? "", panel.successSequenceDelay ?? 0, order)}
         </div>
@@ -9324,6 +9655,17 @@ function renderInsertPanel(order) {
       sequencia_sucesso: panel.successSequence,
       atraso_antes_sequencia_sucesso: panel.successSequenceDelay,
     }, order);
+  } else if (panel.type === "write_spreadsheet") {
+    body = renderWriteSpreadsheetFields("data-insert-field", {
+      arquivo: panel.workbook,
+      aba: panel.sheet,
+      coluna: panel.column,
+      valor: panel.writeValue,
+      ao_sucesso: panel.successAction,
+      bloco_sucesso: panel.successBlock,
+      sequencia_sucesso: panel.successSequence,
+      atraso_antes_sequencia_sucesso: panel.successSequenceDelay,
+    }, order);
   } else {
     body = `
       <div class="tree-inline-fields">
@@ -9373,6 +9715,7 @@ function renderInsertPanel(order) {
         <button class="insert-type-button ${panel.type === "open_url" ? "is-active" : ""}" data-insert-type="open_url">Abrir URL</button>
         <button class="insert-type-button ${panel.type === "open_program" ? "is-active" : ""}" data-insert-type="open_program">Abrir Programa</button>
         <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet">Planilha</button>
+        <button class="insert-type-button ${panel.type === "write_spreadsheet" ? "is-active" : ""}" data-insert-type="write_spreadsheet">Escrever celula</button>
         <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start">Inicio loop</button>
         <button class="insert-type-button ${panel.type === "loop_end" ? "is-active" : ""}" data-insert-type="loop_end">Fim loop</button>
       </div>
@@ -9412,6 +9755,7 @@ function renderEmptyCommandMapStarter() {
           <button class="insert-type-button" data-empty-insert-type="open_url" type="button">Abrir URL</button>
           <button class="insert-type-button" data-empty-insert-type="open_program" type="button">Abrir Programa</button>
           <button class="insert-type-button" data-empty-insert-type="spreadsheet" type="button">Planilha</button>
+          <button class="insert-type-button" data-empty-insert-type="write_spreadsheet" type="button">Escrever celula</button>
           <button class="insert-type-button" data-empty-insert-type="loop_start" type="button">Inicio loop</button>
           <button class="insert-type-button" data-empty-insert-type="loop_end" type="button">Fim loop</button>
         </div>
@@ -9633,19 +9977,20 @@ function renderTimeline() {
   timelineList.innerHTML = events
     .map((event, index) => {
       const delayLabel = index === 0 ? `Inicio + ${event.delay}s` : `${event.delay}s antes do proximo bloco`;
+      const isRuntimeEditable = event.type === "texto_livre" && Boolean(event.details?.editavel_execucao);
       return `
         <div class="timeline-node">
           <div class="delay-bridge">
             <span class="delay-pill">${escapeHtml(delayLabel)}</span>
           </div>
-          <article class="flow-card" data-order="${event.order}" data-type="${escapeHtml(event.type)}">
+          <article class="flow-card ${isRuntimeEditable ? "is-runtime-editable" : ""}" data-order="${event.order}" data-type="${escapeHtml(event.type)}">
             <div class="card-top">
               <div>
                 <p class="panel-kicker">Bloco ${event.order}</p>
                 <h3>${escapeHtml(event.title)}</h3>
                 <p data-recognition-subtitle="true">${escapeHtml(recognitionSubtitleLabel(event))}</p>
               </div>
-              <span class="type-chip ${escapeHtml(event.type)}">${escapeHtml(typeChipLabel(event.type))}</span>
+              <span class="type-chip ${escapeHtml(event.type)} ${isRuntimeEditable ? "runtime-editable" : ""}">${escapeHtml(isRuntimeEditable ? "Bloco editavel" : typeChipLabel(event.type))}</span>
             </div>
 
             <div class="block-grid">
@@ -9692,8 +10037,9 @@ function renderCommandMap(options = {}) {
     const isLastCard = index === events.length - 1;
     const hasRecordButton = event.type === "tecla" || event.type === "atalho";
     const isRecognitionCard = event.type === "clicar_imagem";
-    const isSpreadsheetCard = event.type === "sequencia_planilha";
+    const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha";
     const isLoopMarkerCard = isLoopMarkerType(event.type);
+    const isRuntimeEditable = event.type === "texto_livre" && Boolean(event.details?.editavel_execucao);
     const primaryActionClass = isRecognitionCard
       ? "has-recognition-button"
       : hasRecordButton
@@ -9712,18 +10058,25 @@ function renderCommandMap(options = {}) {
       `;
     const card = `
       <div class="command-flow-segment ${isRecognitionCard ? "visual-recognition-segment" : ""} ${isSpreadsheetCard ? "spreadsheet-segment" : ""} ${state.insertPanel?.targetOrder === event.order ? "has-insert-panel" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}">
-      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarkerCard ? "is-loop-marker" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
+      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarkerCard ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
         <div class="command-tree-top">
           <div class="command-tree-main">
             <span class="command-index">${String(event.order).padStart(2, "0")}</span>
             <div>
               ${event.type === "sequencia_planilha" ? `<span class="command-tree-loop-badge">${escapeHtml(getSpreadsheetLoopBadgeLabel(event))}</span>` : ""}
+              ${event.type === "escrever_planilha" ? `<span class="command-tree-loop-badge">Linha atual</span>` : ""}
               <h3>${escapeHtml(event.title)}</h3>
               <p data-recognition-subtitle="true">${escapeHtml(recognitionSubtitleLabel(event))}</p>
             </div>
           </div>
           <div class="command-tree-side">
-            <span class="type-chip ${escapeHtml(event.type)}">${escapeHtml(typeChipLabel(event.type))}</span>
+            ${event.type === "texto_livre" ? `
+              <label class="runtime-edit-switch command-card-editable-switch" title="Bloco editavel na execucao">
+                <input data-tree-field="editableAtRun" type="checkbox" ${isRuntimeEditable ? "checked" : ""} />
+                <i></i>
+              </label>
+            ` : ""}
+            <span class="type-chip ${escapeHtml(event.type)} ${isRuntimeEditable ? "runtime-editable" : ""}">${escapeHtml(isRuntimeEditable ? "Bloco editavel" : typeChipLabel(event.type))}</span>
             <button class="drag-handle" data-drag-handle="true" data-order="${event.order}" title="Arrastar card" type="button">
               <span>Arrastar</span>
             </button>
@@ -9855,6 +10208,7 @@ function applyRoadmap(roadmap, options = {}) {
   }
   syncAssistTheme();
   renderAssistExecutionMap();
+  renderAssistEditableTexts();
   syncCommandMapSaveStateWithPending();
 }
 
@@ -9966,6 +10320,8 @@ function formValuesFromCard(card) {
     successSequence: get("successSequence")?.value ?? "",
     successSequenceDelay: normalizeTransitionDelay(get("successSequenceDelay")?.value),
     text: get("text")?.value ?? "",
+    editableAtRun: Boolean(get("editableAtRun")?.checked),
+    runtimeLabel: get("runtimeLabel")?.value ?? "",
     keys: get("keys")?.value ?? "",
     repeat: Math.max(1, Math.trunc(parseNumber(get("repeat")?.value, 1))),
     x: parseNumber(get("x")?.value, 0),
@@ -10034,6 +10390,7 @@ function formValuesFromCard(card) {
     workbook: get("workbook")?.value ?? "",
     sheet: get("sheet")?.value ?? "",
     column: get("column")?.value ?? "",
+    writeValue: get("writeValue")?.value ?? "",
     afterAction: get("afterAction")?.value ?? "nenhuma",
     intervalBetween: parseNumber(get("intervalBetween")?.value, 0.5),
   };
@@ -10048,6 +10405,8 @@ function treeValuesFromCard(card) {
     successSequence: get("successSequence")?.value ?? "",
     successSequenceDelay: normalizeTransitionDelay(get("successSequenceDelay")?.value),
     text: get("text")?.value ?? "",
+    editableAtRun: Boolean(get("editableAtRun")?.checked),
+    runtimeLabel: get("runtimeLabel")?.value ?? "",
     keys: get("keys")?.value ?? "",
     repeat: Math.max(1, Math.trunc(parseNumber(get("repeat")?.value, 1))),
     x: parseNumber(get("x")?.value, 0),
@@ -10116,6 +10475,7 @@ function treeValuesFromCard(card) {
     workbook: get("workbook")?.value ?? "",
     sheet: get("sheet")?.value ?? "",
     column: get("column")?.value ?? "",
+    writeValue: get("writeValue")?.value ?? "",
     afterAction: get("afterAction")?.value ?? "nenhuma",
     intervalBetween: parseNumber(get("intervalBetween")?.value, 0.5),
   };
@@ -10289,6 +10649,8 @@ function commandCardHasUnsavedChanges(snapshot) {
 
   if (snapshot.type === "texto_livre") {
     return normalizeStringValue(values.text) !== normalizeStringValue(event.text)
+      || Boolean(values.editableAtRun) !== Boolean(details.editavel_execucao)
+      || normalizeStringValue(values.runtimeLabel) !== normalizeStringValue(details.rotulo_execucao ?? "")
       || successFlowChanged(values, details);
   }
 
@@ -10413,6 +10775,16 @@ function commandCardHasUnsavedChanges(snapshot) {
     );
   }
 
+  if (snapshot.type === "escrever_planilha") {
+    return (
+      normalizeStringValue(values.workbook) !== normalizeStringValue(details.arquivo)
+      || normalizeStringValue(values.sheet) !== normalizeStringValue(details.aba)
+      || normalizeStringValue(values.column) !== normalizeStringValue(details.coluna)
+      || normalizeStringValue(values.writeValue) !== normalizeStringValue(details.valor)
+      || successFlowChanged(values, details)
+    );
+  }
+
   if (isLoopMarkerType(snapshot.type)) {
     return snapshot.type === "fim_loop" && successFlowChanged(values, details);
   }
@@ -10434,6 +10806,8 @@ async function invokeCommandCardUpdate(snapshot) {
         ? optionalSequenceValue(values.successSequence)
         : null,
       atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
+      editavelExecucao: Boolean(values.editableAtRun),
+      rotuloExecucao: values.runtimeLabel || null,
     });
   }
 
@@ -10619,6 +10993,26 @@ async function invokeCommandCardUpdate(snapshot) {
     });
   }
 
+  if (type === "escrever_planilha") {
+    if (!normalizeStringValue(values.sheet) || !normalizeStringValue(values.column)) {
+      throw new Error(`Configure a aba e a coluna do bloco ${order} de escrita na planilha.`);
+    }
+    return invoke("update_write_spreadsheet_block", {
+      order,
+      workbook: values.workbook || null,
+      sheet: values.sheet,
+      column: values.column,
+      value: values.writeValue,
+      delay: values.delay,
+      aoSucesso: values.successAction,
+      blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
+    });
+  }
+
   if (isLoopMarkerType(type)) {
     return invoke("update_loop_marker_block", {
       order,
@@ -10769,6 +11163,8 @@ function insertValuesFromPanel(panelElement) {
     targetOrder: Number(panelElement.dataset.targetOrder),
     position: state.insertPanel?.position ?? "after",
     text: get("text")?.value ?? "",
+    editableAtRun: Boolean(get("editableAtRun")?.checked ?? state.insertPanel?.editableAtRun),
+    runtimeLabel: get("runtimeLabel")?.value ?? state.insertPanel?.runtimeLabel ?? "",
     keys: get("keys")?.value ?? "",
     repeat: Math.max(1, Math.trunc(parseNumber(get("repeat")?.value, state.insertPanel?.repeat ?? 1))),
     x: parseNumber(get("x")?.value, 0),
@@ -10829,8 +11225,9 @@ function insertValuesFromPanel(panelElement) {
     programWait: parseNumber(get("programWait")?.value, state.insertPanel?.programWait ?? 2),
     delay: parseNumber(get("delay")?.value, 0),
     workbook: get("workbook")?.value ?? state.insertPanel?.workbook ?? "",
-    sheet: get("sheet")?.value ?? "",
-    column: get("column")?.value ?? "",
+    sheet: get("sheet")?.value ?? state.insertPanel?.sheet ?? "",
+    column: get("column")?.value ?? state.insertPanel?.column ?? "",
+    writeValue: get("writeValue")?.value ?? state.insertPanel?.writeValue ?? "OK",
     afterAction: get("afterAction")?.value ?? "nenhuma",
     intervalBetween: parseNumber(get("intervalBetween")?.value, 0.5),
   };
@@ -10988,6 +11385,8 @@ document.getElementById("addTextButton").addEventListener("click", () => {
       sequencia: currentSequenceName(),
       aoSucesso: "continuar",
       blocoSucesso: null,
+      editavelExecucao: false,
+      rotuloExecucao: null,
     })
   , focusLastCommandMapCard);
 });
@@ -11067,6 +11466,14 @@ assistControlTabs?.addEventListener("click", (event) => {
     return;
   }
   setAssistControlTab(button.dataset.assistControlTab || "target");
+});
+
+assistEditableTextList?.addEventListener("input", (event) => {
+  const field = event.target.closest("[data-editable-text-order]");
+  if (!field) {
+    return;
+  }
+  state.editableTextOverrides[String(field.dataset.editableTextOrder || "")] = field.value ?? "";
 });
 
 commandMapPageModeSelect?.addEventListener("change", () => {
@@ -11652,6 +12059,7 @@ studioControlRefreshButton?.addEventListener("click", async () => {
     setBusy("Atualizando remoto");
     await refreshStudioControlLibrary();
     await refreshStudioControlStatus({ silent: true });
+    await refreshStudioControlSpreadsheet({ force: true, silent: true });
     setBusy("Pronto");
   } catch (error) {
     setBusy("Erro");
@@ -11705,7 +12113,14 @@ studioControlViewButtons.forEach((button) => {
   button.addEventListener("click", () => {
     state.remoteControl.activeView = button.dataset.studioControlView || "execution";
     renderStudioControl();
+    if (state.remoteControl.activeView === "spreadsheet") {
+      refreshStudioControlSpreadsheet({ force: true, silent: true }).catch(() => null);
+    }
   });
+});
+
+studioControlSheetRefreshButton?.addEventListener("click", () => {
+  refreshStudioControlSpreadsheet({ force: true }).catch((error) => setMessage(String(error), "error"));
 });
 
 studioControlList?.addEventListener("click", async (event) => {
@@ -12297,6 +12712,26 @@ timelineList.addEventListener("click", (event) => {
 
 commandMapList.addEventListener("change", (event) => {
   const target = event.target;
+  if (
+    target.matches('[data-tree-field="editableAtRun"], [data-field="editableAtRun"], [data-insert-field="editableAtRun"]')
+  ) {
+    const container = target.closest(".command-tree-card, .insert-card-panel, .flow-card");
+    if (container?.classList.contains("command-tree-card") || container?.classList.contains("flow-card")) {
+      const isEditable = Boolean(target.checked);
+      container.classList.toggle("is-runtime-editable", isEditable);
+      const chip = container.querySelector(".type-chip");
+      if (chip) {
+        chip.classList.toggle("runtime-editable", isEditable);
+        chip.textContent = isEditable ? "Bloco editavel" : typeChipLabel(container.dataset.type || "texto_livre");
+      }
+      syncCommandMapDraftFromCard(container);
+    }
+    if (container?.classList.contains("insert-card-panel") && state.insertPanel) {
+      state.insertPanel.editableAtRun = Boolean(target.checked);
+    }
+    return;
+  }
+
   if (target.matches("[data-jump-delay]")) {
     saveCommandJumpDelayFromInput(target);
     return;
@@ -12660,7 +13095,7 @@ commandMapList.addEventListener("click", (event) => {
   if (emptyTypeButton) {
     state.insertPanel = createInsertPanelState(0, "after");
     state.insertPanel.type = emptyTypeButton.dataset.emptyInsertType || "key";
-    if (state.insertPanel.type === "spreadsheet") {
+    if (state.insertPanel.type === "spreadsheet" || state.insertPanel.type === "write_spreadsheet") {
       state.insertPanel.workbook = state.insertPanel.workbook || state.composerWorkbookId || state.workbook?.default_workbook || "";
       state.insertPanel.sheet = state.insertPanel.sheet || workbookSheetsFor(state.insertPanel.workbook)[0]?.name || "";
       state.insertPanel.column = state.insertPanel.column || columnsForSheetInWorkbook(state.insertPanel.workbook, state.insertPanel.sheet)[0] || "";
@@ -12699,7 +13134,7 @@ commandMapList.addEventListener("click", (event) => {
       return;
     }
     state.insertPanel.type = button.dataset.insertType;
-    if (state.insertPanel.type === "spreadsheet") {
+    if (state.insertPanel.type === "spreadsheet" || state.insertPanel.type === "write_spreadsheet") {
       state.insertPanel.workbook = state.insertPanel.workbook || state.composerWorkbookId || state.workbook?.default_workbook || "";
       state.insertPanel.sheet = state.insertPanel.sheet || workbookSheetsFor(state.insertPanel.workbook)[0]?.name || "";
       state.insertPanel.column = state.insertPanel.column || columnsForSheetInWorkbook(state.insertPanel.workbook, state.insertPanel.sheet)[0] || "";
@@ -12797,6 +13232,8 @@ commandMapList.addEventListener("click", (event) => {
               blocoSucesso: common.blocoSucesso,
               sequenciaSucesso: common.sequenciaSucesso,
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+              editavelExecucao: Boolean(values.editableAtRun),
+              rotuloExecucao: values.runtimeLabel || null,
             })
           : invoke("insert_text_block", {
               targetOrder: common.targetOrder,
@@ -12808,6 +13245,8 @@ commandMapList.addEventListener("click", (event) => {
               blocoSucesso: common.blocoSucesso,
               sequenciaSucesso: common.sequenciaSucesso,
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+              editavelExecucao: Boolean(values.editableAtRun),
+              rotuloExecucao: values.runtimeLabel || null,
             });
     } else if (values.type === "key") {
       promiseFactory = () =>
@@ -13087,6 +13526,39 @@ commandMapList.addEventListener("click", (event) => {
               caminho: values.programPath,
               parametros: values.programParams || null,
               aguardarSegundos: values.programWait,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            });
+    } else if (values.type === "write_spreadsheet") {
+      if (!values.sheet.trim() || !values.column.trim()) {
+        setMessage("Informe a aba e a coluna antes de inserir esse bloco.", "error");
+        return;
+      }
+      promiseFactory = () =>
+        isFirstBlock
+          ? invoke("add_write_spreadsheet_block", {
+              workbook: values.workbook || state.composerWorkbookId || null,
+              sheet: values.sheet,
+              column: values.column,
+              value: values.writeValue,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            })
+          : invoke("insert_write_spreadsheet_block", {
+              targetOrder: common.targetOrder,
+              position: common.position,
+              workbook: values.workbook || state.composerWorkbookId || null,
+              sheet: values.sheet,
+              column: values.column,
+              value: values.writeValue,
               delay: common.delay,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,

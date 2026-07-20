@@ -133,6 +133,7 @@ INTERVALO_ENTRE_ITENS_PLANILHA = 0.5
 TEMPO_ESTABILIZACAO_APOS_CLIQUE = 0.24
 TEMPO_RESPIRO_ANTES_DIGITACAO = 0.05
 TIPOS_SEQUENCIA_PLANILHA = {"sequencia_planilha"}
+TIPOS_ESCRITA_PLANILHA = {"escrever_planilha"}
 TIPOS_MARCADORES_LOOP = {"inicio_loop", "fim_loop"}
 TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
@@ -144,6 +145,7 @@ TIPOS_SUPORTADOS_EXECUTOR = {
     "tecla",
     "atalho",
     *TIPOS_SEQUENCIA_PLANILHA,
+    *TIPOS_ESCRITA_PLANILHA,
     *TIPOS_MARCADORES_LOOP,
     *TIPOS_MOUSE,
     *TIPOS_IMAGEM,
@@ -195,6 +197,7 @@ class ExecutorAutomacao:
         arquivo_cancelamento=None,
         janela_alvo=None,
         target_context=None,
+        text_overrides=None,
     ):
         self.arquivo_mapeamento = Path(arquivo_mapeamento)
         self.arquivo_planilha = Path(arquivo_planilha)
@@ -222,6 +225,7 @@ class ExecutorAutomacao:
         self._janela_alvo_perdida_logada = False
         self._conflitos_janela_evento_logados = set()
         self.contexto_variaveis = {}
+        self.text_overrides = self.normalizar_text_overrides(text_overrides)
         self.contexto_execucao_alvo = self.normalizar_contexto_execucao(target_context)
         self._playwright_runtime = None
         self._chrome_browser = None
@@ -237,6 +241,27 @@ class ExecutorAutomacao:
         self.sequencia_inicial = self.resolver_sequencia_inicial(self.payload)
         self.configuracoes_sequencia = self.carregar_configuracoes_sequencia(self.payload)
         self.planilha_cache = self.carregar_planilha()
+
+    def normalizar_text_overrides(self, raw):
+        if not raw:
+            return {}
+        try:
+            dados = json.loads(raw) if isinstance(raw, str) else raw
+        except Exception:
+            return {}
+        if isinstance(dados, dict):
+            return {str(chave): str(valor) for chave, valor in dados.items()}
+        if isinstance(dados, list):
+            normalizado = {}
+            for item in dados:
+                if not isinstance(item, dict):
+                    continue
+                ordem = item.get("order", item.get("ordem"))
+                if ordem is None:
+                    continue
+                normalizado[str(ordem)] = str(item.get("value", item.get("valor", "")))
+            return normalizado
+        return {}
 
     def normalizar_nome_sequencia(self, nome):
         texto = str(nome or "").strip()
@@ -3088,6 +3113,51 @@ class ExecutorAutomacao:
             return int(linha_principal)
         return None
 
+    def escrever_valor_planilha_loop(self, evento, contexto_loop=None):
+        detalhes = evento.get("detalhes", {}) or {}
+        linha_atual = self.obter_linha_atual_contexto(contexto_loop)
+        if linha_atual is None:
+            raise ValueError("Este bloco precisa de uma linha atual do loop para escrever na planilha.")
+
+        arquivo = self.normalizar_id_planilha(detalhes.get("arquivo"))
+        aba = str(detalhes.get("aba") or "").strip()
+        coluna = str(detalhes.get("coluna") or "").strip()
+        valor = str(detalhes.get("valor") or "")
+        if not aba or not coluna:
+            raise ValueError("Configure a aba e a coluna do bloco Escrever na planilha.")
+
+        caminho_planilha, workbook_id = self.resolver_planilha(arquivo)
+        if not caminho_planilha.exists():
+            raise FileNotFoundError(f"Planilha nao encontrada: {caminho_planilha}")
+
+        workbook = load_workbook(caminho_planilha)
+        try:
+            if aba not in workbook.sheetnames:
+                raise ValueError(f"A aba '{aba}' nao foi encontrada na planilha.")
+            worksheet = workbook[aba]
+            if not hasattr(worksheet, "iter_rows"):
+                raise ValueError(f"A aba '{aba}' nao e uma planilha editavel.")
+            headers = [
+                str(cell.value or "").strip()
+                for cell in next(worksheet.iter_rows(min_row=1, max_row=1), [])
+            ]
+            try:
+                coluna_indice = headers.index(coluna) + 1
+            except ValueError:
+                coluna_indice = len(headers) + 1
+                worksheet.cell(row=1, column=coluna_indice).value = coluna
+            worksheet.cell(row=int(linha_atual), column=coluna_indice).value = valor
+            workbook.save(caminho_planilha)
+        finally:
+            workbook.close()
+
+        self.planilha_cache = self.carregar_planilha()
+        safe_print(
+            f"Planilha atualizada: {Path(workbook_id).name} / {aba} / linha {linha_atual} / {coluna} = {valor}",
+            flush=True,
+        )
+        return True
+
     def salvar_variavel_contexto(self, nome, valor):
         chave = str(nome or "").strip()
         if chave.startswith("{{") and chave.endswith("}}"):
@@ -3784,7 +3854,7 @@ class ExecutorAutomacao:
         for evento in self.eventos:
             tipo = str(evento.get("tipo") or "").strip()
             detalhes = evento.get("detalhes") or {}
-            if tipo == "sequencia_planilha":
+            if tipo in {"sequencia_planilha", "escrever_planilha"}:
                 arquivos.add(self.normalizar_id_planilha(detalhes.get("arquivo")))
         cache = {}
         for arquivo in arquivos:
@@ -4527,7 +4597,11 @@ class ExecutorAutomacao:
 
         if tipo == "texto_livre":
             self.preparar_janela_para_acao()
-            return self.resultado_sucesso_evento(evento) if self.escrever_texto(evento.get("texto", "")) else self.resultado_fluxo("parar")
+            ordem = str(evento.get("ordem", ""))
+            texto = self.text_overrides.get(ordem, evento.get("texto", ""))
+            if ordem in self.text_overrides:
+                safe_print(f"Texto editavel aplicado no bloco {ordem}.", flush=True)
+            return self.resultado_sucesso_evento(evento) if self.escrever_texto(texto) else self.resultado_fluxo("parar")
 
         if tipo in TIPOS_SEQUENCIA_PLANILHA:
             detalhes = evento.get("detalhes", {})
@@ -4566,6 +4640,9 @@ class ExecutorAutomacao:
                     if not self.esperar(intervalo_entre_itens):
                         return self.resultado_fluxo("parar")
             return self.resultado_sucesso_evento(evento)
+
+        if tipo in TIPOS_ESCRITA_PLANILHA:
+            return self.resultado_sucesso_evento(evento) if self.escrever_valor_planilha_loop(evento, contexto_loop) else self.resultado_fluxo("parar")
 
         if tipo in TIPOS_MOUSE:
             if self.cancelamento_solicitado():
@@ -5759,6 +5836,7 @@ def criar_parser():
     parser.add_argument("--cancelamento-arquivo", default=str(ARQUIVO_CANCELAMENTO))
     parser.add_argument("--janela-alvo", default="")
     parser.add_argument("--target-context", default="")
+    parser.add_argument("--text-overrides", default="")
     parser.add_argument("--imagem-teste", default="")
     parser.add_argument("--timeout-imagem", type=float, default=10.0)
     parser.add_argument("--confianca-imagem", type=float, default=0.8)
@@ -5787,6 +5865,7 @@ def main():
         arquivo_cancelamento=args.cancelamento_arquivo,
         janela_alvo=args.janela_alvo,
         target_context=args.target_context,
+        text_overrides=args.text_overrides,
     )
 
     atraso = max(0, round(float(args.atraso), 2))

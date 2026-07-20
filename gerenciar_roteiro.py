@@ -43,6 +43,7 @@ INSTRUCOES_PADRAO = [
     "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura.",
 ]
 TIPOS_SEQUENCIA_PLANILHA = {"sequencia_planilha"}
+TIPOS_ESCRITA_PLANILHA = {"escrever_planilha"}
 TIPOS_MARCADORES_LOOP = {"inicio_loop", "fim_loop"}
 TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
@@ -54,6 +55,7 @@ TIPOS_SUPORTADOS_RUNTIME = {
     "tecla",
     "atalho",
     *TIPOS_SEQUENCIA_PLANILHA,
+    *TIPOS_ESCRITA_PLANILHA,
     *TIPOS_MARCADORES_LOOP,
     *TIPOS_MOUSE,
     *TIPOS_IMAGEM,
@@ -1192,6 +1194,12 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         acao = (metadados or {}).get("acao_apos_item_texto") or "nenhuma"
         return f"[PLANILHA:{coluna} x{quantidade} | apos:{acao}]"
 
+    if tipo_evento in TIPOS_ESCRITA_PLANILHA:
+        detalhes = metadados or {}
+        coluna = str(detalhes.get("coluna", "Coluna") or "Coluna")
+        valor = str(detalhes.get("valor", "") or "")
+        return f"[ESCREVER PLANILHA:{coluna}='{valor[:28]}' | linha atual]"
+
     if tipo_evento in TIPOS_MOUSE:
         detalhes = metadados or {}
         x = detalhes.get("x", 0)
@@ -1303,6 +1311,16 @@ def montar_comando_python(teclas, tipo_evento, texto_livre=None, metadados=None)
             f"executar_sequencia({valores!r}, "
             f"acao_apos_item={acao_apos_item!r}, "
             f"intervalo_entre_itens={intervalo_entre_itens!r})"
+        )
+
+    if tipo_evento in TIPOS_ESCRITA_PLANILHA:
+        detalhes = metadados or {}
+        return (
+            "escrever_planilha("
+            f"aba={str(detalhes.get('aba', ''))!r}, "
+            f"coluna={str(detalhes.get('coluna', ''))!r}, "
+            f"valor={str(detalhes.get('valor', ''))!r}, "
+            "linha='loop_atual')"
         )
 
     if tipo_evento in TIPOS_MOUSE:
@@ -1836,8 +1854,12 @@ def criar_bloco_texto(
     bloco_sucesso="",
     sequencia_sucesso="",
     atraso_sequencia_sucesso=0,
+    editavel_execucao=False,
+    rotulo_execucao="",
 ):
     detalhes = aplicar_fluxo_sucesso({}, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
+    detalhes["editavel_execucao"] = bool(editavel_execucao)
+    detalhes["rotulo_execucao"] = str(rotulo_execucao or "").strip()
     return {
         "ordem": 0,
         "sequencia": normalizar_nome_sequencia(sequencia),
@@ -1855,6 +1877,12 @@ def parse_keys_string(keys_string):
     if not partes:
         raise ValueError("Informe uma tecla ou atalho.")
     return partes
+
+
+def parse_bool_value(value):
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "sim", "yes", "on"}
 
 
 def criar_bloco_teclas(
@@ -2216,6 +2244,43 @@ def criar_bloco_planilha(
     }
 
 
+def criar_bloco_escrever_planilha(
+    sheet,
+    column,
+    value,
+    delay,
+    workbook_file=None,
+    sequencia="principal",
+    ao_sucesso="continuar",
+    bloco_sucesso="",
+    sequencia_sucesso="",
+    atraso_sequencia_sucesso=0,
+):
+    workbook_id = normalizar_id_planilha(workbook_file)
+    detalhes = aplicar_fluxo_sucesso({
+        "arquivo": workbook_id,
+        "aba": str(sheet or "").strip(),
+        "coluna": str(column or "").strip(),
+        "valor": str(value or ""),
+        "modo_linha": "loop_atual",
+        "criar_coluna": True,
+    }, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
+    return {
+        "ordem": 0,
+        "sequencia": normalizar_nome_sequencia(sequencia),
+        "tipo": "escrever_planilha",
+        "teclas": [f"escrever_planilha:{column}"],
+        "texto": formatar_evento([f"escrever_planilha:{column}"], "escrever_planilha", metadados=detalhes),
+        "intervalo_antes": round(float(delay), 3),
+        "comando_python": montar_comando_python(
+            [f"escrever_planilha:{column}"],
+            "escrever_planilha",
+            metadados=detalhes,
+        ),
+        "detalhes": detalhes,
+    }
+
+
 def criar_bloco_marcador_loop(
     tipo,
     delay=0,
@@ -2341,6 +2406,13 @@ def card_do_evento(evento):
             f"{len(detalhes.get('valores', []))} itens | apos item: "
             f"{detalhes.get('acao_apos_item_texto', 'nenhuma')}"
         )
+    elif tipo == "escrever_planilha":
+        titulo = "Escrever na planilha"
+        subtitulo = (
+            f"{Path(detalhes.get('arquivo', ARQUIVO_PLANILHA.name)).name} - "
+            f"{detalhes.get('aba', 'Sheet1')} -> {detalhes.get('coluna', 'Coluna')}"
+        )
+        descricao = f"Linha atual do loop recebe: {detalhes.get('valor', '')}"
     elif tipo == "inicio_loop":
         titulo = "Inicio do loop"
         subtitulo = "Daqui em diante o trecho pode repetir por linha da planilha."
@@ -2790,7 +2862,19 @@ def comando_preview_planilha(args):
 
 def comando_adicionar_texto(args):
     payload = carregar_e_normalizar()
-    payload["eventos"].append(criar_bloco_texto(args.text, args.delay, args.sequencia, args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso))
+    payload["eventos"].append(
+        criar_bloco_texto(
+            args.text,
+            args.delay,
+            args.sequencia,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+            parse_bool_value(getattr(args, "editavel_execucao", False)),
+            getattr(args, "rotulo_execucao", "") or "",
+        )
+    )
     return salvar_e_retornar(payload)
 
 
@@ -2946,6 +3030,25 @@ def comando_adicionar_planilha(args):
     return salvar_e_retornar(payload)
 
 
+def comando_adicionar_escrita_planilha(args):
+    payload = carregar_e_normalizar()
+    payload["eventos"].append(
+        criar_bloco_escrever_planilha(
+            args.sheet,
+            args.column,
+            args.value,
+            args.delay,
+            args.workbook,
+            args.sequencia,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+        )
+    )
+    return salvar_e_retornar(payload)
+
+
 def comando_adicionar_inicio_loop(args):
     payload = carregar_e_normalizar()
     payload["eventos"].append(criar_bloco_marcador_loop("inicio_loop", args.delay, args.sequencia))
@@ -2972,7 +3075,17 @@ def comando_inserir_texto(args):
     payload = carregar_e_normalizar()
     inserir_evento(
         payload,
-        criar_bloco_texto(args.text, args.delay, args.sequencia, args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso),
+        criar_bloco_texto(
+            args.text,
+            args.delay,
+            args.sequencia,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+            parse_bool_value(getattr(args, "editavel_execucao", False)),
+            getattr(args, "rotulo_execucao", "") or "",
+        ),
         args.target_order,
         args.position,
     )
@@ -3159,6 +3272,28 @@ def comando_inserir_planilha(args):
     return salvar_e_retornar(payload)
 
 
+def comando_inserir_escrita_planilha(args):
+    payload = carregar_e_normalizar()
+    inserir_evento(
+        payload,
+        criar_bloco_escrever_planilha(
+            args.sheet,
+            args.column,
+            args.value,
+            args.delay,
+            args.workbook,
+            args.sequencia,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+        ),
+        args.target_order,
+        args.position,
+    )
+    return salvar_e_retornar(payload)
+
+
 def comando_inserir_inicio_loop(args):
     payload = carregar_e_normalizar()
     inserir_evento(
@@ -3216,6 +3351,8 @@ def comando_atualizar_texto(args):
         raise ValueError("O bloco selecionado nao eh do tipo texto livre.")
     evento["texto"] = args.text
     detalhes = aplicar_fluxo_sucesso(evento.get("detalhes"), args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso)
+    detalhes["editavel_execucao"] = parse_bool_value(getattr(args, "editavel_execucao", detalhes.get("editavel_execucao", False)))
+    detalhes["rotulo_execucao"] = str(getattr(args, "rotulo_execucao", detalhes.get("rotulo_execucao", "")) or "").strip()
     evento["detalhes"] = detalhes
     if args.sequencia is not None:
         evento["sequencia"] = normalizar_nome_sequencia(args.sequencia)
@@ -3412,6 +3549,28 @@ def comando_atualizar_planilha(args):
     return salvar_e_retornar(payload)
 
 
+def comando_atualizar_escrita_planilha(args):
+    payload = carregar_e_normalizar()
+    _, evento = localizar_evento(payload, args.order)
+    if evento.get("tipo") != "escrever_planilha":
+        raise ValueError("O bloco selecionado nao eh do tipo escrever na planilha.")
+    detalhes_atuais = evento.get("detalhes") or {}
+    bloco = criar_bloco_escrever_planilha(
+        args.sheet,
+        args.column,
+        args.value,
+        args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
+        args.workbook or detalhes_atuais.get("arquivo"),
+        args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
+        args.ao_sucesso,
+        args.bloco_sucesso,
+        args.sequencia_sucesso,
+        args.atraso_sequencia_sucesso,
+    )
+    evento.update(bloco)
+    return salvar_e_retornar(payload)
+
+
 def comando_atualizar_atraso(args):
     payload = carregar_e_normalizar()
     _, evento = localizar_evento(payload, args.order)
@@ -3588,6 +3747,8 @@ def build_parser():
     add_text.add_argument("--text", required=True)
     add_text.add_argument("--delay", type=float, default=0)
     add_text.add_argument("--sequencia", default="principal")
+    add_text.add_argument("--editavel-execucao", default="false")
+    add_text.add_argument("--rotulo-execucao", default="")
     adicionar_argumentos_fluxo_sucesso(add_text)
 
     add_key = subparsers.add_parser("add-key")
@@ -3690,6 +3851,15 @@ def build_parser():
     add_sheet.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(add_sheet)
 
+    add_write_sheet = subparsers.add_parser("add-write-planilha")
+    add_write_sheet.add_argument("--workbook")
+    add_write_sheet.add_argument("--sheet", required=True)
+    add_write_sheet.add_argument("--column", required=True)
+    add_write_sheet.add_argument("--value", default="")
+    add_write_sheet.add_argument("--delay", type=float, default=0)
+    add_write_sheet.add_argument("--sequencia", default="principal")
+    adicionar_argumentos_fluxo_sucesso(add_write_sheet)
+
     add_loop_start = subparsers.add_parser("add-loop-start")
     add_loop_start.add_argument("--delay", type=float, default=0)
     add_loop_start.add_argument("--sequencia", default="principal")
@@ -3705,6 +3875,8 @@ def build_parser():
     insert_text.add_argument("--text", required=True)
     insert_text.add_argument("--delay", type=float, default=0)
     insert_text.add_argument("--sequencia", default="principal")
+    insert_text.add_argument("--editavel-execucao", default="false")
+    insert_text.add_argument("--rotulo-execucao", default="")
     adicionar_argumentos_fluxo_sucesso(insert_text)
 
     insert_key = subparsers.add_parser("insert-key")
@@ -3823,6 +3995,17 @@ def build_parser():
     insert_sheet.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(insert_sheet)
 
+    insert_write_sheet = subparsers.add_parser("insert-write-planilha")
+    insert_write_sheet.add_argument("--workbook")
+    insert_write_sheet.add_argument("--target-order", type=int, required=True)
+    insert_write_sheet.add_argument("--position", choices=["before", "after"], required=True)
+    insert_write_sheet.add_argument("--sheet", required=True)
+    insert_write_sheet.add_argument("--column", required=True)
+    insert_write_sheet.add_argument("--value", default="")
+    insert_write_sheet.add_argument("--delay", type=float, default=0)
+    insert_write_sheet.add_argument("--sequencia", default="principal")
+    adicionar_argumentos_fluxo_sucesso(insert_write_sheet)
+
     update_loop_marker = subparsers.add_parser("update-loop-marker")
     update_loop_marker.add_argument("--order", type=int, required=True)
     update_loop_marker.add_argument("--delay", type=float)
@@ -3847,6 +4030,8 @@ def build_parser():
     update_text.add_argument("--text", required=True)
     update_text.add_argument("--delay", type=float)
     update_text.add_argument("--sequencia")
+    update_text.add_argument("--editavel-execucao", default="false")
+    update_text.add_argument("--rotulo-execucao", default="")
     adicionar_argumentos_fluxo_sucesso(update_text)
 
     update_key = subparsers.add_parser("update-key")
@@ -3957,6 +4142,16 @@ def build_parser():
     update_sheet.add_argument("--sequencia")
     adicionar_argumentos_fluxo_sucesso(update_sheet)
 
+    update_write_sheet = subparsers.add_parser("update-write-planilha")
+    update_write_sheet.add_argument("--workbook")
+    update_write_sheet.add_argument("--order", type=int, required=True)
+    update_write_sheet.add_argument("--sheet", required=True)
+    update_write_sheet.add_argument("--column", required=True)
+    update_write_sheet.add_argument("--value", default="")
+    update_write_sheet.add_argument("--delay", type=float)
+    update_write_sheet.add_argument("--sequencia")
+    adicionar_argumentos_fluxo_sucesso(update_write_sheet)
+
     update_delay = subparsers.add_parser("update-delay")
     update_delay.add_argument("--order", type=int, required=True)
     update_delay.add_argument("--delay", type=float, required=True)
@@ -4014,6 +4209,7 @@ COMANDOS = {
     "add-open-url": comando_adicionar_abrir_url,
     "add-open-program": comando_adicionar_abrir_programa,
     "add-planilha": comando_adicionar_planilha,
+    "add-write-planilha": comando_adicionar_escrita_planilha,
     "add-loop-start": comando_adicionar_inicio_loop,
     "add-loop-end": comando_adicionar_fim_loop,
     "insert-text": comando_inserir_texto,
@@ -4025,6 +4221,7 @@ COMANDOS = {
     "insert-open-url": comando_inserir_abrir_url,
     "insert-open-program": comando_inserir_abrir_programa,
     "insert-planilha": comando_inserir_planilha,
+    "insert-write-planilha": comando_inserir_escrita_planilha,
     "insert-loop-start": comando_inserir_inicio_loop,
     "insert-loop-end": comando_inserir_fim_loop,
     "update-text": comando_atualizar_texto,
@@ -4036,6 +4233,7 @@ COMANDOS = {
     "update-open-url": comando_atualizar_abrir_url,
     "update-open-program": comando_atualizar_abrir_programa,
     "update-planilha": comando_atualizar_planilha,
+    "update-write-planilha": comando_atualizar_escrita_planilha,
     "update-loop-marker": comando_atualizar_marcador_loop,
     "update-delay": comando_atualizar_atraso,
     "update-delay-all": comando_atualizar_atraso_global,

@@ -1,5 +1,5 @@
 {
-  "criado_em": "2026-07-17T15:16:59",
+  "criado_em": "2026-07-20T14:11:48",
   "instrucoes": [
     "Teclas simples e atalhos sao gravados individualmente.",
     "F8 abre uma caixa de texto grande e salva o bloco como um unico comando.",
@@ -8,35 +8,60 @@
     "A aba Planilha pode adicionar uma sequencia inteira ou so linhas selecionadas ao roteiro.",
     "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura."
   ],
-  "resumo_digitado": "[PLANILHA:Data - 2025 x18 | apos:enter][ENTER]\n[ALT+N][TAB x7][PLANILHA:Importação - 2025 x18 | apos:enter][ALT+O][IMAGEM:okok | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][ENTER]\n[IMAGEM:okok2 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][TAB][ENTER]\n[ALT+V][IMAGEM:achi1 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]01012025[ENTER]\n31072026[ENTER]\n[ALT+N]301[ENTER x4]\n[IMAGEM:fechar | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:achi11 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]301[ENTER x4]\n[IMAGEM:aiuhgbxiu1 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:aaaa | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:aaaaaa | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:aaaaa2 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][ALT+N][IMAGEM:achie2 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:aassss | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:aas12 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:aaa | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][ALT+V][IMAGEM:sair-loop | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+  "resumo_digitado": "[ALT+P][TAB x3][PLANILHA:2026 x6 | apos:enter][ALT+N][IMAGEM:imagem_capturada_007 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:continuar]72[ENTER x4]\n[ALT+N][ALT+O][IMAGEM:ook | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][PLANILHA:Descrição2 x6 | apos:nenhuma][TAB x3][ENTER]\n[ALT+F][ALT+V]",
   "eventos": [
     {
       "ordem": 1,
-      "sequencia": "pagina_2",
+      "sequencia": "principal",
+      "tipo": "atalho",
+      "teclas": [
+        "alt",
+        "p"
+      ],
+      "texto": "[ALT+P]",
+      "intervalo_antes": 0.3,
+      "comando_python": "executar_teclas(['alt', 'p'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 2,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "tab"
+      ],
+      "texto": "[TAB x3]",
+      "intervalo_antes": 0.7,
+      "comando_python": "executar_teclas(['tab'], repeticoes=3)",
+      "detalhes": {
+        "repeticoes": 3,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 3,
+      "sequencia": "principal",
       "tipo": "sequencia_planilha",
       "teclas": [
-        "planilha:Data - 2025"
+        "planilha:2026"
       ],
-      "texto": "[PLANILHA:Data - 2025 x18 | apos:enter]",
+      "texto": "[PLANILHA:2026 x6 | apos:enter]",
       "intervalo_antes": 0.3,
-      "comando_python": "executar_sequencia(['01012025', '01022025', '010302025', '01042025', '01052025', '01062025', '01072025', '01082025', '01092025', '01102025', '01112025', '01122025', '01012026', '01022026', '01032026', '01042026', '01052026', '01062026'], acao_apos_item=['enter'], intervalo_entre_itens=0.5)",
+      "comando_python": "executar_sequencia(['01012026', '01022026', '01032026', '01042026', '01052026', '01062026'], acao_apos_item=['enter'], intervalo_entre_itens=0.5)",
       "detalhes": {
-        "arquivo": "planilhas/Integra__o_Folha.xlsx",
+        "arquivo": "planilhas/Relatorios-Datasss-corrigida.xlsx",
         "aba": "Sheet1",
-        "coluna": "Data - 2025",
+        "coluna": "2026",
         "valores": [
-          "01012025",
-          "01022025",
-          "010302025",
-          "01042025",
-          "01052025",
-          "01062025",
-          "01072025",
-          "01082025",
-          "01092025",
-          "01102025",
-          "01112025",
-          "01122025",
           "01012026",
           "01022026",
           "01032026",
@@ -58,54 +83,18 @@
       }
     },
     {
-      "ordem": 2,
-      "sequencia": "pagina_2",
-      "tipo": "tecla",
-      "teclas": [
-        "enter"
-      ],
-      "texto": "[ENTER]\n",
-      "intervalo_antes": 0.3,
-      "comando_python": "executar_teclas(['enter'], repeticoes=1)",
-      "detalhes": {
-        "repeticoes": 1,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 3,
-      "sequencia": "pagina_2",
+      "ordem": 4,
+      "sequencia": "principal",
       "tipo": "atalho",
       "teclas": [
         "alt",
         "n"
       ],
       "texto": "[ALT+N]",
-      "intervalo_antes": 0.3,
+      "intervalo_antes": 0.7,
       "comando_python": "executar_teclas(['alt', 'n'], repeticoes=1)",
       "detalhes": {
         "repeticoes": 1,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 4,
-      "sequencia": "pagina_2",
-      "tipo": "tecla",
-      "teclas": [
-        "tab"
-      ],
-      "texto": "[TAB x7]",
-      "intervalo_antes": 0.3,
-      "comando_python": "executar_teclas(['tab'], repeticoes=7)",
-      "detalhes": {
-        "repeticoes": 7,
         "ao_sucesso": "continuar",
         "bloco_sucesso": "",
         "sequencia_sucesso": "",
@@ -114,362 +103,62 @@
     },
     {
       "ordem": 5,
-      "sequencia": "pagina_2",
-      "tipo": "sequencia_planilha",
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
       "teclas": [
-        "planilha:Importação - 2025"
+        "imagem"
       ],
-      "texto": "[PLANILHA:Importação - 2025 x18 | apos:enter]",
-      "intervalo_antes": 1.0,
-      "comando_python": "executar_sequencia(['2025 - PROV.FOLHA - 01', '2025 - PROV.FOLHA - 02', '2025 - PROV.FOLHA - 03', '2025 - PROV.FOLHA - 04', '2025 - PROV.FOLHA - 05', '2025 - PROV.FOLHA - 06', '2025 - PROV.FOLHA - 07', '2025 - PROV.FOLHA - 08', '2025 - PROV.FOLHA - 09', '2025 - PROV.FOLHA - 10', '2025 - PROV.FOLHA - 11', '2025 - PROV.FOLHA - 12', '2026 - PROV.FOLHA - 01', '2026 - PROV.FOLHA - 02', '2026 - PROV.FOLHA - 03', '2026 - PROV.FOLHA - 04', '2026 - PROV.FOLHA - 05', '2026 - PROV.FOLHA - 06'], acao_apos_item=['enter'], intervalo_entre_itens=0.5)",
+      "texto": "[IMAGEM:imagem_capturada_007 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:continuar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/imagem_capturada_007', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='continuar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
       "detalhes": {
-        "arquivo": "planilhas/Integra__o_Folha.xlsx",
-        "aba": "Sheet1",
-        "coluna": "Importação - 2025",
-        "valores": [
-          "2025 - PROV.FOLHA - 01",
-          "2025 - PROV.FOLHA - 02",
-          "2025 - PROV.FOLHA - 03",
-          "2025 - PROV.FOLHA - 04",
-          "2025 - PROV.FOLHA - 05",
-          "2025 - PROV.FOLHA - 06",
-          "2025 - PROV.FOLHA - 07",
-          "2025 - PROV.FOLHA - 08",
-          "2025 - PROV.FOLHA - 09",
-          "2025 - PROV.FOLHA - 10",
-          "2025 - PROV.FOLHA - 11",
-          "2025 - PROV.FOLHA - 12",
-          "2026 - PROV.FOLHA - 01",
-          "2026 - PROV.FOLHA - 02",
-          "2026 - PROV.FOLHA - 03",
-          "2026 - PROV.FOLHA - 04",
-          "2026 - PROV.FOLHA - 05",
-          "2026 - PROV.FOLHA - 06"
-        ],
-        "origem": "coluna_inteira",
-        "linhas_selecionadas": [],
-        "acao_apos_item": [
-          "enter"
-        ],
-        "acao_apos_item_texto": "enter",
-        "intervalo_entre_itens": 0.5,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
+        "imagem": "imagens/imagem_capturada_007",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "continuar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "ir_para_bloco",
+        "bloco_sucesso": 8,
         "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
+        "atraso_antes_sequencia_sucesso": 1.0
       }
     },
     {
       "ordem": 6,
-      "sequencia": "pagina_2",
-      "tipo": "atalho",
+      "sequencia": "principal",
+      "tipo": "texto_livre",
       "teclas": [
-        "alt",
-        "o"
+        "texto_livre"
       ],
-      "texto": "[ALT+O]",
+      "texto": "72",
       "intervalo_antes": 0.3,
-      "comando_python": "executar_teclas(['alt', 'o'], repeticoes=1)",
+      "comando_python": "digitar_texto('72')",
       "detalhes": {
-        "repeticoes": 1,
         "ao_sucesso": "continuar",
         "bloco_sucesso": "",
         "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
+        "atraso_antes_sequencia_sucesso": 0.0,
+        "editavel_execucao": true,
+        "rotulo_execucao": "tetse"
       }
     },
     {
       "ordem": 7,
-      "sequencia": "pagina_2",
-      "tipo": "clicar_imagem",
-      "teclas": [
-        "imagem"
-      ],
-      "texto": "[IMAGEM:okok | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/okok', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
-      "detalhes": {
-        "imagem": "imagens/okok",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 8,
-      "sequencia": "pagina_2",
-      "tipo": "tecla",
-      "teclas": [
-        "enter"
-      ],
-      "texto": "[ENTER]\n",
-      "intervalo_antes": 0.3,
-      "comando_python": "executar_teclas(['enter'], repeticoes=1)",
-      "detalhes": {
-        "repeticoes": 1,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 9,
-      "sequencia": "pagina_2",
-      "tipo": "clicar_imagem",
-      "teclas": [
-        "imagem"
-      ],
-      "texto": "[IMAGEM:okok2 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 4.0,
-      "comando_python": "clicar_por_imagem(imagem='imagens/okok2', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
-      "detalhes": {
-        "imagem": "imagens/okok2",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 10,
-      "sequencia": "pagina_2",
-      "tipo": "tecla",
-      "teclas": [
-        "tab"
-      ],
-      "texto": "[TAB]",
-      "intervalo_antes": 0.6,
-      "comando_python": "executar_teclas(['tab'], repeticoes=1)",
-      "detalhes": {
-        "repeticoes": 1,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 11,
-      "sequencia": "pagina_2",
-      "tipo": "tecla",
-      "teclas": [
-        "enter"
-      ],
-      "texto": "[ENTER]\n",
-      "intervalo_antes": 0.6,
-      "comando_python": "executar_teclas(['enter'], repeticoes=1)",
-      "detalhes": {
-        "repeticoes": 1,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 12,
-      "sequencia": "pagina_2",
-      "tipo": "atalho",
-      "teclas": [
-        "alt",
-        "v"
-      ],
-      "texto": "[ALT+V]",
-      "intervalo_antes": 0.9,
-      "comando_python": "executar_teclas(['alt', 'v'], repeticoes=1)",
-      "detalhes": {
-        "repeticoes": 1,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 13,
-      "sequencia": "principal",
-      "tipo": "clicar_imagem",
-      "teclas": [
-        "imagem"
-      ],
-      "texto": "[IMAGEM:achi1 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/achi1', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
-      "detalhes": {
-        "imagem": "imagens/achi1",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 14,
-      "sequencia": "principal",
-      "tipo": "texto_livre",
-      "teclas": [
-        "texto_livre"
-      ],
-      "texto": "01012025",
-      "intervalo_antes": 0.6,
-      "comando_python": "digitar_texto('01012025')",
-      "detalhes": {
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 15,
-      "sequencia": "principal",
-      "tipo": "tecla",
-      "teclas": [
-        "enter"
-      ],
-      "texto": "[ENTER]\n",
-      "intervalo_antes": 0.3,
-      "comando_python": "executar_teclas(['enter'], repeticoes=1)",
-      "detalhes": {
-        "repeticoes": 1,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 16,
-      "sequencia": "principal",
-      "tipo": "texto_livre",
-      "teclas": [
-        "texto_livre"
-      ],
-      "texto": "31072026",
-      "intervalo_antes": 0.3,
-      "comando_python": "digitar_texto('31072026')",
-      "detalhes": {
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 17,
-      "sequencia": "principal",
-      "tipo": "tecla",
-      "teclas": [
-        "enter"
-      ],
-      "texto": "[ENTER]\n",
-      "intervalo_antes": 0.3,
-      "comando_python": "executar_teclas(['enter'], repeticoes=1)",
-      "detalhes": {
-        "repeticoes": 1,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 18,
-      "sequencia": "principal",
-      "tipo": "atalho",
-      "teclas": [
-        "alt",
-        "n"
-      ],
-      "texto": "[ALT+N]",
-      "intervalo_antes": 0.3,
-      "comando_python": "executar_teclas(['alt', 'n'], repeticoes=1)",
-      "detalhes": {
-        "repeticoes": 1,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 19,
-      "sequencia": "principal",
-      "tipo": "texto_livre",
-      "teclas": [
-        "texto_livre"
-      ],
-      "texto": "301",
-      "intervalo_antes": 0.3,
-      "comando_python": "digitar_texto('301')",
-      "detalhes": {
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 20,
       "sequencia": "principal",
       "tipo": "tecla",
       "teclas": [
@@ -480,279 +169,22 @@
       "comando_python": "executar_teclas(['enter'], repeticoes=4)",
       "detalhes": {
         "repeticoes": 4,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 21,
-      "sequencia": "principal",
-      "tipo": "clicar_imagem",
-      "teclas": [
-        "imagem"
-      ],
-      "texto": "[IMAGEM:fechar | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 2.0,
-      "comando_python": "clicar_por_imagem(imagem='imagens/fechar', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
-      "detalhes": {
-        "imagem": "imagens/fechar",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
         "ao_sucesso": "ir_para_bloco",
-        "bloco_sucesso": 22,
+        "bloco_sucesso": 9,
         "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
+        "atraso_antes_sequencia_sucesso": 1.0
       }
     },
     {
-      "ordem": 22,
-      "sequencia": "pagina_3",
-      "tipo": "clicar_imagem",
-      "teclas": [
-        "imagem"
-      ],
-      "texto": "[IMAGEM:achi11 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/achi11', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
-      "detalhes": {
-        "imagem": "imagens/achi11",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 23,
-      "sequencia": "pagina_3",
-      "tipo": "texto_livre",
-      "teclas": [
-        "texto_livre"
-      ],
-      "texto": "301",
-      "intervalo_antes": 1.0,
-      "comando_python": "digitar_texto('301')",
-      "detalhes": {
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 24,
-      "sequencia": "pagina_3",
-      "tipo": "tecla",
-      "teclas": [
-        "enter"
-      ],
-      "texto": "[ENTER x4]\n",
-      "intervalo_antes": 0.3,
-      "comando_python": "executar_teclas(['enter'], repeticoes=4)",
-      "detalhes": {
-        "repeticoes": 4,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 25,
-      "sequencia": "pagina_3",
-      "tipo": "clicar_imagem",
-      "teclas": [
-        "imagem"
-      ],
-      "texto": "[IMAGEM:aiuhgbxiu1 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 1.0,
-      "comando_python": "clicar_por_imagem(imagem='imagens/aiuhgbxiu1', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
-      "detalhes": {
-        "imagem": "imagens/aiuhgbxiu1",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 26,
-      "sequencia": "pagina_3",
-      "tipo": "clicar_imagem",
-      "teclas": [
-        "imagem"
-      ],
-      "texto": "[IMAGEM:aaaa | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/aaaa', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
-      "detalhes": {
-        "imagem": "imagens/aaaa",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 27,
-      "sequencia": "pagina_3",
-      "tipo": "clicar_imagem",
-      "teclas": [
-        "imagem"
-      ],
-      "texto": "[IMAGEM:aaaaaa | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/aaaaaa', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
-      "detalhes": {
-        "imagem": "imagens/aaaaaa",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 28,
-      "sequencia": "pagina_3",
-      "tipo": "clicar_imagem",
-      "teclas": [
-        "imagem"
-      ],
-      "texto": "[IMAGEM:aaaaa2 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/aaaaa2', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
-      "detalhes": {
-        "imagem": "imagens/aaaaa2",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 29,
-      "sequencia": "pagina_3",
+      "ordem": 8,
+      "sequencia": "principal",
       "tipo": "atalho",
       "teclas": [
         "alt",
         "n"
       ],
       "texto": "[ALT+N]",
-      "intervalo_antes": 1.0,
+      "intervalo_antes": 0.3,
       "comando_python": "executar_teclas(['alt', 'n'], repeticoes=1)",
       "detalhes": {
         "repeticoes": 1,
@@ -763,17 +195,36 @@
       }
     },
     {
-      "ordem": 30,
-      "sequencia": "pagina_3",
+      "ordem": 9,
+      "sequencia": "principal",
+      "tipo": "atalho",
+      "teclas": [
+        "alt",
+        "o"
+      ],
+      "texto": "[ALT+O]",
+      "intervalo_antes": 0.9,
+      "comando_python": "executar_teclas(['alt', 'o'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 10,
+      "sequencia": "principal",
       "tipo": "clicar_imagem",
       "teclas": [
         "imagem"
       ],
-      "texto": "[IMAGEM:achie2 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "texto": "[IMAGEM:ook | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
       "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/achie2', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "comando_python": "clicar_por_imagem(imagem='imagens/ook', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
       "detalhes": {
-        "imagem": "imagens/achie2",
+        "imagem": "imagens/ook",
         "timeout": 10.0,
         "confianca": 0.8,
         "perfil_busca": "balanced",
@@ -800,36 +251,32 @@
       }
     },
     {
-      "ordem": 31,
-      "sequencia": "pagina_3",
-      "tipo": "clicar_imagem",
+      "ordem": 11,
+      "sequencia": "principal",
+      "tipo": "sequencia_planilha",
       "teclas": [
-        "imagem"
+        "planilha:Descrição2"
       ],
-      "texto": "[IMAGEM:aassss | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/aassss', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "texto": "[PLANILHA:Descrição2 x6 | apos:nenhuma]",
+      "intervalo_antes": 1.2,
+      "comando_python": "executar_sequencia(['01.2026', '02.2026', '03.2026', '04.2026', '05.2026', '06.2026'], acao_apos_item=[], intervalo_entre_itens=0.5)",
       "detalhes": {
-        "imagem": "imagens/aassss",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
+        "arquivo": "planilhas/Relatorios-Datas.xlsx",
+        "aba": "Sheet1",
+        "coluna": "Descrição2",
+        "valores": [
+          "01.2026",
+          "02.2026",
+          "03.2026",
+          "04.2026",
+          "05.2026",
+          "06.2026"
+        ],
+        "origem": "coluna_inteira",
+        "linhas_selecionadas": [],
+        "acao_apos_item": [],
+        "acao_apos_item_texto": "nenhuma",
+        "intervalo_entre_itens": 0.5,
         "ao_sucesso": "continuar",
         "bloco_sucesso": "",
         "sequencia_sucesso": "",
@@ -837,36 +284,17 @@
       }
     },
     {
-      "ordem": 32,
-      "sequencia": "pagina_3",
-      "tipo": "clicar_imagem",
+      "ordem": 12,
+      "sequencia": "principal",
+      "tipo": "tecla",
       "teclas": [
-        "imagem"
+        "tab"
       ],
-      "texto": "[IMAGEM:aas12 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/aas12', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "texto": "[TAB x3]",
+      "intervalo_antes": 2.0,
+      "comando_python": "executar_teclas(['tab'], repeticoes=3)",
       "detalhes": {
-        "imagem": "imagens/aas12",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
+        "repeticoes": 3,
         "ao_sucesso": "continuar",
         "bloco_sucesso": "",
         "sequencia_sucesso": "",
@@ -874,36 +302,17 @@
       }
     },
     {
-      "ordem": 33,
-      "sequencia": "pagina_3",
-      "tipo": "clicar_imagem",
+      "ordem": 13,
+      "sequencia": "principal",
+      "tipo": "tecla",
       "teclas": [
-        "imagem"
+        "enter"
       ],
-      "texto": "[IMAGEM:aaa | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/aaa', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "texto": "[ENTER]\n",
+      "intervalo_antes": 0.6,
+      "comando_python": "executar_teclas(['enter'], repeticoes=1)",
       "detalhes": {
-        "imagem": "imagens/aaa",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
+        "repeticoes": 1,
         "ao_sucesso": "continuar",
         "bloco_sucesso": "",
         "sequencia_sucesso": "",
@@ -911,8 +320,27 @@
       }
     },
     {
-      "ordem": 34,
-      "sequencia": "pagina_3",
+      "ordem": 14,
+      "sequencia": "principal",
+      "tipo": "atalho",
+      "teclas": [
+        "alt",
+        "f"
+      ],
+      "texto": "[ALT+F]",
+      "intervalo_antes": 3.0,
+      "comando_python": "executar_teclas(['alt', 'f'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 15,
+      "sequencia": "principal",
       "tipo": "atalho",
       "teclas": [
         "alt",
@@ -923,45 +351,8 @@
       "comando_python": "executar_teclas(['alt', 'v'], repeticoes=1)",
       "detalhes": {
         "repeticoes": 1,
-        "ao_sucesso": "ir_para_bloco",
-        "bloco_sucesso": 1,
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 35,
-      "sequencia": "pagina_4",
-      "tipo": "clicar_imagem",
-      "teclas": [
-        "imagem"
-      ],
-      "texto": "[IMAGEM:sair-loop | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/sair-loop', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
-      "detalhes": {
-        "imagem": "imagens/sair-loop",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
-        "ao_sucesso": "ir_para_bloco",
-        "bloco_sucesso": 14,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
         "sequencia_sucesso": "",
         "atraso_antes_sequencia_sucesso": 0.0
       }
@@ -969,7 +360,7 @@
   ],
   "sequencia_inicial": "principal",
   "configuracoes_sequencia": {
-    "pagina_2": {
+    "principal": {
       "modo_execucao": "loop_planilha",
       "sequencia_apos_loop": ""
     }

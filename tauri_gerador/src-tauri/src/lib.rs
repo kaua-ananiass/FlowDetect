@@ -403,6 +403,133 @@ fn run_script_json(root: &PathBuf, script_name: &str, args: &[String]) -> Result
     Ok(parsed)
 }
 
+fn read_remote_spreadsheet_preview(root: &PathBuf, limit: i64) -> Result<Value, String> {
+    let (python_program, python_args) = python_command(root)?;
+    let script = r#"
+import json
+import sys
+from pathlib import Path
+from openpyxl import load_workbook
+
+root = Path(sys.argv[1])
+limit = max(1, min(200, int(float(sys.argv[2])) if len(sys.argv) > 2 else 80))
+mapping_path = root / "mapeamento_teclado.json"
+if not mapping_path.exists():
+    print(json.dumps({"available": False, "message": "Nenhuma automacao aberta no Agent."}, ensure_ascii=False))
+    raise SystemExit(0)
+
+payload = json.loads(mapping_path.read_text(encoding="utf-8"))
+events = payload.get("eventos") or []
+sheet_event = next((event for event in events if event.get("tipo") == "sequencia_planilha"), None)
+write_events = [event for event in events if event.get("tipo") == "escrever_planilha"]
+
+def normalize_workbook(value):
+    text = str(value or "db.xlsx").replace("\\", "/").strip() or "db.xlsx"
+    return text
+
+def resolve_workbook(value):
+    workbook_id = normalize_workbook(value)
+    path = Path(workbook_id)
+    if path.is_absolute():
+        return path, workbook_id
+    direct = root / workbook_id
+    if direct.exists():
+        return direct, workbook_id
+    if "/" not in workbook_id and "\\" not in workbook_id and workbook_id != "db.xlsx":
+        alternative = root / "planilhas" / workbook_id
+        if alternative.exists():
+            return alternative, f"planilhas/{workbook_id}"
+    return direct, workbook_id
+
+if sheet_event:
+    details = sheet_event.get("detalhes") or {}
+    workbook_path, workbook_id = resolve_workbook(details.get("arquivo"))
+    sheet_name = str(details.get("aba") or "").strip()
+else:
+    workbook_candidates = [root / "db.xlsx", *sorted((root / "planilhas").glob("*.xlsx"))] if (root / "planilhas").exists() else [root / "db.xlsx"]
+    workbook_path = next((path for path in workbook_candidates if path.exists()), root / "db.xlsx")
+    workbook_id = str(workbook_path.relative_to(root)).replace("\\", "/") if workbook_path.exists() and root in workbook_path.parents else workbook_path.name
+    sheet_name = ""
+
+if not workbook_path.exists():
+    print(json.dumps({"available": False, "message": f"Planilha nao encontrada: {workbook_id}"}, ensure_ascii=False))
+    raise SystemExit(0)
+
+workbook = load_workbook(workbook_path, read_only=True, data_only=True)
+try:
+    if not sheet_name:
+        sheet_name = workbook.sheetnames[0] if workbook.sheetnames else ""
+    if sheet_name not in workbook.sheetnames:
+        print(json.dumps({"available": False, "message": f"Aba nao encontrada: {sheet_name}"}, ensure_ascii=False))
+        raise SystemExit(0)
+    worksheet = workbook[sheet_name]
+    if not hasattr(worksheet, "iter_rows"):
+        print(json.dumps({"available": False, "message": f"Aba nao editavel: {sheet_name}"}, ensure_ascii=False))
+        raise SystemExit(0)
+    rows_iter = worksheet.iter_rows(values_only=True)
+    headers = [str(value).strip() if value is not None and str(value).strip() else f"Coluna {index + 1}" for index, value in enumerate(next(rows_iter, []))]
+    write_columns = []
+    for event in write_events:
+        details = event.get("detalhes") or {}
+        if normalize_workbook(details.get("arquivo")) == normalize_workbook(workbook_id) and str(details.get("aba") or sheet_name).strip() == sheet_name:
+            column = str(details.get("coluna") or "").strip()
+            if column and column not in write_columns:
+                write_columns.append(column)
+    for column in write_columns:
+        if column not in headers:
+            headers.append(column)
+    rows = []
+    for row_number, values in enumerate(rows_iter, start=2):
+        item = {"row_number": row_number, "values": []}
+        has_content = False
+        for index, header in enumerate(headers):
+            value = values[index] if index < len(values) else None
+            if value is not None and str(value).strip():
+                has_content = True
+            item["values"].append("" if value is None else str(value))
+        if has_content:
+            rows.append(item)
+        if len(rows) >= limit:
+            break
+    print(json.dumps({
+        "available": True,
+        "workbook_id": workbook_id,
+        "sheet": sheet_name,
+        "headers": headers,
+        "rows": rows,
+        "row_count": len(rows),
+        "limited": len(rows) >= limit,
+        "write_columns": write_columns,
+    }, ensure_ascii=False))
+finally:
+    workbook.close()
+"#;
+    let mut command = Command::new(&python_program);
+    command
+        .current_dir(root)
+        .args(&python_args)
+        .arg("-c")
+        .arg(script)
+        .arg(root)
+        .arg(limit.max(1).min(200).to_string());
+    configure_no_window(&mut command);
+    let output = command
+        .output()
+        .map_err(|err| format!("Falha ao ler planilha remota: {err}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "Falha ao gerar previa da planilha remota.".to_string()
+        } else {
+            stderr
+        });
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    serde_json::from_str(&raw).map_err(|err| format!("Falha ao interpretar previa da planilha remota: {err}"))
+}
+
 #[tauri::command]
 fn get_login_session(app: AppHandle) -> Result<Value, String> {
     let root = workspace_root(&app);
@@ -1152,6 +1279,24 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
         }
     } else if method == "GET" && clean_path == "/api/status" {
         http_json_response("200 OK", get_remote_agent_snapshot(&root))
+    } else if method == "GET" && clean_path == "/api/spreadsheet-preview" {
+        let limit = path
+            .split_once('?')
+            .and_then(|(_, query)| {
+                query.split('&').find_map(|pair| {
+                    let (key, value) = pair.split_once('=')?;
+                    if key == "limit" {
+                        value.parse::<i64>().ok()
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or(80);
+        match read_remote_spreadsheet_preview(&root, limit) {
+            Ok(value) => http_json_response("200 OK", value),
+            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+        }
     } else if method == "POST" && clean_path == "/api/stop" {
         let _ = fs::write(root.join(".parar_automacao.flag"), b"stop");
         let snapshot = remote_status_payload(&root, false, None, Some(serde_json::json!({
@@ -1331,6 +1476,16 @@ fn remote_agent_open_automation(address: String, id: String) -> Result<Value, St
 #[tauri::command]
 fn remote_agent_status(address: String) -> Result<Value, String> {
     remote_agent_request(&address, "GET", "/api/status", None)
+}
+
+#[tauri::command]
+fn remote_agent_spreadsheet_preview(address: String, limit: Option<i64>) -> Result<Value, String> {
+    remote_agent_request(
+        &address,
+        "GET",
+        &format!("/api/spreadsheet-preview?limit={}", limit.unwrap_or(80).max(1).min(200)),
+        None,
+    )
 }
 
 #[tauri::command]
@@ -1972,12 +2127,20 @@ fn capture_mouse_click(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn add_text_block(app: AppHandle, text: String, delay: f64, sequencia: Option<String>, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>) -> Result<Value, String> {
+fn add_text_block(app: AppHandle, text: String, delay: f64, sequencia: Option<String>, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>, editavel_execucao: Option<bool>, rotulo_execucao: Option<String>) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec!["add-text".into(), "--text".into(), text, "--delay".into(), delay.to_string()];
     if let Some(sequence_name) = sequencia {
         args.push("--sequencia".into());
         args.push(sequence_name);
+    }
+    if let Some(value) = editavel_execucao {
+        args.push("--editavel-execucao".into());
+        args.push(if value { "true" } else { "false" }.into());
+    }
+    if let Some(value) = rotulo_execucao.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        args.push("--rotulo-execucao".into());
+        args.push(value.to_string());
     }
     append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
@@ -2177,6 +2340,46 @@ fn add_spreadsheet_block(
         after_action,
         "--interval-between".into(),
         interval_between.to_string(),
+    ]);
+    if let Some(sequence_name) = sequencia {
+        args.push("--sequencia".into());
+        args.push(sequence_name);
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn add_write_spreadsheet_block(
+    app: AppHandle,
+    workbook: Option<String>,
+    sheet: String,
+    column: String,
+    value: String,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec!["add-write-planilha".into()];
+    if let Some(workbook_file) = workbook {
+        if !workbook_file.trim().is_empty() {
+            args.push("--workbook".into());
+            args.push(workbook_file);
+        }
+    }
+    args.extend([
+        "--sheet".into(),
+        sheet,
+        "--column".into(),
+        column,
+        "--value".into(),
+        value,
+        "--delay".into(),
+        delay.to_string(),
     ]);
     if let Some(sequence_name) = sequencia {
         args.push("--sequencia".into());
@@ -2418,6 +2621,8 @@ fn insert_text_block(
     bloco_sucesso: Option<i32>,
     sequencia_sucesso: Option<String>,
     atraso_sequencia_sucesso: Option<f64>,
+    editavel_execucao: Option<bool>,
+    rotulo_execucao: Option<String>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -2436,6 +2641,14 @@ fn insert_text_block(
             args.push("--sequencia".into());
             args.push(sequence_name);
         }
+    }
+    if let Some(value) = editavel_execucao {
+        args.push("--editavel-execucao".into());
+        args.push(if value { "true" } else { "false" }.into());
+    }
+    if let Some(value) = rotulo_execucao.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        args.push("--rotulo-execucao".into());
+        args.push(value.to_string());
     }
     append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
@@ -2725,6 +2938,56 @@ fn insert_spreadsheet_block(
 }
 
 #[tauri::command]
+fn insert_write_spreadsheet_block(
+    app: AppHandle,
+    target_order: i32,
+    position: String,
+    workbook: Option<String>,
+    sheet: String,
+    column: String,
+    value: String,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "insert-write-planilha".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+    ];
+    if let Some(workbook_file) = workbook {
+        if !workbook_file.trim().is_empty() {
+            args.push("--workbook".into());
+            args.push(workbook_file);
+        }
+    }
+    args.extend([
+        "--sheet".into(),
+        sheet,
+        "--column".into(),
+        column,
+        "--value".into(),
+        value,
+        "--delay".into(),
+        delay.to_string(),
+    ]);
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn insert_chrome_html_block(
     app: AppHandle,
     target_order: i32,
@@ -2911,7 +3174,7 @@ fn insert_open_program_block(
 }
 
 #[tauri::command]
-fn update_text_block(app: AppHandle, order: i32, text: String, delay: f64, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>) -> Result<Value, String> {
+fn update_text_block(app: AppHandle, order: i32, text: String, delay: f64, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>, editavel_execucao: Option<bool>, rotulo_execucao: Option<String>) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
             "update-text".into(),
@@ -2923,6 +3186,14 @@ fn update_text_block(app: AppHandle, order: i32, text: String, delay: f64, ao_su
             delay.to_string(),
         ];
     append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    if let Some(value) = editavel_execucao {
+        args.push("--editavel-execucao".into());
+        args.push(if value { "true" } else { "false" }.into());
+    }
+    if let Some(value) = rotulo_execucao.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        args.push("--rotulo-execucao".into());
+        args.push(value.to_string());
+    }
     run_helper_json(&root, &args)
 }
 
@@ -3093,6 +3364,46 @@ fn update_spreadsheet_block(
         after_action,
         "--interval-between".into(),
         interval_between.to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ]);
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn update_write_spreadsheet_block(
+    app: AppHandle,
+    order: i32,
+    workbook: Option<String>,
+    sheet: String,
+    column: String,
+    value: String,
+    delay: f64,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "update-write-planilha".into(),
+        "--order".into(),
+        order.to_string(),
+    ];
+    if let Some(workbook_file) = workbook {
+        if !workbook_file.trim().is_empty() {
+            args.push("--workbook".into());
+            args.push(workbook_file);
+        }
+    }
+    args.extend([
+        "--sheet".into(),
+        sheet,
+        "--column".into(),
+        column,
+        "--value".into(),
+        value,
         "--delay".into(),
         delay.to_string(),
     ]);
@@ -3547,6 +3858,7 @@ fn launch_quick_test(
     delay: f64,
     window_title: Option<String>,
     _minimize_window: Option<bool>,
+    text_overrides: Option<String>,
 ) -> Result<String, String> {
     let root = workspace_root(&app);
     let _ = std::fs::remove_file(root.join("ultimo_log_launcher.txt"));
@@ -3589,6 +3901,9 @@ fn launch_quick_test(
     if let Some(title) = window_title.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
         command.arg("--janela-alvo").arg(title);
     }
+    if let Some(value) = text_overrides.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        command.arg("--text-overrides").arg(value);
+    }
 
     spawn_test_process(
         &app,
@@ -3608,8 +3923,9 @@ fn launch_assisted_quick_test(
     state: State<'_, RuntimeState>,
     delay: f64,
     window_title: Option<String>,
+    text_overrides: Option<String>,
 ) -> Result<String, String> {
-    launch_quick_test(app, state, delay, window_title, Some(false))
+    launch_quick_test(app, state, delay, window_title, Some(false), text_overrides)
 }
 
 #[tauri::command]
@@ -3620,6 +3936,7 @@ fn launch_test_automation(
     loop_start: i32,
     window_title: Option<String>,
     _minimize_window: Option<bool>,
+    text_overrides: Option<String>,
 ) -> Result<String, String> {
     let root = workspace_root(&app);
     let _ = std::fs::remove_file(root.join("ultimo_log_launcher.txt"));
@@ -3671,6 +3988,9 @@ fn launch_test_automation(
     if let Some(title) = window_title.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
         command.arg("--janela-alvo").arg(title);
     }
+    if let Some(value) = text_overrides.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        command.arg("--text-overrides").arg(value);
+    }
 
     spawn_test_process(
         &app,
@@ -3692,8 +4012,9 @@ fn launch_assisted_loop_test(
     delay: f64,
     loop_start: i32,
     window_title: Option<String>,
+    text_overrides: Option<String>,
 ) -> Result<String, String> {
-    launch_test_automation(app, state, delay, loop_start, window_title, Some(false))
+    launch_test_automation(app, state, delay, loop_start, window_title, Some(false), text_overrides)
 }
 
 #[tauri::command]
@@ -3961,6 +4282,7 @@ pub fn run() {
             add_open_url_block,
             add_open_program_block,
             add_spreadsheet_block,
+            add_write_spreadsheet_block,
             insert_text_block,
             insert_key_block,
             insert_loop_start_block,
@@ -3971,6 +4293,7 @@ pub fn run() {
             insert_open_url_block,
             insert_open_program_block,
             insert_spreadsheet_block,
+            insert_write_spreadsheet_block,
             update_text_block,
             update_key_block,
             update_loop_marker_block,
@@ -3981,6 +4304,7 @@ pub fn run() {
             update_open_url_block,
             update_open_program_block,
             update_spreadsheet_block,
+            update_write_spreadsheet_block,
             update_sequence_settings,
             update_initial_sequence,
             update_block_delay,
@@ -4003,6 +4327,7 @@ pub fn run() {
             remote_agent_list_automations,
             remote_agent_open_automation,
             remote_agent_status,
+            remote_agent_spreadsheet_preview,
             remote_agent_execute,
             remote_agent_stop,
             remote_agent_import_automation_zip,

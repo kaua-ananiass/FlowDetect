@@ -241,6 +241,7 @@ function blockChipLabel(event = {}) {
     abrir_programa: "PROGRAMA",
     verificar_estado_botao: "VERIFICACAO",
     sequencia_planilha: "PLANILHA",
+    escrever_planilha: "ESCREVER CELULA",
     inicio_loop: "INICIO LOOP",
     fim_loop: "FIM LOOP",
   };
@@ -362,6 +363,11 @@ function buildDetailRows(event = {}) {
     rows.push({ label: "Origem", value: `${compactText(details.aba || "Sheet1", 18)} -> ${compactText(details.coluna || "-", 18)}` });
     rows.push({ label: "Loop", value: `${Array.isArray(details.valores) ? details.valores.length : 0} item(ns) | apos: ${buildActionAfterItemLabel(details)}` });
     rows.push({ label: "Intervalo item", value: `${formatDecimal(details.intervalo_entre_itens || 0, 2)}s` });
+  } else if (type === "escrever_planilha") {
+    rows.push({ label: "Planilha", value: compactText(String(details.arquivo || "").split(/[\\/]/).pop() || "-", 36), emphasis: true });
+    rows.push({ label: "Destino", value: `${compactText(details.aba || "Sheet1", 18)} -> ${compactText(details.coluna || "-", 18)}` });
+    rows.push({ label: "Valor", value: compactText(details.valor || "-", 42) });
+    rows.push({ label: "Linha", value: "Linha atual do loop" });
   } else if (type === "chrome_elemento_html") {
     const alvo = details.alvo || {};
     const acao = details.acao || {};
@@ -409,6 +415,9 @@ function detailFooterText(event = {}) {
   }
   if (type === "sequencia_planilha") {
     return "Resumo do loop da planilha";
+  }
+  if (type === "escrever_planilha") {
+    return "Escrita na linha atual";
   }
   return "Resumo rapido do bloco";
 }

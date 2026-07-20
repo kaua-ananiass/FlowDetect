@@ -3206,7 +3206,7 @@ label span {
 
 .assist-control-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -3238,6 +3238,125 @@ label span {
 
 .assist-control-panel[hidden] {
   display: none !important;
+}
+
+.assist-editable-text-panel {
+  align-content: start;
+  gap: 10px;
+}
+
+.assist-editable-text-list {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.assist-editable-text-item {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid rgba(94, 234, 212, 0.16);
+  border-radius: 12px;
+  background: rgba(7, 17, 31, 0.42);
+}
+
+.assist-editable-text-item span {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.assist-editable-text-item strong {
+  color: #e6f7ff;
+  font-size: 0.86rem;
+}
+
+.assist-editable-text-item small,
+.assist-editable-text-empty {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.assist-editable-text-item textarea {
+  min-height: 52px;
+  resize: vertical;
+}
+
+.runtime-edit-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 1px solid rgba(230, 247, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(230, 247, 255, 0.025);
+}
+
+.runtime-edit-switch-row > span:first-child {
+  color: rgba(230, 247, 255, 0.82);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.runtime-edit-switch {
+  width: 34px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid rgba(94, 234, 212, 0.24);
+  border-radius: 999px;
+  background: rgba(18, 181, 203, 0.12);
+  cursor: pointer;
+  transition: background 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.runtime-edit-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.runtime-edit-switch i {
+  width: 14px;
+  height: 14px;
+  display: block;
+  border-radius: 999px;
+  background: #b8d9e6;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.runtime-edit-switch:has(input:checked) {
+  border-color: rgba(251, 191, 36, 0.55);
+  background: rgba(245, 158, 11, 0.24);
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.18);
+}
+
+.runtime-edit-switch:has(input:checked) i {
+  transform: translateX(14px);
+  background: #fde68a;
+  box-shadow: 0 0 14px rgba(251, 191, 36, 0.36);
+}
+
+.command-card-editable-switch {
+  justify-self: end;
+  margin-bottom: 2px;
+}
+
+.runtime-edit-name {
+  display: none;
+}
+
+.runtime-edit-switch-row:has(input:checked) + .runtime-edit-name,
+.command-tree-card:has(.command-card-editable-switch input:checked) .runtime-edit-name,
+.command-tree-card.is-runtime-editable .runtime-edit-name,
+.flow-card:has(.runtime-edit-switch-row input:checked) .runtime-edit-name {
+  display: grid;
 }
 
 .assist-log-panel {
@@ -4536,6 +4655,107 @@ label span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.studio-control-sheet-panel {
+  min-height: 420px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid rgba(18, 181, 203, 0.22);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at top right, rgba(18, 181, 203, 0.16), transparent 34%),
+    linear-gradient(180deg, rgba(9, 22, 38, 0.94), rgba(7, 17, 31, 0.96));
+}
+
+.studio-control-sheet-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.studio-control-sheet-head h3 {
+  margin: 4px 0 3px;
+  color: #e6f7ff;
+  font-size: 1.25rem;
+}
+
+.studio-control-sheet-head span,
+.studio-control-sheet-status {
+  color: rgba(230, 247, 255, 0.72);
+  font-size: 0.82rem;
+}
+
+.studio-control-sheet-status {
+  padding: 10px 12px;
+  border: 1px solid rgba(230, 247, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(230, 247, 255, 0.04);
+}
+
+.studio-control-sheet-table-wrap {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid rgba(18, 181, 203, 0.18);
+  border-radius: 16px;
+  background: rgba(3, 8, 16, 0.38);
+}
+
+.studio-control-sheet-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: separate;
+  border-spacing: 0;
+  color: #dff6ff;
+  font-size: 0.8rem;
+}
+
+.studio-control-sheet-table th,
+.studio-control-sheet-table td {
+  max-width: 240px;
+  padding: 10px 12px;
+  border-right: 1px solid rgba(230, 247, 255, 0.06);
+  border-bottom: 1px solid rgba(230, 247, 255, 0.06);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.studio-control-sheet-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  color: #5eead4;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  background: rgba(8, 19, 34, 0.96);
+}
+
+.studio-control-sheet-table td {
+  background: rgba(230, 247, 255, 0.025);
+}
+
+.studio-control-sheet-table tbody tr:hover td {
+  background: rgba(18, 181, 203, 0.08);
+}
+
+.studio-control-sheet-row-number,
+.studio-control-sheet-table th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  width: 72px;
+  color: rgba(230, 247, 255, 0.62);
+  background: rgba(8, 19, 34, 0.96) !important;
+}
+
+.studio-control-sheet-table .is-write-column {
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.08);
 }
 
 @media (max-width: 1120px) {
@@ -6115,6 +6335,27 @@ label span {
     linear-gradient(180deg, rgba(10, 17, 28, 0.98), rgba(8, 12, 20, 0.98));
 }
 
+.command-tree-card.is-runtime-editable,
+.command-tree-card:has(.command-card-editable-switch input:checked),
+.flow-card.is-runtime-editable {
+  border-color: rgba(245, 158, 11, 0.38);
+  background:
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.15), transparent 27%),
+    linear-gradient(180deg, rgba(18, 16, 12, 0.99), rgba(9, 11, 17, 0.99));
+  box-shadow:
+    0 0 0 1px rgba(245, 158, 11, 0.08),
+    0 18px 42px rgba(0, 0, 0, 0.24),
+    0 0 24px rgba(245, 158, 11, 0.09);
+}
+
+.command-flow-segment.is-focused .command-tree-card.is-runtime-editable {
+  border-color: rgba(251, 191, 36, 0.58);
+  box-shadow:
+    0 0 0 1px rgba(251, 191, 36, 0.2),
+    0 24px 56px rgba(0, 0, 0, 0.34),
+    0 0 30px rgba(245, 158, 11, 0.16);
+}
+
 .command-tree-card:hover {
   transform: translateY(-3px);
   border-color: var(--command-page-accent-border);
@@ -6484,6 +6725,13 @@ label span {
 
 .spreadsheet-card-editor {
   gap: 6px;
+}
+
+.spreadsheet-write-hint {
+  margin: 0;
+  color: rgba(230, 247, 255, 0.68);
+  font-size: 0.72rem;
+  line-height: 1.35;
 }
 
 .spreadsheet-card-tabs {
@@ -7868,6 +8116,18 @@ label span {
   color: #bde8cf;
 }
 
+.type-chip.runtime-editable {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(251, 191, 36, 0.36);
+  color: #fde68a;
+}
+
+.command-tree-card:has(.command-card-editable-switch input:checked) .type-chip.texto_livre {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(251, 191, 36, 0.36);
+  color: #fde68a;
+}
+
 .type-chip.atalho,
 .type-chip.tecla {
   background: rgba(132, 149, 225, 0.12);
@@ -7883,6 +8143,12 @@ label span {
   background: rgba(18, 181, 203, 0.12);
   border-color: rgba(18, 181, 203, 0.22);
   color: #ffd5bc;
+}
+
+.type-chip.escrever_planilha {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.24);
+  color: #fde68a;
 }
 
 .type-chip.inicio_loop,

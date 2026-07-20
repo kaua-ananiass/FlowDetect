@@ -783,6 +783,7 @@
                 <div id="assistControlTabs" class="assist-control-tabs" role="tablist" aria-label="Controles da execucao assistida">
                   <button class="assist-control-tab is-active" type="button" data-assist-control-tab="target" aria-pressed="true">Janela alvo</button>
                   <button class="assist-control-tab" type="button" data-assist-control-tab="pages" aria-pressed="false">Paginas</button>
+                  <button class="assist-control-tab" type="button" data-assist-control-tab="texts" aria-pressed="false">Textos</button>
                 </div>
 
                 <div class="assist-control-panels">
@@ -811,6 +812,15 @@
                       <span class="stat-label">Paginas</span>
                       <div id="assistSequenceModeList" class="assist-sequence-mode-list"></div>
                     </div>
+                  </section>
+
+                  <section class="assist-editable-text-panel assist-control-panel" data-assist-control-panel="texts" hidden>
+                    <div class="assist-target-copy">
+                      <span class="stat-label">Textos editaveis</span>
+                      <strong>Alterar antes de executar</strong>
+                      <p class="assist-detail">Marque blocos de texto no mapa para editar aqui antes de iniciar.</p>
+                    </div>
+                    <div id="assistEditableTextList" class="assist-editable-text-list"></div>
                   </section>
                 </div>
               </section>
@@ -1068,6 +1078,7 @@
 
           <nav class="studio-control-subtabs" aria-label="Areas do controle remoto">
             <button class="is-active" type="button" data-studio-control-view="execution">Execucao remota</button>
+            <button type="button" data-studio-control-view="spreadsheet">Planilha</button>
             <button type="button" data-studio-control-view="library">Biblioteca do Agent</button>
           </nav>
 
@@ -1090,6 +1101,21 @@
               Conecte no Agent para carregar as automacoes remotas.
             </div>
             <div id="studioControlList" class="studio-control-grid"></div>
+          </section>
+
+          <section class="studio-control-view-panel" data-studio-control-panel="spreadsheet" hidden>
+            <section class="studio-control-sheet-panel">
+              <div class="studio-control-sheet-head">
+                <div>
+                  <p class="panel-kicker">Planilha em tempo real</p>
+                  <h3 id="studioControlSheetTitle">Aguardando planilha</h3>
+                  <span id="studioControlSheetMeta">Conecte no Agent para visualizar os dados do projeto.</span>
+                </div>
+                <button id="studioControlSheetRefreshButton" class="ghost-button" type="button">Atualizar planilha</button>
+              </div>
+              <div id="studioControlSheetStatus" class="studio-control-sheet-status">A planilha preenchida pelo Agent vai aparecer aqui.</div>
+              <div id="studioControlSheetTableWrap" class="studio-control-sheet-table-wrap"></div>
+            </section>
           </section>
         </section>
       </section>
