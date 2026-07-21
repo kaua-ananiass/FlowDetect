@@ -2237,6 +2237,7 @@ fn add_image_click_block(
     offset_x: i32,
     offset_y: i32,
     janela_alvo: Option<String>,
+    texto_ocr_esperado: Option<String>,
     ao_nao_encontrar: String,
     sequencia_nao_encontrar: Option<String>,
     bloco_nao_encontrar: Option<i32>,
@@ -2271,6 +2272,8 @@ fn add_image_click_block(
         offset_y.to_string(),
         "--janela-alvo".into(),
         janela_alvo.unwrap_or_default(),
+        "--texto-ocr-esperado".into(),
+        texto_ocr_esperado.unwrap_or_default(),
         "--ao-nao-encontrar".into(),
         ao_nao_encontrar,
     ];
@@ -2809,6 +2812,7 @@ fn insert_image_click_block(
     offset_x: i32,
     offset_y: i32,
     janela_alvo: Option<String>,
+    texto_ocr_esperado: Option<String>,
     ao_nao_encontrar: String,
     sequencia_nao_encontrar: Option<String>,
     bloco_nao_encontrar: Option<i32>,
@@ -2847,6 +2851,8 @@ fn insert_image_click_block(
             offset_y.to_string(),
             "--janela-alvo".into(),
             janela_alvo.unwrap_or_default(),
+            "--texto-ocr-esperado".into(),
+            texto_ocr_esperado.unwrap_or_default(),
             "--ao-nao-encontrar".into(),
             ao_nao_encontrar,
     ];
@@ -3262,6 +3268,7 @@ fn update_image_click_block(
     offset_x: i32,
     offset_y: i32,
     janela_alvo: Option<String>,
+    texto_ocr_esperado: Option<String>,
     ao_nao_encontrar: String,
     sequencia_nao_encontrar: Option<String>,
     bloco_nao_encontrar: Option<i32>,
@@ -3297,6 +3304,8 @@ fn update_image_click_block(
             offset_y.to_string(),
             "--janela-alvo".into(),
             janela_alvo.unwrap_or_default(),
+            "--texto-ocr-esperado".into(),
+            texto_ocr_esperado.unwrap_or_default(),
             "--ao-nao-encontrar".into(),
             ao_nao_encontrar,
     ];
@@ -3759,6 +3768,7 @@ fn test_image_recognition(
     confianca: f64,
     perfil_busca: Option<String>,
     janela_alvo: Option<String>,
+    texto_ocr_esperado: Option<String>,
 ) -> Result<String, String> {
     let root = workspace_root(&app);
     let script_path = root.join("executar_automacao.py");
@@ -3795,6 +3805,9 @@ fn test_image_recognition(
 
     if let Some(title) = janela_alvo.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
         command.arg("--janela-alvo").arg(title);
+    }
+    if let Some(text) = texto_ocr_esperado.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        command.arg("--texto-ocr-esperado").arg(text);
     }
     configure_no_window(&mut command);
 

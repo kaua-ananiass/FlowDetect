@@ -29,13 +29,15 @@ def popen_silencioso(argumentos, **kwargs):
     return subprocess.Popen(argumentos, **kwargs)
 
 try:
-    from PIL import Image, ImageDraw, ImageGrab
+    from PIL import Image, ImageDraw, ImageEnhance, ImageGrab, ImageOps
 
     PIL_DISPONIVEL = True
 except Exception:
     Image = None
     ImageDraw = None
+    ImageEnhance = None
     ImageGrab = None
+    ImageOps = None
     PIL_DISPONIVEL = False
 
 try:
@@ -1066,7 +1068,7 @@ class ExecutorAutomacao:
             altura + margem_y * 2,
         ), limite=limite)
 
-    def marcar_area_reconhecida(self, local, duracao=1.1, bloqueante=False):
+    def marcar_area_reconhecida(self, local, duracao=1.1, bloqueante=False, estilo="visual", texto="Reconhecido"):
         if not TK_DISPONIVEL:
             return
 
@@ -1079,10 +1081,18 @@ class ExecutorAutomacao:
 
         def exibir():
             try:
-                cor_borda = "#2ecc71"
-                cor_flash = "#9bffbf"
-                cor_texto = "#f5fff8"
-                cor_fundo_etiqueta = "#1c9f5b"
+                if str(estilo or "").strip().lower() == "ocr":
+                    cor_borda = "#0f8f4f"
+                    cor_flash = "#21c66d"
+                    cor_texto = "#f5fff8"
+                    cor_fundo_etiqueta = "#0b6f3f"
+                    etiqueta_texto = str(texto or "OCR OK")
+                else:
+                    cor_borda = "#2ecc71"
+                    cor_flash = "#9bffbf"
+                    cor_texto = "#f5fff8"
+                    cor_fundo_etiqueta = "#1c9f5b"
+                    etiqueta_texto = str(texto or "Reconhecido")
                 fundo_transparente = "#ff00ff"
                 raio = 16
                 espessura = 3
@@ -1233,7 +1243,7 @@ class ExecutorAutomacao:
                 texto_etiqueta = canvas_overlay.create_text(
                     int((etiqueta_x1 + etiqueta_x2) / 2),
                     int((etiqueta_y1 + etiqueta_y2) / 2),
-                    text="Reconhecido",
+                    text=etiqueta_texto[:18],
                     fill=cor_texto,
                     font=("Segoe UI", 8, "bold"),
                 )
@@ -1296,7 +1306,14 @@ class ExecutorAutomacao:
         centro_y = topo + int(altura / 2)
         return int(centro_x + int(offset_x or 0)), int(centro_y + int(offset_y or 0))
 
-    def confirmar_localizacao_imagem(self, caminho_imagem, local, confianca=0.8, perfil_busca="balanced"):
+    def confirmar_localizacao_imagem(
+        self,
+        caminho_imagem,
+        local,
+        confianca=0.8,
+        perfil_busca="balanced",
+        texto_ocr_esperado="",
+    ):
         perfil_busca = str(perfil_busca or "balanced").strip().lower()
         if perfil_busca not in {"fast", "balanced", "precise"}:
             perfil_busca = "balanced"
@@ -1478,8 +1495,11 @@ class ExecutorAutomacao:
         try:
             base = imagem.convert("L")
             ampliada = self.ampliar_imagem_para_ocr(base, fator=3)
+            contraste = ImageEnhance.Contrast(ampliada).enhance(2.2) if ImageEnhance else ampliada
+            invertida = ImageOps.invert(contraste) if ImageOps else contraste
             limiar_claro = ampliada.point(lambda valor: 255 if valor >= 150 else 0)
             limiar_escuro = ampliada.point(lambda valor: 255 if valor >= 118 else 0)
+            limiar_invertido = invertida.point(lambda valor: 255 if valor >= 118 else 0)
         except Exception:
             return []
 
@@ -1489,7 +1509,7 @@ class ExecutorAutomacao:
             "--psm 7 -c tessedit_char_whitelist=0123456789/.-:",
             "--psm 8 -c tessedit_char_whitelist=0123456789/.-:",
         ]
-        variantes = [ampliada, limiar_claro, limiar_escuro]
+        variantes = [ampliada, contraste, invertida, limiar_claro, limiar_escuro, limiar_invertido]
         textos = []
 
         for variante in variantes:
@@ -1810,9 +1830,384 @@ class ExecutorAutomacao:
         base_top = int(topo_virtual + rel_top_clamped)
         return finalizar_captura(cortada, base_left, base_top)
 
-    def validar_correspondencia_visual(self, caminho_imagem, local, confianca=0.8, perfil_busca="balanced"):
-        if not OPENCV_DISPONIVEL or not PIL_DISPONIVEL or np is None:
+    def validar_texto_ocr_obrigatorio(self, texto_esperado, imagem):
+        esperado = self.normalizar_texto_ocr(texto_esperado)
+        if not esperado:
             return True
+        if not OCR_DISPONIVEL or Image is None:
+            safe_print("OCR obrigatorio rejeitado: motor OCR indisponivel.", flush=True)
+            return False
+
+        textos = self.extrair_variantes_texto_ocr_imagem(imagem)
+        if self.texto_ocr_exige_exatidao_visual(esperado):
+            digitos_esperados = re.sub(r"\D", "", esperado)
+            textos_completos = [self.normalizar_texto_ocr(texto) for texto in textos if str(texto or "").strip()]
+            digitos_lidos = [re.sub(r"\D", "", texto) for texto in textos_completos]
+            if any(digitos_esperados and digitos_esperados in digitos for digitos in digitos_lidos):
+                safe_print(
+                    "OCR obrigatorio confirmou os digitos exatos "
+                    f"(esperado='{esperado}' | leituras='{'; '.join(textos_completos)[:120]}').",
+                    flush=True,
+                )
+                return True
+            safe_print(
+                "OCR obrigatorio rejeitou data/codigo diferente "
+                f"(esperado='{esperado}' | leituras='{'; '.join(textos_completos)[:120]}').",
+                flush=True,
+            )
+            return False
+
+        texto_total = self.normalizar_texto_ocr(" ".join(textos))
+        digitos_esperado_total = re.sub(r"\D", "", esperado)
+        digitos_total = re.sub(r"\D", "", texto_total)
+        if texto_total and (esperado in texto_total or (len(digitos_esperado_total) >= 4 and digitos_esperado_total in digitos_total)):
+            safe_print(
+                "OCR obrigatorio confirmado "
+                f"(esperado='{esperado}' | capturado='{texto_total[:80]}').",
+                flush=True,
+            )
+            return True
+        comparacoes = [
+            self.comparar_texto_reconhecimento_preciso(esperado, texto)
+            for texto in textos
+            if str(texto or "").strip()
+        ]
+        melhor = max(
+            comparacoes,
+            key=lambda item: (
+                float(item.get("digit_ratio", 0.0) or 0.0),
+                float(item.get("ratio", 0.0) or 0.0),
+            ),
+            default={
+                "ratio": 0.0,
+                "digit_ratio": 0.0,
+                "reference": esperado,
+                "captured": "",
+                "has_digits": len(re.sub(r"\D", "", esperado)) >= 2,
+            },
+        )
+
+        capturado = str(melhor.get("captured", "") or "").strip()
+        ratio_texto = float(melhor.get("ratio", 0.0) or 0.0)
+        digitos_esperado = re.sub(r"\D", "", esperado)
+        digitos_capturados = re.sub(r"\D", "", capturado)
+        tem_digitos_importantes = len(digitos_esperado) >= 4
+        texto_exato = bool(capturado) and capturado == esperado
+        texto_contido = bool(capturado) and esperado in capturado
+        digitos_exatos = tem_digitos_importantes and digitos_capturados == digitos_esperado
+        digitos_contidos = tem_digitos_importantes and digitos_esperado in digitos_capturados
+
+        if tem_digitos_importantes:
+            aprovado = texto_exato or texto_contido or digitos_exatos or digitos_contidos
+        else:
+            aprovado = texto_exato or texto_contido or ratio_texto >= 0.94
+
+        if aprovado:
+            safe_print(
+                "OCR obrigatorio confirmado "
+                f"(esperado='{esperado}' | capturado='{capturado}' | texto={ratio_texto:.2f}).",
+                flush=True,
+            )
+            return True
+
+        safe_print(
+            "OCR obrigatorio rejeitou a correspondencia "
+            f"(esperado='{esperado}' | capturado='{capturado}' | texto={ratio_texto:.2f}).",
+            flush=True,
+        )
+        return False
+
+    def texto_ocr_exige_exatidao_visual(self, texto):
+        normalizado = self.normalizar_texto_ocr(texto)
+        digitos = re.sub(r"\D", "", normalizado)
+        if len(digitos) >= 6 and len(digitos) >= max(4, len(normalizado.replace(" ", "")) - 1):
+            return True
+        return bool(re.fullmatch(r"\d{1,2}\s+\d{4}", normalizado) or re.fullmatch(r"\d{1,2}\s+\d{1,2}\s+\d{4}", normalizado))
+
+    def capturar_recorte_local_para_ocr(self, local):
+        esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
+        margem_x = max(10, min(36, int(largura * 0.55)))
+        margem_y = max(6, min(18, int(altura * 0.45)))
+        regiao = self.limitar_regiao(
+            (
+                int(esquerda - margem_x),
+                int(topo - margem_y),
+                int(largura + margem_x * 2),
+                int(altura + margem_y * 2),
+            )
+        )
+        if regiao is None:
+            regiao = (int(esquerda), int(topo), int(largura), int(altura))
+        captura, _base_left, _base_top = self.capturar_tela_pil(region=regiao)
+        return captura
+
+    def construir_regiao_ocr_proxima_visual(self, local, janela_info=None):
+        esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
+        margem_x = max(28, min(90, int(largura * 1.6)))
+        margem_y = max(14, min(46, int(altura * 1.4)))
+        limite = None
+        if janela_info:
+            limite = (
+                int(janela_info.get("left", 0) or 0),
+                int(janela_info.get("top", 0) or 0),
+                int(janela_info.get("width", 0) or 0),
+                int(janela_info.get("height", 0) or 0),
+            )
+        return self.limitar_regiao(
+            (
+                int(esquerda - margem_x),
+                int(topo - margem_y),
+                int(largura + margem_x * 2),
+                int(altura + margem_y * 2),
+            ),
+            limite=limite,
+        )
+
+    def confirmar_ocr_obrigatorio_apos_visual(self, local_visual, texto_ocr_esperado, janela_info=None):
+        texto_esperado = str(texto_ocr_esperado or "").strip()
+        if not texto_esperado:
+            return True
+
+        self.marcar_area_reconhecida(local_visual, duracao=0.55, bloqueante=True, estilo="visual", texto="Visual OK")
+        regiao_ocr = self.construir_regiao_ocr_proxima_visual(local_visual, janela_info=janela_info)
+        if regiao_ocr is None:
+            safe_print("OCR obrigatorio rejeitado: nao foi possivel montar a regiao proxima do visual.", flush=True)
+            return False
+
+        safe_print(
+            f"Visual confirmado. Procurando texto OCR obrigatorio perto do bloco: {texto_esperado}",
+            flush=True,
+        )
+        exige_exatidao = self.texto_ocr_exige_exatidao_visual(texto_esperado)
+        if not exige_exatidao:
+            try:
+                captura_ocr, _base_left, _base_top = self.capturar_tela_pil(region=regiao_ocr)
+                if self.validar_texto_ocr_obrigatorio(texto_esperado, captura_ocr):
+                    self.marcar_area_reconhecida(local_visual, duracao=0.8, bloqueante=True, estilo="ocr", texto="OCR OK")
+                    return True
+            except Exception as erro:
+                safe_print(f"OCR obrigatorio falhou ao ler recorte proximo do visual: {erro}", flush=True)
+
+        local_ocr = self.procurar_texto_por_ocr(texto_esperado, region=regiao_ocr)
+        if local_ocr:
+            if exige_exatidao:
+                local_template_exato = self.procurar_template_texto_exato_perto(
+                    getattr(self, "_referencia_ocr_visual_atual", None),
+                    local_ocr,
+                    janela_info=janela_info,
+                )
+                if local_template_exato:
+                    self.marcar_area_reconhecida(local_template_exato, duracao=0.8, bloqueante=True, estilo="ocr", texto="OCR OK")
+                    return True
+                safe_print(
+                    "OCR localizou uma data/codigo parecida, mas o recorte exato da referencia nao bateu.",
+                    flush=True,
+                )
+                return False
+            self.marcar_area_reconhecida(local_ocr, duracao=0.8, bloqueante=True, estilo="ocr", texto="OCR OK")
+            return True
+
+        if exige_exatidao:
+            local_template_exato = self.procurar_template_texto_exato_perto(
+                getattr(self, "_referencia_ocr_visual_atual", None),
+                local_visual,
+                janela_info=janela_info,
+            )
+            if local_template_exato:
+                self.marcar_area_reconhecida(local_template_exato, duracao=0.8, bloqueante=True, estilo="ocr", texto="OCR OK")
+                return True
+            safe_print(
+                f"OCR obrigatorio nao confirmou exatamente a data/codigo '{texto_esperado}'. "
+                "Fallback visual amplo foi bloqueado para evitar falso positivo.",
+                flush=True,
+            )
+            return False
+
+        safe_print(
+            f"OCR nao leu '{texto_esperado}'. Tentando confirmar pelo recorte visual da referencia.",
+            flush=True,
+        )
+        local_template_texto = self.procurar_imagem_por_template(
+            getattr(self, "_referencia_ocr_visual_atual", None),
+            confianca=0.995,
+            region=regiao_ocr,
+            perfil_busca="precise",
+        ) if getattr(self, "_referencia_ocr_visual_atual", None) else None
+        validacao_visual_texto = self.validar_recorte_visual_texto_obrigatorio(
+            getattr(self, "_referencia_ocr_visual_atual", None),
+            local_template_texto,
+        )
+        if local_template_texto and validacao_visual_texto.get("ok"):
+            safe_print(
+                "Texto obrigatorio confirmado pelo recorte visual "
+                f"(cor={validacao_visual_texto.get('color', 0.0):.2f}, tons={validacao_visual_texto.get('gray', 0.0):.2f}, "
+                f"bin={validacao_visual_texto.get('binary', 0.0):.2f}, corr={validacao_visual_texto.get('corr', 0.0):.2f}, "
+                f"texto={validacao_visual_texto.get('text_iou', 0.0):.2f}, dif={validacao_visual_texto.get('text_xor', 1.0):.2f}).",
+                flush=True,
+            )
+            self.marcar_area_reconhecida(local_template_texto, duracao=0.8, bloqueante=True, estilo="ocr", texto="OCR OK")
+            return True
+
+        if local_template_texto:
+            safe_print(
+                "Recorte visual rejeitado por nao ser identico ao texto obrigatorio "
+                f"(cor={validacao_visual_texto.get('color', 0.0):.2f}, tons={validacao_visual_texto.get('gray', 0.0):.2f}, "
+                f"bin={validacao_visual_texto.get('binary', 0.0):.2f}, corr={validacao_visual_texto.get('corr', 0.0):.2f}, "
+                f"texto={validacao_visual_texto.get('text_iou', 0.0):.2f}, dif={validacao_visual_texto.get('text_xor', 1.0):.2f}).",
+                flush=True,
+            )
+
+        safe_print(f"OCR obrigatorio nao encontrou '{texto_esperado}' perto do visual confirmado.", flush=True)
+        return False
+
+    def procurar_template_texto_exato_perto(self, caminho_imagem, local_base, janela_info=None):
+        if not caminho_imagem or not local_base:
+            return None
+        esquerda, topo, largura, altura = self.bounds_reconhecimento(local_base)
+        margem_x = max(22, min(70, int(largura * 1.2)))
+        margem_y = max(10, min(32, int(altura * 1.0)))
+        limite = None
+        if janela_info:
+            limite = (
+                int(janela_info.get("left", 0) or 0),
+                int(janela_info.get("top", 0) or 0),
+                int(janela_info.get("width", 0) or 0),
+                int(janela_info.get("height", 0) or 0),
+            )
+        regiao = self.limitar_regiao(
+            (
+                int(esquerda - margem_x),
+                int(topo - margem_y),
+                int(largura + margem_x * 2),
+                int(altura + margem_y * 2),
+            ),
+            limite=limite,
+        )
+        if regiao is None:
+            return None
+        local_template = self.procurar_imagem_por_template(
+            caminho_imagem,
+            confianca=0.995,
+            region=regiao,
+            perfil_busca="precise",
+        )
+        validacao = self.validar_recorte_visual_texto_obrigatorio(caminho_imagem, local_template, modo="estrito")
+        if local_template and validacao.get("ok"):
+            safe_print(
+                "Data/codigo confirmado por recorte exato perto do OCR "
+                f"(cor={validacao.get('color', 0.0):.2f}, tons={validacao.get('gray', 0.0):.2f}, "
+                f"bin={validacao.get('binary', 0.0):.2f}, corr={validacao.get('corr', 0.0):.2f}, "
+                f"texto={validacao.get('text_iou', 0.0):.2f}, dif={validacao.get('text_xor', 1.0):.2f}).",
+                flush=True,
+            )
+            return local_template
+        return None
+
+    def validar_recorte_visual_texto_obrigatorio(self, caminho_imagem, local, modo="estrito"):
+        if not caminho_imagem or not local or not OPENCV_DISPONIVEL or not PIL_DISPONIVEL or np is None:
+            return {"ok": False}
+        template = self.carregar_template_imagem(caminho_imagem)
+        if not template:
+            return {"ok": False}
+        try:
+            esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
+            captura, _base_left, _base_top = self.capturar_tela_pil(region=(esquerda, topo, largura, altura))
+            captura_bgr = cv2.cvtColor(np.array(captura), cv2.COLOR_RGB2BGR)
+            captura_gray = cv2.cvtColor(captura_bgr, cv2.COLOR_BGR2GRAY)
+            metricas = self.avaliar_patch_template(captura_bgr, captura_gray, template) or {}
+            referencia_gray = template["gray"]
+            if captura_gray.shape[:2] != referencia_gray.shape[:2]:
+                captura_gray = cv2.resize(
+                    captura_gray,
+                    (referencia_gray.shape[1], referencia_gray.shape[0]),
+                    interpolation=cv2.INTER_LINEAR,
+                )
+            mascara_patch = self.mascara_texto_por_contraste(captura_gray)
+            mascara_ref = self.mascara_texto_por_contraste(referencia_gray)
+            uniao = np.logical_or(mascara_patch, mascara_ref)
+            intersecao = np.logical_and(mascara_patch, mascara_ref)
+            total_uniao = max(1, int(np.count_nonzero(uniao)))
+            texto_iou = float(np.count_nonzero(intersecao)) / float(total_uniao)
+            texto_xor = float(np.count_nonzero(np.logical_xor(mascara_patch, mascara_ref))) / float(total_uniao)
+        except Exception:
+            return {"ok": False}
+
+        cor = float(metricas.get("color", 0.0) or 0.0)
+        tons = float(metricas.get("gray", 0.0) or 0.0)
+        binaria = float(metricas.get("binary", 0.0) or 0.0)
+        tinta = float(metricas.get("ink_iou", 0.0) or 0.0)
+        corr = float(metricas.get("corr", 0.0) or 0.0)
+        hist = float(metricas.get("hist", 0.0) or 0.0)
+        composto = float(metricas.get("composite", 0.0) or 0.0)
+        if str(modo or "").strip().lower() == "moderado":
+            ok = (
+                cor >= 0.975
+                and tons >= 0.975
+                and binaria >= 0.955
+                and corr >= 0.92
+                and hist >= 0.94
+                and composto >= 0.935
+                and tinta >= 0.62
+                and texto_iou >= 0.92
+                and texto_xor <= 0.08
+            )
+        else:
+            ok = (
+                cor >= 0.992
+                and tons >= 0.992
+                and binaria >= 0.988
+                and corr >= 0.982
+                and hist >= 0.985
+                and composto >= 0.982
+                and tinta >= 0.88
+                and texto_iou >= 0.965
+                and texto_xor <= 0.035
+            )
+        return {
+            "ok": ok,
+            "color": cor,
+            "gray": tons,
+            "binary": binaria,
+            "ink_iou": tinta,
+            "corr": corr,
+            "hist": hist,
+            "composite": composto,
+            "text_iou": texto_iou,
+            "text_xor": texto_xor,
+        }
+
+    def mascara_texto_por_contraste(self, gray):
+        if gray is None or np is None:
+            return np.zeros((1, 1), dtype=bool)
+        try:
+            base = gray.astype("int16")
+            mediana = int(np.median(base))
+            distancia = np.abs(base - mediana).astype("uint8")
+            _, mascara = cv2.threshold(distancia, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            mascara_bool = mascara > 0
+            if int(np.count_nonzero(mascara_bool)) < 4:
+                mascara_bool = distancia >= 18
+            return mascara_bool
+        except Exception:
+            return np.zeros(gray.shape[:2], dtype=bool)
+
+    def validar_correspondencia_visual(
+        self,
+        caminho_imagem,
+        local,
+        confianca=0.8,
+        perfil_busca="balanced",
+        texto_ocr_esperado="",
+    ):
+        if not OPENCV_DISPONIVEL or not PIL_DISPONIVEL or np is None:
+            if str(texto_ocr_esperado or "").strip() and PIL_DISPONIVEL:
+                try:
+                    captura = self.capturar_recorte_local_para_ocr(local)
+                    return self.validar_texto_ocr_obrigatorio(texto_ocr_esperado, captura)
+                except Exception as erro:
+                    safe_print(f"OCR obrigatorio falhou sem OpenCV: {erro}", flush=True)
+                    return False
+            return not str(texto_ocr_esperado or "").strip()
 
         perfil_busca = str(perfil_busca or "balanced").strip().lower()
         if perfil_busca not in {"fast", "balanced", "precise"}:
@@ -2091,6 +2486,16 @@ class ExecutorAutomacao:
                 flush=True,
             )
             return False
+        if str(texto_ocr_esperado or "").strip():
+            try:
+                if not self.validar_texto_ocr_obrigatorio(
+                    texto_ocr_esperado,
+                    self.capturar_recorte_local_para_ocr(local),
+                ):
+                    return False
+            except Exception as erro:
+                safe_print(f"OCR obrigatorio falhou ao validar a imagem encontrada: {erro}", flush=True)
+                return False
         return True
 
     def procurar_texto_por_ocr(self, texto_referencia, region=None):
@@ -2114,30 +2519,56 @@ class ExecutorAutomacao:
         except OSError as erro:
             raise RuntimeError(f"PyAutoGUI nao conseguiu capturar a tela para OCR: {erro}") from erro
 
+        variantes_ocr = [(captura, 1.0)]
         try:
-            dados = pytesseract.image_to_data(
-                captura,
-                output_type=pytesseract.Output.DICT,
-                config="--psm 6",
-            )
+            cinza = captura.convert("L")
+            ampliada = self.ampliar_imagem_para_ocr(cinza, fator=3)
+            contraste = ImageEnhance.Contrast(ampliada).enhance(2.4) if ImageEnhance else ampliada
+            invertida = ImageOps.invert(contraste) if ImageOps else contraste
+            limiar_escuro = contraste.point(lambda valor: 255 if valor >= 120 else 0)
+            limiar_invertido = invertida.point(lambda valor: 255 if valor >= 120 else 0)
+            variantes_ocr.extend([
+                (ampliada, 3.0),
+                (contraste, 3.0),
+                (invertida, 3.0),
+                (limiar_escuro, 3.0),
+                (limiar_invertido, 3.0),
+            ])
         except Exception:
-            return None
+            pass
 
         palavras = []
-        total_itens = len(dados.get("text", []))
-        for indice in range(total_itens):
-            texto = self.normalizar_texto_ocr(dados["text"][indice])
-            if not texto:
-                continue
-            palavras.append(
-                {
-                    "texto": texto,
-                    "left": int(dados["left"][indice]),
-                    "top": int(dados["top"][indice]),
-                    "width": int(dados["width"][indice]),
-                    "height": int(dados["height"][indice]),
-                }
-            )
+        configs_dados = [
+            "--psm 6",
+            "--psm 11",
+            "--psm 6 -c tessedit_char_whitelist=0123456789/.-:",
+            "--psm 11 -c tessedit_char_whitelist=0123456789/.-:",
+        ]
+        for imagem_ocr, escala_ocr in variantes_ocr:
+            for config_ocr in configs_dados:
+                try:
+                    dados = pytesseract.image_to_data(
+                        imagem_ocr,
+                        output_type=pytesseract.Output.DICT,
+                        config=config_ocr,
+                    )
+                except Exception:
+                    continue
+
+                total_itens = len(dados.get("text", []))
+                for indice in range(total_itens):
+                    texto = self.normalizar_texto_ocr(dados["text"][indice])
+                    if not texto:
+                        continue
+                    palavras.append(
+                        {
+                            "texto": texto,
+                            "left": int(int(dados["left"][indice]) / escala_ocr),
+                            "top": int(int(dados["top"][indice]) / escala_ocr),
+                            "width": max(1, int(int(dados["width"][indice]) / escala_ocr)),
+                            "height": max(1, int(int(dados["height"][indice]) / escala_ocr)),
+                        }
+                    )
 
         if not palavras:
             self._ultima_busca_ocr_info = {
@@ -2160,6 +2591,12 @@ class ExecutorAutomacao:
                 trecho = palavras[inicio : inicio + tamanho]
                 candidato = " ".join(item["texto"] for item in trecho)
                 pontuacao = difflib.SequenceMatcher(None, texto_alvo, candidato).ratio()
+                digitos_alvo = re.sub(r"\D", "", texto_alvo)
+                digitos_candidato = re.sub(r"\D", "", candidato)
+                if len(digitos_alvo) >= 4 and digitos_alvo in digitos_candidato:
+                    pontuacao = max(pontuacao, 0.99)
+                elif len(digitos_alvo) >= 4:
+                    pontuacao = 0.0
                 if pontuacao <= melhor_pontuacao:
                     continue
 
@@ -2186,6 +2623,8 @@ class ExecutorAutomacao:
                 melhor_pontuacao = pontuacao
 
         limite = 0.68 if len(alvo_palavras) > 1 else 0.8
+        if len(re.sub(r"\D", "", texto_alvo)) >= 4:
+            limite = 0.9
         self._ultima_busca_ocr_info = {
             "capture_ms": float((self._ultima_captura_visual_info or {}).get("capture_ms", 0.0) or 0.0),
             "ocr_ms": (time.perf_counter() - inicio_ocr) * 1000.0,
@@ -3933,6 +4372,7 @@ class ExecutorAutomacao:
         bloco_id=None,
         modo_area_busca="target_window",
         area_personalizada=None,
+        texto_ocr_esperado="",
     ):
         caminho_imagem, imagem_id = self.resolver_imagem(imagem)
         if not imagem_id:
@@ -3940,6 +4380,7 @@ class ExecutorAutomacao:
         if not caminho_imagem.exists():
             raise FileNotFoundError(f"Imagem nao encontrada no caminho informado: {caminho_imagem}")
 
+        self._referencia_ocr_visual_atual = caminho_imagem
         janela_alvo_explicita = str(janela_alvo or "").strip()
         usando_alvo_execucao = self.alvo_execucao_ativo() and not bool(janela_alvo_explicita)
         janela_alvo_resolvida = str(
@@ -4149,6 +4590,13 @@ class ExecutorAutomacao:
                         perfil_busca=perfil_busca_tentativa,
                     )
                     if local_confirmado:
+                        if not self.confirmar_ocr_obrigatorio_apos_visual(
+                            local_confirmado,
+                            texto_ocr_esperado,
+                            janela_info=janela_info_cache,
+                        ):
+                            safe_print("Visual encontrado, mas OCR obrigatorio nao confirmou. Continuando a busca.", flush=True)
+                            continue
                         self.registrar_reconhecimento_bem_sucedido(
                             imagem_id,
                             local_confirmado,
@@ -4167,6 +4615,27 @@ class ExecutorAutomacao:
                         )
                         return local_confirmado
                     safe_print("Correspondencia visual descartada apos confirmacao.", flush=True)
+
+                texto_ocr_obrigatorio = str(texto_ocr_esperado or "").strip()
+                if texto_ocr_obrigatorio and OCR_DISPONIVEL and regiao is not None:
+                    local_ocr_obrigatorio = self.procurar_texto_por_ocr(texto_ocr_obrigatorio, region=regiao)
+                    if local_ocr_obrigatorio:
+                        self.registrar_reconhecimento_bem_sucedido(
+                            imagem_id,
+                            local_ocr_obrigatorio,
+                            janela_alvo=janela_alvo,
+                            bloco_id=bloco_id,
+                            janela_info=janela_info_cache,
+                        )
+                        info_ocr = self._ultima_busca_ocr_info or {}
+                        safe_print(
+                            "Texto OCR obrigatorio encontrado na area do bloco "
+                            f"(texto='{texto_ocr_obrigatorio}', captura={float(info_ocr.get('capture_ms', 0.0) or 0.0):.0f}ms, "
+                            f"ocr={float(info_ocr.get('ocr_ms', 0.0) or 0.0):.0f}ms, "
+                            f"area={self.formatar_regiao_log(regiao)}, confianca={float(info_ocr.get('score', 0.0) or 0.0):.2f}).",
+                            flush=True,
+                        )
+                        return local_ocr_obrigatorio
 
                 if modo_estrito:
                     grayscale_modes = (False,)
@@ -4232,6 +4701,13 @@ class ExecutorAutomacao:
                                     perfil_busca=perfil_busca,
                                 )
                                 if local_confirmado:
+                                    if not self.confirmar_ocr_obrigatorio_apos_visual(
+                                        local_confirmado,
+                                        texto_ocr_esperado,
+                                        janela_info=janela_info_cache,
+                                    ):
+                                        safe_print("Visual encontrado, mas OCR obrigatorio nao confirmou. Continuando a busca.", flush=True)
+                                        continue
                                     self.registrar_reconhecimento_bem_sucedido(
                                         imagem_id,
                                         local_confirmado,
@@ -4273,6 +4749,13 @@ class ExecutorAutomacao:
                                     perfil_busca=perfil_iteracao,
                                 )
                                 if local_confirmado:
+                                    if not self.confirmar_ocr_obrigatorio_apos_visual(
+                                        local_confirmado,
+                                        texto_ocr_esperado,
+                                        janela_info=janela_info_cache,
+                                    ):
+                                        safe_print("Visual encontrado, mas OCR obrigatorio nao confirmou. Continuando a busca.", flush=True)
+                                        continue
                                     self.registrar_reconhecimento_bem_sucedido(
                                         imagem_id,
                                         local_confirmado,
@@ -4370,6 +4853,7 @@ class ExecutorAutomacao:
         bloco_id=None,
         modo_area_busca="target_window",
         area_personalizada=None,
+        texto_ocr_esperado="",
     ):
         local = self.esperar_imagem(
             imagem=imagem,
@@ -4380,6 +4864,7 @@ class ExecutorAutomacao:
             bloco_id=bloco_id,
             modo_area_busca=modo_area_busca,
             area_personalizada=area_personalizada,
+            texto_ocr_esperado=texto_ocr_esperado,
         )
         if not local:
             return None
@@ -4409,6 +4894,7 @@ class ExecutorAutomacao:
         bloco_id=None,
         modo_area_busca="target_window",
         area_personalizada=None,
+        texto_ocr_esperado="",
     ):
         titulo_janela = str(janela_alvo or self.janela_alvo or "").strip()
         if titulo_janela:
@@ -4437,6 +4923,7 @@ class ExecutorAutomacao:
             bloco_id=bloco_id,
             modo_area_busca=modo_area_busca,
             area_personalizada=area_personalizada,
+            texto_ocr_esperado=texto_ocr_esperado,
         )
         if not local:
             safe_print("Teste de reconhecimento: nenhuma correspondencia encontrada.", flush=True)
@@ -4710,6 +5197,7 @@ class ExecutorAutomacao:
                         bloco_id=f"bloco:{ordem_evento}",
                         modo_area_busca=detalhes.get("modo_area_busca", "target_window"),
                         area_personalizada=area_personalizada,
+                        texto_ocr_esperado=detalhes.get("texto_ocr_esperado", ""),
                     )
                     ultima_falha_reconhecimento = None
                 except Exception as erro:
@@ -5841,6 +6329,7 @@ def criar_parser():
     parser.add_argument("--timeout-imagem", type=float, default=10.0)
     parser.add_argument("--confianca-imagem", type=float, default=0.8)
     parser.add_argument("--perfil-busca-imagem", default="balanced")
+    parser.add_argument("--texto-ocr-esperado", default="")
     parser.add_argument("--modo-area-busca-imagem", default="target_window")
     parser.add_argument("--area-busca-x-imagem", type=int, default=0)
     parser.add_argument("--area-busca-y-imagem", type=int, default=0)
@@ -5911,6 +6400,7 @@ def main():
                         "width": args.area_busca_largura_imagem,
                         "height": args.area_busca_altura_imagem,
                     },
+                    texto_ocr_esperado=getattr(args, "texto_ocr_esperado", ""),
                 )
             elif args.modo == "loop":
                 sucesso = executor.executar_loop(loop_start=args.loop_start)

@@ -1222,6 +1222,7 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         sequencia_falha = str(detalhes.get("sequencia_nao_encontrar", "") or "").strip()
         bloco_falha = str(detalhes.get("bloco_nao_encontrar", "") or "").strip()
         janela_alvo = str(detalhes.get("janela_alvo", "") or "").strip()
+        texto_ocr = str(detalhes.get("texto_ocr_esperado", "") or "").strip()
         sufixo = "2 cliques" if cliques >= 2 else ("clicar" if clicar else "localizar")
         alvo = ""
         if acao == "ir_para_sequencia" and sequencia_falha:
@@ -1229,9 +1230,10 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         elif acao == "ir_para_bloco" and bloco_falha:
             alvo = f" -> bloco {bloco_falha}"
         janela = f" | janela:{janela_alvo}" if janela_alvo else ""
+        ocr = f" | OCR:{texto_ocr}" if texto_ocr else ""
         return (
             f"[IMAGEM:{imagem} | {sufixo} | timeout={timeout:g}s | conf={confianca:g} "
-            f"| perfil:{perfil_busca} | area:{modo_area_busca}{janela} | falha:{acao}{alvo}]"
+            f"| perfil:{perfil_busca} | area:{modo_area_busca}{janela}{ocr} | falha:{acao}{alvo}]"
         )
 
     if tipo_evento in TIPOS_CHROME:
@@ -1349,6 +1351,7 @@ def montar_comando_python(teclas, tipo_evento, texto_livre=None, metadados=None)
             f"offset_x={int(detalhes.get('offset_x', 0) or 0)!r}, "
             f"offset_y={int(detalhes.get('offset_y', 0) or 0)!r}, "
             f"janela_alvo={str(detalhes.get('janela_alvo', ''))!r}, "
+            f"texto_ocr_esperado={str(detalhes.get('texto_ocr_esperado', ''))!r}, "
             f"ao_nao_encontrar={str(detalhes.get('ao_nao_encontrar', 'parar'))!r}, "
             f"sequencia_nao_encontrar={str(detalhes.get('sequencia_nao_encontrar', ''))!r}, "
             f"bloco_nao_encontrar={detalhes.get('bloco_nao_encontrar', '')!r}, "
@@ -1958,6 +1961,7 @@ def criar_bloco_clicar_imagem(
     offset_x=0,
     offset_y=0,
     janela_alvo="",
+    texto_ocr_esperado="",
     ao_nao_encontrar="parar",
     sequencia_nao_encontrar="",
     atraso_sequencia_nao_encontrar=0,
@@ -1985,6 +1989,7 @@ def criar_bloco_clicar_imagem(
         "offset_x": int(offset_x),
         "offset_y": int(offset_y),
         "janela_alvo": str(janela_alvo or "").strip(),
+        "texto_ocr_esperado": str(texto_ocr_esperado or "").strip(),
         "ao_nao_encontrar": str(ao_nao_encontrar or "parar"),
         "sequencia_nao_encontrar": str(sequencia_nao_encontrar or "").strip(),
         "atraso_antes_sequencia_nao_encontrar": normalizar_atraso_transicao(atraso_sequencia_nao_encontrar),
@@ -2909,6 +2914,7 @@ def comando_adicionar_imagem(args):
             args.offset_x,
             args.offset_y,
             args.janela_alvo,
+            args.texto_ocr_esperado,
             args.ao_nao_encontrar,
             args.sequencia_nao_encontrar,
             args.atraso_sequencia_nao_encontrar,
@@ -3134,6 +3140,7 @@ def comando_inserir_imagem(args):
             args.offset_x,
             args.offset_y,
             args.janela_alvo,
+            args.texto_ocr_esperado,
             args.ao_nao_encontrar,
             args.sequencia_nao_encontrar,
             args.atraso_sequencia_nao_encontrar,
@@ -3419,6 +3426,7 @@ def comando_atualizar_imagem(args):
     detalhes["offset_x"] = int(args.offset_x)
     detalhes["offset_y"] = int(args.offset_y)
     detalhes["janela_alvo"] = str(args.janela_alvo or "").strip()
+    detalhes["texto_ocr_esperado"] = str(args.texto_ocr_esperado or "").strip()
     detalhes["ao_nao_encontrar"] = str(args.ao_nao_encontrar or "parar")
     detalhes["sequencia_nao_encontrar"] = str(args.sequencia_nao_encontrar or "").strip()
     detalhes["atraso_antes_sequencia_nao_encontrar"] = normalizar_atraso_transicao(args.atraso_sequencia_nao_encontrar)
@@ -3782,6 +3790,7 @@ def build_parser():
     add_image.add_argument("--offset-x", type=int, default=0)
     add_image.add_argument("--offset-y", type=int, default=0)
     add_image.add_argument("--janela-alvo", default="")
+    add_image.add_argument("--texto-ocr-esperado", default="")
     add_image.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
     add_image.add_argument("--sequencia-nao-encontrar", default="")
     add_image.add_argument("--atraso-sequencia-nao-encontrar", type=float, default=0)
@@ -3916,6 +3925,7 @@ def build_parser():
     insert_image.add_argument("--offset-x", type=int, default=0)
     insert_image.add_argument("--offset-y", type=int, default=0)
     insert_image.add_argument("--janela-alvo", default="")
+    insert_image.add_argument("--texto-ocr-esperado", default="")
     insert_image.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
     insert_image.add_argument("--sequencia-nao-encontrar", default="")
     insert_image.add_argument("--atraso-sequencia-nao-encontrar", type=float, default=0)
@@ -4068,6 +4078,7 @@ def build_parser():
     update_image.add_argument("--offset-x", type=int, default=0)
     update_image.add_argument("--offset-y", type=int, default=0)
     update_image.add_argument("--janela-alvo", default="")
+    update_image.add_argument("--texto-ocr-esperado", default="")
     update_image.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
     update_image.add_argument("--sequencia-nao-encontrar", default="")
     update_image.add_argument("--atraso-sequencia-nao-encontrar", type=float, default=0)

@@ -1377,6 +1377,7 @@ async function runImageRecognitionTest(values, options = {}) {
       areaBuscaLargura: 0,
       areaBuscaAltura: 0,
       janelaAlvo: values.windowTitle?.trim() || null,
+      textoOcrEsperado: values.expectedOcrText?.trim() || null,
     });
     setBusy("Pronto");
     if (Number.isFinite(Number(options.recognitionOrder))) {
@@ -3078,6 +3079,7 @@ function applyCommandMapDraftToEvent(event) {
     details.area_busca_largura = 0;
     details.area_busca_altura = 0;
     details.janela_alvo = normalizeRecognitionWindowTitle(values.windowTitle || details.janela_alvo || "");
+    details.texto_ocr_esperado = values.expectedOcrText ?? details.texto_ocr_esperado ?? "";
     details.clicar = recognitionClicksFromMode(values.recognitionClickMode, 1) > 0;
     details.clicks = recognitionClicksFromMode(values.recognitionClickMode, 1);
     details.cliques = details.clicks;
@@ -4374,6 +4376,7 @@ function createInsertPanelState(targetOrder, position) {
     searchAreaHeight: 0,
     recognitionTab: "base",
     windowTitle: "",
+    expectedOcrText: "",
     recognitionClickMode: "single",
     failureAction: "parar",
     failureBlock: "",
@@ -5438,6 +5441,7 @@ function renderRecognitionTreeHiddenFields(details = {}, currentOrder = null) {
     <input data-tree-field="timeout" type="hidden" value="${escapeHtml(details.timeout ?? 10)}" />
     <input data-tree-field="confidence" type="hidden" value="${escapeHtml(details.confianca ?? 0.8)}" />
     <input data-tree-field="searchProfile" type="hidden" value="${escapeHtml(normalizeRecognitionProfile(details.perfil_busca, "balanced"))}" />
+    <input data-tree-field="expectedOcrText" type="hidden" value="${escapeHtml(details.texto_ocr_esperado ?? "")}" />
     <input data-tree-field="windowTitle" type="hidden" value="${escapeHtml(details.janela_alvo ?? "")}" />
     <input data-tree-field="clickOnFind" type="hidden" value="${escapeHtml(clickMode)}" />
     <input data-tree-field="successAction" type="hidden" value="${escapeHtml(successAction)}" />
@@ -5543,6 +5547,10 @@ function renderRecognitionExpandedTreeEditor(event) {
               <option value="balanced" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "balanced" ? "selected" : ""}>Equilibrado</option>
               <option value="precise" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "precise" ? "selected" : ""}>Preciso</option>
             </select>
+          </label>
+          <label class="recognition-cell recognition-cell-full">
+            <span>Texto OCR obrigatorio</span>
+            <input data-tree-field="expectedOcrText" type="text" value="${escapeHtml(details.texto_ocr_esperado ?? "")}" placeholder="Ex: 06/2025" />
           </label>
           <label class="recognition-cell recognition-cell-full">
             <span>Janela deste bloco</span>
@@ -8759,6 +8767,10 @@ function renderEditorFields(event) {
               ${recognitionWindowOptionsMarkup(details.janela_alvo ?? "", "Sem janela fixa neste bloco")}
             </select>
           </label>
+          <label>
+            <span>Texto OCR obrigatorio</span>
+            <input data-field="expectedOcrText" type="text" value="${escapeHtml(details.texto_ocr_esperado ?? "")}" placeholder="Ex: 06/2025" />
+          </label>
           <button class="tree-open-button recognition-window-refresh" data-action="refresh-recognition-windows" type="button">Atualizar janelas</button>
           <label>
             <span>Ao reconhecer</span>
@@ -9248,6 +9260,10 @@ function renderInsertRecognitionPanel(panel, order) {
             <select data-insert-field="windowTitle">
               ${recognitionWindowOptionsMarkup(panel.windowTitle ?? "", "Sem janela fixa neste bloco")}
             </select>
+          </label>
+          <label class="recognition-cell recognition-cell-full">
+            <span>Texto OCR obrigatorio</span>
+            <input data-insert-field="expectedOcrText" type="text" value="${escapeHtml(panel.expectedOcrText ?? "")}" placeholder="Ex: 06/2025" />
           </label>
           <button class="tree-open-button recognition-window-refresh" data-insert-action="refresh-recognition-windows" type="button">Atualizar janelas</button>
         </div>
@@ -10338,6 +10354,7 @@ function formValuesFromCard(card) {
     searchAreaWidth: 0,
     searchAreaHeight: 0,
     windowTitle: normalizeRecognitionWindowTitle(get("windowTitle")?.value ?? ""),
+    expectedOcrText: get("expectedOcrText")?.value ?? "",
     recognitionClickMode: get("clickOnFind")?.value ?? "single",
     failureAction: get("failureAction")?.value ?? "parar",
     failureBlock: get("failureBlock")?.value ?? "",
@@ -10423,6 +10440,7 @@ function treeValuesFromCard(card) {
     searchAreaWidth: 0,
     searchAreaHeight: 0,
     windowTitle: normalizeRecognitionWindowTitle(get("windowTitle")?.value ?? ""),
+    expectedOcrText: get("expectedOcrText")?.value ?? "",
     recognitionClickMode: get("clickOnFind")?.value ?? "single",
     failureAction: get("failureAction")?.value ?? "parar",
     failureBlock: get("failureBlock")?.value ?? "",
@@ -10679,6 +10697,7 @@ function commandCardHasUnsavedChanges(snapshot) {
       || !approxEqual(values.confidence, details.confianca ?? 0.8)
       || normalizeRecognitionProfile(values.searchProfile, "balanced") !== normalizeRecognitionProfile(details.perfil_busca, "balanced")
       || normalizeRecognitionWindowTitle(values.windowTitle || "") !== normalizeRecognitionWindowTitle(details.janela_alvo ?? "")
+      || normalizeStringValue(values.expectedOcrText) !== normalizeStringValue(details.texto_ocr_esperado ?? "")
       || normalizeStringValue(values.recognitionClickMode) !== normalizeStringValue(recognitionClickModeFromDetails(details))
       || successFlowChanged(values, details)
       || normalizeStringValue(values.failureAction) !== normalizeStringValue(details.ao_nao_encontrar ?? "parar")
@@ -10859,6 +10878,7 @@ async function invokeCommandCardUpdate(snapshot) {
       areaBuscaLargura: 0,
       areaBuscaAltura: 0,
       janelaAlvo: values.windowTitle?.trim() || null,
+      textoOcrEsperado: values.expectedOcrText?.trim() || null,
       clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
       clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
       offsetX: 0,
@@ -11181,6 +11201,7 @@ function insertValuesFromPanel(panelElement) {
     searchAreaWidth: 0,
     searchAreaHeight: 0,
     windowTitle: normalizeRecognitionWindowTitle(get("windowTitle")?.value ?? state.insertPanel?.windowTitle ?? ""),
+    expectedOcrText: get("expectedOcrText")?.value ?? state.insertPanel?.expectedOcrText ?? "",
     recognitionClickMode: get("clickOnFind")?.value ?? state.insertPanel?.recognitionClickMode ?? "single",
     failureAction: get("failureAction")?.value ?? state.insertPanel?.failureAction ?? "parar",
     failureBlock: get("failureBlock")?.value ?? state.insertPanel?.failureBlock ?? "",
@@ -11335,6 +11356,7 @@ async function persistVisibleRecognitionDrafts() {
       areaBuscaLargura: 0,
       areaBuscaAltura: 0,
       janelaAlvo: values.windowTitle?.trim() || null,
+      textoOcrEsperado: values.expectedOcrText?.trim() || null,
       clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
       clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
       offsetX: 0,
@@ -11539,6 +11561,7 @@ document.getElementById("addImageButton").addEventListener("click", () => {
       areaBuscaLargura: 0,
       areaBuscaAltura: 0,
       janelaAlvo: null,
+      textoOcrEsperado: null,
       clicar: recognitionClicksFromMode(imageClickModeInput.value, 1) > 0,
       clicks: recognitionClicksFromMode(imageClickModeInput.value, 1),
       offsetX: 0,
@@ -12779,12 +12802,25 @@ commandMapList.addEventListener("change", (event) => {
     return;
   }
 
+  if (target.matches('[data-tree-field="expectedOcrText"]')) {
+    const card = target.closest(".command-tree-card");
+    syncCommandMapDraftFromCard(card);
+    return;
+  }
+
   if (target.matches('[data-insert-field="imagePath"]')) {
     const panel = target.closest(".insert-card-panel");
     if (state.insertPanel && panel) {
       state.insertPanel.imagePath = target.value;
     }
     hydrateRecognitionPreviewCards(panel, target.value);
+    return;
+  }
+
+  if (target.matches('[data-insert-field="expectedOcrText"]')) {
+    if (state.insertPanel) {
+      state.insertPanel.expectedOcrText = target.value;
+    }
     return;
   }
   if (target.matches('[data-tree-field="chromeTargetMethod"]')) {
@@ -13354,6 +13390,7 @@ commandMapList.addEventListener("click", (event) => {
               areaBuscaLargura: 0,
               areaBuscaAltura: 0,
               janelaAlvo: values.windowTitle?.trim() || null,
+              textoOcrEsperado: values.expectedOcrText?.trim() || null,
               clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
               clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
               offsetX: 0,
@@ -13386,6 +13423,7 @@ commandMapList.addEventListener("click", (event) => {
               areaBuscaLargura: 0,
               areaBuscaAltura: 0,
               janelaAlvo: values.windowTitle?.trim() || null,
+              textoOcrEsperado: values.expectedOcrText?.trim() || null,
               clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
               clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
               offsetX: 0,
