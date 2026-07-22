@@ -1,5 +1,5 @@
 {
-  "criado_em": "2026-07-21T14:41:06",
+  "criado_em": "2026-07-22T14:35:03",
   "instrucoes": [
     "Teclas simples e atalhos sao gravados individualmente.",
     "F8 abre uma caixa de texto grande e salva o bloco como um unico comando.",
@@ -8,7 +8,7 @@
     "A aba Planilha pode adicionar uma sequencia inteira ou so linhas selecionadas ao roteiro.",
     "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura."
   ],
-  "resumo_digitado": "[ABRIR URL:https://fgtsdigital.sistema.gov.br/portal/login | chrome | nova_janela | aguardar=20s][IMAGEM:botao-01 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:login | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:valida__o | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:aqui | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][DOWN][ENTER]\n[TAB][IMAGEM:primeiro-campo | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][PLANILHA:CNPJ x37 | apos:nenhuma][TAB x2][ENTER]\n[IMAGEM:guiass | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:guiass2 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:imagem_capturada_008 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+  "resumo_digitado": "[ABRIR URL:https://fgtsdigital.sistema.gov.br/portal/login | chrome | nova_janela | aguardar=20s][IMAGEM:botao-01 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:login | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:valida__o | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:primeiro-campo | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][PLANILHA:CNPJ x37 | apos:nenhuma][DOWN][IMAGEM:aqui | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][TAB][ENTER]\n[TAB x2][ENTER]\n[IMAGEM:guiass | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:guiass2 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:imagem_capturada_008 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
   "eventos": [
     {
       "ordem": 1,
@@ -144,97 +144,6 @@
     },
     {
       "ordem": 5,
-      "sequencia": "principal",
-      "tipo": "clicar_imagem",
-      "teclas": [
-        "imagem"
-      ],
-      "texto": "[IMAGEM:aqui | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
-      "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/aqui', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
-      "detalhes": {
-        "imagem": "imagens/aqui",
-        "timeout": 10.0,
-        "confianca": 0.8,
-        "perfil_busca": "balanced",
-        "modo_area_busca": "target_window",
-        "area_busca_x": 0,
-        "area_busca_y": 0,
-        "area_busca_largura": 0,
-        "area_busca_altura": 0,
-        "clicar": true,
-        "cliques": 1,
-        "offset_x": 0,
-        "offset_y": 0,
-        "janela_alvo": "",
-        "ao_nao_encontrar": "parar",
-        "sequencia_nao_encontrar": "",
-        "atraso_antes_sequencia_nao_encontrar": 0.0,
-        "bloco_nao_encontrar": "",
-        "quantidade_tentativas": 3,
-        "intervalo_tentativas": 1.0,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 6,
-      "sequencia": "principal",
-      "tipo": "tecla",
-      "teclas": [
-        "down"
-      ],
-      "texto": "[DOWN]",
-      "intervalo_antes": 0.3,
-      "comando_python": "executar_teclas(['down'], repeticoes=1)",
-      "detalhes": {
-        "repeticoes": 1,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 7,
-      "sequencia": "principal",
-      "tipo": "tecla",
-      "teclas": [
-        "enter"
-      ],
-      "texto": "[ENTER]\n",
-      "intervalo_antes": 0.3,
-      "comando_python": "executar_teclas(['enter'], repeticoes=1)",
-      "detalhes": {
-        "repeticoes": 1,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 8,
-      "sequencia": "principal",
-      "tipo": "tecla",
-      "teclas": [
-        "tab"
-      ],
-      "texto": "[TAB]",
-      "intervalo_antes": 0.3,
-      "comando_python": "executar_teclas(['tab'], repeticoes=1)",
-      "detalhes": {
-        "repeticoes": 1,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 9,
       "sequencia": "pagina_2",
       "tipo": "clicar_imagem",
       "teclas": [
@@ -271,7 +180,7 @@
       }
     },
     {
-      "ordem": 10,
+      "ordem": 6,
       "sequencia": "pagina_2",
       "tipo": "sequencia_planilha",
       "teclas": [
@@ -328,6 +237,97 @@
         "acao_apos_item": [],
         "acao_apos_item_texto": "nenhuma",
         "intervalo_entre_itens": 0.5,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 7,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "down"
+      ],
+      "texto": "[DOWN]",
+      "intervalo_antes": 0.3,
+      "comando_python": "executar_teclas(['down'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 8,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:aqui | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/aqui', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/aqui",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 9,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "tab"
+      ],
+      "texto": "[TAB]",
+      "intervalo_antes": 0.3,
+      "comando_python": "executar_teclas(['tab'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 10,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "enter"
+      ],
+      "texto": "[ENTER]\n",
+      "intervalo_antes": 0.3,
+      "comando_python": "executar_teclas(['enter'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1,
         "ao_sucesso": "continuar",
         "bloco_sucesso": "",
         "sequencia_sucesso": "",

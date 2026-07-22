@@ -3655,6 +3655,8 @@ def comando_reordenar(args):
         return salvar_e_retornar(payload)
 
     target_index = max(1, int(args.target_index))
+    if indice_atual < target_index - 1:
+        target_index -= 1
     target_index = min(target_index, len(eventos) + 1)
     eventos.insert(target_index - 1, evento_removido)
     payload["eventos"] = eventos

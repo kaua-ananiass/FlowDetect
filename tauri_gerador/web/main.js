@@ -85,6 +85,7 @@ const state = {
   commandMapPageSequence: "principal",
   commandMapPageSequenceLock: null,
   commandMapFocusOrder: null,
+  commandMapOrderCache: [],
   commandMapAutoFitFrame: 0,
   commandConnectorLayoutFrame: 0,
   commandMapSave: {
@@ -150,6 +151,8 @@ const state = {
   captureSequence: 0,
   imageImportTarget: null,
   draggingOrder: null,
+  draggingClientKey: "",
+  pendingDrag: null,
   dragTargetIndex: null,
   dragPointerId: null,
   dragPreviewEl: null,
@@ -162,6 +165,8 @@ const state = {
   dragDropZones: [],
   dragThresholds: [],
   dragContainerRect: null,
+  dragPlaceholderWidth: 0,
+  dragPlaceholderHeight: 0,
   recognitionTreeTabs: {},
   spreadsheetTreeTabs: {},
   recognitionTestStatus: {},
@@ -205,6 +210,11 @@ const state = {
     data: null,
     error: "",
   },
+  renderDirty: {
+    commandMap: true,
+    assist: true,
+    workbook: true,
+  },
 };
 
 let commandMapClientKeySequence = 0;
@@ -212,6 +222,11 @@ let assistTargetPollTimer = 0;
 let assistWindowPickerRequestId = 0;
 let assistTargetValidationPending = false;
 let loginSubmitInFlight = false;
+let studioTutorialActiveIndex = 0;
+let studioTutorialOpen = false;
+let studioTutorialAutoStartTimer = 0;
+let studioTutorialPositionFrame = 0;
+let workspaceRenderTimer = 0;
 const DEV_ADMIN_CONFIG = Object.freeze({
   enabled: true,
   displayName: "Usuario local",
@@ -299,6 +314,17 @@ const workbookTabButton = document.getElementById("workbookTabButton");
 const launcherTabButton = document.getElementById("launcherTabButton");
 const remoteControlTabButton = document.getElementById("remoteControlTabButton");
 const sessionChip = document.getElementById("sessionChip");
+const tutorialReplayButton = document.getElementById("tutorialReplayButton");
+const studioTutorialOverlay = document.getElementById("studioTutorialOverlay");
+const studioTutorialSpotlight = document.getElementById("studioTutorialSpotlight");
+const studioTutorialCard = document.getElementById("studioTutorialCard");
+const studioTutorialStepText = document.getElementById("studioTutorialStepText");
+const studioTutorialTitle = document.getElementById("studioTutorialTitle");
+const studioTutorialText = document.getElementById("studioTutorialText");
+const studioTutorialExtra = document.getElementById("studioTutorialExtra");
+const studioTutorialPrevButton = document.getElementById("studioTutorialPrevButton");
+const studioTutorialNextButton = document.getElementById("studioTutorialNextButton");
+const studioTutorialSkipButton = document.getElementById("studioTutorialSkipButton");
 const launcherPanel = document.getElementById("launcherPanel");
 const editorPanel = document.getElementById("editorPanel");
 const assistPanel = document.getElementById("assistPanel");
@@ -578,6 +604,94 @@ function confirmLeaveEditorIfDirty() {
   return window.confirm("Existem alteracoes nao salvas. Deseja continuar mesmo assim?");
 }
 
+function markWorkspaceRenderDirty(options = {}) {
+  const {
+    commandMap = false,
+    assist = false,
+    workbook = false,
+  } = options;
+  state.renderDirty.commandMap = state.renderDirty.commandMap || Boolean(commandMap);
+  state.renderDirty.assist = state.renderDirty.assist || Boolean(assist);
+  state.renderDirty.workbook = state.renderDirty.workbook || Boolean(workbook);
+}
+
+function renderActiveWorkspaceContent() {
+  let renderedCommandMap = false;
+  let renderedAssist = false;
+  if (state.activeTab === "commands" && state.renderDirty.commandMap) {
+    renderCommandMap();
+    state.renderDirty.commandMap = false;
+    renderedCommandMap = true;
+  }
+
+  if (state.activeTab === "assist" && state.renderDirty.assist) {
+    renderAssistSequenceSettings(state.roadmap);
+    renderAssistExecutionMap();
+    renderAssistEditableTexts();
+    state.renderDirty.assist = false;
+    renderedAssist = true;
+  }
+
+  if (state.activeTab === "workbook" && state.renderDirty.workbook) {
+    state.renderDirty.workbook = false;
+    if (state.workbookPreview?.headers?.length || !availableWorkbooks().length) {
+      renderWorkbookPreview();
+    } else {
+      loadWorkbookPreview().catch((error) => {
+        state.renderDirty.workbook = true;
+        setMessage(String(error), "error");
+      });
+    }
+  }
+
+  if (state.activeTab === "commands") {
+    scheduleCommandMapAutoFit();
+    if (state.commandMapFocusOrder) {
+      requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
+    }
+  }
+
+  if (state.activeTab === "assist" && !renderedAssist) {
+    requestAnimationFrame(() => {
+      if (!assistMapList) {
+        return;
+      }
+      if (state.assist.mode === "running" && state.assist.currentOrder != null) {
+        syncAssistEdgeSpacers();
+        centerAssistOrder(state.assist.currentOrder, "auto");
+      } else {
+        centerFirstAssistOrder("auto");
+      }
+    });
+  }
+
+  return renderedCommandMap || renderedAssist;
+}
+
+function scheduleActiveWorkspaceRender() {
+  window.clearTimeout(workspaceRenderTimer);
+  workspaceRenderTimer = window.setTimeout(() => {
+    renderActiveWorkspaceContent();
+  }, 35);
+}
+
+function releaseInactiveWorkspaceDom(previousTab = "") {
+  window.setTimeout(() => {
+    if (previousTab === "commands" && state.activeTab !== "commands" && commandMapList) {
+      commandMapList.innerHTML = "";
+      state.renderDirty.commandMap = true;
+    }
+    if (previousTab === "assist" && state.activeTab !== "assist" && assistMapList) {
+      assistMapList.innerHTML = "";
+      state.renderDirty.assist = true;
+    }
+    if (previousTab === "workbook" && state.activeTab !== "workbook" && workbookTableWrap) {
+      workbookTableWrap.innerHTML = "";
+      state.renderDirty.workbook = true;
+    }
+  }, 90);
+}
+
 function setWorkspaceTab(tabName) {
   if (tabName === "editor") {
     tabName = "commands";
@@ -585,6 +699,7 @@ function setWorkspaceTab(tabName) {
   if (tabName === "launcher" && state.activeTab !== "launcher" && !confirmLeaveEditorIfDirty()) {
     return;
   }
+  const previousTab = state.activeTab;
   state.activeTab = tabName;
   const launcherActive = tabName === "launcher";
   const editorActive = tabName === "editor";
@@ -610,25 +725,199 @@ function setWorkspaceTab(tabName) {
   builderShell?.classList.toggle("is-assist-active", assistActive);
   builderShell?.classList.toggle("is-remote-control-active", remoteControlActive);
   applyCommandMapChromeMode();
-  if (commandsActive) {
-    scheduleCommandMapAutoFit();
+  scheduleActiveWorkspaceRender();
+  releaseInactiveWorkspaceDom(previousTab);
+}
+
+const STUDIO_TUTORIAL_STORAGE_KEY = "flowdetect_studio_tutorial_seen_v1";
+const STUDIO_TUTORIAL_STEPS = Object.freeze([
+  {
+    tab: "launcher",
+    target: "#launcherTabButton",
+    title: "Launcher de Automacoes",
+    text: "Aqui voce cria, importa, organiza e abre suas automacoes salvas.",
+  },
+  {
+    tab: "commands",
+    target: "#commandMapList",
+    title: "Mapa dos comandos",
+    text: "Monte o fluxo em blocos, conecte caminhos e defina o que acontece em cada etapa.",
+  },
+  {
+    tab: "commands",
+    target: "#commandMapList",
+    title: "Criar um bloco",
+    text: "Para criar, clique em uma opcao de bloco no mapa ou use os botoes de inserir antes/depois em um card existente.",
+    extra: [
+      "Texto",
+      "Tecla",
+      "Reconhecimento",
+      "Planilha",
+    ],
+  },
+  {
+    tab: "assist",
+    target: "#assistTabButton",
+    title: "Execucao assistida",
+    text: "Teste a automacao e acompanhe os blocos avancando em tempo real.",
+  },
+  {
+    tab: "assist",
+    target: "#assistControlTabs",
+    title: "Controles da execucao",
+    text: "Escolha janela alvo, pagina inicial, loops e textos editaveis antes de executar.",
+  },
+  {
+    tab: "workbook",
+    target: "#workbookTabButton",
+    title: "Planilha e dados",
+    text: "Importe planilhas, confira linhas e envie celulas ou colunas para o mapa.",
+  },
+  {
+    tab: "remote-control",
+    target: "#remoteControlTabButton",
+    title: "Controle remoto",
+    text: "Conecte em um Agent para importar, iniciar e acompanhar automacoes em outro PC.",
+  },
+]);
+
+function hasSeenStudioTutorial() {
+  try {
+    return window.localStorage?.getItem(STUDIO_TUTORIAL_STORAGE_KEY) === "1";
+  } catch (error) {
+    return false;
   }
-  if (commandsActive && state.commandMapFocusOrder) {
-    requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
+}
+
+function markStudioTutorialSeen() {
+  try {
+    window.localStorage?.setItem(STUDIO_TUTORIAL_STORAGE_KEY, "1");
+  } catch (error) {
+    console.warn("Nao foi possivel salvar o estado do tutorial.", error);
   }
-  if (assistActive) {
-    requestAnimationFrame(() => {
-      if (!assistMapList) {
-        return;
-      }
-      if (state.assist.mode === "running" && state.assist.currentOrder != null) {
-        syncAssistEdgeSpacers();
-        centerAssistOrder(state.assist.currentOrder, "auto");
-      } else {
-        centerFirstAssistOrder("auto");
-      }
-    });
+}
+
+function fallbackStudioTutorialTarget() {
+  return document.querySelector(".workspace-tabs") || builderShell || document.body;
+}
+
+function currentStudioTutorialStep() {
+  return STUDIO_TUTORIAL_STEPS[Math.min(
+    Math.max(0, studioTutorialActiveIndex),
+    STUDIO_TUTORIAL_STEPS.length - 1
+  )];
+}
+
+function positionStudioTutorial() {
+  if (!studioTutorialOpen || !studioTutorialOverlay || !studioTutorialCard || !studioTutorialSpotlight) {
+    return;
   }
+
+  const step = currentStudioTutorialStep();
+  const target = document.querySelector(step.target) || fallbackStudioTutorialTarget();
+  const rect = target.getBoundingClientRect();
+  const padding = 6;
+  const left = Math.round(Math.max(10, rect.left - padding));
+  const top = Math.round(Math.max(10, rect.top - padding));
+  const width = Math.round(Math.min(window.innerWidth - left - 10, rect.width + padding * 2));
+  const height = Math.round(Math.min(window.innerHeight - top - 10, rect.height + padding * 2));
+  studioTutorialSpotlight.style.left = `${left}px`;
+  studioTutorialSpotlight.style.top = `${top}px`;
+  studioTutorialSpotlight.style.width = `${Math.max(70, width)}px`;
+  studioTutorialSpotlight.style.height = `${Math.max(44, height)}px`;
+
+  const cardRect = studioTutorialCard.getBoundingClientRect();
+  const gap = 12;
+  const prefersBelow = rect.top + rect.height + cardRect.height + gap < window.innerHeight - 14;
+  let cardTop = prefersBelow ? rect.bottom + gap : rect.top - cardRect.height - gap;
+  if (cardTop < 14) {
+    cardTop = Math.min(window.innerHeight - cardRect.height - 14, rect.bottom + gap);
+  }
+  const idealLeft = rect.left + Math.min(18, Math.max(0, rect.width / 4));
+  const cardLeft = Math.min(Math.max(14, idealLeft), window.innerWidth - cardRect.width - 14);
+  studioTutorialCard.style.left = `${Math.round(cardLeft)}px`;
+  studioTutorialCard.style.top = `${Math.round(Math.max(14, cardTop))}px`;
+}
+
+function scheduleStudioTutorialPosition() {
+  window.cancelAnimationFrame(studioTutorialPositionFrame);
+  studioTutorialPositionFrame = window.requestAnimationFrame(positionStudioTutorial);
+}
+
+function renderStudioTutorialStep() {
+  if (!studioTutorialOverlay) {
+    return;
+  }
+
+  const step = currentStudioTutorialStep();
+  const canSwitchTutorialTab = step.tab !== "launcher" || state.activeTab === "launcher" || !hasUnsavedEditorChanges();
+  const willSwitchTab = Boolean(step.tab && state.activeTab !== step.tab && canSwitchTutorialTab);
+  if (step.tab && state.activeTab !== step.tab && canSwitchTutorialTab) {
+    setWorkspaceTab(step.tab);
+  }
+  if (studioTutorialStepText) {
+    studioTutorialStepText.textContent = `Passo ${studioTutorialActiveIndex + 1} de ${STUDIO_TUTORIAL_STEPS.length}`;
+  }
+  if (studioTutorialTitle) {
+    studioTutorialTitle.textContent = step.title;
+  }
+  if (studioTutorialText) {
+    studioTutorialText.textContent = step.text;
+  }
+  if (studioTutorialExtra) {
+    const items = Array.isArray(step.extra) ? step.extra : [];
+    studioTutorialExtra.hidden = !items.length;
+    studioTutorialExtra.innerHTML = items.map((item) => `<span>${escapeHtml(item)}</span>`).join("");
+  }
+  if (studioTutorialPrevButton) {
+    studioTutorialPrevButton.disabled = studioTutorialActiveIndex <= 0;
+  }
+  if (studioTutorialNextButton) {
+    studioTutorialNextButton.textContent = studioTutorialActiveIndex >= STUDIO_TUTORIAL_STEPS.length - 1
+      ? "Finalizar"
+      : "Proximo";
+  }
+  if (willSwitchTab) {
+    window.setTimeout(scheduleStudioTutorialPosition, 140);
+  } else {
+    scheduleStudioTutorialPosition();
+  }
+}
+
+function openStudioTutorial({ force = false } = {}) {
+  if (!studioTutorialOverlay || !state.login.authenticated) {
+    return;
+  }
+  if (!force && hasSeenStudioTutorial()) {
+    return;
+  }
+  studioTutorialOpen = true;
+  studioTutorialActiveIndex = 0;
+  studioTutorialOverlay.hidden = false;
+  document.body.classList.add("is-studio-tutorial-open");
+  renderStudioTutorialStep();
+}
+
+function closeStudioTutorial({ remember = true } = {}) {
+  studioTutorialOpen = false;
+  window.cancelAnimationFrame(studioTutorialPositionFrame);
+  if (studioTutorialOverlay) {
+    studioTutorialOverlay.hidden = true;
+  }
+  document.body.classList.remove("is-studio-tutorial-open");
+  if (remember) {
+    markStudioTutorialSeen();
+  }
+}
+
+function scheduleStudioTutorialAutoStart() {
+  window.clearTimeout(studioTutorialAutoStartTimer);
+  if (!state.login.authenticated || hasSeenStudioTutorial()) {
+    return;
+  }
+  studioTutorialAutoStartTimer = window.setTimeout(() => {
+    openStudioTutorial();
+  }, 650);
 }
 
 function applyCommandMapChromeMode() {
@@ -641,9 +930,6 @@ function applyCommandMapChromeMode() {
       "aria-label",
       collapsed ? "Mostrar menu superior do mapa" : "Ocultar menu superior do mapa"
     );
-  }
-  if (state.activeTab === "commands") {
-    scheduleCommandMapAutoFit();
   }
 }
 
@@ -1035,7 +1321,7 @@ function syncAssistTheme() {
 }
 
 function updateCommandMapNavButtons() {
-  const orders = getCommandMapOrders();
+  const orders = state.commandMapOrderCache || getCommandMapOrders();
   const currentIndex = orders.indexOf(Number(state.commandMapFocusOrder));
   const hasOrders = orders.length > 0;
   if (mapPrevButton) {
@@ -1047,7 +1333,7 @@ function updateCommandMapNavButtons() {
 }
 
 function moveCommandMapFocus(step) {
-  const orders = getCommandMapOrders();
+  const orders = state.commandMapOrderCache || getCommandMapOrders();
   if (!orders.length) {
     return;
   }
@@ -1058,7 +1344,11 @@ function moveCommandMapFocus(step) {
   if (nextOrder == null || nextOrder === state.commandMapFocusOrder) {
     return;
   }
-  setCommandMapFocus(nextOrder);
+  setCommandMapFocus(nextOrder, "auto", {
+    skipConnectorLayout: true,
+    animateFocusPulse: true,
+    scrollMode: "if-needed",
+  });
 }
 
 function syncTestInputsFrom(source) {
@@ -1209,6 +1499,16 @@ function applyLoginStateUI() {
     assistWindowDetailText.textContent = authenticated
       ? `Resolucao salva: ${resolutionLabel}`
       : "Clique em entrar para salvar a resolucao atual desta maquina.";
+  }
+
+  if (tutorialReplayButton) {
+    tutorialReplayButton.hidden = !authenticated;
+  }
+
+  if (authenticated) {
+    scheduleStudioTutorialAutoStart();
+  } else {
+    closeStudioTutorial({ remember: false });
   }
 }
 
@@ -3535,7 +3835,8 @@ function resolveCommandMapFocusByClientKey(roadmap, clientKey, fallbackOrder = n
   return resolveNearestCommandMapFocus(roadmap, fallbackOrder);
 }
 
-function centerCommandMapOrder(order, behavior = "smooth") {
+function centerCommandMapOrder(order, behavior = "smooth", options = {}) {
+  const mode = options.mode || "center";
   const targetSegment = commandMapList.querySelector(`.command-flow-segment[data-order="${order}"]`);
   if (!targetSegment) {
     return;
@@ -3543,6 +3844,22 @@ function centerCommandMapOrder(order, behavior = "smooth") {
 
   const containerRect = commandMapList.getBoundingClientRect();
   const targetRect = targetSegment.getBoundingClientRect();
+  if (mode === "if-needed") {
+    const margin = Math.min(140, Math.max(72, commandMapList.clientWidth * 0.12));
+    const leftOverflow = targetRect.left - (containerRect.left + margin);
+    const rightOverflow = targetRect.right - (containerRect.right - margin);
+    if (leftOverflow >= 0 && rightOverflow <= 0) {
+      return;
+    }
+
+    const delta = leftOverflow < 0 ? leftOverflow : rightOverflow;
+    commandMapList.scrollTo({
+      left: commandMapList.scrollLeft + delta,
+      behavior,
+    });
+    return;
+  }
+
   const delta = targetRect.left - containerRect.left - (commandMapList.clientWidth / 2 - targetRect.width / 2);
   commandMapList.scrollTo({
     left: commandMapList.scrollLeft + delta,
@@ -3661,7 +3978,10 @@ function animateCommandMapLayoutShift(previousPositions) {
   });
 }
 
-function applyCommandMapFocus(behavior = "smooth") {
+function applyCommandMapFocus(behavior = "smooth", options = {}) {
+  const skipConnectorLayout = Boolean(options.skipConnectorLayout);
+  const animateFocusPulse = Boolean(options.animateFocusPulse);
+  const scrollMode = options.scrollMode || "center";
   const events = getCommandMapEvents();
   const focusOrder = resolveNearestCommandMapFocus(state.roadmap, state.commandMapFocusOrder ?? events[0]?.order ?? null);
   state.commandMapFocusOrder = focusOrder;
@@ -3684,6 +4004,14 @@ function applyCommandMapFocus(behavior = "smooth") {
     const isNeighbor = neighborOrders.has(order);
     segment.classList.toggle("is-focused", isFocused);
     segment.classList.toggle("is-neighbor", isNeighbor);
+    if (isFocused && animateFocusPulse) {
+      segment.classList.remove("is-focus-pulse");
+      void segment.offsetWidth;
+      segment.classList.add("is-focus-pulse");
+      window.setTimeout(() => {
+        segment.classList.remove("is-focus-pulse");
+      }, 260);
+    }
   });
 
   commandMapList.querySelectorAll(".command-inline-connector").forEach((connector) => {
@@ -3692,16 +4020,21 @@ function applyCommandMapFocus(behavior = "smooth") {
     connector.classList.toggle("is-near-focus", nearFocus);
   });
 
-  scheduleCommandConnectorLayout();
+  if (!skipConnectorLayout) {
+    scheduleCommandConnectorLayout();
+  }
 
   updateCommandMapNavButtons();
 
   if (state.activeTab === "commands" && focusOrder) {
-    requestAnimationFrame(() => centerCommandMapOrder(focusOrder, behavior));
+    requestAnimationFrame(() => centerCommandMapOrder(focusOrder, behavior, { mode: scrollMode }));
   }
 }
 
-function setCommandMapFocus(order, behavior = "smooth") {
+function setCommandMapFocus(order, behavior = "smooth", options = {}) {
+  const skipConnectorLayout = Boolean(options.skipConnectorLayout);
+  const animateFocusPulse = Boolean(options.animateFocusPulse);
+  const scrollMode = options.scrollMode || "center";
   const targetSequence = getCommandMapEventSequenceByOrder(order);
   const lockedSequence = activeCommandMapPageSequenceLock();
   if (lockedSequence && targetSequence && targetSequence !== lockedSequence) {
@@ -3710,7 +4043,7 @@ function setCommandMapFocus(order, behavior = "smooth") {
     renderCommandMapPageTabs();
     updateCommandMapHeaderSummary();
     state.commandMapFocusOrder = resolveNearestCommandMapFocus(state.roadmap, state.commandMapFocusOrder ?? order);
-    applyCommandMapFocus(behavior);
+    applyCommandMapFocus(behavior, { skipConnectorLayout, animateFocusPulse, scrollMode });
     return;
   }
   if (targetSequence && targetSequence !== normalizeSequenceName(state.commandMapPageSequence)) {
@@ -3721,7 +4054,7 @@ function setCommandMapFocus(order, behavior = "smooth") {
     renderCommandMap();
   }
   state.commandMapFocusOrder = order;
-  applyCommandMapFocus(behavior);
+  applyCommandMapFocus(behavior, { skipConnectorLayout, animateFocusPulse, scrollMode });
 }
 
 function focusLastCommandMapCard(roadmap) {
@@ -3864,6 +4197,7 @@ function clearDragState() {
     state.dragMoveFrame = 0;
   }
   builderShell?.classList.remove("is-map-dragging");
+  state.pendingDrag = null;
   commandMapList.querySelectorAll(".command-drop-zone").forEach((zone) => {
     zone.classList.remove("is-drop-target");
   });
@@ -3874,6 +4208,7 @@ function clearDragState() {
   });
 
   state.draggingOrder = null;
+  state.draggingClientKey = "";
   state.dragTargetIndex = null;
   state.dragPointerId = null;
   state.dragOffsetX = 0;
@@ -3884,6 +4219,11 @@ function clearDragState() {
   state.dragDropZones = [];
   state.dragThresholds = [];
   state.dragContainerRect = null;
+  state.dragPlaceholderWidth = 0;
+  state.dragPlaceholderHeight = 0;
+  commandMapList?.style.removeProperty("--drag-placeholder-width");
+  commandMapList?.style.removeProperty("--drag-placeholder-height");
+  commandMapList?.style.removeProperty("--drag-placeholder-offset-y");
 
   if (state.dragPreviewEl) {
     state.dragPreviewEl.remove();
@@ -3900,7 +4240,9 @@ function releaseDragInteraction({ keepPreview = false } = {}) {
     state.dragPreviewEl.remove();
     state.dragPreviewEl = null;
   }
+  state.pendingDrag = null;
   state.draggingOrder = null;
+  state.draggingClientKey = "";
   state.dragTargetIndex = null;
   state.dragPointerId = null;
   state.dragOffsetX = 0;
@@ -3911,6 +4253,11 @@ function releaseDragInteraction({ keepPreview = false } = {}) {
   state.dragDropZones = [];
   state.dragThresholds = [];
   state.dragContainerRect = null;
+  state.dragPlaceholderWidth = 0;
+  state.dragPlaceholderHeight = 0;
+  commandMapList?.style.removeProperty("--drag-placeholder-width");
+  commandMapList?.style.removeProperty("--drag-placeholder-height");
+  commandMapList?.style.removeProperty("--drag-placeholder-offset-y");
   builderShell?.classList.remove("is-map-dragging");
   commandMapList.querySelectorAll(".command-drop-zone").forEach((zone) => {
     zone.classList.remove("is-drop-target");
@@ -3939,10 +4286,28 @@ function updateDragTarget(targetIndex) {
     ? state.dragSegments
     : Array.from(commandMapList.querySelectorAll(".command-flow-segment"));
   dragSegments.forEach((segment) => {
-    const order = Number(segment.dataset.order);
-    segment.classList.toggle("is-drop-before", order === targetIndex);
-    segment.classList.toggle("is-drop-after", order + 1 === targetIndex);
+    segment.classList.remove("is-drop-before", "is-drop-after");
   });
+}
+
+function getNormalizedDragTargetIndex(targetIndex, order) {
+  const sourceOrder = Number(order);
+  const nextTarget = Number(targetIndex);
+  if (!Number.isFinite(sourceOrder) || !Number.isFinite(nextTarget)) {
+    return nextTarget;
+  }
+
+  return nextTarget > sourceOrder ? nextTarget - 1 : nextTarget;
+}
+
+function isNoopCardReorder(order, targetIndex) {
+  const sourceOrder = Number(order);
+  const destinationIndex = Number(targetIndex);
+  return (
+    Number.isFinite(sourceOrder) &&
+    Number.isFinite(destinationIndex) &&
+    (destinationIndex === sourceOrder || destinationIndex === sourceOrder + 1)
+  );
 }
 
 function getDragTargetIndexFromEvent(event) {
@@ -3968,23 +4333,37 @@ function getDragTargetIndexFromEvent(event) {
 }
 
 function getDragTargetIndexFromPoint(clientX, clientY) {
-  const thresholds = state.dragThresholds;
   const containerRect = state.dragContainerRect || commandMapList.getBoundingClientRect();
   const verticalTolerance = 160;
+  const draggingOrder = Number(state.draggingOrder);
+  const liveThresholds = Array.from(commandMapList.querySelectorAll(".command-flow-segment"))
+    .map((segment) => {
+      const order = Number(segment.dataset.order);
+      if (!order || order === draggingOrder) {
+        return null;
+      }
+      const rect = segment.getBoundingClientRect();
+      return {
+        order,
+        centerX: rect.left - containerRect.left + commandMapList.scrollLeft + rect.width / 2,
+      };
+    })
+    .filter(Boolean)
+    .sort((first, second) => first.centerX - second.centerX);
 
-  if (thresholds.length) {
+  if (liveThresholds.length) {
     if (clientY < containerRect.top - verticalTolerance || clientY > containerRect.bottom + verticalTolerance) {
       return null;
     }
 
     const contentX = clientX - containerRect.left + commandMapList.scrollLeft;
-    for (const threshold of thresholds) {
+    for (const threshold of liveThresholds) {
       if (contentX <= threshold.centerX) {
         return threshold.order;
       }
     }
 
-    const lastThreshold = thresholds[thresholds.length - 1];
+    const lastThreshold = liveThresholds[liveThresholds.length - 1];
     return lastThreshold ? lastThreshold.order + 1 : null;
   }
 
@@ -4024,6 +4403,7 @@ function moveDragPreview(clientX, clientY) {
 function refreshDragGeometry() {
   const containerRect = commandMapList.getBoundingClientRect();
   const scrollLeft = commandMapList.scrollLeft;
+  const draggingOrder = Number(state.draggingOrder);
   const dragSegments = state.dragSegments.length
     ? state.dragSegments
     : Array.from(commandMapList.querySelectorAll(".command-flow-segment"));
@@ -4032,7 +4412,7 @@ function refreshDragGeometry() {
   state.dragThresholds = dragSegments
     .map((segment) => {
       const order = Number(segment.dataset.order);
-      if (!order) {
+      if (!order || order === draggingOrder) {
         return null;
       }
 
@@ -4043,7 +4423,7 @@ function refreshDragGeometry() {
       };
     })
     .filter(Boolean)
-    .sort((first, second) => first.order - second.order);
+    .sort((first, second) => first.centerX - second.centerX);
 }
 
 function scheduleDragUpdate(clientX, clientY) {
@@ -4293,7 +4673,11 @@ function beginCardDrag(handle, pointerEvent) {
     return;
   }
 
-  const order = Number(handle.dataset.order);
+  const order = Number(segment.dataset.order || handle.dataset.order);
+  if (!Number.isFinite(order) || order <= 0) {
+    return;
+  }
+
   const rect = segment.getBoundingClientRect();
   const preview = segment.cloneNode(true);
   const dragZoom = Math.max(0.01, Number(state.commandMapZoom) || 1);
@@ -4312,16 +4696,22 @@ function beginCardDrag(handle, pointerEvent) {
   document.body.appendChild(preview);
 
   state.draggingOrder = order;
+  state.draggingClientKey = String(segment.dataset.clientKey || "").trim();
   state.dragPointerId = pointerEvent.pointerId;
   state.dragPreviewEl = preview;
   state.dragOffsetX = pointerEvent.clientX - rect.left;
   state.dragOffsetY = pointerEvent.clientY - rect.top;
   state.dragDropZones = Array.from(commandMapList.querySelectorAll(".command-drop-zone"));
   state.dragSegments = Array.from(commandMapList.querySelectorAll(".command-flow-segment"));
-  refreshDragGeometry();
+  state.dragPlaceholderWidth = Math.max(188, Math.round(rect.width / dragZoom));
+  state.dragPlaceholderHeight = Math.max(150, Math.round(rect.height / dragZoom));
+  commandMapList.style.setProperty("--drag-placeholder-width", `${state.dragPlaceholderWidth}px`);
+  commandMapList.style.setProperty("--drag-placeholder-height", `${state.dragPlaceholderHeight}px`);
+  commandMapList.style.setProperty("--drag-placeholder-offset-y", "0px");
 
   segment.classList.add("is-drag-source");
   builderShell?.classList.add("is-map-dragging");
+  refreshDragGeometry();
 
   if (typeof handle.setPointerCapture === "function") {
     handle.setPointerCapture(pointerEvent.pointerId);
@@ -4339,9 +4729,10 @@ function finishCardDrag(shouldDrop = true) {
     return;
   }
 
-  const order = state.draggingOrder;
+  const draggedEvent = findRoadmapEventByClientKey(state.draggingClientKey);
+  const order = Number(draggedEvent?.order ?? state.draggingOrder);
   const targetIndex = state.dragTargetIndex;
-  if (shouldDrop && targetIndex) {
+  if (shouldDrop && targetIndex && !isNoopCardReorder(order, targetIndex)) {
     const layoutSnapshot = captureCommandMapCardPositions();
     const commitPromise = commitCardReorder(order, targetIndex, layoutSnapshot);
     releaseDragInteraction();
@@ -10035,6 +10426,9 @@ function renderTimeline() {
 function renderCommandMap(options = {}) {
   const { layoutSnapshot = null } = options;
   const events = getCommandMapEvents().map((event) => applyCommandMapDraftToEvent(event));
+  state.commandMapOrderCache = events
+    .map((event) => Number(event.order))
+    .filter((order) => Number.isFinite(order));
   const pageDefinition = getCommandMapPageDefinition(state.commandMapPageSequence);
   builderShell?.classList.toggle("has-insert-panel", Boolean(state.insertPanel));
   builderShell?.classList.toggle("has-command-card-overlay", Boolean(state.expandedTreeCardOrder));
@@ -10216,15 +10610,13 @@ function applyRoadmap(roadmap, options = {}) {
     state.commandMapFocusOrder ?? decoratedRoadmap?.events?.[0]?.order ?? null
   );
   syncWorkbook(decoratedRoadmap.workbook);
-  renderAssistSequenceSettings(decoratedRoadmap);
   renderTimeline();
-  renderCommandMap();
   if (state.assist.mode === "idle" && !state.assist.currentOrder) {
     state.assist.currentOrder = getAssistInitialOrder(decoratedRoadmap);
   }
   syncAssistTheme();
-  renderAssistExecutionMap();
-  renderAssistEditableTexts();
+  markWorkspaceRenderDirty({ commandMap: true, assist: true, workbook: true });
+  renderActiveWorkspaceContent();
   syncCommandMapSaveStateWithPending();
 }
 
@@ -10284,7 +10676,7 @@ async function loadWorkbookPreview(
   const preview = await invoke("get_workbook_preview", {
     workbook: workbookId || null,
     sheet: sheetName || null,
-    limit: 240,
+    limit: 120,
   });
   state.workbookPreview = preview;
   state.previewWorkbookId = preview.workbook_id || workbookId;
@@ -10298,7 +10690,12 @@ async function loadWorkbookPreview(
   ) {
     state.workbookSelectedCell = null;
   }
-  renderWorkbookPreview();
+  if (state.activeTab === "workbook") {
+    renderWorkbookPreview();
+    state.renderDirty.workbook = false;
+  } else {
+    state.renderDirty.workbook = true;
+  }
 }
 
 async function runMutation(label, promiseFactory, focusResolver = null) {
@@ -11443,7 +11840,7 @@ window.addEventListener("resize", () => {
 });
 
 commandMapList?.addEventListener("scroll", () => {
-  if (state.activeTab === "commands") {
+  if (state.activeTab === "commands" && state.insertPanel) {
     scheduleCommandConnectorLayout();
   }
 }, { passive: true });
@@ -11770,6 +12167,40 @@ workbookTabButton.addEventListener("click", () => setWorkspaceTab("workbook"));
 launcherTabButton.addEventListener("click", () => setWorkspaceTab("launcher"));
 remoteControlTabButton?.addEventListener("click", () => setWorkspaceTab("remote-control"));
 document.getElementById("openEditorFromMap").addEventListener("click", () => setWorkspaceTab("commands"));
+tutorialReplayButton?.addEventListener("click", () => openStudioTutorial({ force: true }));
+studioTutorialNextButton?.addEventListener("click", () => {
+  if (studioTutorialActiveIndex >= STUDIO_TUTORIAL_STEPS.length - 1) {
+    closeStudioTutorial();
+    return;
+  }
+  studioTutorialActiveIndex += 1;
+  renderStudioTutorialStep();
+});
+studioTutorialPrevButton?.addEventListener("click", () => {
+  studioTutorialActiveIndex = Math.max(0, studioTutorialActiveIndex - 1);
+  renderStudioTutorialStep();
+});
+studioTutorialSkipButton?.addEventListener("click", () => closeStudioTutorial());
+studioTutorialOverlay?.addEventListener("click", (event) => {
+  if (event.target === studioTutorialOverlay) {
+    closeStudioTutorial();
+  }
+});
+window.addEventListener("resize", () => {
+  scheduleStudioTutorialPosition();
+});
+window.addEventListener("keydown", (event) => {
+  if (!studioTutorialOpen) {
+    return;
+  }
+  if (event.key === "Escape") {
+    closeStudioTutorial();
+  } else if (event.key === "ArrowRight") {
+    studioTutorialNextButton?.click();
+  } else if (event.key === "ArrowLeft") {
+    studioTutorialPrevButton?.click();
+  }
+});
 commandMapChromeToggleButton?.addEventListener("click", () => {
   state.commandMapChromeCollapsed = !state.commandMapChromeCollapsed;
   applyCommandMapChromeMode();
@@ -12936,21 +13367,38 @@ commandMapList.addEventListener("change", (event) => {
 });
 
 commandMapList.addEventListener("pointerdown", (event) => {
+  const handle = event.target.closest("[data-drag-handle]");
+  if (handle && event.button === 0) {
+    event.preventDefault();
+    state.pendingDrag = {
+      handle,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastX: event.clientX,
+      lastY: event.clientY,
+    };
+    if (typeof handle.setPointerCapture === "function") {
+      handle.setPointerCapture(event.pointerId);
+    }
+    return;
+  }
+
   const segment = event.target.closest(".command-flow-segment");
   if (segment) {
     setCommandMapFocus(Number(segment.dataset.order), "auto");
   }
 
-  const handle = event.target.closest("[data-drag-handle]");
   if (!handle || event.button !== 0) {
     return;
   }
-
-  event.preventDefault();
-  beginCardDrag(handle, event);
 });
 
 commandMapList.addEventListener("focusin", (event) => {
+  if (event.target.closest("[data-drag-handle]")) {
+    return;
+  }
+
   const segment = event.target.closest(".command-flow-segment");
   if (segment) {
     setCommandMapFocus(Number(segment.dataset.order), "smooth");
@@ -12958,6 +13406,25 @@ commandMapList.addEventListener("focusin", (event) => {
 });
 
 window.addEventListener("pointermove", (event) => {
+  if (state.pendingDrag?.pointerId === event.pointerId && !state.draggingOrder) {
+    event.preventDefault();
+    state.pendingDrag.lastX = event.clientX;
+    state.pendingDrag.lastY = event.clientY;
+    const distance = Math.hypot(event.clientX - state.pendingDrag.startX, event.clientY - state.pendingDrag.startY);
+    if (distance >= 5) {
+      const pending = state.pendingDrag;
+      state.pendingDrag = null;
+      beginCardDrag(pending.handle, {
+        ...event,
+        clientX: pending.startX,
+        clientY: pending.startY,
+        pointerId: pending.pointerId,
+      });
+      scheduleDragUpdate(event.clientX, event.clientY);
+    }
+    return;
+  }
+
   if (!state.draggingOrder || state.dragPointerId !== event.pointerId) {
     return;
   }
@@ -12967,6 +13434,11 @@ window.addEventListener("pointermove", (event) => {
 });
 
 window.addEventListener("pointerup", (event) => {
+  if (state.pendingDrag?.pointerId === event.pointerId && !state.draggingOrder) {
+    state.pendingDrag = null;
+    return;
+  }
+
   if (!state.draggingOrder || state.dragPointerId !== event.pointerId) {
     return;
   }
@@ -12980,6 +13452,11 @@ window.addEventListener("pointerup", (event) => {
 });
 
 window.addEventListener("pointercancel", (event) => {
+  if (state.pendingDrag?.pointerId === event.pointerId && !state.draggingOrder) {
+    state.pendingDrag = null;
+    return;
+  }
+
   if (!state.draggingOrder || state.dragPointerId !== event.pointerId) {
     return;
   }
@@ -13767,7 +14244,6 @@ async function boot() {
     });
     await refreshAutomationLibrary();
     await refreshWorkbookMeta();
-    await loadWorkbookPreview();
     const roadmap = await invoke("get_roadmap");
     applyPersistedRoadmap(roadmap);
     await refreshTestLoopData();

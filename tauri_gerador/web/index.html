@@ -1155,6 +1155,25 @@
       </div>
     </main>
 
+    <button id="tutorialReplayButton" class="tutorial-replay-button" type="button" hidden>Tutorial</button>
+
+    <section id="studioTutorialOverlay" class="studio-tutorial-overlay" aria-modal="true" role="dialog" aria-labelledby="studioTutorialTitle" hidden>
+      <div id="studioTutorialSpotlight" class="studio-tutorial-spotlight" aria-hidden="true"></div>
+      <article id="studioTutorialCard" class="studio-tutorial-card">
+        <div class="studio-tutorial-card-top">
+          <span id="studioTutorialStepText">Passo 1 de 6</span>
+          <button id="studioTutorialSkipButton" type="button">Pular</button>
+        </div>
+        <h2 id="studioTutorialTitle">Bem-vindo ao FlowDetect Studio</h2>
+        <p id="studioTutorialText">Conheca rapidamente as areas principais do programa.</p>
+        <div id="studioTutorialExtra" class="studio-tutorial-extra" hidden></div>
+        <div class="studio-tutorial-actions">
+          <button id="studioTutorialPrevButton" class="ghost-button" type="button">Anterior</button>
+          <button id="studioTutorialNextButton" class="primary-button" type="button">Proximo</button>
+        </div>
+      </article>
+    </section>
+
     <datalist id="sequenceSuggestions"></datalist>
 
     <script type="module" src="./main.js"></script>
