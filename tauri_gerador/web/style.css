@@ -76,6 +76,24 @@
   }
 }
 
+@keyframes commandFocusPass {
+  0% {
+    opacity: 0.7;
+    transform: translateY(2px) scale(0.992);
+    filter: brightness(0.96);
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(-6px) scale(1.006);
+    filter: brightness(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(-6px) scale(1);
+    filter: brightness(1);
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -805,7 +823,6 @@ button:disabled {
   background: linear-gradient(135deg, rgba(18, 181, 203, 0.2), rgba(18, 181, 203, 0.08));
   border-color: rgba(18, 181, 203, 0.26);
   box-shadow: 0 6px 18px rgba(18, 181, 203, 0.12);
-  animation: tabActivate 320ms var(--ease-smooth);
 }
 
 #editorTabButton,
@@ -822,11 +839,9 @@ button:disabled {
 
 .workspace-panel.is-active {
   display: block;
-  animation: workspacePanelIn 260ms var(--ease-smooth);
 }
 
 .workspace-panel.is-active > * {
-  animation: surfaceIn 340ms var(--ease-smooth);
 }
 
 .builder-shell.is-commands-active .workspace-panel.is-active {
@@ -3469,6 +3484,7 @@ label span {
 .assist-card {
   width: clamp(224px, 18vw, 270px);
   flex: 0 0 clamp(224px, 18vw, 270px);
+  min-width: 0;
   scroll-snap-align: center;
   padding: 14px;
   border-radius: 18px;
@@ -3476,6 +3492,7 @@ label span {
   background: linear-gradient(180deg, rgba(13, 16, 23, 0.98), rgba(9, 11, 17, 0.98));
   display: grid;
   gap: 10px;
+  overflow: hidden;
   opacity: 0.4;
   transform: scale(0.96);
   will-change: transform, opacity;
@@ -3492,6 +3509,7 @@ label span {
   justify-content: space-between;
   gap: 8px;
   align-items: center;
+  min-width: 0;
 }
 
 .assist-card-index {
@@ -3508,6 +3526,7 @@ label span {
 }
 
 .assist-card-chip {
+  max-width: 130px;
   padding: 6px 8px;
   border-radius: 999px;
   border: 1px solid var(--command-page-accent-border);
@@ -3517,6 +3536,9 @@ label span {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .assist-card h3 {
@@ -3524,13 +3546,21 @@ label span {
   font-family: var(--font-display);
   font-size: 1.08rem;
   line-height: 1.04;
+  overflow-wrap: anywhere;
 }
 
 .assist-card p {
   margin: 0;
+  max-width: 100%;
   color: var(--text-soft);
   font-size: 0.82rem;
   line-height: 1.34;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .assist-card.is-upcoming {
@@ -5840,8 +5870,8 @@ label span {
   display: flex;
   align-items: flex-start;
   justify-content: flex-start;
-  scroll-behavior: smooth;
-  scroll-snap-type: x proximity;
+  scroll-behavior: auto;
+  scroll-snap-type: none;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
   position: relative;
@@ -5951,7 +5981,9 @@ label span {
 .command-flow-row.is-carousel-focus .command-inline-connector,
 .command-flow-row.is-carousel-focus .command-flow-end {
   opacity: 0.34;
-  transition: opacity 220ms ease, transform 220ms ease, filter 220ms ease;
+  transition:
+    opacity 160ms ease,
+    transform 160ms var(--ease-smooth);
 }
 
 .command-flow-segment {
@@ -5962,9 +5994,11 @@ label span {
   align-self: flex-start;
   position: relative;
   z-index: 1;
-  transition: transform 220ms ease, opacity 220ms ease;
-  scroll-snap-align: center;
-  scroll-snap-stop: always;
+  transition:
+    transform 160ms var(--ease-smooth),
+    opacity 160ms ease;
+  scroll-snap-align: none;
+  scroll-snap-stop: normal;
 }
 
 .command-flow-segment.has-insert-panel {
@@ -5997,9 +6031,18 @@ label span {
   z-index: 3;
 }
 
+.command-flow-segment.is-focus-pulse {
+  animation: commandFocusPass 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 .command-flow-segment.is-drag-source {
-  opacity: 1;
-  transform: none;
+  flex: 0 0 0 !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  opacity: 0;
+  transform: none !important;
+  overflow: visible;
+  pointer-events: none;
 }
 
 .command-flow-segment.is-drag-source > .command-tree-card,
@@ -6009,13 +6052,7 @@ label span {
 }
 
 .command-flow-segment.is-drag-source::after {
-  content: "";
-  position: absolute;
-  inset: 6px 0 6px;
-  border-radius: 12px;
-  border: 1px dashed rgba(18, 181, 203, 0.18);
-  background: rgba(18, 181, 203, 0.04);
-  z-index: 0;
+  display: none;
 }
 
 .command-tree-card.is-drop-animating {
@@ -6248,9 +6285,10 @@ label span {
   flex: 0 0 22px;
   position: relative;
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
   justify-content: center;
-  transition: flex-basis 180ms ease, opacity 180ms ease;
+  padding-top: 0;
+  transition: flex-basis 180ms var(--ease-smooth), opacity 160ms ease;
 }
 
 .command-drop-zone::before {
@@ -6262,17 +6300,29 @@ label span {
   background: rgba(230, 247, 255, 0.03);
   border: 1px dashed rgba(230, 247, 255, 0.06);
   transition:
-    width 180ms ease,
+    width 180ms var(--ease-smooth),
+    height 180ms var(--ease-smooth),
+    min-height 180ms var(--ease-smooth),
+    border-radius 180ms ease,
     background 180ms ease,
     border-color 180ms ease,
     box-shadow 180ms ease;
 }
 
 .command-drop-zone.is-drop-target::before {
-  width: 6px;
-  background: rgba(34, 197, 94, 0.2);
-  border-color: rgba(34, 197, 94, 0.34);
-  box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.08);
+  width: calc(100% - 10px);
+  height: var(--drag-placeholder-height, 172px);
+  min-height: var(--drag-placeholder-height, 172px);
+  margin-top: var(--drag-placeholder-offset-y, 0);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top right, rgba(18, 181, 203, 0.18), transparent 42%),
+    linear-gradient(180deg, rgba(18, 181, 203, 0.09), rgba(18, 181, 203, 0.025));
+  border-color: rgba(18, 181, 203, 0.42);
+  box-shadow:
+    inset 0 0 0 1px rgba(94, 234, 212, 0.1),
+    0 0 0 4px rgba(18, 181, 203, 0.04),
+    0 14px 28px rgba(0, 0, 0, 0.18);
 }
 
 .command-drop-zone-end {
@@ -6280,7 +6330,7 @@ label span {
 }
 
 .command-drop-zone.is-drop-target {
-  flex-basis: 28px;
+  flex-basis: var(--drag-placeholder-width, 188px);
 }
 
 .command-tree-card {
@@ -6304,12 +6354,8 @@ label span {
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
-  transition:
-    transform 220ms ease,
-    border-color 220ms ease,
-    box-shadow 220ms ease,
-    background 220ms ease;
-  animation: flowCardIn 280ms ease;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  animation: none;
 }
 
 .command-tree-card.is-visual-recognition {
@@ -6417,7 +6463,7 @@ label span {
 }
 
 .connector-time-inline {
-  animation: connectorIn 320ms ease;
+  animation: none;
   position: absolute;
   left: calc(50% + var(--connector-inline-horizontal-shift));
   top: var(--connector-inline-top, var(--command-connector-line-top));
@@ -8170,7 +8216,8 @@ label span {
   color: var(--text-soft);
   cursor: grab;
   user-select: none;
-  -webkit-user-drag: element;
+  touch-action: none;
+  -webkit-user-drag: none;
   transition:
     transform 180ms ease,
     border-color 180ms ease,
@@ -8252,6 +8299,161 @@ label span {
 .muted-copy {
   color: var(--text-muted);
   font-size: 0.82rem;
+}
+
+.tutorial-replay-button {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 90;
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(94, 234, 212, 0.2);
+  background:
+    linear-gradient(135deg, rgba(18, 181, 203, 0.18), rgba(14, 27, 46, 0.88));
+  color: var(--white);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
+  transition:
+    transform 180ms var(--ease-smooth),
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.tutorial-replay-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(94, 234, 212, 0.42);
+  background:
+    linear-gradient(135deg, rgba(18, 181, 203, 0.28), rgba(14, 27, 46, 0.94));
+  box-shadow:
+    0 16px 36px rgba(0, 0, 0, 0.28),
+    0 0 22px rgba(18, 181, 203, 0.16);
+}
+
+.studio-tutorial-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: auto;
+  background: rgba(2, 8, 16, 0.54);
+}
+
+.studio-tutorial-overlay[hidden],
+.tutorial-replay-button[hidden] {
+  display: none;
+}
+
+.studio-tutorial-spotlight {
+  position: fixed;
+  border-radius: 16px;
+  border: 2px solid rgba(94, 234, 212, 0.96);
+  background: rgba(18, 181, 203, 0.08);
+  box-shadow:
+    0 0 20px rgba(18, 181, 203, 0.42),
+    inset 0 0 14px rgba(94, 234, 212, 0.14);
+  pointer-events: none;
+  transition:
+    left 160ms var(--ease-smooth),
+    top 160ms var(--ease-smooth),
+    width 160ms var(--ease-smooth),
+    height 160ms var(--ease-smooth);
+}
+
+.studio-tutorial-card {
+  position: fixed;
+  width: min(350px, calc(100vw - 28px));
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(94, 234, 212, 0.24);
+  background:
+    radial-gradient(circle at top right, rgba(18, 181, 203, 0.2), transparent 42%),
+    linear-gradient(145deg, rgba(14, 27, 46, 0.98), rgba(7, 17, 31, 0.98));
+  color: var(--white);
+  box-shadow:
+    0 18px 46px rgba(0, 0, 0, 0.38),
+    0 0 18px rgba(18, 181, 203, 0.12);
+  animation: surfaceIn 180ms var(--ease-smooth);
+}
+
+.studio-tutorial-card-top,
+.studio-tutorial-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.studio-tutorial-card-top span {
+  color: var(--accent-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.studio-tutorial-card-top button {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(230, 247, 255, 0.1);
+  background: rgba(230, 247, 255, 0.05);
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.studio-tutorial-card h2 {
+  margin: 12px 0 7px;
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  line-height: 1.08;
+}
+
+.studio-tutorial-card p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.studio-tutorial-extra {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.studio-tutorial-extra span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(94, 234, 212, 0.18);
+  background: rgba(18, 181, 203, 0.08);
+  color: var(--accent-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.studio-tutorial-actions {
+  margin-top: 14px;
+}
+
+.studio-tutorial-actions button {
+  min-height: 36px;
+  min-width: 104px;
+}
+
+.studio-tutorial-actions button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
 }
 
 ::-webkit-scrollbar {
