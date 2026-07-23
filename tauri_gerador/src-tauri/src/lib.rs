@@ -59,6 +59,7 @@ static REMOTE_AGENT_LAST_CONTACT_MS: OnceLock<Arc<Mutex<u128>>> = OnceLock::new(
 static PYTHON_COMMAND_CACHE: OnceLock<(String, Vec<String>)> = OnceLock::new();
 
 static TARGET_OVERLAY_CHILD: Mutex<Option<Child>> = Mutex::new(None);
+static SMART_RECORDER_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 
 #[derive(Serialize)]
 struct AutomationConfig {
@@ -2073,6 +2074,68 @@ fn import_workbook(app: AppHandle, file_name: String, bytes: Vec<u8>) -> Result<
     }))
 }
 
+fn resolve_safe_workbook_path(root: &PathBuf, workbook: &str) -> Result<PathBuf, String> {
+    let normalized = workbook.trim().replace('\\', "/");
+    if normalized.is_empty() {
+        return Err("Nenhuma planilha selecionada.".to_string());
+    }
+
+    let requested_path = Path::new(&normalized);
+    if requested_path.is_absolute() || normalized.split('/').any(|part| part == "..") {
+        return Err("Caminho da planilha invalido.".to_string());
+    }
+
+    let workbook_path = root.join(&normalized);
+    if !workbook_path.exists() {
+        return Err(format!("Planilha nao encontrada: {normalized}"));
+    }
+
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|err| format!("Falha ao validar pasta do projeto: {err}"))?;
+    let canonical_workbook = workbook_path
+        .canonicalize()
+        .map_err(|err| format!("Falha ao validar planilha: {err}"))?;
+    if !canonical_workbook.starts_with(&canonical_root) {
+        return Err("A planilha selecionada esta fora da pasta do projeto.".to_string());
+    }
+
+    Ok(canonical_workbook)
+}
+
+#[tauri::command]
+fn open_workbook(app: AppHandle, workbook: String) -> Result<String, String> {
+    let root = workspace_root(&app);
+    let workbook_path = resolve_safe_workbook_path(&root, &workbook)?;
+    Command::new("explorer")
+        .arg(&workbook_path)
+        .spawn()
+        .map_err(|err| format!("Falha ao abrir planilha: {err}"))?;
+    Ok(workbook_path.display().to_string())
+}
+
+#[tauri::command]
+fn delete_workbook(app: AppHandle, workbook: String) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let normalized = workbook.trim().replace('\\', "/");
+    let canonical_workbook = resolve_safe_workbook_path(&root, &workbook)?;
+
+    fs::remove_file(&canonical_workbook)
+        .map_err(|err| format!("Falha ao excluir planilha: {err}"))?;
+
+    let meta = run_helper_json(&root, &[String::from("workbook-meta")])?;
+    let next_workbook_id = meta
+        .get("default_workbook")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Ok(serde_json::json!({
+        "deleted": normalized,
+        "workbook": meta,
+        "next_workbook_id": next_workbook_id,
+    }))
+}
+
 #[tauri::command]
 fn import_image_asset(app: AppHandle, file_name: String, bytes: Vec<u8>) -> Result<Value, String> {
     let root = workspace_root(&app);
@@ -2124,6 +2187,269 @@ fn append_success_flow_args(
 fn capture_mouse_click(app: AppHandle) -> Result<Value, String> {
     let root = workspace_root(&app);
     run_script_json(&root, "capturar_mouse_global.py", &[])
+}
+
+fn smart_recorder_dir(root: &Path) -> PathBuf {
+    root.join(".flowdetect_recorder")
+}
+
+fn smart_recorder_events_path(root: &Path) -> PathBuf {
+    smart_recorder_dir(root).join("eventos.jsonl")
+}
+
+fn smart_recorder_stop_path(root: &Path) -> PathBuf {
+    smart_recorder_dir(root).join("parar.flag")
+}
+
+fn read_smart_recorder_events(path: &Path) -> Vec<Value> {
+    let Ok(content) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect()
+}
+
+fn write_smart_recorder_events(path: &Path, events: &[Value]) -> Result<(), String> {
+    let mut content = String::new();
+    for event in events {
+        content.push_str(&serde_json::to_string(event).map_err(|err| format!("Falha ao serializar evento: {err}"))?);
+        content.push('\n');
+    }
+    fs::write(path, content).map_err(|err| format!("Falha ao atualizar eventos do gravador: {err}"))
+}
+
+#[tauri::command]
+fn start_smart_recorder(app: AppHandle) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let script_path = root.join("gravador_inteligente.py");
+    if !script_path.exists() {
+        return Err(format!("Arquivo nao encontrado: {}", script_path.display()));
+    }
+
+    {
+        let mut guard = SMART_RECORDER_CHILD
+            .lock()
+            .map_err(|_| "Falha ao acessar estado do gravador.".to_string())?;
+        if let Some(child) = guard.as_mut() {
+            if child.try_wait().map_err(|err| format!("Falha ao verificar gravador: {err}"))?.is_none() {
+                return Err("O Gravador inteligente ja esta em execucao.".to_string());
+            }
+        }
+        *guard = None;
+    }
+
+    let recorder_dir = smart_recorder_dir(&root);
+    let images_dir = root.join("Imagens").join("gravador");
+    fs::create_dir_all(&recorder_dir).map_err(|err| format!("Falha ao preparar gravador: {err}"))?;
+    fs::create_dir_all(&images_dir).map_err(|err| format!("Falha ao preparar imagens do gravador: {err}"))?;
+    let events_path = smart_recorder_events_path(&root);
+    let stop_path = smart_recorder_stop_path(&root);
+    let _ = fs::remove_file(&events_path);
+    let _ = fs::remove_file(&stop_path);
+
+    let (python_program, python_args) = python_command(&root)?;
+    let mut command = Command::new(&python_program);
+    command
+        .current_dir(&root)
+        .args(&python_args)
+        .arg(&script_path)
+        .arg("--output")
+        .arg(&events_path)
+        .arg("--images-dir")
+        .arg(&images_dir)
+        .arg("--stop-flag")
+        .arg(&stop_path);
+    configure_no_window(&mut command);
+    let child = command
+        .spawn()
+        .map_err(|err| format!("Falha ao iniciar o Gravador inteligente: {err}"))?;
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.minimize();
+    }
+
+    let mut guard = SMART_RECORDER_CHILD
+        .lock()
+        .map_err(|_| "Falha ao salvar estado do gravador.".to_string())?;
+    *guard = Some(child);
+    Ok(serde_json::json!({
+        "running": true,
+        "events": [],
+        "message": "Gravador iniciado. Use ESC para finalizar."
+    }))
+}
+
+#[tauri::command]
+fn stop_smart_recorder(app: AppHandle) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    fs::create_dir_all(smart_recorder_dir(&root)).map_err(|err| format!("Falha ao parar gravador: {err}"))?;
+    fs::write(smart_recorder_stop_path(&root), "stop").map_err(|err| format!("Falha ao sinalizar parada: {err}"))?;
+    thread::sleep(Duration::from_millis(250));
+    {
+        let mut guard = SMART_RECORDER_CHILD
+            .lock()
+            .map_err(|_| "Falha ao acessar estado do gravador.".to_string())?;
+        if let Some(child) = guard.as_mut() {
+            if child.try_wait().ok().flatten().is_none() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+        *guard = None;
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    get_smart_recorder_status(app)
+}
+
+#[tauri::command]
+fn get_smart_recorder_status(app: AppHandle) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut finished_now = false;
+    let running = {
+        let mut guard = SMART_RECORDER_CHILD
+            .lock()
+            .map_err(|_| "Falha ao acessar estado do gravador.".to_string())?;
+        if let Some(child) = guard.as_mut() {
+            if child.try_wait().map_err(|err| format!("Falha ao verificar gravador: {err}"))?.is_some() {
+                *guard = None;
+                finished_now = true;
+                false
+            } else {
+                true
+            }
+        } else {
+            false
+        }
+    };
+    if finished_now {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+    Ok(serde_json::json!({
+        "running": running,
+        "events": read_smart_recorder_events(&smart_recorder_events_path(&root)),
+    }))
+}
+
+#[tauri::command]
+fn update_smart_recorder_click_area(
+    app: AppHandle,
+    event_id: i32,
+    width: i32,
+    height: i32,
+    clicks: i32,
+    click_action: Option<String>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let events_path = smart_recorder_events_path(&root);
+    let mut events = read_smart_recorder_events(&events_path);
+    let index = events
+        .iter()
+        .position(|event| event.get("id").and_then(Value::as_i64).unwrap_or(0) == i64::from(event_id))
+        .ok_or_else(|| "Evento do clique nao encontrado.".to_string())?;
+    let event_json = serde_json::to_string(&events[index])
+        .map_err(|err| format!("Falha ao preparar evento do clique: {err}"))?;
+    let script_path = root.join("gravador_inteligente.py");
+    if !script_path.exists() {
+        return Err(format!("Arquivo nao encontrado: {}", script_path.display()));
+    }
+    let images_dir = root.join("Imagens").join("gravador");
+    fs::create_dir_all(&images_dir).map_err(|err| format!("Falha ao preparar imagens do gravador: {err}"))?;
+    let mut args = vec![
+        "--recrop".into(),
+        "--event-json".into(),
+        event_json,
+        "--output".into(),
+        events_path.display().to_string(),
+        "--images-dir".into(),
+        images_dir.display().to_string(),
+        "--stop-flag".into(),
+        smart_recorder_stop_path(&root).display().to_string(),
+        "--crop-width".into(),
+        width.max(40).to_string(),
+        "--crop-height".into(),
+        height.max(40).to_string(),
+        "--clicks".into(),
+        clicks.max(1).min(2).to_string(),
+    ];
+    if let Some(value) = click_action {
+        args.push("--click-action".into());
+        args.push(value);
+    }
+    let updated = run_script_json(&root, "gravador_inteligente.py", &args)?;
+    events[index] = updated.clone();
+    write_smart_recorder_events(&events_path, &events)?;
+    Ok(serde_json::json!({
+        "event": updated,
+        "events": events,
+    }))
+}
+
+#[tauri::command]
+fn delete_smart_recorder_event(app: AppHandle, event_id: i32) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let events_path = smart_recorder_events_path(&root);
+    let mut events = read_smart_recorder_events(&events_path);
+    let removed = events
+        .iter()
+        .position(|event| event.get("id").and_then(Value::as_i64).unwrap_or(0) == i64::from(event_id))
+        .map(|index| events.remove(index))
+        .ok_or_else(|| "Bloco gravado nao encontrado.".to_string())?;
+
+    if let Some(image_id) = removed.get("image_id").and_then(Value::as_str) {
+        let normalized = image_id.replace('\\', "/");
+        if normalized.starts_with("imagens/gravador/") {
+            let file_name = Path::new(&normalized)
+                .file_name()
+                .ok_or_else(|| "Nome da imagem do gravador invalido.".to_string())?;
+            let image_path = root.join("Imagens").join("gravador").join(file_name);
+            let _ = fs::remove_file(image_path);
+        }
+    }
+
+    write_smart_recorder_events(&events_path, &events)?;
+    Ok(serde_json::json!({
+        "events": events,
+    }))
+}
+
+#[tauri::command]
+fn clear_smart_recorder_events(app: AppHandle) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let events_path = smart_recorder_events_path(&root);
+    if events_path.exists() {
+        fs::write(&events_path, "").map_err(|err| format!("Falha ao limpar blocos do gravador: {err}"))?;
+    }
+    Ok(serde_json::json!({
+        "events": [],
+    }))
+}
+
+#[tauri::command]
+fn update_smart_recorder_event_delay(app: AppHandle, event_id: i32, delay: f64) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let events_path = smart_recorder_events_path(&root);
+    let mut events = read_smart_recorder_events(&events_path);
+    let index = events
+        .iter()
+        .position(|event| event.get("id").and_then(Value::as_i64).unwrap_or(0) == i64::from(event_id))
+        .ok_or_else(|| "Bloco gravado nao encontrado.".to_string())?;
+    events[index]["delay"] = serde_json::json!(delay.max(0.0));
+    let updated = events[index].clone();
+    write_smart_recorder_events(&events_path, &events)?;
+    Ok(serde_json::json!({
+        "event": updated,
+        "events": events,
+    }))
 }
 
 #[tauri::command]
@@ -2549,6 +2875,7 @@ fn add_open_url_block(
     url: String,
     navegador: String,
     modo_abertura: String,
+    tela_cheia: bool,
     aguardar_segundos: f64,
     delay: f64,
     sequencia: Option<String>,
@@ -2571,6 +2898,9 @@ fn add_open_url_block(
         "--delay".into(),
         delay.to_string(),
     ];
+    if tela_cheia {
+        args.push("--tela-cheia".into());
+    }
     if let Some(sequence_name) = sequencia {
         args.push("--sequencia".into());
         args.push(sequence_name);
@@ -3102,6 +3432,7 @@ fn insert_open_url_block(
     url: String,
     navegador: String,
     modo_abertura: String,
+    tela_cheia: bool,
     aguardar_segundos: f64,
     delay: f64,
     sequencia: Option<String>,
@@ -3128,6 +3459,9 @@ fn insert_open_url_block(
         "--delay".into(),
         delay.to_string(),
     ];
+    if tela_cheia {
+        args.push("--tela-cheia".into());
+    }
     if let Some(sequence_name) = sequencia {
         if !sequence_name.trim().is_empty() {
             args.push("--sequencia".into());
@@ -3574,6 +3908,7 @@ fn update_open_url_block(
     url: String,
     navegador: String,
     modo_abertura: String,
+    tela_cheia: bool,
     aguardar_segundos: f64,
     delay: f64,
     ao_sucesso: Option<String>,
@@ -3597,6 +3932,9 @@ fn update_open_url_block(
         "--delay".into(),
         delay.to_string(),
     ];
+    if tela_cheia {
+        args.push("--tela-cheia".into());
+    }
     append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
     run_helper_json(&root, &args)
 }
@@ -4277,6 +4615,8 @@ pub fn run() {
             import_runtime_update_zip,
             import_runtime_update_zip_from_path,
             import_workbook,
+            open_workbook,
+            delete_workbook,
             import_image_asset,
             rename_image_asset,
             get_recognition_image_preview,
@@ -4284,6 +4624,13 @@ pub fn run() {
             open_images_folder,
             open_recognition_diagnostics_folder,
             capture_mouse_click,
+            start_smart_recorder,
+            stop_smart_recorder,
+            get_smart_recorder_status,
+            update_smart_recorder_click_area,
+            delete_smart_recorder_event,
+            clear_smart_recorder_events,
+            update_smart_recorder_event_delay,
             add_text_block,
             add_key_block,
             add_loop_start_block,

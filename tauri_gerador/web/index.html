@@ -144,6 +144,7 @@
         <button id="commandTabButton" class="workspace-tab" data-tab="commands">Mapa dos comandos</button>
         <button id="workbookTabButton" class="workspace-tab" data-tab="workbook">Planilha e dados</button>
         <button id="remoteControlTabButton" class="workspace-tab" data-tab="remote-control">Controle remoto</button>
+        <button id="smartRecorderTabButton" class="workspace-tab" data-tab="smart-recorder">Gravador inteligente</button>
         <div id="sessionChip" class="workspace-session-chip">Sessao bloqueada</div>
       </section>
 
@@ -903,6 +904,8 @@
             </div>
             <div class="workbook-header-actions">
               <button id="addWorkbookButton" class="primary-button" type="button">Adicionar planilha</button>
+              <button id="openWorkbookButton" class="ghost-button" type="button">Abrir planilha atual</button>
+              <button id="deleteWorkbookButton" class="danger-button" type="button">Excluir planilha</button>
               <input id="workbookFileInput" type="file" accept=".xlsx,.xlsm,.xltx,.xltm" hidden />
               <input id="imageFileInput" type="file" accept=".png,.jpg,.jpeg,.bmp,.gif,.webp" hidden />
             </div>
@@ -991,6 +994,49 @@
                 <button id="addWorkbookColumnButton" class="soft-button workbook-side-cta">Criar loop com esta coluna</button>
               </div>
             </aside>
+          </section>
+        </section>
+      </section>
+
+      <section id="smartRecorderPanel" class="workspace-panel">
+        <section class="smart-recorder-shell">
+          <header class="smart-recorder-header">
+            <div>
+              <span class="command-map-eyebrow">Gravador inteligente</span>
+              <h2>Ensine a automacao fazendo</h2>
+              <p>Inicie a gravacao, use o sistema normalmente e o FlowDetect cria blocos visuais conforme voce clica e digita.</p>
+            </div>
+            <div class="smart-recorder-actions">
+              <button id="smartRecorderStartButton" class="primary-button" type="button">Iniciar gravacao</button>
+              <button id="smartRecorderStopButton" class="ghost-button" type="button" disabled>Parar</button>
+              <button id="smartRecorderSendButton" class="soft-button" type="button" disabled>Enviar para o mapa</button>
+            </div>
+          </header>
+
+          <section class="smart-recorder-status-grid">
+            <article>
+              <span>Status</span>
+              <strong id="smartRecorderStatus">Pronto</strong>
+            </article>
+            <article>
+              <span>Eventos</span>
+              <strong id="smartRecorderCount">0</strong>
+            </article>
+            <article>
+              <span>Como parar</span>
+              <strong>ESC</strong>
+            </article>
+          </section>
+
+          <section class="smart-recorder-tip">
+            <strong>Confirme os cliques visuais</strong>
+            <span>Cada clique salva uma imagem pequena ao redor do ponto. Se quiser uma area mais precisa, use “Ajustar area” no card.</span>
+          </section>
+
+          <section class="smart-recorder-map">
+            <div id="smartRecorderTrack" class="smart-recorder-track">
+              <div class="empty-state">Nenhum bloco gravado ainda. Clique em Iniciar gravacao para comecar.</div>
+            </div>
           </section>
         </section>
       </section>

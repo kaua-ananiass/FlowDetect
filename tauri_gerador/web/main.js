@@ -42,6 +42,14 @@ const state = {
   roadmap: null,
   workbook: null,
   workbookPreview: null,
+  workbookExternalEditOpenedAt: 0,
+  smartRecorder: {
+    running: false,
+    events: [],
+    previews: {},
+    pendingClickId: null,
+    pollTimer: null,
+  },
   activeTab: "launcher",
   remoteControl: {
     address: "127.0.0.1:18452",
@@ -313,6 +321,7 @@ const commandTabButton = document.getElementById("commandTabButton");
 const workbookTabButton = document.getElementById("workbookTabButton");
 const launcherTabButton = document.getElementById("launcherTabButton");
 const remoteControlTabButton = document.getElementById("remoteControlTabButton");
+const smartRecorderTabButton = document.getElementById("smartRecorderTabButton");
 const sessionChip = document.getElementById("sessionChip");
 const tutorialReplayButton = document.getElementById("tutorialReplayButton");
 const studioTutorialOverlay = document.getElementById("studioTutorialOverlay");
@@ -335,6 +344,7 @@ const mapPrevButton = document.getElementById("mapPrevButton");
 const mapNextButton = document.getElementById("mapNextButton");
 const workbookPanel = document.getElementById("workbookPanel");
 const remoteControlPanel = document.getElementById("remoteControlPanel");
+const smartRecorderPanel = document.getElementById("smartRecorderPanel");
 const studioControlHint = document.getElementById("studioControlHint");
 const studioControlStatus = document.getElementById("studioControlStatus");
 const studioControlAddressInput = document.getElementById("studioControlAddressInput");
@@ -410,12 +420,20 @@ const assistWindowPickerRefreshButton = document.getElementById("assistWindowPic
 const workbookMeta = document.getElementById("workbookMeta");
 const workbookFilesTabs = document.getElementById("workbookFilesTabs");
 const addWorkbookButton = document.getElementById("addWorkbookButton");
+const openWorkbookButton = document.getElementById("openWorkbookButton");
+const deleteWorkbookButton = document.getElementById("deleteWorkbookButton");
 const workbookFileInput = document.getElementById("workbookFileInput");
 const imageFileInput = document.getElementById("imageFileInput");
 const automationZipFileInput = document.getElementById("automationZipFileInput");
 const workbookSheetSelect = document.getElementById("workbookSheetSelect");
 const workbookSearchInput = document.getElementById("workbookSearchInput");
 const workbookRowsInfo = document.getElementById("workbookRowsInfo");
+const smartRecorderStartButton = document.getElementById("smartRecorderStartButton");
+const smartRecorderStopButton = document.getElementById("smartRecorderStopButton");
+const smartRecorderSendButton = document.getElementById("smartRecorderSendButton");
+const smartRecorderStatus = document.getElementById("smartRecorderStatus");
+const smartRecorderCount = document.getElementById("smartRecorderCount");
+const smartRecorderTrack = document.getElementById("smartRecorderTrack");
 const workbookTableWrap = document.getElementById("workbookTableWrap");
 const workbookSelectedValueBlock = document.getElementById("workbookSelectedValueBlock");
 const selectedWorkbookStatus = document.getElementById("selectedWorkbookStatus");
@@ -644,6 +662,10 @@ function renderActiveWorkspaceContent() {
     }
   }
 
+  if (state.activeTab === "smart-recorder") {
+    renderSmartRecorder();
+  }
+
   if (state.activeTab === "commands") {
     scheduleCommandMapAutoFit();
     if (state.commandMapFocusOrder) {
@@ -707,23 +729,27 @@ function setWorkspaceTab(tabName) {
   const commandsActive = tabName === "commands";
   const workbookActive = tabName === "workbook";
   const remoteControlActive = tabName === "remote-control";
+  const smartRecorderActive = tabName === "smart-recorder";
   launcherTabButton.classList.toggle("is-active", launcherActive);
   editorTabButton.classList.toggle("is-active", editorActive);
   assistTabButton.classList.toggle("is-active", assistActive);
   commandTabButton.classList.toggle("is-active", commandsActive);
   workbookTabButton.classList.toggle("is-active", workbookActive);
   remoteControlTabButton?.classList.toggle("is-active", remoteControlActive);
+  smartRecorderTabButton?.classList.toggle("is-active", smartRecorderActive);
   launcherPanel.classList.toggle("is-active", launcherActive);
   editorPanel.classList.toggle("is-active", editorActive);
   assistPanel.classList.toggle("is-active", assistActive);
   commandsPanel.classList.toggle("is-active", commandsActive);
   workbookPanel.classList.toggle("is-active", workbookActive);
   remoteControlPanel?.classList.toggle("is-active", remoteControlActive);
+  smartRecorderPanel?.classList.toggle("is-active", smartRecorderActive);
   builderShell?.classList.toggle("is-launcher-active", launcherActive);
   builderShell?.classList.toggle("is-commands-active", commandsActive);
   builderShell?.classList.toggle("is-workbook-active", workbookActive);
   builderShell?.classList.toggle("is-assist-active", assistActive);
   builderShell?.classList.toggle("is-remote-control-active", remoteControlActive);
+  builderShell?.classList.toggle("is-smart-recorder-active", smartRecorderActive);
   applyCommandMapChromeMode();
   scheduleActiveWorkspaceRender();
   releaseInactiveWorkspaceDom(previousTab);
@@ -4806,6 +4832,7 @@ function createInsertPanelState(targetOrder, position) {
     openUrl: "",
     openBrowser: "padrao",
     openMode: "nova_janela",
+    openFullscreen: false,
     openWait: 3,
     programPath: "",
     programParams: "",
@@ -7498,8 +7525,415 @@ function selectedPreviewWorkbookMeta() {
   return workbookById(activeId) || workbooks[0] || null;
 }
 
+function smartRecorderUsableEvents() {
+  return (state.smartRecorder.events || []).filter((event) => event?.type && event.type !== "status");
+}
+
+function smartRecorderTypeLabel(type) {
+  if (type === "clicar_imagem") return "Reconhecimento";
+  if (type === "texto_livre") return "Texto";
+  if (type === "tecla") return "Tecla";
+  return "Evento";
+}
+
+function smartRecorderEventTitle(event) {
+  if (event.type === "clicar_imagem") return "Clique visual";
+  if (event.type === "texto_livre") return "Texto digitado";
+  if (event.type === "tecla") return `Tecla ${(event.keys || "").toUpperCase()}`;
+  return event.title || "Evento capturado";
+}
+
+function smartRecorderEventSubtitle(event) {
+  if (event.type === "clicar_imagem") {
+    const action = event.click_action === "identificar" || event.clicks === 0 ? "so identificar" : `${event.clicks || 1} clique(s)`;
+    return `${action} | ${event.image_id || "referencia visual"} | x=${event.x ?? "-"} y=${event.y ?? "-"}`;
+  }
+  if (event.type === "texto_livre") return event.text || "-";
+  if (event.type === "tecla") return `${event.keys || "-"} x${event.repeat || 1}`;
+  return event.title || "-";
+}
+
+function smartRecorderTargetSequence(event) {
+  return event.target_sequence || event.targetSequence || "principal";
+}
+
+function smartRecorderDestinationLabel(event) {
+  return `Criar em: ${sequenceLabel(smartRecorderTargetSequence(event))}`;
+}
+
+function formatSmartRecorderDelay(value) {
+  const delay = Math.max(0, Number(value || 0));
+  return `${delay.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}s`;
+}
+
+function smartRecorderClickControls(event) {
+  const width = Number(event.crop?.width || 180);
+  const height = Number(event.crop?.height || 110);
+  const clicks = Number(event.clicks || 1);
+  const clickAction = event.click_action === "identificar" || event.clicks === 0 ? "identificar" : "clicar";
+  const confirmed = Boolean(event.confirmed);
+  return `
+    <div class="smart-recorder-preview" data-smart-preview="${escapeHtml(event.image_id || "")}">
+      ${state.smartRecorder.previews[event.image_id]
+        ? `<img src="${escapeHtml(state.smartRecorder.previews[event.image_id])}" alt="Preview da area capturada" />`
+        : `<span>Carregando preview...</span>`}
+    </div>
+    <div class="smart-recorder-click-editor ${confirmed ? "is-confirmed" : "is-pending"}">
+      <label>
+        <span>Largura</span>
+        <input data-smart-recorder-field="width" type="number" min="40" step="10" value="${escapeHtml(String(width))}" />
+      </label>
+      <label>
+        <span>Altura</span>
+        <input data-smart-recorder-field="height" type="number" min="40" step="10" value="${escapeHtml(String(height))}" />
+      </label>
+      <label>
+        <span>Acao</span>
+        <select data-smart-recorder-field="clicks">
+          <option value="1" ${clickAction !== "identificar" && clicks !== 2 ? "selected" : ""}>1 clique</option>
+          <option value="2" ${clickAction !== "identificar" && clicks === 2 ? "selected" : ""}>2 cliques</option>
+          <option value="identify" ${clickAction === "identificar" ? "selected" : ""}>So identificar</option>
+        </select>
+      </label>
+      <button class="tree-save-button" type="button" data-smart-recorder-action="confirm-click">
+        ${confirmed ? "Atualizar area" : "Confirmar area"}
+      </button>
+    </div>
+  `;
+}
+
+async function hydrateSmartRecorderPreviews() {
+  const imageIds = smartRecorderUsableEvents()
+    .filter((event) => event.type === "clicar_imagem" && event.image_id && !state.smartRecorder.previews[event.image_id])
+    .map((event) => event.image_id);
+  if (!imageIds.length) return;
+  await Promise.allSettled(imageIds.map(async (imageId) => {
+    const preview = await invoke("get_recognition_image_preview", { imageId });
+    if (preview?.src) {
+      state.smartRecorder.previews[imageId] = preview.src;
+    }
+  }));
+  renderSmartRecorder();
+}
+
+function renderSmartRecorder() {
+  if (!smartRecorderTrack) return;
+  const events = smartRecorderUsableEvents();
+  if (smartRecorderStatus) smartRecorderStatus.textContent = state.smartRecorder.running ? "Gravando" : "Pronto";
+  if (smartRecorderCount) smartRecorderCount.textContent = String(events.length);
+  if (smartRecorderStartButton) smartRecorderStartButton.disabled = state.smartRecorder.running;
+  if (smartRecorderStopButton) smartRecorderStopButton.disabled = !state.smartRecorder.running;
+  if (smartRecorderSendButton) smartRecorderSendButton.disabled = state.smartRecorder.running || !events.length;
+
+  if (!events.length) {
+    smartRecorderTrack.innerHTML = `<div class="empty-state">Nenhum bloco gravado ainda. Clique em Iniciar gravacao para comecar.</div>`;
+    return;
+  }
+
+  smartRecorderTrack.innerHTML = events.map((event, index) => `
+    ${index > 0 ? `
+      <span class="smart-recorder-delay-connector">
+        <i></i>
+        <input
+          type="number"
+          min="0"
+          step="0.1"
+          value="${escapeHtml(String(Math.max(0, Number(event.delay || 0.3)).toFixed(1)))}"
+          title="Tempo antes deste bloco"
+          data-smart-recorder-delay-id="${escapeHtml(String(event.id))}"
+        />
+        <i></i>
+      </span>
+    ` : ""}
+    <article class="smart-recorder-card smart-recorder-card-${escapeHtml(event.type)}" data-smart-recorder-id="${escapeHtml(String(event.id))}">
+      <div class="smart-recorder-card-top">
+        <span class="flow-index">${String(index + 1).padStart(2, "0")}</span>
+        <span class="type-chip ${escapeHtml(event.type)}">${escapeHtml(smartRecorderTypeLabel(event.type))}</span>
+      </div>
+      <h3>${escapeHtml(smartRecorderEventTitle(event))}</h3>
+      <label class="smart-recorder-delay-chip">
+        <span>Antes</span>
+        <input
+          type="number"
+          min="0"
+          step="0.1"
+          value="${escapeHtml(String(Math.max(0, Number(event.delay || 0.3)).toFixed(1)))}"
+          data-smart-recorder-delay-id="${escapeHtml(String(event.id))}"
+        />
+        <em>s</em>
+      </label>
+      <span class="smart-recorder-destination-chip">${escapeHtml(smartRecorderDestinationLabel(event))}</span>
+      <p>${escapeHtml(smartRecorderEventSubtitle(event))}</p>
+      ${event.type === "clicar_imagem" ? `
+        <div class="smart-recorder-crop">Area: ${escapeHtml(String(event.crop?.width || "-"))} x ${escapeHtml(String(event.crop?.height || "-"))}</div>
+        ${smartRecorderClickControls(event)}
+        <button class="tree-open-button" type="button" data-smart-recorder-action="adjust-image">Selecionar area manual</button>
+      ` : ""}
+      <button class="tree-delete-button smart-recorder-delete-button" type="button" data-smart-recorder-action="delete-event">Excluir bloco</button>
+    </article>
+  `).join("");
+  hydrateSmartRecorderPreviews().catch(() => {});
+}
+
+async function refreshSmartRecorderStatus() {
+  const wasRunning = state.smartRecorder.running;
+  const status = await invoke("get_smart_recorder_status");
+  state.smartRecorder.running = Boolean(status.running);
+  state.smartRecorder.events = Array.isArray(status.events) ? status.events : [];
+  renderSmartRecorder();
+  const pendingClick = smartRecorderUsableEvents().find((event) => event.type === "clicar_imagem" && !event.confirmed);
+  if (state.smartRecorder.running && pendingClick && state.smartRecorder.pendingClickId !== pendingClick.id) {
+    state.smartRecorder.pendingClickId = pendingClick.id;
+    await stopSmartRecorder();
+    setWorkspaceTab("smart-recorder");
+    setMessage("Clique capturado. Confirme a area e escolha 1 ou 2 cliques antes de continuar.", "success");
+    return;
+  }
+  if (!state.smartRecorder.running) {
+    stopSmartRecorderPolling();
+    if (wasRunning) {
+      setBusy("Pronto");
+      setMessage("Gravacao finalizada. Revise os blocos antes de enviar para o mapa.", "success");
+    }
+  }
+}
+
+function startSmartRecorderPolling() {
+  window.clearInterval(state.smartRecorder.pollTimer);
+  state.smartRecorder.pollTimer = window.setInterval(() => {
+    refreshSmartRecorderStatus().catch((error) => {
+      stopSmartRecorderPolling();
+      setMessage(String(error), "error");
+    });
+  }, 700);
+}
+
+function stopSmartRecorderPolling() {
+  window.clearInterval(state.smartRecorder.pollTimer);
+  state.smartRecorder.pollTimer = null;
+}
+
+async function startSmartRecorder() {
+  try {
+    setBusy("Gravando");
+    const result = await invoke("start_smart_recorder");
+    state.smartRecorder.running = Boolean(result.running);
+    state.smartRecorder.events = Array.isArray(result.events) ? result.events : [];
+    state.smartRecorder.pendingClickId = null;
+    renderSmartRecorder();
+    startSmartRecorderPolling();
+    setMessage(result.message || "Gravador iniciado. Use ESC para finalizar.", "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+}
+
+async function stopSmartRecorder() {
+  try {
+    setBusy("Parando gravador");
+    const result = await invoke("stop_smart_recorder");
+    state.smartRecorder.running = Boolean(result.running);
+    state.smartRecorder.events = Array.isArray(result.events) ? result.events : [];
+    stopSmartRecorderPolling();
+    renderSmartRecorder();
+    setBusy("Pronto");
+    setMessage("Gravacao finalizada. Revise os blocos antes de enviar para o mapa.", "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+}
+
+async function adjustSmartRecorderClickImage(eventId) {
+  const event = state.smartRecorder.events.find((item) => String(item.id) === String(eventId));
+  if (!event || event.type !== "clicar_imagem") return;
+  try {
+    setBusy("Ajustando area");
+    const result = await invoke("capture_image_asset", { baseNameHint: `gravador_click_${event.id}` });
+    event.image_id = result.image_id || event.image_id;
+    event.crop = { ...(event.crop || {}), manual: true };
+    renderSmartRecorder();
+    setBusy("Pronto");
+    setMessage("Area do clique atualizada para esse bloco gravado.", "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+}
+
+async function confirmSmartRecorderClickArea(card) {
+  const eventId = Number(card?.dataset.smartRecorderId || 0);
+  const event = state.smartRecorder.events.find((item) => Number(item.id) === eventId);
+  if (!event || event.type !== "clicar_imagem") return;
+  const get = (field) => card.querySelector(`[data-smart-recorder-field="${field}"]`);
+  const width = Math.max(40, Math.trunc(parseNumber(get("width")?.value, event.crop?.width || 180)));
+  const height = Math.max(40, Math.trunc(parseNumber(get("height")?.value, event.crop?.height || 110)));
+  const clickValue = get("clicks")?.value || "1";
+  const clickAction = clickValue === "identify" ? "identificar" : "clicar";
+  const clicks = clickAction === "identificar" ? 0 : Math.max(1, Math.min(2, Math.trunc(parseNumber(clickValue, event.clicks || 1))));
+  try {
+    setBusy("Confirmando area");
+    const result = await invoke("update_smart_recorder_click_area", {
+      eventId,
+      width,
+      height,
+      clicks,
+      clickAction,
+    });
+    state.smartRecorder.events = Array.isArray(result.events) ? result.events : state.smartRecorder.events;
+    const updated = result.event;
+    if (updated?.image_id) {
+      delete state.smartRecorder.previews[updated.image_id];
+    }
+    renderSmartRecorder();
+    setBusy("Pronto");
+    setMessage("Area e quantidade de cliques confirmadas.", "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+}
+
+async function deleteSmartRecorderEvent(eventId) {
+  const event = state.smartRecorder.events.find((item) => String(item.id) === String(eventId));
+  if (!event) return;
+  try {
+    setBusy("Excluindo bloco");
+    const result = await invoke("delete_smart_recorder_event", { eventId: Number(eventId) });
+    state.smartRecorder.events = Array.isArray(result.events)
+      ? result.events
+      : state.smartRecorder.events.filter((item) => String(item.id) !== String(eventId));
+    if (event.image_id) {
+      delete state.smartRecorder.previews[event.image_id];
+    }
+    renderSmartRecorder();
+    setBusy(state.smartRecorder.running ? "Gravando" : "Pronto");
+    setMessage("Bloco removido do Gravador inteligente.", "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+}
+
+async function updateSmartRecorderEventDelay(input) {
+  const eventId = Number(input?.dataset.smartRecorderDelayId || 0);
+  if (!eventId) return;
+  const delay = Math.max(0, Number(parseNumber(input.value, 0)));
+  const current = state.smartRecorder.events.find((item) => Number(item.id) === eventId);
+  if (current && Math.abs(Number(current.delay || 0) - delay) < 0.001) return;
+  try {
+    setBusy("Salvando tempo");
+    const result = await invoke("update_smart_recorder_event_delay", { eventId, delay });
+    state.smartRecorder.events = Array.isArray(result.events) ? result.events : state.smartRecorder.events;
+    renderSmartRecorder();
+    setBusy(state.smartRecorder.running ? "Gravando" : "Pronto");
+    setMessage("Tempo do bloco atualizado.", "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+}
+
+async function sendSmartRecorderEventsToMap() {
+  const events = smartRecorderUsableEvents();
+  if (!events.length) {
+    setMessage("Nenhum bloco gravado para enviar ao mapa.", "error");
+    return;
+  }
+  const pendingClicks = events.filter((event) => event.type === "clicar_imagem" && !event.confirmed);
+  if (pendingClicks.length) {
+    setMessage("Confirme a area dos cliques visuais antes de enviar para o mapa.", "error");
+    return;
+  }
+  try {
+    setBusy("Enviando blocos");
+    let roadmap = null;
+    const sequencia = currentSequenceName();
+    for (const event of events) {
+      const eventSequence = smartRecorderTargetSequence(event);
+      if (event.type === "texto_livre" && String(event.text || "").trim()) {
+        roadmap = await invoke("add_text_block", {
+          text: String(event.text || ""),
+          delay: Number(event.delay || 0.3),
+          sequencia: eventSequence,
+          aoSucesso: "continuar",
+          blocoSucesso: null,
+          sequenciaSucesso: null,
+          atrasoSequenciaSucesso: 0,
+          editavelExecucao: false,
+          rotuloExecucao: null,
+        });
+      } else if (event.type === "tecla" && String(event.keys || "").trim()) {
+        roadmap = await invoke("add_key_block", {
+          keys: String(event.keys || ""),
+          repeat: Number(event.repeat || 1),
+          delay: Number(event.delay || 0.3),
+          sequencia: eventSequence,
+          aoSucesso: "continuar",
+          blocoSucesso: null,
+          sequenciaSucesso: null,
+          atrasoSequenciaSucesso: 0,
+        });
+      } else if (event.type === "clicar_imagem" && String(event.image_id || "").trim()) {
+        roadmap = await invoke("add_image_click_block", {
+          imagem: String(event.image_id || ""),
+          timeout: 10,
+          confianca: Number(event.confidence || 0.82),
+          perfilBusca: "balanced",
+          clicar: !(event.click_action === "identificar" || Number(event.clicks || 1) <= 0),
+          clicks: event.click_action === "identificar" ? 0 : Number(event.clicks || 1),
+          offsetX: 0,
+          offsetY: 0,
+          janelaAlvo: null,
+          textoOcrEsperado: null,
+          aoNaoEncontrar: "parar",
+          sequenciaNaoEncontrar: null,
+          blocoNaoEncontrar: null,
+          atrasoSequenciaNaoEncontrar: 0,
+          quantidadeTentativas: 1,
+          intervaloTentativas: 1,
+          delay: Number(event.delay || 0.3),
+          sequencia: eventSequence,
+          aoSucesso: "continuar",
+          blocoSucesso: null,
+          sequenciaSucesso: null,
+          atrasoSequenciaSucesso: 0,
+        });
+      }
+    }
+    if (roadmap) {
+      applyRoadmap(roadmap, { preserveCommandMapSequence: sequencia });
+      markCommandMapSaveDirty();
+    }
+    await invoke("clear_smart_recorder_events");
+    state.smartRecorder.events = [];
+    state.smartRecorder.previews = {};
+    renderSmartRecorder();
+    setBusy("Pronto");
+    setMessage(`${events.length} bloco(s) enviados para o mapa e removidos do gravador.`, "success");
+    setWorkspaceTab("commands");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+}
+
 function workbookSheetsFor(workbookId) {
   return workbookById(workbookId)?.sheets ?? [];
+}
+
+function countBlocksUsingWorkbook(workbookId) {
+  const normalizedWorkbookId = String(workbookId || "").trim();
+  if (!normalizedWorkbookId) {
+    return 0;
+  }
+
+  return (state.roadmap?.events ?? []).filter((event) => {
+    const details = event.details || event.detalhes || {};
+    const eventWorkbook = String(details.arquivo || details.workbook || "").trim();
+    return eventWorkbook === normalizedWorkbookId;
+  }).length;
 }
 
 function columnsForSheetInWorkbook(workbookId, sheetName) {
@@ -7648,6 +8082,12 @@ function updateWorkbookSelectionLabels() {
 function renderWorkbookPreview() {
   populateWorkbookSheetSelect();
   renderWorkbookFileTabs();
+  if (openWorkbookButton) {
+    openWorkbookButton.disabled = !selectedPreviewWorkbookMeta()?.id;
+  }
+  if (deleteWorkbookButton) {
+    deleteWorkbookButton.disabled = !selectedPreviewWorkbookMeta()?.id;
+  }
   const preview = state.workbookPreview;
   if (!preview?.headers?.length) {
     workbookMeta.textContent = "A planilha ainda nao foi encontrada ou nao possui colunas legiveis.";
@@ -8365,6 +8805,7 @@ function studioControlEventDetails(event = {}) {
   } else if (event.type === "abrir_url") {
     rows.push(["URL", details.url || "-"]);
     rows.push(["Navegador", details.navegador || "padrao"]);
+    rows.push(["Tela cheia", details.tela_cheia ? "Sim" : "Nao"]);
   } else if (event.type === "abrir_programa") {
     rows.push(["Executavel", details.caminho || "-"]);
     rows.push(["Parametros", details.parametros || "-"]);
@@ -8913,6 +9354,7 @@ async function refreshAutomationLibrary(feedbackMessage = "") {
 function renderOpenUrlFields(fieldAttr, details = {}, currentOrder = null) {
   const browser = String(details.navegador ?? "padrao");
   const openMode = String(details.modo_abertura ?? "nova_janela");
+  const fullscreen = Boolean(details.tela_cheia ?? false);
   return `
     <div class="field-stack">
       <label>
@@ -8940,6 +9382,13 @@ function renderOpenUrlFields(fieldAttr, details = {}, currentOrder = null) {
           <input ${fieldAttr}="openWait" type="number" min="0" step="0.5" value="${escapeHtml(details.aguardar_segundos ?? 3)}" />
         </label>
       </div>
+      <label class="runtime-edit-switch-row open-url-fullscreen-switch">
+        <span>Tela cheia</span>
+        <span class="runtime-edit-switch">
+          <input ${fieldAttr}="openFullscreen" type="checkbox" ${fullscreen ? "checked" : ""} />
+          <i></i>
+        </span>
+      </label>
       <div class="tree-inline-fields">
         ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
       </div>
@@ -10046,6 +10495,7 @@ function renderInsertPanel(order) {
       url: panel.openUrl,
       navegador: panel.openBrowser,
       modo_abertura: panel.openMode,
+      tela_cheia: panel.openFullscreen,
       aguardar_segundos: panel.openWait,
       ao_sucesso: panel.successAction,
       bloco_sucesso: panel.successBlock,
@@ -10797,6 +11247,7 @@ function formValuesFromCard(card) {
     openUrl: get("openUrl")?.value ?? "",
     openBrowser: get("openBrowser")?.value ?? "padrao",
     openMode: get("openMode")?.value ?? "nova_janela",
+    openFullscreen: Boolean(get("openFullscreen")?.checked),
     openWait: parseNumber(get("openWait")?.value, 3),
     programPath: get("programPath")?.value ?? "",
     programParams: get("programParams")?.value ?? "",
@@ -10883,6 +11334,7 @@ function treeValuesFromCard(card) {
     openUrl: get("openUrl")?.value ?? "",
     openBrowser: get("openBrowser")?.value ?? "padrao",
     openMode: get("openMode")?.value ?? "nova_janela",
+    openFullscreen: Boolean(get("openFullscreen")?.checked),
     openWait: parseNumber(get("openWait")?.value, 3),
     programPath: get("programPath")?.value ?? "",
     programParams: get("programParams")?.value ?? "",
@@ -11150,6 +11602,7 @@ function commandCardHasUnsavedChanges(snapshot) {
       normalizeStringValue(values.openUrl) !== normalizeStringValue(details.url)
       || normalizeStringValue(values.openBrowser) !== normalizeStringValue(details.navegador ?? "padrao")
       || normalizeStringValue(values.openMode) !== normalizeStringValue(details.modo_abertura ?? "nova_janela")
+      || Boolean(values.openFullscreen) !== Boolean(details.tela_cheia ?? false)
       || !approxEqual(values.openWait, details.aguardar_segundos ?? 3)
       || successFlowChanged(values, details)
     );
@@ -11341,6 +11794,7 @@ async function invokeCommandCardUpdate(snapshot) {
       url: values.openUrl,
       navegador: values.openBrowser || "padrao",
       modoAbertura: values.openMode || "nova_janela",
+      telaCheia: Boolean(values.openFullscreen),
       aguardarSegundos: values.openWait,
       delay: values.delay,
       aoSucesso: values.successAction,
@@ -11637,6 +12091,7 @@ function insertValuesFromPanel(panelElement) {
     openUrl: get("openUrl")?.value ?? state.insertPanel?.openUrl ?? "",
     openBrowser: get("openBrowser")?.value ?? state.insertPanel?.openBrowser ?? "padrao",
     openMode: get("openMode")?.value ?? state.insertPanel?.openMode ?? "nova_janela",
+    openFullscreen: Boolean(get("openFullscreen")?.checked ?? state.insertPanel?.openFullscreen),
     openWait: parseNumber(get("openWait")?.value, state.insertPanel?.openWait ?? 3),
     programPath: get("programPath")?.value ?? state.insertPanel?.programPath ?? "",
     programParams: get("programParams")?.value ?? state.insertPanel?.programParams ?? "",
@@ -12166,6 +12621,41 @@ commandTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
 workbookTabButton.addEventListener("click", () => setWorkspaceTab("workbook"));
 launcherTabButton.addEventListener("click", () => setWorkspaceTab("launcher"));
 remoteControlTabButton?.addEventListener("click", () => setWorkspaceTab("remote-control"));
+smartRecorderTabButton?.addEventListener("click", () => setWorkspaceTab("smart-recorder"));
+smartRecorderStartButton?.addEventListener("click", () => {
+  startSmartRecorder();
+});
+smartRecorderStopButton?.addEventListener("click", () => {
+  stopSmartRecorder();
+});
+smartRecorderSendButton?.addEventListener("click", () => {
+  sendSmartRecorderEventsToMap();
+});
+smartRecorderTrack?.addEventListener("click", (event) => {
+  const actionButton = event.target.closest("[data-smart-recorder-action]");
+  if (!actionButton) return;
+  const card = actionButton.closest("[data-smart-recorder-id]");
+  if (actionButton.dataset.smartRecorderAction === "adjust-image") {
+    adjustSmartRecorderClickImage(card?.dataset.smartRecorderId || "");
+  } else if (actionButton.dataset.smartRecorderAction === "confirm-click") {
+    confirmSmartRecorderClickArea(card);
+  } else if (actionButton.dataset.smartRecorderAction === "delete-event") {
+    deleteSmartRecorderEvent(card?.dataset.smartRecorderId || "");
+  }
+});
+smartRecorderTrack?.addEventListener("keydown", (event) => {
+  const delayInput = event.target.closest("[data-smart-recorder-delay-id]");
+  if (!delayInput || event.key !== "Enter") return;
+  event.preventDefault();
+  delayInput.blur();
+  updateSmartRecorderEventDelay(delayInput);
+});
+smartRecorderTrack?.addEventListener("focusout", (event) => {
+  const delayInput = event.target.closest("[data-smart-recorder-delay-id]");
+  if (delayInput) {
+    updateSmartRecorderEventDelay(delayInput);
+  }
+});
 document.getElementById("openEditorFromMap").addEventListener("click", () => setWorkspaceTab("commands"));
 tutorialReplayButton?.addEventListener("click", () => openStudioTutorial({ force: true }));
 studioTutorialNextButton?.addEventListener("click", () => {
@@ -12787,6 +13277,90 @@ workbookFilesTabs.addEventListener("click", async (event) => {
 
 addWorkbookButton.addEventListener("click", () => {
   workbookFileInput.click();
+});
+
+openWorkbookButton?.addEventListener("click", async () => {
+  const workbook = selectedPreviewWorkbookMeta();
+  if (!workbook?.id) {
+    setMessage("Nenhuma planilha selecionada para abrir.", "error");
+    return;
+  }
+
+  try {
+    setBusy("Abrindo planilha");
+    await invoke("open_workbook", {
+      workbook: workbook.id,
+    });
+    state.workbookExternalEditOpenedAt = Date.now();
+    setBusy("Pronto");
+    setMessage("Planilha aberta no editor padrao. Ao voltar para o FlowDetect, a previa sera recarregada.", "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+});
+
+window.addEventListener("focus", async () => {
+  if (!state.workbookExternalEditOpenedAt || state.activeTab !== "workbook") {
+    return;
+  }
+  if (Date.now() - state.workbookExternalEditOpenedAt < 1000) {
+    return;
+  }
+
+  const workbookId = state.previewWorkbookId || selectedPreviewWorkbookMeta()?.id || "";
+  const sheetName = state.workbookSelectedSheet || workbookSheetSelect?.value || "";
+  state.workbookExternalEditOpenedAt = 0;
+
+  try {
+    await refreshWorkbookMeta();
+    await loadWorkbookPreview(sheetName, workbookId);
+    setMessage("Planilha recarregada com as alteracoes salvas.", "success");
+  } catch (error) {
+    setMessage(`Nao foi possivel recarregar a planilha: ${error}`, "error");
+  }
+});
+
+deleteWorkbookButton?.addEventListener("click", async () => {
+  const workbook = selectedPreviewWorkbookMeta();
+  if (!workbook?.id) {
+    setMessage("Nenhuma planilha selecionada para excluir.", "error");
+    return;
+  }
+
+  const usedBlocks = countBlocksUsingWorkbook(workbook.id);
+  const warning = usedBlocks
+    ? `\n\nAtenção: ${usedBlocks} bloco(s) usam essa planilha. Eles continuarão no mapa, mas ficarão sem o arquivo até você escolher outra planilha.`
+    : "";
+  const confirmed = window.confirm(`Excluir a planilha "${workbook.file_name}" do projeto?${warning}`);
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    setBusy("Excluindo planilha");
+    const result = await invoke("delete_workbook", {
+      workbook: workbook.id,
+    });
+    await refreshWorkbookMeta();
+    const nextWorkbookId = result.next_workbook_id || state.workbook?.default_workbook || availableWorkbooks()[0]?.id || "";
+    state.previewWorkbookId = nextWorkbookId;
+    state.workbookSelectedSheet = "";
+    state.workbookSelectedColumn = "";
+    state.workbookSelectedCell = null;
+    state.workbookPreview = null;
+    if (nextWorkbookId) {
+      await loadWorkbookPreview("", nextWorkbookId);
+    } else {
+      renderWorkbookPreview();
+    }
+    populateSheetSelect("");
+    setBusy("Pronto");
+    setMessage(`Planilha ${workbook.file_name} excluida do projeto.`, "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
 });
 
 workbookFileInput.addEventListener("change", async () => {
@@ -13995,6 +14569,7 @@ commandMapList.addEventListener("click", (event) => {
               url: values.openUrl,
               navegador: values.openBrowser,
               modoAbertura: values.openMode,
+              telaCheia: Boolean(values.openFullscreen),
               aguardarSegundos: values.openWait,
               delay: common.delay,
               sequencia: currentSequenceName(),
@@ -14009,6 +14584,7 @@ commandMapList.addEventListener("click", (event) => {
               url: values.openUrl,
               navegador: values.openBrowser,
               modoAbertura: values.openMode,
+              telaCheia: Boolean(values.openFullscreen),
               aguardarSegundos: values.openWait,
               delay: common.delay,
               sequencia: currentSequenceName(),
