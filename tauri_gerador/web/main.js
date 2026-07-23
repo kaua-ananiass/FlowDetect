@@ -7545,8 +7545,7 @@ function smartRecorderEventTitle(event) {
 
 function smartRecorderEventSubtitle(event) {
   if (event.type === "clicar_imagem") {
-    const action = event.click_action === "identificar" || event.clicks === 0 ? "so identificar" : `${event.clicks || 1} clique(s)`;
-    return `${action} | ${event.image_id || "referencia visual"} | x=${event.x ?? "-"} y=${event.y ?? "-"}`;
+    return event.click_action === "identificar" || event.clicks === 0 ? "So identificar" : `${event.clicks || 1} clique(s)`;
   }
   if (event.type === "texto_livre") return event.text || "-";
   if (event.type === "tecla") return `${event.keys || "-"} x${event.repeat || 1}`;
@@ -7647,23 +7646,18 @@ function renderSmartRecorder() {
     ` : ""}
     <article class="smart-recorder-card smart-recorder-card-${escapeHtml(event.type)}" data-smart-recorder-id="${escapeHtml(String(event.id))}">
       <div class="smart-recorder-card-top">
-        <span class="flow-index">${String(index + 1).padStart(2, "0")}</span>
+        <div class="smart-recorder-card-main">
+          <span class="flow-index">${String(index + 1).padStart(2, "0")}</span>
+          <div>
+            <h3>${escapeHtml(smartRecorderEventTitle(event))}</h3>
+            <p>${escapeHtml(smartRecorderEventSubtitle(event))}</p>
+          </div>
+        </div>
         <span class="type-chip ${escapeHtml(event.type)}">${escapeHtml(smartRecorderTypeLabel(event.type))}</span>
       </div>
-      <h3>${escapeHtml(smartRecorderEventTitle(event))}</h3>
-      <label class="smart-recorder-delay-chip">
-        <span>Antes</span>
-        <input
-          type="number"
-          min="0"
-          step="0.1"
-          value="${escapeHtml(String(Math.max(0, Number(event.delay || 0.3)).toFixed(1)))}"
-          data-smart-recorder-delay-id="${escapeHtml(String(event.id))}"
-        />
-        <em>s</em>
-      </label>
-      <span class="smart-recorder-destination-chip">${escapeHtml(smartRecorderDestinationLabel(event))}</span>
-      <p>${escapeHtml(smartRecorderEventSubtitle(event))}</p>
+      <div class="smart-recorder-meta-row">
+        <span class="smart-recorder-destination-chip">${escapeHtml(smartRecorderDestinationLabel(event))}</span>
+      </div>
       ${event.type === "clicar_imagem" ? `
         <div class="smart-recorder-crop">Area: ${escapeHtml(String(event.crop?.width || "-"))} x ${escapeHtml(String(event.crop?.height || "-"))}</div>
         ${smartRecorderClickControls(event)}
