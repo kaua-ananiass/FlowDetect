@@ -435,19 +435,32 @@ def localizar_item_biblioteca(biblioteca, automacao_id):
 def copiar_arquivo_se_existir(origem, destino):
     origem = Path(origem)
     destino = Path(destino)
-    if not origem.exists():
-        return
+    if not origem.exists() or origem.name.startswith("~$"):
+        return False
     destino.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(origem, destino)
+    try:
+        shutil.copy2(origem, destino)
+        return True
+    except OSError:
+        # Arquivos abertos pelo Excel/Windows podem ficar bloqueados. Nao deixe
+        # isso impedir a troca de automacao; o usuario pode fechar e recarregar.
+        return False
 
 
 def sincronizar_diretorio(origem, destino):
     origem = Path(origem)
     destino = Path(destino)
-    if destino.exists():
-        shutil.rmtree(destino, ignore_errors=True)
-    if origem.exists():
-        shutil.copytree(origem, destino, dirs_exist_ok=True)
+    if not origem.exists():
+        return
+    destino.mkdir(parents=True, exist_ok=True)
+    for caminho in origem.rglob("*"):
+        if caminho.is_dir() or caminho.name.startswith("~$"):
+            continue
+        try:
+            relativo = caminho.relative_to(origem)
+        except ValueError:
+            continue
+        copiar_arquivo_se_existir(caminho, destino / relativo)
 
 
 def contar_blocos_payload(payload):
@@ -519,11 +532,9 @@ def carregar_automacao_na_raiz(automacao_id):
     pasta = diretorio_automacao(automacao_id)
     copiar_arquivo_se_existir(pasta / ARQUIVO_PLANILHA.name, ARQUIVO_PLANILHA)
     if (pasta / DIRETORIO_PLANILHAS.name).exists():
-        DIRETORIO_PLANILHAS.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(pasta / DIRETORIO_PLANILHAS.name, DIRETORIO_PLANILHAS, dirs_exist_ok=True)
+        sincronizar_diretorio(pasta / DIRETORIO_PLANILHAS.name, DIRETORIO_PLANILHAS)
     if (pasta / PASTA_IMAGENS.name).exists():
-        PASTA_IMAGENS.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(pasta / PASTA_IMAGENS.name, PASTA_IMAGENS, dirs_exist_ok=True)
+        sincronizar_diretorio(pasta / PASTA_IMAGENS.name, PASTA_IMAGENS)
     definir_automacao_ativa(automacao_id)
     salvar_payload(payload)
     return payload
@@ -1258,8 +1269,10 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         url = str(detalhes.get("url", "") or "").strip()
         navegador = str(detalhes.get("navegador", "padrao") or "padrao")
         modo = str(detalhes.get("modo_abertura", "nova_janela") or "nova_janela")
+        tela_cheia = bool(detalhes.get("tela_cheia", False))
         aguardar = float(detalhes.get("aguardar_segundos", 3) or 0)
-        return f"[ABRIR URL:{url[:64]} | {navegador} | {modo} | aguardar={aguardar:g}s]"
+        sufixo_tela = " | tela cheia" if tela_cheia else ""
+        return f"[ABRIR URL:{url[:64]} | {navegador} | {modo}{sufixo_tela} | aguardar={aguardar:g}s]"
 
     if tipo_evento == "abrir_programa":
         detalhes = metadados or {}
@@ -1685,6 +1698,8 @@ def carregar_planilha_meta():
                     workbook.close()
             except PermissionError:
                 workbook_meta["erro"] = "Planilha em uso no Excel."
+            except Exception as erro:
+                workbook_meta["erro"] = f"Nao foi possivel ler esta planilha. Feche o Excel e salve novamente. Detalhe: {erro}"
         workbooks.append(workbook_meta)
 
     workbook_padrao = next((item for item in workbooks if item["id"] == ARQUIVO_PLANILHA.name), workbooks[0] if workbooks else None)
@@ -1714,7 +1729,14 @@ def carregar_planilha_preview(sheet_name=None, limit=200, workbook_file=None):
     if not caminho_planilha.exists():
         return preview
 
-    workbook = load_workbook(caminho_planilha, read_only=True, data_only=True)
+    try:
+        workbook = load_workbook(caminho_planilha, read_only=True, data_only=True)
+    except PermissionError:
+        preview["erro"] = "Planilha em uso no Excel. Feche o arquivo e tente atualizar novamente."
+        return preview
+    except Exception as erro:
+        preview["erro"] = f"Nao foi possivel ler a planilha. Feche o Excel, salve novamente e atualize. Detalhe: {erro}"
+        return preview
     try:
         worksheets = list(workbook.worksheets)
         worksheet_names = [sheet.title for sheet in worksheets]
@@ -2146,6 +2168,7 @@ def criar_bloco_abrir_url(
     url,
     navegador="padrao",
     modo_abertura="nova_janela",
+    tela_cheia=False,
     aguardar_segundos=3,
     delay=0,
     sequencia="principal",
@@ -2161,6 +2184,7 @@ def criar_bloco_abrir_url(
         "url": url_normalizada,
         "navegador": normalizar_navegador_url(navegador),
         "modo_abertura": normalizar_modo_abertura_url(modo_abertura),
+        "tela_cheia": bool(tela_cheia),
         "aguardar_segundos": max(0.0, float(aguardar_segundos or 0)),
     }, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
     return {
@@ -2986,6 +3010,7 @@ def comando_adicionar_abrir_url(args):
             args.url,
             args.navegador,
             args.modo_abertura,
+            args.tela_cheia,
             args.aguardar_segundos,
             args.delay,
             args.sequencia,
@@ -3221,6 +3246,7 @@ def comando_inserir_abrir_url(args):
             args.url,
             args.navegador,
             args.modo_abertura,
+            args.tela_cheia,
             args.aguardar_segundos,
             args.delay,
             args.sequencia,
@@ -3503,6 +3529,7 @@ def comando_atualizar_abrir_url(args):
         args.url,
         args.navegador,
         args.modo_abertura,
+        args.tela_cheia,
         args.aguardar_segundos,
         args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
         args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
@@ -3697,6 +3724,7 @@ def build_parser():
         parser_destino.add_argument("--url", required=True)
         parser_destino.add_argument("--navegador", choices=["padrao", "chrome", "edge"], default="padrao")
         parser_destino.add_argument("--modo-abertura", choices=["nova_janela", "nova_aba"], default="nova_janela")
+        parser_destino.add_argument("--tela-cheia", action="store_true")
         parser_destino.add_argument("--aguardar-segundos", type=float, default=3)
 
     def adicionar_argumentos_abrir_programa(parser_destino):

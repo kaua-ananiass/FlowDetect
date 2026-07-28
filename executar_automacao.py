@@ -5026,10 +5026,11 @@ class ExecutorAutomacao:
         url = self.normalizar_url_para_abertura(detalhes.get("url"))
         navegador = str(detalhes.get("navegador", "padrao") or "padrao").strip().lower()
         modo_abertura = str(detalhes.get("modo_abertura", "nova_janela") or "nova_janela").strip().lower()
+        tela_cheia = bool(detalhes.get("tela_cheia", False))
         aguardar = max(0.0, float(detalhes.get("aguardar_segundos", 3) or 0))
         nova_janela = modo_abertura != "nova_aba"
         safe_print(
-            f"Abrindo URL: {url} | navegador={navegador} | modo={modo_abertura}",
+            f"Abrindo URL: {url} | navegador={navegador} | modo={modo_abertura} | tela_cheia={tela_cheia}",
             flush=True,
         )
         executavel = self.localizar_executavel_navegador(navegador)
@@ -5037,11 +5038,24 @@ class ExecutorAutomacao:
             argumentos = [executavel]
             if nova_janela:
                 argumentos.append("--new-window")
+            if tela_cheia:
+                argumentos.extend(["--start-fullscreen", "--start-maximized"])
             argumentos.append(url)
             popen_silencioso(argumentos)
         else:
             webbrowser.open(url, new=1 if nova_janela else 2)
-        if aguardar > 0 and not self.esperar(aguardar):
+        tempo_fullscreen = 0.0
+        if tela_cheia:
+            tempo_fullscreen = min(1.2, aguardar) if aguardar > 0 else 1.2
+            if tempo_fullscreen > 0 and not self.esperar(tempo_fullscreen):
+                return self.resultado_fluxo("parar")
+            try:
+                pyautogui.press("f11")
+                safe_print("Tela cheia solicitada com F11.", flush=True)
+            except Exception as exc:
+                safe_print(f"Nao foi possivel acionar F11 para tela cheia: {exc}", flush=True)
+        tempo_restante = max(0.0, aguardar - tempo_fullscreen)
+        if tempo_restante > 0 and not self.esperar(tempo_restante):
             return self.resultado_fluxo("parar")
         return self.resultado_sucesso_evento(evento)
 

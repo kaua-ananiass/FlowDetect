@@ -210,6 +210,33 @@ button {
   box-shadow: 0 0 14px rgba(34, 197, 94, 0.8);
 }
 
+.agent-mesh-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid rgba(230, 247, 255, 0.08);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(21, 35, 54, 0.92), rgba(14, 23, 38, 0.92));
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.agent-mesh-chip.is-starting {
+  border-color: rgba(245, 158, 11, 0.42);
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.agent-mesh-chip.is-running {
+  border-color: rgba(34, 197, 94, 0.5);
+  color: #dcfce7;
+  background: rgba(34, 197, 94, 0.12);
+}
+
 .agent-primary-button,
 .agent-secondary-button,
 .agent-danger-button,

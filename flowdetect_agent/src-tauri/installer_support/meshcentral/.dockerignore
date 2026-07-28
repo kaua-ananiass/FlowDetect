@@ -1,0 +1,14 @@
+/*.txt
+node_modules/
+.github/
+.vscode/
+docs/
+.git
+.gitignore
+.gitlab-ci.yml
+*.bat
+*.sln
+*.njsproj
+*.md
+examples
+tests

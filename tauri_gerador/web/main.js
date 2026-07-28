@@ -53,6 +53,22 @@ const state = {
   activeTab: "launcher",
   remoteControl: {
     address: "127.0.0.1:18452",
+    meshUrl: "",
+    meshFrameUrl: "",
+    meshPath: "",
+    meshRunning: false,
+    meshStarting: false,
+    screenStreaming: false,
+    screenStreamTimer: null,
+    screenSnapshotUrl: "",
+    screenSnapshotAt: 0,
+    screenSnapshotLoading: false,
+    webrtcPeer: null,
+    webrtcSessionId: "",
+    webrtcActive: false,
+    webrtcControlChannel: null,
+    webrtcAnswerTimer: null,
+    remotePointerInside: false,
     connected: false,
     agentLabel: "Aguardando conexao",
     activeView: "execution",
@@ -79,6 +95,7 @@ const state = {
       rows: [],
       write_columns: [],
     },
+    editableTextOverrides: {},
     progress: {
       percent: 0,
       description: "A execucao remota vai aparecer aqui.",
@@ -225,6 +242,13 @@ const state = {
   },
 };
 
+try {
+  state.remoteControl.meshUrl = localStorage.getItem("flowdetect_meshcentral_url") || "";
+  state.remoteControl.meshPath = localStorage.getItem("flowdetect_meshcentral_agent_path") || "";
+} catch (error) {
+  console.warn("Nao foi possivel carregar a URL do MeshCentral.", error);
+}
+
 let commandMapClientKeySequence = 0;
 let assistTargetPollTimer = 0;
 let assistWindowPickerRequestId = 0;
@@ -321,6 +345,7 @@ const commandTabButton = document.getElementById("commandTabButton");
 const workbookTabButton = document.getElementById("workbookTabButton");
 const launcherTabButton = document.getElementById("launcherTabButton");
 const remoteControlTabButton = document.getElementById("remoteControlTabButton");
+const agentScreenTabButton = document.getElementById("agentScreenTabButton");
 const smartRecorderTabButton = document.getElementById("smartRecorderTabButton");
 const sessionChip = document.getElementById("sessionChip");
 const tutorialReplayButton = document.getElementById("tutorialReplayButton");
@@ -344,6 +369,7 @@ const mapPrevButton = document.getElementById("mapPrevButton");
 const mapNextButton = document.getElementById("mapNextButton");
 const workbookPanel = document.getElementById("workbookPanel");
 const remoteControlPanel = document.getElementById("remoteControlPanel");
+const agentScreenPanel = document.getElementById("agentScreenPanel");
 const smartRecorderPanel = document.getElementById("smartRecorderPanel");
 const studioControlHint = document.getElementById("studioControlHint");
 const studioControlStatus = document.getElementById("studioControlStatus");
@@ -359,6 +385,8 @@ const studioControlLoopStartInput = document.getElementById("studioControlLoopSt
 const studioControlCompanyStartInput = document.getElementById("studioControlCompanyStartInput");
 const studioControlRunButton = document.getElementById("studioControlRunButton");
 const studioControlStopButton = document.getElementById("studioControlStopButton");
+const studioControlEditableTextPanel = document.getElementById("studioControlEditableTextPanel");
+const studioControlEditableTextList = document.getElementById("studioControlEditableTextList");
 const studioControlViewButtons = Array.from(document.querySelectorAll("[data-studio-control-view]"));
 const studioControlViewPanels = Array.from(document.querySelectorAll("[data-studio-control-panel]"));
 const studioControlEmpty = document.getElementById("studioControlEmpty");
@@ -380,6 +408,17 @@ const studioControlSheetTitle = document.getElementById("studioControlSheetTitle
 const studioControlSheetMeta = document.getElementById("studioControlSheetMeta");
 const studioControlSheetStatus = document.getElementById("studioControlSheetStatus");
 const studioControlSheetTableWrap = document.getElementById("studioControlSheetTableWrap");
+const studioControlMeshUrlInput = document.getElementById("studioControlMeshUrlInput");
+const studioControlMeshPathInput = document.getElementById("studioControlMeshPathInput");
+const studioControlMeshStartButton = document.getElementById("studioControlMeshStartButton");
+const studioControlMeshLoadButton = document.getElementById("studioControlMeshLoadButton");
+const studioControlMeshEmbedButton = document.getElementById("studioControlMeshEmbedButton");
+const studioControlMeshOpenButton = document.getElementById("studioControlMeshOpenButton");
+const studioControlMeshClearButton = document.getElementById("studioControlMeshClearButton");
+const studioControlMeshFrame = document.getElementById("studioControlMeshFrame");
+const studioControlScreenVideo = document.getElementById("studioControlScreenVideo");
+const studioControlScreenImage = document.getElementById("studioControlScreenImage");
+const studioControlScreenStatus = document.getElementById("studioControlScreenStatus");
 const mapZoomOutButton = document.getElementById("mapZoomOutButton");
 const mapZoomInButton = document.getElementById("mapZoomInButton");
 const mapZoomRange = document.getElementById("mapZoomRange");
@@ -729,6 +768,7 @@ function setWorkspaceTab(tabName) {
   const commandsActive = tabName === "commands";
   const workbookActive = tabName === "workbook";
   const remoteControlActive = tabName === "remote-control";
+  const agentScreenActive = tabName === "agent-screen";
   const smartRecorderActive = tabName === "smart-recorder";
   launcherTabButton.classList.toggle("is-active", launcherActive);
   editorTabButton.classList.toggle("is-active", editorActive);
@@ -736,6 +776,7 @@ function setWorkspaceTab(tabName) {
   commandTabButton.classList.toggle("is-active", commandsActive);
   workbookTabButton.classList.toggle("is-active", workbookActive);
   remoteControlTabButton?.classList.toggle("is-active", remoteControlActive);
+  agentScreenTabButton?.classList.toggle("is-active", agentScreenActive);
   smartRecorderTabButton?.classList.toggle("is-active", smartRecorderActive);
   launcherPanel.classList.toggle("is-active", launcherActive);
   editorPanel.classList.toggle("is-active", editorActive);
@@ -743,14 +784,20 @@ function setWorkspaceTab(tabName) {
   commandsPanel.classList.toggle("is-active", commandsActive);
   workbookPanel.classList.toggle("is-active", workbookActive);
   remoteControlPanel?.classList.toggle("is-active", remoteControlActive);
+  agentScreenPanel?.classList.toggle("is-active", agentScreenActive);
   smartRecorderPanel?.classList.toggle("is-active", smartRecorderActive);
   builderShell?.classList.toggle("is-launcher-active", launcherActive);
   builderShell?.classList.toggle("is-commands-active", commandsActive);
   builderShell?.classList.toggle("is-workbook-active", workbookActive);
   builderShell?.classList.toggle("is-assist-active", assistActive);
   builderShell?.classList.toggle("is-remote-control-active", remoteControlActive);
+  builderShell?.classList.toggle("is-agent-screen-active", agentScreenActive);
   builderShell?.classList.toggle("is-smart-recorder-active", smartRecorderActive);
   applyCommandMapChromeMode();
+  if (agentScreenActive) {
+    renderStudioControlScreen();
+    refreshStudioControlMeshStatus({ silent: true }).catch(() => null);
+  }
   scheduleActiveWorkspaceRender();
   releaseInactiveWorkspaceDom(previousTab);
 }
@@ -804,6 +851,12 @@ const STUDIO_TUTORIAL_STEPS = Object.freeze([
     target: "#remoteControlTabButton",
     title: "Controle remoto",
     text: "Conecte em um Agent para importar, iniciar e acompanhar automacoes em outro PC.",
+  },
+  {
+    tab: "agent-screen",
+    target: "#agentScreenTabButton",
+    title: "Tela do Agent",
+    text: "Abra a tela remota do PC do Agent pelo MeshCentral quando precisar acompanhar ou controlar manualmente.",
   },
 ]);
 
@@ -1287,8 +1340,8 @@ function getCommandMapOrders() {
     .filter((order) => Number.isFinite(order));
 }
 
-function getAssistRoadmapEvents() {
-  return [...(state.roadmap?.events ?? [])].sort((firstEvent, secondEvent) => {
+function getAssistRoadmapEvents(roadmap = state.roadmap) {
+  return [...(roadmap?.events ?? [])].sort((firstEvent, secondEvent) => {
     const firstOrder = Number(firstEvent?.order ?? firstEvent?.ordem ?? 0);
     const secondOrder = Number(secondEvent?.order ?? secondEvent?.ordem ?? 0);
     const firstIsFinite = Number.isFinite(firstOrder);
@@ -2503,7 +2556,7 @@ function formatAssistValue(value, max = 40) {
 }
 
 function getEditableTextEvents(roadmap = state.roadmap) {
-  return getAssistRoadmapEvents()
+  return getAssistRoadmapEvents(roadmap)
     .filter((event) => event?.type === "texto_livre" && Boolean(event?.details?.editavel_execucao));
 }
 
@@ -2512,8 +2565,9 @@ function getEditableTextLabel(event) {
   if (customLabel) {
     return customLabel;
   }
-  const preview = formatAssistValue(event?.text ?? "", 28);
-  return preview ? `Bloco ${event.order} - ${preview}` : `Bloco ${event.order}`;
+  const order = event?.order ?? event?.ordem ?? "";
+  const preview = formatAssistValue(event?.text ?? event?.texto ?? "", 28);
+  return preview ? `Bloco ${order} - ${preview}` : `Bloco ${order}`;
 }
 
 function renderAssistEditableTexts() {
@@ -2536,7 +2590,7 @@ function renderAssistEditableTexts() {
       const orderKey = String(event.order);
       const currentValue = Object.prototype.hasOwnProperty.call(state.editableTextOverrides, orderKey)
         ? state.editableTextOverrides[orderKey]
-        : event.text ?? "";
+        : event.text ?? event.texto ?? "";
       return `
         <label class="assist-editable-text-item">
           <span>
@@ -2568,6 +2622,60 @@ function collectAssistEditableTextOverrides() {
 
 function editableTextOverridesJson() {
   const overrides = collectAssistEditableTextOverrides();
+  return Object.keys(overrides).length ? JSON.stringify(overrides) : "";
+}
+
+function renderStudioControlEditableTexts() {
+  if (!studioControlEditableTextPanel || !studioControlEditableTextList) {
+    return;
+  }
+
+  const events = getEditableTextEvents(state.remoteControl.roadmap);
+  studioControlEditableTextPanel.hidden = !events.length;
+  if (!events.length) {
+    studioControlEditableTextList.innerHTML = "";
+    return;
+  }
+
+  studioControlEditableTextList.innerHTML = events
+    .map((event) => {
+      const orderKey = String(event.order ?? event.ordem ?? "");
+      const currentValue = Object.prototype.hasOwnProperty.call(state.remoteControl.editableTextOverrides, orderKey)
+        ? state.remoteControl.editableTextOverrides[orderKey]
+        : event.text ?? event.texto ?? "";
+      return `
+        <label class="studio-control-editable-item">
+          <span>
+            <strong>${escapeHtml(getEditableTextLabel(event))}</strong>
+            <small>${escapeHtml(sequenceLabel(event.sequence ?? event.sequencia ?? "principal"))} | bloco ${escapeHtml(orderKey)}</small>
+          </span>
+          <textarea data-studio-control-editable-order="${escapeHtml(orderKey)}" rows="2">${escapeHtml(currentValue)}</textarea>
+        </label>
+      `;
+    })
+    .join("");
+}
+
+function collectStudioControlEditableTextOverrides() {
+  if (!studioControlEditableTextList) {
+    return {};
+  }
+  const overrides = {};
+  studioControlEditableTextList.querySelectorAll("[data-studio-control-editable-order]").forEach((field) => {
+    const order = String(field.dataset.studioControlEditableOrder || "").trim();
+    if (order) {
+      overrides[order] = field.value ?? "";
+    }
+  });
+  state.remoteControl.editableTextOverrides = {
+    ...state.remoteControl.editableTextOverrides,
+    ...overrides,
+  };
+  return overrides;
+}
+
+function studioControlEditableTextOverridesJson() {
+  const overrides = collectStudioControlEditableTextOverrides();
   return Object.keys(overrides).length ? JSON.stringify(overrides) : "";
 }
 
@@ -4770,7 +4878,7 @@ function finishCardDrag(shouldDrop = true) {
 }
 
 function createInsertPanelState(targetOrder, position) {
-  const workbookId = state.composerWorkbookId || state.workbook?.default_workbook || availableWorkbooks()[0]?.id || "";
+  const workbookId = resolveWorkbookId();
   return {
     targetOrder,
     position,
@@ -7934,6 +8042,56 @@ function columnsForSheetInWorkbook(workbookId, sheetName) {
   return workbookSheetsFor(workbookId).find((sheet) => sheet.name === sheetName)?.columns ?? [];
 }
 
+function resolveWorkbookId(preferredId = "") {
+  const workbooks = availableWorkbooks();
+  return workbookById(preferredId)?.id
+    || workbookById(state.composerWorkbookId)?.id
+    || workbookById(state.workbook?.default_workbook)?.id
+    || workbooks[0]?.id
+    || "";
+}
+
+function setOptionsForSelect(select, options, selectedValue = "") {
+  if (!select) return;
+  select.innerHTML = options
+    .map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`)
+    .join("");
+  select.value = options.includes(selectedValue) ? selectedValue : options[0] ?? "";
+}
+
+function setColumnSuggestionsForField(field, columns, selectedValue = "") {
+  if (!field) return;
+  const value = columns.includes(selectedValue) ? selectedValue : columns[0] ?? selectedValue ?? "";
+  if (field.tagName === "SELECT") {
+    setOptionsForSelect(field, columns, value);
+    return;
+  }
+
+  const listId = field.getAttribute("list");
+  const datalist = listId ? document.getElementById(listId) : null;
+  if (datalist) {
+    datalist.innerHTML = columns
+      .map((column) => `<option value="${escapeHtml(column)}"></option>`)
+      .join("");
+  }
+  field.value = value;
+}
+
+function syncSpreadsheetSheetAndColumnFields(container, fieldSelector, workbookId, preferredSheet = "", preferredColumn = "") {
+  const sheetField = container?.querySelector(`[${fieldSelector}="sheet"]`);
+  const columnField = container?.querySelector(`[${fieldSelector}="column"]`);
+  const sheets = workbookSheetsFor(workbookId);
+  const nextSheet = sheets.some((sheet) => sheet.name === preferredSheet)
+    ? preferredSheet
+    : sheets[0]?.name ?? "";
+  setOptionsForSelect(sheetField, sheets.map((sheet) => sheet.name), nextSheet);
+  setColumnSuggestionsForField(columnField, columnsForSheetInWorkbook(workbookId, nextSheet), preferredColumn);
+  return {
+    sheet: nextSheet,
+    column: columnField?.value ?? "",
+  };
+}
+
 function populateSheetSelect(selectedName) {
   const sheets = workbookSheets();
   const chosen = selectedName && sheets.some((sheet) => sheet.name === selectedName)
@@ -8986,6 +9144,140 @@ function renderStudioControlSpreadsheet() {
   `;
 }
 
+function normalizeMeshCentralUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  if (/^https?:\/\//i.test(raw)) {
+    return raw;
+  }
+  return `https://${raw}`;
+}
+
+function meshCentralUrlFromAgentAddress(address) {
+  const normalized = String(address || "").trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "");
+  if (!normalized) {
+    return "";
+  }
+  const host = normalized.includes(":")
+    ? normalized.split(":").slice(0, -1).join(":")
+    : normalized;
+  return host ? `http://${host}:8080` : "";
+}
+
+function ensureMeshCentralUrlFromAgent({ force = false } = {}) {
+  const derivedUrl = meshCentralUrlFromAgentAddress(state.remoteControl.address);
+  if (!derivedUrl) {
+    return "";
+  }
+  if (force || !state.remoteControl.meshUrl) {
+    persistMeshCentralUrl(derivedUrl);
+  }
+  return state.remoteControl.meshUrl || derivedUrl;
+}
+
+function currentMeshCentralUrl() {
+  return normalizeMeshCentralUrl(
+    studioControlMeshUrlInput?.value
+    || state.remoteControl.meshUrl
+    || ensureMeshCentralUrlFromAgent()
+  );
+}
+
+function persistMeshCentralUrl(url) {
+  state.remoteControl.meshUrl = url;
+  try {
+    if (url) {
+      localStorage.setItem("flowdetect_meshcentral_url", url);
+    } else {
+      localStorage.removeItem("flowdetect_meshcentral_url");
+    }
+  } catch (error) {
+    console.warn("Nao foi possivel salvar a URL do MeshCentral.", error);
+  }
+}
+
+function persistMeshCentralPath(path) {
+  state.remoteControl.meshPath = String(path || "").trim();
+  try {
+    if (state.remoteControl.meshPath) {
+      localStorage.setItem("flowdetect_meshcentral_agent_path", state.remoteControl.meshPath);
+    } else {
+      localStorage.removeItem("flowdetect_meshcentral_agent_path");
+    }
+  } catch (error) {
+    console.warn("Nao foi possivel salvar a pasta do MeshCentral.", error);
+  }
+}
+
+function renderStudioControlScreen() {
+  const remote = state.remoteControl;
+  if (remote.connected && !remote.meshUrl) {
+    ensureMeshCentralUrlFromAgent();
+  }
+  if (studioControlMeshUrlInput && document.activeElement !== studioControlMeshUrlInput) {
+    studioControlMeshUrlInput.value = remote.meshUrl || "";
+  }
+  if (studioControlMeshPathInput && document.activeElement !== studioControlMeshPathInput) {
+    studioControlMeshPathInput.value = remote.meshPath || "";
+  }
+  if (studioControlMeshFrame && studioControlMeshFrame.getAttribute("src") !== (remote.meshFrameUrl || "about:blank")) {
+    studioControlMeshFrame.setAttribute("src", remote.meshFrameUrl || "about:blank");
+  }
+  if (studioControlScreenImage) {
+    if (remote.screenSnapshotUrl && studioControlScreenImage.src !== remote.screenSnapshotUrl) {
+      studioControlScreenImage.src = remote.screenSnapshotUrl;
+    }
+    studioControlScreenImage.hidden = !remote.screenSnapshotUrl;
+  }
+  const hasRemoteScreen = Boolean(remote.meshFrameUrl || remote.screenSnapshotUrl || remote.webrtcActive);
+  studioControlMeshFrame?.classList.toggle("is-active", Boolean(remote.meshFrameUrl) && !remote.screenSnapshotUrl && !remote.webrtcActive);
+  studioControlMeshFrame?.closest(".studio-control-screen-frame-wrap")?.classList.toggle("has-screen", hasRemoteScreen);
+  if (studioControlScreenStatus) {
+    if (remote.screenStreaming) {
+      studioControlScreenStatus.textContent = "Recebendo tela do Agent dentro do Studio.";
+    } else if (remote.screenSnapshotUrl) {
+      studioControlScreenStatus.textContent = "Visualizacao pausada. Clique em Assistir no Studio para continuar.";
+    } else if (remote.meshRunning) {
+      studioControlScreenStatus.textContent = "MeshCentral rodando no Agent. Use Abrir tela segura para evitar travar o Studio.";
+    } else if (remote.meshStarting) {
+      studioControlScreenStatus.textContent = "MeshCentral sendo preparado no Agent. Na primeira vez pode levar alguns minutos.";
+    } else if (remote.meshFrameUrl) {
+      studioControlScreenStatus.textContent = "Tela remota carregada. Se ficar em branco, o MeshCentral bloqueou incorporacao; use Abrir fora.";
+    } else if (remote.meshUrl) {
+      studioControlScreenStatus.textContent = remote.connected
+        ? "URL montada pelo IP do Agent. Clique em Iniciar no Agent e depois Abrir tela segura."
+        : "URL salva. Conecte no Agent ou abra a tela segura.";
+    } else {
+      studioControlScreenStatus.textContent = "Conecte no Agent para o FlowDetect montar a URL do MeshCentral automaticamente.";
+    }
+  }
+  if (studioControlMeshStartButton) {
+    studioControlMeshStartButton.disabled = !remote.connected || remote.meshStarting;
+    studioControlMeshStartButton.textContent = remote.meshRunning
+      ? "Servidor ativo"
+      : remote.meshStarting
+        ? "Preparando..."
+        : "Iniciar no Agent";
+  }
+  if (studioControlMeshLoadButton) {
+    studioControlMeshLoadButton.disabled = !remote.connected;
+    studioControlMeshLoadButton.textContent = remote.screenStreaming ? "Pausar visualizacao" : "Assistir no Studio";
+  }
+  if (studioControlMeshEmbedButton) {
+    studioControlMeshEmbedButton.disabled = !remote.meshUrl;
+  }
+  if (studioControlMeshOpenButton) {
+    studioControlMeshOpenButton.disabled = !remote.meshUrl;
+  }
+  if (studioControlMeshClearButton) {
+    studioControlMeshClearButton.disabled = !remote.meshUrl && !remote.meshFrameUrl;
+  }
+}
+
 function renderStudioControl() {
   const remote = state.remoteControl;
   const selected = studioControlSelectedAutomation();
@@ -9075,6 +9367,7 @@ function renderStudioControl() {
   if (studioControlProgressText) {
     studioControlProgressText.textContent = remote.progress.description || "A execucao remota vai aparecer aqui.";
   }
+  renderStudioControlScreen();
   if (studioControlCompanyText) {
     studioControlCompanyText.textContent = remote.progress.company || "-";
   }
@@ -9086,6 +9379,7 @@ function renderStudioControl() {
   }
   renderStudioControlFlow();
   renderStudioControlSpreadsheet();
+  renderStudioControlEditableTexts();
   if (studioControlLogList) {
     studioControlLogList.innerHTML = remote.logs.length
       ? remote.logs.slice(0, 12).map((line) => `<article>${escapeHtml(line)}</article>`).join("")
@@ -9226,12 +9520,300 @@ async function refreshStudioControlSpreadsheet(options = {}) {
   }
 }
 
+function applyStudioControlMeshStatus(result = {}) {
+  state.remoteControl.meshRunning = Boolean(result.running);
+  state.remoteControl.meshStarting = Boolean(result.starting);
+  if (result.url) {
+    persistMeshCentralUrl(normalizeMeshCentralUrl(result.url));
+  }
+  if (state.activeTab === "agent-screen") {
+    renderStudioControl();
+  }
+}
+
+async function refreshStudioControlMeshStatus(options = {}) {
+  if (!state.remoteControl.connected) {
+    state.remoteControl.meshRunning = false;
+    renderStudioControl();
+    return;
+  }
+  try {
+    const result = await invoke("remote_agent_meshcentral_status", { address: state.remoteControl.address });
+    applyStudioControlMeshStatus(result);
+  } catch (error) {
+    state.remoteControl.meshRunning = false;
+    renderStudioControl();
+    if (!options.silent) {
+      setMessage(String(error), "error");
+    }
+  }
+}
+
+async function refreshStudioControlScreenSnapshot({ silent = false } = {}) {
+  const remote = state.remoteControl;
+  if (!remote.connected || remote.screenSnapshotLoading) {
+    return;
+  }
+  remote.screenSnapshotLoading = true;
+  try {
+    const result = await invoke("remote_agent_screen_snapshot", { address: remote.address });
+    const imageData = String(result?.data || "");
+    if (!imageData) {
+      throw new Error("O Agent nao retornou imagem da tela.");
+    }
+    const nextUrl = `data:${result?.mime || "image/png"};base64,${imageData}`;
+    remote.screenSnapshotUrl = nextUrl;
+    remote.screenSnapshotAt = Date.now();
+    if (studioControlScreenImage) {
+      studioControlScreenImage.src = nextUrl;
+      studioControlScreenImage.hidden = false;
+      studioControlScreenImage.closest(".studio-control-screen-frame-wrap")?.classList.add("has-screen");
+    }
+    if (studioControlScreenStatus && remote.screenStreaming) {
+      const resolution = result?.resolution ? ` | ${result.resolution}` : "";
+      studioControlScreenStatus.textContent = `Recebendo tela do Agent em tempo real${resolution}.`;
+    }
+  } catch (error) {
+    if (!silent) {
+      setMessage(String(error), "error");
+      if (studioControlScreenStatus) {
+        studioControlScreenStatus.textContent = String(error);
+      }
+    }
+  } finally {
+    remote.screenSnapshotLoading = false;
+  }
+}
+
+function waitForIceGatheringComplete(peer, timeoutMs = 2200) {
+  if (!peer || peer.iceGatheringState === "complete") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(done, timeoutMs);
+    function done() {
+      window.clearTimeout(timeout);
+      peer.removeEventListener("icegatheringstatechange", onChange);
+      resolve();
+    }
+    function onChange() {
+      if (peer.iceGatheringState === "complete") {
+        done();
+      }
+    }
+    peer.addEventListener("icegatheringstatechange", onChange);
+  });
+}
+
+function stopStudioControlWebRtc({ clearRemote = false } = {}) {
+  const remote = state.remoteControl;
+  if (remote.webrtcAnswerTimer) {
+    window.clearInterval(remote.webrtcAnswerTimer);
+    remote.webrtcAnswerTimer = null;
+  }
+  if (remote.webrtcPeer) {
+    remote.webrtcPeer.close();
+    remote.webrtcPeer = null;
+  }
+  remote.webrtcControlChannel = null;
+  remote.webrtcSessionId = "";
+  remote.webrtcActive = false;
+  if (studioControlScreenVideo) {
+    studioControlScreenVideo.srcObject = null;
+    studioControlScreenVideo.hidden = true;
+    studioControlScreenVideo.closest(".studio-control-screen-frame-wrap")?.classList.remove("has-webrtc");
+  }
+  if (clearRemote && remote.connected) {
+    invoke("remote_agent_webrtc_clear", { address: remote.address }).catch(() => null);
+  }
+}
+
+async function startStudioControlWebRtc() {
+  const remote = state.remoteControl;
+  if (!remote.connected) {
+    throw new Error("Conecte no Agent antes de iniciar o WebRTC.");
+  }
+  if (!window.RTCPeerConnection) {
+    throw new Error("WebRTC nao esta disponivel neste WebView.");
+  }
+  stopStudioControlWebRtc({ clearRemote: true });
+  if (remote.screenStreamTimer) {
+    window.clearInterval(remote.screenStreamTimer);
+    remote.screenStreamTimer = null;
+  }
+  remote.screenSnapshotUrl = "";
+  if (studioControlScreenImage) {
+    studioControlScreenImage.removeAttribute("src");
+    studioControlScreenImage.hidden = true;
+  }
+  const peer = new RTCPeerConnection({ iceServers: [] });
+  remote.webrtcPeer = peer;
+  remote.webrtcControlChannel = peer.createDataChannel("flowdetect-control", { ordered: true });
+  peer.addTransceiver("video", { direction: "recvonly" });
+  peer.ontrack = (event) => {
+    const stream = event.streams?.[0];
+    if (stream && studioControlScreenVideo) {
+      studioControlScreenVideo.srcObject = stream;
+      studioControlScreenVideo.hidden = false;
+      studioControlScreenImage.hidden = true;
+      studioControlScreenVideo.closest(".studio-control-screen-frame-wrap")?.classList.add("has-screen", "has-webrtc");
+      remote.webrtcActive = true;
+      if (studioControlScreenStatus) {
+        studioControlScreenStatus.textContent = "WebRTC ativo. Recebendo video em tempo real do Agent.";
+      }
+      renderStudioControl();
+    }
+  };
+  peer.onconnectionstatechange = () => {
+    if (["failed", "closed", "disconnected"].includes(peer.connectionState)) {
+      remote.webrtcActive = false;
+      renderStudioControl();
+    }
+  };
+  const offer = await peer.createOffer();
+  await peer.setLocalDescription(offer);
+  await waitForIceGatheringComplete(peer);
+  const session = await invoke("remote_agent_webrtc_offer", {
+    address: remote.address,
+    offer: {
+      type: peer.localDescription.type,
+      sdp: peer.localDescription.sdp,
+    },
+  });
+  remote.webrtcSessionId = String(session?.session_id || "");
+  if (!remote.webrtcSessionId) {
+    throw new Error("O Agent nao aceitou a sessao WebRTC.");
+  }
+  if (studioControlScreenStatus) {
+    studioControlScreenStatus.textContent = "Solicitando permissao de tela no Agent...";
+  }
+  let attempts = 0;
+  return new Promise((resolve, reject) => {
+    remote.webrtcAnswerTimer = window.setInterval(async () => {
+      attempts += 1;
+      try {
+        const answerPayload = await invoke("remote_agent_webrtc_answer", { address: remote.address });
+        const answer = answerPayload?.answer || null;
+        if (answer && String(answerPayload?.session_id || "") === remote.webrtcSessionId) {
+          window.clearInterval(remote.webrtcAnswerTimer);
+          remote.webrtcAnswerTimer = null;
+          await peer.setRemoteDescription(answer);
+          resolve(true);
+        } else if (attempts > 60) {
+          window.clearInterval(remote.webrtcAnswerTimer);
+          remote.webrtcAnswerTimer = null;
+          reject(new Error("O Agent nao respondeu ao WebRTC. Vou usar a visualizacao leve."));
+        }
+      } catch (error) {
+        if (attempts > 60) {
+          window.clearInterval(remote.webrtcAnswerTimer);
+          remote.webrtcAnswerTimer = null;
+          reject(error);
+        }
+      }
+    }, 500);
+  });
+}
+
+function remoteVideoPointFromEvent(event) {
+  if (!studioControlScreenVideo || studioControlScreenVideo.hidden) {
+    return null;
+  }
+  const rect = studioControlScreenVideo.getBoundingClientRect();
+  const videoWidth = studioControlScreenVideo.videoWidth || 16;
+  const videoHeight = studioControlScreenVideo.videoHeight || 9;
+  const boxRatio = rect.width / rect.height;
+  const videoRatio = videoWidth / videoHeight;
+  let contentWidth = rect.width;
+  let contentHeight = rect.height;
+  let offsetX = 0;
+  let offsetY = 0;
+  if (boxRatio > videoRatio) {
+    contentWidth = rect.height * videoRatio;
+    offsetX = (rect.width - contentWidth) / 2;
+  } else {
+    contentHeight = rect.width / videoRatio;
+    offsetY = (rect.height - contentHeight) / 2;
+  }
+  const x = (event.clientX - rect.left - offsetX) / contentWidth;
+  const y = (event.clientY - rect.top - offsetY) / contentHeight;
+  if (x < 0 || x > 1 || y < 0 || y > 1) {
+    return null;
+  }
+  return { x, y };
+}
+
+function sendStudioRemoteControlEvent(payload) {
+  const channel = state.remoteControl.webrtcControlChannel;
+  if (!channel || channel.readyState !== "open") {
+    return;
+  }
+  channel.send(JSON.stringify(payload));
+}
+
+function stopStudioControlScreenStream({ clear = false } = {}) {
+  const remote = state.remoteControl;
+  remote.screenStreaming = false;
+  if (remote.screenStreamTimer) {
+    window.clearInterval(remote.screenStreamTimer);
+    remote.screenStreamTimer = null;
+  }
+  if (clear) {
+    stopStudioControlWebRtc({ clearRemote: true });
+    remote.screenSnapshotUrl = "";
+    remote.screenSnapshotAt = 0;
+    if (studioControlScreenImage) {
+      studioControlScreenImage.removeAttribute("src");
+      studioControlScreenImage.hidden = true;
+    }
+  }
+  renderStudioControl();
+}
+
+function startStudioControlScreenStream() {
+  const remote = state.remoteControl;
+  if (!remote.connected) {
+    setMessage("Conecte no Agent antes de assistir a tela.", "error");
+    return;
+  }
+  if (remote.screenStreaming) {
+    stopStudioControlScreenStream();
+    stopStudioControlWebRtc({ clearRemote: true });
+    setMessage("Visualizacao da tela do Agent pausada.", "success");
+    return;
+  }
+  remote.screenStreaming = true;
+  remote.meshFrameUrl = "";
+  if (studioControlMeshFrame) {
+    studioControlMeshFrame.setAttribute("src", "about:blank");
+  }
+  renderStudioControl();
+  startStudioControlWebRtc()
+    .then(() => {
+      setMessage("WebRTC iniciado dentro do Studio.", "success");
+    })
+    .catch((error) => {
+      stopStudioControlWebRtc({ clearRemote: true });
+      if (studioControlScreenStatus) {
+        studioControlScreenStatus.textContent = `${String(error)} Usando visualizacao leve.`;
+      }
+      refreshStudioControlScreenSnapshot({ silent: false }).catch(() => null);
+      remote.screenStreamTimer = window.setInterval(() => {
+        refreshStudioControlScreenSnapshot({ silent: true }).catch(() => null);
+      }, 280);
+      setMessage("WebRTC nao iniciou; usando visualizacao leve por snapshots.", "error");
+    });
+}
+
 function startStudioControlPolling() {
   if (state.remoteControl.pollTimer) {
     window.clearInterval(state.remoteControl.pollTimer);
   }
   state.remoteControl.pollTimer = window.setInterval(() => {
     refreshStudioControlStatus({ silent: true }).catch(() => null);
+    if (state.activeTab === "agent-screen") {
+      refreshStudioControlMeshStatus({ silent: true }).catch(() => null);
+    }
     if (state.remoteControl.running || state.remoteControl.activeView === "spreadsheet") {
       refreshStudioControlSpreadsheet({ silent: true }).catch(() => null);
     }
@@ -9244,12 +9826,12 @@ async function connectStudioControl() {
   const ping = await invoke("remote_agent_ping", { address });
   state.remoteControl.connected = true;
   state.remoteControl.agentLabel = `${ping?.agent || "FlowDetect Agent"} | ${ping?.address || address}`;
+  ensureMeshCentralUrlFromAgent({ force: true });
   setMessage(`Controle remoto conectado em ${address}.`, "success");
-  await refreshStudioControlLibrary();
-  await refreshStudioControlStatus({ silent: true });
-  await refreshStudioControlSpreadsheet({ force: true, silent: true });
   startStudioControlPolling();
   renderStudioControl();
+  refreshStudioControlLibrary({ silent: true }).catch(() => null);
+  refreshStudioControlStatus({ silent: true }).catch(() => null);
 }
 
 async function openStudioControlAutomation(id) {
@@ -9267,6 +9849,7 @@ async function openStudioControlAutomation(id) {
   state.remoteControl.currentOrder = studioControlFirstOrder(state.remoteControl.currentSequence) ?? roadmap?.events?.[0]?.order ?? null;
   state.remoteControl.detailOpenOrder = null;
   state.remoteControl.lastCenteredOrder = null;
+  state.remoteControl.editableTextOverrides = {};
   await refreshStudioControlStatus({ silent: true });
   await refreshStudioControlSpreadsheet({ force: true, silent: true });
   renderStudioControl();
@@ -9290,6 +9873,7 @@ async function runStudioControlAutomation(id = "") {
     loopStart: Math.max(1, Math.trunc(parseNumber(studioControlLoopStartInput?.value || testLoopStartInput?.value, 1))),
     startCompany: String(studioControlCompanyStartInput?.value || "").trim(),
     minimizeAgent: String(studioControlAgentWindowMode?.value || "minimize") === "minimize",
+    textOverrides: studioControlEditableTextOverridesJson(),
   });
   applyStudioControlStatus(result);
   refreshStudioControlSpreadsheet({ force: true, silent: true }).catch(() => null);
@@ -9413,10 +9997,14 @@ function renderOpenProgramFields(fieldAttr, details = {}, currentOrder = null) {
 }
 
 function renderWriteSpreadsheetFields(fieldAttr, details = {}, currentOrder = null) {
-  const workbookId = details.arquivo || details.workbook || state.composerWorkbookId || state.workbook?.default_workbook || "";
-  const workbookOptions = availableWorkbooks()
-    .map((workbook) => `<option value="${escapeHtml(workbook.id)}" ${workbook.id === workbookId ? "selected" : ""}>${escapeHtml(workbook.file_name)}</option>`)
-    .join("");
+  const workbooks = availableWorkbooks();
+  const requestedWorkbookId = details.arquivo || details.workbook || "";
+  const workbookId = resolveWorkbookId(requestedWorkbookId);
+  const workbookOptions = workbooks.length
+    ? workbooks
+      .map((workbook) => `<option value="${escapeHtml(workbook.id)}" ${workbook.id === workbookId ? "selected" : ""}>${escapeHtml(workbook.file_name)}</option>`)
+      .join("")
+    : `<option value="">Nenhuma planilha</option>`;
   const availableSheets = workbookSheetsFor(workbookId);
   const currentSheet = details.aba || details.sheet || "";
   const selectedSheet = availableSheets.some((sheet) => sheet.name === currentSheet)
@@ -9722,7 +10310,7 @@ function renderEditorFields(event) {
     `;
   }
 
-  const workbookId = details.arquivo || state.composerWorkbookId || state.workbook?.default_workbook || "";
+  const workbookId = resolveWorkbookId(details.arquivo || details.workbook || "");
   const workbookOptions = availableWorkbooks()
     .map(
       (workbook) =>
@@ -9933,7 +10521,7 @@ function renderTreeEditorFields(event) {
     `;
   }
 
-  const workbookId = details.arquivo || state.composerWorkbookId || state.workbook?.default_workbook || "";
+  const workbookId = resolveWorkbookId(details.arquivo || details.workbook || "");
   const workbookOptions = availableWorkbooks()
     .map(
       (workbook) =>
@@ -10225,7 +10813,7 @@ function renderInsertPanel(order) {
   }
 
   const panel = state.insertPanel;
-  const workbookId = panel.workbook || state.composerWorkbookId || state.workbook?.default_workbook || "";
+  const workbookId = resolveWorkbookId(panel.workbook || "");
   const workbookOptions = availableWorkbooks()
     .map(
       (workbook) =>
@@ -11020,6 +11608,7 @@ function renderCommandMap(options = {}) {
 
 function applyRoadmap(roadmap, options = {}) {
   const resetCommandMapDrafts = Boolean(options.resetCommandMapDrafts);
+  const resetCommandMapNavigation = Boolean(options.resetCommandMapNavigation);
   const preserveCommandMapSequence = options.preserveCommandMapSequence
     ? normalizeSequenceName(options.preserveCommandMapSequence)
     : "";
@@ -11029,7 +11618,18 @@ function applyRoadmap(roadmap, options = {}) {
   const decoratedRoadmap = decorateRoadmapForClient(roadmap, state.roadmap);
   state.roadmap = decoratedRoadmap;
   syncCommandMapDraftsWithRoadmap(decoratedRoadmap);
-  if (preserveCommandMapSequence) {
+  if (resetCommandMapNavigation) {
+    const initialSequence = normalizeSequenceName(
+      decoratedRoadmap?.initial_sequence || decoratedRoadmap?.sequencia_inicial || "principal"
+    );
+    const pageExists = getCommandMapPageDefinitions(decoratedRoadmap)
+      .some((page) => page.sequence === initialSequence);
+    state.commandMapPageSequence = pageExists ? initialSequence : "principal";
+    state.commandMapPageSequenceLock = null;
+    state.commandMapFocusOrder = getCommandMapEvents(state.commandMapPageSequence, decoratedRoadmap)
+      .at(0)?.order ?? decoratedRoadmap?.events?.[0]?.order ?? null;
+    state.assist.currentOrder = getAssistInitialOrder(decoratedRoadmap);
+  } else if (preserveCommandMapSequence) {
     const pageExists = getCommandMapPageDefinitions(decoratedRoadmap)
       .some((page) => page.sequence === preserveCommandMapSequence);
     if (pageExists) {
@@ -11065,7 +11665,10 @@ function applyRoadmap(roadmap, options = {}) {
 }
 
 function applyPersistedRoadmap(roadmap) {
-  applyRoadmap(roadmap, { resetCommandMapDrafts: true });
+  applyRoadmap(roadmap, {
+    resetCommandMapDrafts: true,
+    resetCommandMapNavigation: true,
+  });
 }
 
 async function refreshRoadmap(message = "Roteiro atualizado.") {
@@ -12344,6 +12947,14 @@ assistEditableTextList?.addEventListener("input", (event) => {
   state.editableTextOverrides[String(field.dataset.editableTextOrder || "")] = field.value ?? "";
 });
 
+studioControlEditableTextList?.addEventListener("input", (event) => {
+  const field = event.target.closest("[data-studio-control-editable-order]");
+  if (!field) {
+    return;
+  }
+  state.remoteControl.editableTextOverrides[String(field.dataset.studioControlEditableOrder || "")] = field.value ?? "";
+});
+
 commandMapPageModeSelect?.addEventListener("change", () => {
   if (commandMapPageModeSelect.value !== "loop_planilha" && commandMapPageAfterLoopSelect) {
     commandMapPageAfterLoopSelect.value = "";
@@ -12615,6 +13226,7 @@ commandTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
 workbookTabButton.addEventListener("click", () => setWorkspaceTab("workbook"));
 launcherTabButton.addEventListener("click", () => setWorkspaceTab("launcher"));
 remoteControlTabButton?.addEventListener("click", () => setWorkspaceTab("remote-control"));
+agentScreenTabButton?.addEventListener("click", () => setWorkspaceTab("agent-screen"));
 smartRecorderTabButton?.addEventListener("click", () => setWorkspaceTab("smart-recorder"));
 smartRecorderStartButton?.addEventListener("click", () => {
   startSmartRecorder();
@@ -13055,6 +13667,158 @@ studioControlViewButtons.forEach((button) => {
       refreshStudioControlSpreadsheet({ force: true, silent: true }).catch(() => null);
     }
   });
+});
+
+studioControlMeshUrlInput?.addEventListener("change", () => {
+  persistMeshCentralUrl(normalizeMeshCentralUrl(studioControlMeshUrlInput.value));
+  renderStudioControl();
+});
+
+studioControlMeshPathInput?.addEventListener("change", () => {
+  persistMeshCentralPath(studioControlMeshPathInput.value);
+  renderStudioControl();
+});
+
+studioControlMeshStartButton?.addEventListener("click", () => {
+  const meshPath = String(studioControlMeshPathInput?.value || state.remoteControl.meshPath || "").trim();
+  if (!state.remoteControl.connected) {
+    setMessage("Conecte no Agent antes de iniciar o MeshCentral.", "error");
+    return;
+  }
+  persistMeshCentralPath(meshPath);
+  const meshUrl = currentMeshCentralUrl();
+  persistMeshCentralUrl(meshUrl);
+  state.remoteControl.meshStarting = true;
+  renderStudioControl();
+  setMessage("Comando enviado ao Agent. O MeshCentral vai preparar em segundo plano.", "success");
+  invoke("remote_agent_meshcentral_start", {
+    address: state.remoteControl.address,
+    meshPath,
+    url: meshUrl,
+  })
+    .then((result) => {
+      applyStudioControlMeshStatus(result);
+      refreshStudioControlMeshStatus({ silent: true }).catch(() => null);
+    })
+    .catch((error) => {
+      state.remoteControl.meshStarting = false;
+      renderStudioControl();
+      setMessage(String(error), "error");
+    });
+  window.setTimeout(() => refreshStudioControlMeshStatus({ silent: true }).catch(() => null), 1800);
+});
+
+studioControlMeshLoadButton?.addEventListener("click", () => {
+  startStudioControlScreenStream();
+});
+
+studioControlMeshEmbedButton?.addEventListener("click", () => {
+  const url = currentMeshCentralUrl();
+  if (!url) {
+    setMessage("Informe a URL do MeshCentral para incorporar a tela remota.", "error");
+    return;
+  }
+  persistMeshCentralUrl(url);
+  stopStudioControlScreenStream({ clear: true });
+  state.remoteControl.meshFrameUrl = url;
+  setMessage("Tentando incorporar a tela do MeshCentral. Se ficar branco, use Assistir no Studio ou Abrir fora.", "success");
+  renderStudioControl();
+});
+
+studioControlMeshOpenButton?.addEventListener("click", () => {
+  const url = currentMeshCentralUrl();
+  if (!url) {
+    setMessage("Informe a URL do MeshCentral antes de abrir.", "error");
+    return;
+  }
+  persistMeshCentralUrl(url);
+  window.open(url, "_blank", "noopener,noreferrer");
+});
+
+studioControlMeshClearButton?.addEventListener("click", () => {
+  persistMeshCentralUrl("");
+  state.remoteControl.meshFrameUrl = "";
+  stopStudioControlScreenStream({ clear: true });
+  if (studioControlMeshFrame) {
+    studioControlMeshFrame.setAttribute("src", "about:blank");
+  }
+  renderStudioControl();
+});
+
+studioControlScreenVideo?.addEventListener("mouseenter", () => {
+  state.remoteControl.remotePointerInside = true;
+});
+
+studioControlScreenVideo?.addEventListener("mouseleave", () => {
+  state.remoteControl.remotePointerInside = false;
+});
+
+studioControlScreenVideo?.addEventListener("mousemove", (event) => {
+  const point = remoteVideoPointFromEvent(event);
+  if (!point) {
+    return;
+  }
+  sendStudioRemoteControlEvent({ kind: "mouse", event: "move", x: point.x, y: point.y });
+});
+
+studioControlScreenVideo?.addEventListener("mousedown", (event) => {
+  const point = remoteVideoPointFromEvent(event);
+  if (!point) {
+    return;
+  }
+  event.preventDefault();
+  studioControlScreenVideo.focus?.();
+  sendStudioRemoteControlEvent({ kind: "mouse", event: "down", x: point.x, y: point.y, button: event.button });
+});
+
+studioControlScreenVideo?.addEventListener("mouseup", (event) => {
+  const point = remoteVideoPointFromEvent(event);
+  if (!point) {
+    return;
+  }
+  event.preventDefault();
+  sendStudioRemoteControlEvent({ kind: "mouse", event: "up", x: point.x, y: point.y, button: event.button });
+});
+
+studioControlScreenVideo?.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+});
+
+studioControlScreenVideo?.addEventListener("wheel", (event) => {
+  const point = remoteVideoPointFromEvent(event);
+  if (!point) {
+    return;
+  }
+  event.preventDefault();
+  sendStudioRemoteControlEvent({
+    kind: "mouse",
+    event: "wheel",
+    x: point.x,
+    y: point.y,
+    delta: event.deltaY < 0 ? 120 : -120,
+  });
+}, { passive: false });
+
+window.addEventListener("keydown", (event) => {
+  if (!state.remoteControl.webrtcActive || !state.remoteControl.remotePointerInside) {
+    return;
+  }
+  if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) {
+    return;
+  }
+  event.preventDefault();
+  sendStudioRemoteControlEvent({ kind: "key", event: "down", key: event.key });
+});
+
+window.addEventListener("keyup", (event) => {
+  if (!state.remoteControl.webrtcActive || !state.remoteControl.remotePointerInside) {
+    return;
+  }
+  if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) {
+    return;
+  }
+  event.preventDefault();
+  sendStudioRemoteControlEvent({ kind: "key", event: "up", key: event.key });
 });
 
 studioControlSheetRefreshButton?.addEventListener("click", () => {
@@ -13601,19 +14365,7 @@ timelineList.addEventListener("change", (event) => {
   }
   if (target.matches('[data-field="workbook"]')) {
     const card = target.closest(".flow-card");
-    const sheetField = card.querySelector('[data-field="sheet"]');
-    const columnField = card.querySelector('[data-field="column"]');
-    const sheets = workbookSheetsFor(target.value);
-    const nextSheet = sheets[0]?.name ?? "";
-    sheetField.innerHTML = sheets
-      .map((sheet) => `<option value="${escapeHtml(sheet.name)}">${escapeHtml(sheet.name)}</option>`)
-      .join("");
-    sheetField.value = nextSheet;
-    const columns = columnsForSheetInWorkbook(target.value, nextSheet);
-    columnField.innerHTML = columns
-      .map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`)
-      .join("");
-    columnField.value = columns[0] ?? "";
+    syncSpreadsheetSheetAndColumnFields(card, "data-field", target.value);
     return;
   }
 
@@ -13622,10 +14374,7 @@ timelineList.addEventListener("change", (event) => {
     const workbookField = card.querySelector('[data-field="workbook"]');
     const columnField = card.querySelector('[data-field="column"]');
     const columns = columnsForSheetInWorkbook(workbookField?.value, target.value);
-    columnField.innerHTML = columns
-      .map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`)
-      .join("");
-    columnField.value = columns[0] ?? "";
+    setColumnSuggestionsForField(columnField, columns);
     return;
   }
 });
@@ -13846,19 +14595,7 @@ commandMapList.addEventListener("change", (event) => {
 
   if (target.matches('[data-tree-field="workbook"]')) {
     const card = target.closest(".command-tree-card");
-    const sheetField = card.querySelector('[data-tree-field="sheet"]');
-    const columnField = card.querySelector('[data-tree-field="column"]');
-    const sheets = workbookSheetsFor(target.value);
-    const nextSheet = sheets[0]?.name ?? "";
-    sheetField.innerHTML = sheets
-      .map((sheet) => `<option value="${escapeHtml(sheet.name)}">${escapeHtml(sheet.name)}</option>`)
-      .join("");
-    sheetField.value = nextSheet;
-    const columns = columnsForSheetInWorkbook(target.value, nextSheet);
-    columnField.innerHTML = columns
-      .map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`)
-      .join("");
-    columnField.value = columns[0] ?? "";
+    syncSpreadsheetSheetAndColumnFields(card, "data-tree-field", target.value);
     return;
   }
 
@@ -13867,32 +14604,17 @@ commandMapList.addEventListener("change", (event) => {
     const workbookField = card.querySelector('[data-tree-field="workbook"]');
     const columnField = card.querySelector('[data-tree-field="column"]');
     const columns = columnsForSheetInWorkbook(workbookField?.value, target.value);
-    columnField.innerHTML = columns
-      .map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`)
-      .join("");
-    columnField.value = columns[0] ?? "";
+    setColumnSuggestionsForField(columnField, columns);
     return;
   }
 
   if (target.matches('[data-insert-field="workbook"]')) {
     const panel = target.closest(".insert-card-panel");
-    const sheetField = panel.querySelector('[data-insert-field="sheet"]');
-    const columnField = panel.querySelector('[data-insert-field="column"]');
-    const sheets = workbookSheetsFor(target.value);
-    const nextSheet = sheets[0]?.name ?? "";
-    sheetField.innerHTML = sheets
-      .map((sheet) => `<option value="${escapeHtml(sheet.name)}">${escapeHtml(sheet.name)}</option>`)
-      .join("");
-    sheetField.value = nextSheet;
-    const columns = columnsForSheetInWorkbook(target.value, nextSheet);
-    columnField.innerHTML = columns
-      .map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`)
-      .join("");
-    columnField.value = columns[0] ?? "";
+    const updated = syncSpreadsheetSheetAndColumnFields(panel, "data-insert-field", target.value);
     if (state.insertPanel) {
       state.insertPanel.workbook = target.value;
-      state.insertPanel.sheet = nextSheet;
-      state.insertPanel.column = columns[0] ?? "";
+      state.insertPanel.sheet = updated.sheet;
+      state.insertPanel.column = updated.column;
     }
     return;
   }
@@ -13916,13 +14638,10 @@ commandMapList.addEventListener("change", (event) => {
     const workbookField = panel.querySelector('[data-insert-field="workbook"]');
     const columns = columnsForSheetInWorkbook(workbookField?.value, target.value);
     const columnField = panel.querySelector('[data-insert-field="column"]');
-    columnField.innerHTML = columns
-      .map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`)
-      .join("");
-    columnField.value = columns[0] ?? "";
+    setColumnSuggestionsForField(columnField, columns);
     if (state.insertPanel) {
       state.insertPanel.sheet = target.value;
-      state.insertPanel.column = columns[0] ?? "";
+      state.insertPanel.column = columnField?.value ?? "";
     }
     return;
   }
@@ -14177,9 +14896,9 @@ commandMapList.addEventListener("click", (event) => {
     state.insertPanel = createInsertPanelState(0, "after");
     state.insertPanel.type = emptyTypeButton.dataset.emptyInsertType || "key";
     if (state.insertPanel.type === "spreadsheet" || state.insertPanel.type === "write_spreadsheet") {
-      state.insertPanel.workbook = state.insertPanel.workbook || state.composerWorkbookId || state.workbook?.default_workbook || "";
-      state.insertPanel.sheet = state.insertPanel.sheet || workbookSheetsFor(state.insertPanel.workbook)[0]?.name || "";
-      state.insertPanel.column = state.insertPanel.column || columnsForSheetInWorkbook(state.insertPanel.workbook, state.insertPanel.sheet)[0] || "";
+      state.insertPanel.workbook = resolveWorkbookId(state.insertPanel.workbook);
+      state.insertPanel.sheet = workbookSheetsFor(state.insertPanel.workbook)[0]?.name || "";
+      state.insertPanel.column = columnsForSheetInWorkbook(state.insertPanel.workbook, state.insertPanel.sheet)[0] || "";
     }
     renderCommandMap();
     return;
@@ -14216,9 +14935,9 @@ commandMapList.addEventListener("click", (event) => {
     }
     state.insertPanel.type = button.dataset.insertType;
     if (state.insertPanel.type === "spreadsheet" || state.insertPanel.type === "write_spreadsheet") {
-      state.insertPanel.workbook = state.insertPanel.workbook || state.composerWorkbookId || state.workbook?.default_workbook || "";
-      state.insertPanel.sheet = state.insertPanel.sheet || workbookSheetsFor(state.insertPanel.workbook)[0]?.name || "";
-      state.insertPanel.column = state.insertPanel.column || columnsForSheetInWorkbook(state.insertPanel.workbook, state.insertPanel.sheet)[0] || "";
+      state.insertPanel.workbook = resolveWorkbookId(state.insertPanel.workbook);
+      state.insertPanel.sheet = workbookSheetsFor(state.insertPanel.workbook)[0]?.name || "";
+      state.insertPanel.column = columnsForSheetInWorkbook(state.insertPanel.workbook, state.insertPanel.sheet)[0] || "";
     }
     setCommandMapFocus(state.insertPanel.targetOrder);
     renderCommandMap();

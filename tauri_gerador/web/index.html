@@ -144,6 +144,7 @@
         <button id="commandTabButton" class="workspace-tab" data-tab="commands">Mapa dos comandos</button>
         <button id="workbookTabButton" class="workspace-tab" data-tab="workbook">Planilha e dados</button>
         <button id="remoteControlTabButton" class="workspace-tab" data-tab="remote-control">Controle remoto</button>
+        <button id="agentScreenTabButton" class="workspace-tab" data-tab="agent-screen">Tela do Agent</button>
         <button id="smartRecorderTabButton" class="workspace-tab" data-tab="smart-recorder">Gravador inteligente</button>
         <div id="sessionChip" class="workspace-session-chip">Sessao bloqueada</div>
       </section>
@@ -1091,6 +1092,15 @@
             </div>
           </section>
 
+          <section id="studioControlEditableTextPanel" class="studio-control-editable-panel" hidden>
+            <div>
+              <p class="panel-kicker">Campos editaveis</p>
+              <strong>Valores para esta execucao</strong>
+              <span>Altere os textos antes de iniciar no Agent.</span>
+            </div>
+            <div id="studioControlEditableTextList" class="studio-control-editable-list"></div>
+          </section>
+
           <aside class="studio-control-monitor">
             <div class="studio-control-monitor-head">
               <div>
@@ -1163,6 +1173,43 @@
               <div id="studioControlSheetTableWrap" class="studio-control-sheet-table-wrap"></div>
             </section>
           </section>
+
+        </section>
+      </section>
+
+      <section id="agentScreenPanel" class="workspace-panel">
+        <section class="studio-control-screen-panel">
+          <div class="studio-control-screen-head">
+            <div>
+              <p class="panel-kicker">Tela do Agent</p>
+              <h3>Assistir ou controlar PC</h3>
+              <span id="studioControlScreenStatus">Conecte no Agent para o FlowDetect montar a URL do MeshCentral automaticamente.</span>
+            </div>
+            <div class="studio-control-screen-actions">
+              <label>
+                <span>URL do MeshCentral</span>
+                <input id="studioControlMeshUrlInput" type="text" placeholder="Automatico pelo IP do Agent" />
+              </label>
+              <label>
+                <span>Pasta no Agent</span>
+                <input id="studioControlMeshPathInput" type="text" placeholder="Padrao: pasta meshcentral instalada junto do Agent" />
+              </label>
+              <button id="studioControlMeshStartButton" class="soft-button" type="button">Iniciar no Agent</button>
+              <button id="studioControlMeshLoadButton" class="primary-button" type="button">Assistir no Studio</button>
+              <button id="studioControlMeshEmbedButton" class="ghost-button" type="button">Incorporar aqui</button>
+              <button id="studioControlMeshOpenButton" class="ghost-button" type="button">Abrir fora</button>
+              <button id="studioControlMeshClearButton" class="ghost-button" type="button">Limpar</button>
+            </div>
+          </div>
+          <div class="studio-control-screen-frame-wrap">
+            <video id="studioControlScreenVideo" class="studio-control-screen-video" autoplay playsinline muted tabindex="0"></video>
+            <img id="studioControlScreenImage" class="studio-control-screen-image" alt="Tela atual do Agent" />
+            <iframe id="studioControlMeshFrame" title="Tela remota MeshCentral" loading="lazy" referrerpolicy="no-referrer"></iframe>
+            <div class="studio-control-screen-placeholder">
+              <strong>Tela remota pronta para carregar</strong>
+              <span>Clique em Assistir no Studio para receber snapshots da tela do Agent sem depender do iframe do MeshCentral.</span>
+            </div>
+          </div>
         </section>
       </section>
 
