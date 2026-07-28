@@ -1,5 +1,6 @@
 const tauriCore = window.__TAURI__?.core ?? null;
 const tauriEvent = window.__TAURI__?.event ?? null;
+const tauriWindow = window.__TAURI__?.window ?? null;
 
 const FLOWDETECT_WINDOW_PATTERN = /flowdetect/i;
 const PAGE_DEFINITIONS = Object.freeze([
@@ -31,6 +32,17 @@ const state = {
   logs: [],
   librarySignature: "",
   remotePollTimer: null,
+  meshPollTimer: null,
+  webrtcPollTimer: null,
+  webrtcSessionId: "",
+  webrtcPeer: null,
+  webrtcStream: null,
+  meshStatus: {
+    running: false,
+    starting: false,
+    message: "",
+    url: "",
+  },
   remoteStatusRefreshing: false,
   remoteConnected: false,
 };
@@ -38,6 +50,7 @@ const state = {
 const elements = {
   agentShell: document.getElementById("agentShell"),
   agentConnectionAddress: document.getElementById("agentConnectionAddress"),
+  meshCentralStatusChip: document.getElementById("meshCentralStatusChip"),
   importZipButton: document.getElementById("importZipButton"),
   refreshLibraryButton: document.getElementById("refreshLibraryButton"),
   automationZipInput: document.getElementById("automationZipInput"),
@@ -601,6 +614,183 @@ function renderAgentConnectionState(snapshot = {}) {
   elements.agentConnectionAddress.textContent = connected
     ? `Conectado ao Studio: ${safeAddress}`
     : `Aguardando Studio: ${safeAddress}`;
+}
+
+function renderMeshCentralStatus() {
+  if (!elements.meshCentralStatusChip) {
+    return;
+  }
+  const mesh = state.meshStatus || {};
+  const label = mesh.running
+    ? "Tela remota: ativa"
+    : mesh.starting
+      ? "Tela remota: preparando"
+      : "Tela remota: parada";
+  elements.meshCentralStatusChip.textContent = label;
+  elements.meshCentralStatusChip.title = mesh.message || mesh.url || label;
+  elements.meshCentralStatusChip.classList.toggle("is-running", Boolean(mesh.running));
+  elements.meshCentralStatusChip.classList.toggle("is-starting", Boolean(mesh.starting));
+}
+
+async function refreshMeshCentralStatus({ silent = false } = {}) {
+  try {
+    const result = await invoke("agent_meshcentral_status");
+    state.meshStatus = {
+      running: Boolean(result?.running),
+      starting: Boolean(result?.starting),
+      message: String(result?.message || ""),
+      url: String(result?.url || ""),
+    };
+    renderMeshCentralStatus();
+    if (!silent && state.meshStatus.message) {
+      pushLog(state.meshStatus.message, state.meshStatus.running ? "success" : "info", "Tela remota");
+    }
+  } catch (error) {
+    if (!silent) {
+      pushLog(String(error), "error", "Tela remota");
+    }
+  }
+}
+
+function startMeshCentralPolling() {
+  if (state.meshPollTimer) {
+    window.clearInterval(state.meshPollTimer);
+  }
+  state.meshPollTimer = window.setInterval(() => {
+    refreshMeshCentralStatus({ silent: true }).catch(() => {});
+  }, 2500);
+}
+
+function waitForAgentIceGatheringComplete(peer, timeoutMs = 2200) {
+  if (!peer || peer.iceGatheringState === "complete") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timeout = window.setTimeout(done, timeoutMs);
+    function done() {
+      window.clearTimeout(timeout);
+      peer.removeEventListener("icegatheringstatechange", onChange);
+      resolve();
+    }
+    function onChange() {
+      if (peer.iceGatheringState === "complete") {
+        done();
+      }
+    }
+    peer.addEventListener("icegatheringstatechange", onChange);
+  });
+}
+
+function stopAgentWebRtc() {
+  if (state.webrtcPeer) {
+    state.webrtcPeer.close();
+    state.webrtcPeer = null;
+  }
+  if (state.webrtcStream) {
+    state.webrtcStream.getTracks().forEach((track) => track.stop());
+    state.webrtcStream = null;
+  }
+  state.webrtcSessionId = "";
+}
+
+function minimizeAgentWindowDuringShare() {
+  window.setTimeout(() => {
+    try {
+      const currentWindow = tauriWindow?.getCurrentWindow?.();
+      if (currentWindow?.minimize) {
+        currentWindow.minimize().catch(() => {});
+      }
+    } catch (error) {
+      console.warn("Nao foi possivel minimizar o Agent durante o compartilhamento.", error);
+    }
+  }, 700);
+}
+
+async function startAgentWebRtcSession(signal) {
+  const sessionId = String(signal?.session_id || "");
+  const offer = signal?.offer || null;
+  if (!sessionId || !offer || sessionId === state.webrtcSessionId) {
+    return;
+  }
+  if (!navigator.mediaDevices?.getDisplayMedia || !window.RTCPeerConnection) {
+    await invoke("agent_webrtc_clear");
+    pushLog("WebRTC indisponivel neste Agent. Use a visualizacao leve do Studio.", "error", "Tela remota");
+    return;
+  }
+  stopAgentWebRtc();
+  state.webrtcSessionId = sessionId;
+  pushLog("Studio solicitou transmissao WebRTC. Confirme a captura de tela se o Windows pedir.", "info", "Tela remota");
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        frameRate: { ideal: 24, max: 30 },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    });
+    state.webrtcStream = stream;
+    minimizeAgentWindowDuringShare();
+    const peer = new RTCPeerConnection({ iceServers: [] });
+    state.webrtcPeer = peer;
+    peer.ondatachannel = (event) => {
+      const channel = event.channel;
+      if (channel.label !== "flowdetect-control") {
+        return;
+      }
+      channel.onmessage = (messageEvent) => {
+        try {
+          const payload = JSON.parse(String(messageEvent.data || "{}"));
+          invoke("agent_remote_control_event", { event: payload }).catch((error) => {
+            console.warn("Falha ao executar controle remoto.", error);
+          });
+        } catch (error) {
+          console.warn("Evento remoto invalido.", error);
+        }
+      };
+    };
+    stream.getVideoTracks().forEach((track) => peer.addTrack(track, stream));
+    await peer.setRemoteDescription(offer);
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+    await waitForAgentIceGatheringComplete(peer);
+    await invoke("agent_webrtc_set_answer", {
+      sessionId,
+      answer: {
+        type: peer.localDescription.type,
+        sdp: peer.localDescription.sdp,
+      },
+    });
+    pushLog("Transmissao WebRTC ativa para o Studio.", "success", "Tela remota");
+  } catch (error) {
+    stopAgentWebRtc();
+    await invoke("agent_webrtc_clear").catch(() => {});
+    pushLog(`Nao foi possivel iniciar WebRTC: ${String(error)}`, "error", "Tela remota");
+  }
+}
+
+async function pollAgentWebRtcOffer() {
+  try {
+    const signal = await invoke("agent_webrtc_poll_offer");
+    const sessionId = String(signal?.session_id || "");
+    if (sessionId && signal?.offer && sessionId !== state.webrtcSessionId) {
+      await startAgentWebRtcSession(signal);
+    }
+    if (!sessionId && state.webrtcSessionId) {
+      stopAgentWebRtc();
+    }
+  } catch (error) {
+    console.warn("Falha ao consultar offer WebRTC.", error);
+  }
+}
+
+function startAgentWebRtcPolling() {
+  if (state.webrtcPollTimer) {
+    window.clearInterval(state.webrtcPollTimer);
+  }
+  state.webrtcPollTimer = window.setInterval(() => {
+    pollAgentWebRtcOffer().catch(() => {});
+  }, 900);
 }
 
 async function safeListen(eventName, handler) {
@@ -1609,6 +1799,9 @@ async function boot() {
     updateButtons();
     setStatusChip(state.running ? "Executando" : "Pronto", state.running ? "running" : "idle");
     startRemoteAgentPolling();
+    await refreshMeshCentralStatus({ silent: true });
+    startMeshCentralPolling();
+    startAgentWebRtcPolling();
     pushLog("FlowDetect Agent pronto para uso.", "success", "Inicializacao");
   } catch (error) {
     pushLog(String(error), "error", "Inicializacao");

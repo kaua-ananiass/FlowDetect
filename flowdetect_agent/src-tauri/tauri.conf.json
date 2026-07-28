@@ -54,7 +54,9 @@
       "../../tauri_gerador/src-tauri/installer_support/python-wheels/": "python-wheels/",
       "../../tauri_gerador/src-tauri/installer_support/runtime_seed/mapeamento_teclado.json": "mapeamento_teclado.json",
       "../../tauri_gerador/src-tauri/installer_support/runtime_seed/resumo_teclado.txt": "resumo_teclado.txt",
-      "../../tauri_gerador/src-tauri/installer_support/runtime_seed/automacoes/": "automacoes/"
+      "../../tauri_gerador/src-tauri/installer_support/runtime_seed/automacoes/": "automacoes/",
+      "installer_support/meshcentral/": "meshcentral/",
+      "installer_support/nodejs/": "nodejs/"
     },
     "windows": {
       "webviewInstallMode": {

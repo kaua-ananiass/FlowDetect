@@ -67,6 +67,14 @@ debug_screenshot*.png
 assist_*.png
 relatorios_loop/
 
+# Bundled runtime used by FlowDetect Agent installer
+!flowdetect_agent/src-tauri/installer_support/
+!flowdetect_agent/src-tauri/installer_support/meshcentral/
+!flowdetect_agent/src-tauri/installer_support/meshcentral/**
+!flowdetect_agent/src-tauri/installer_support/nodejs/
+!flowdetect_agent/src-tauri/installer_support/nodejs/**
+flowdetect_agent/src-tauri/installer_support/*.zip
+
 # OS / editor
 .DS_Store
 Thumbs.db

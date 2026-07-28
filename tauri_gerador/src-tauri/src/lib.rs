@@ -1,5 +1,7 @@
 ﻿use serde::Serialize;
 use base64::{engine::general_purpose, Engine as _};
+#[cfg(windows)]
+use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, ImageBuffer, Rgba};
 use serde_json::Value;
 use std::{
     fs,
@@ -14,6 +16,22 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, State};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use windows::Win32::{
+    Foundation::HWND,
+    Graphics::Gdi::{
+        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
+        GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+        HBITMAP, HGDIOBJ, RGBQUAD, SRCCOPY,
+    },
+    UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
+        KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+        MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
+        MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, VIRTUAL_KEY,
+    },
+    UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN},
+};
 
 #[derive(Serialize)]
 struct ExportResult {
@@ -57,6 +75,10 @@ struct RuntimeState {
 static REMOTE_AGENT_SNAPSHOT: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
 static REMOTE_AGENT_LAST_CONTACT_MS: OnceLock<Arc<Mutex<u128>>> = OnceLock::new();
 static PYTHON_COMMAND_CACHE: OnceLock<(String, Vec<String>)> = OnceLock::new();
+static MESHCENTRAL_PROCESS: OnceLock<Arc<Mutex<Option<Child>>>> = OnceLock::new();
+static MESHCENTRAL_STARTING: OnceLock<Arc<Mutex<bool>>> = OnceLock::new();
+static MESHCENTRAL_LAST_MESSAGE: OnceLock<Arc<Mutex<String>>> = OnceLock::new();
+static WEBRTC_SIGNAL_STATE: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
 
 static TARGET_OVERLAY_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 static SMART_RECORDER_CHILD: Mutex<Option<Child>> = Mutex::new(None);
@@ -442,21 +464,36 @@ def resolve_workbook(value):
             return alternative, f"planilhas/{workbook_id}"
     return direct, workbook_id
 
+def workbook_is_usable(path):
+    return path.exists() and path.suffix.lower() in {".xlsx", ".xlsm"} and not path.name.startswith("~$")
+
 if sheet_event:
     details = sheet_event.get("detalhes") or {}
     workbook_path, workbook_id = resolve_workbook(details.get("arquivo"))
     sheet_name = str(details.get("aba") or "").strip()
 else:
-    workbook_candidates = [root / "db.xlsx", *sorted((root / "planilhas").glob("*.xlsx"))] if (root / "planilhas").exists() else [root / "db.xlsx"]
-    workbook_path = next((path for path in workbook_candidates if path.exists()), root / "db.xlsx")
+    workbook_candidates = [root / "db.xlsx"]
+    if (root / "planilhas").exists():
+        workbook_candidates.extend(sorted((root / "planilhas").glob("*.xlsx")))
+        workbook_candidates.extend(sorted((root / "planilhas").glob("*.xlsm")))
+    workbook_path = next((path for path in workbook_candidates if workbook_is_usable(path)), root / "db.xlsx")
     workbook_id = str(workbook_path.relative_to(root)).replace("\\", "/") if workbook_path.exists() and root in workbook_path.parents else workbook_path.name
     sheet_name = ""
 
-if not workbook_path.exists():
+if not workbook_is_usable(workbook_path):
     print(json.dumps({"available": False, "message": f"Planilha nao encontrada: {workbook_id}"}, ensure_ascii=False))
     raise SystemExit(0)
 
-workbook = load_workbook(workbook_path, read_only=True, data_only=True)
+try:
+    workbook = load_workbook(workbook_path, read_only=True, data_only=True)
+except Exception as exc:
+    print(json.dumps({
+        "available": False,
+        "message": "Nao foi possivel ler a planilha. Feche o Excel, salve o arquivo novamente e clique em Atualizar planilha.",
+        "detail": str(exc),
+        "workbook_id": workbook_id,
+    }, ensure_ascii=False))
+    raise SystemExit(0)
 try:
     if not sheet_name:
         sheet_name = workbook.sheetnames[0] if workbook.sheetnames else ""
@@ -801,6 +838,12 @@ fn local_agent_address() -> String {
     format!("{ip}:18452")
 }
 
+fn local_meshcentral_url() -> String {
+    let address = local_agent_address();
+    let host = address.rsplit_once(':').map(|(host, _)| host).unwrap_or("127.0.0.1");
+    format!("http://{host}:8080")
+}
+
 #[tauri::command]
 fn get_agent_connection_info() -> Result<Value, String> {
     Ok(serde_json::json!({
@@ -913,6 +956,202 @@ fn now_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0)
+}
+
+fn webrtc_signal_store() -> Arc<Mutex<Value>> {
+    WEBRTC_SIGNAL_STATE
+        .get_or_init(|| Arc::new(Mutex::new(serde_json::json!({
+            "session_id": "",
+            "offer": null,
+            "answer": null,
+            "created_at": 0u128,
+            "updated_at": 0u128
+        }))))
+        .clone()
+}
+
+fn set_webrtc_offer(offer: Value) -> Value {
+    let session_id = format!("rtc-{}", now_millis());
+    let payload = serde_json::json!({
+        "session_id": session_id,
+        "offer": offer,
+        "answer": null,
+        "created_at": now_millis(),
+        "updated_at": now_millis()
+    });
+    if let Ok(mut guard) = webrtc_signal_store().lock() {
+        *guard = payload.clone();
+    }
+    payload
+}
+
+fn set_webrtc_answer(session_id: String, answer: Value) -> Value {
+    if let Ok(mut guard) = webrtc_signal_store().lock() {
+        let current_session = guard
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if current_session == session_id {
+            guard["answer"] = answer;
+            guard["updated_at"] = serde_json::json!(now_millis());
+        }
+        return guard.clone();
+    }
+    serde_json::json!({})
+}
+
+fn get_webrtc_signal_payload() -> Value {
+    webrtc_signal_store()
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_else(|_| serde_json::json!({}))
+}
+
+fn clear_webrtc_signal() -> Value {
+    let payload = serde_json::json!({
+        "session_id": "",
+        "offer": null,
+        "answer": null,
+        "created_at": 0u128,
+        "updated_at": now_millis()
+    });
+    if let Ok(mut guard) = webrtc_signal_store().lock() {
+        *guard = payload.clone();
+    }
+    payload
+}
+
+#[cfg(windows)]
+fn browser_key_to_vk(key: &str) -> Option<u16> {
+    match key {
+        "Backspace" => Some(0x08),
+        "Tab" => Some(0x09),
+        "Enter" => Some(0x0D),
+        "Escape" => Some(0x1B),
+        " " | "Space" | "Spacebar" => Some(0x20),
+        "ArrowLeft" => Some(0x25),
+        "ArrowUp" => Some(0x26),
+        "ArrowRight" => Some(0x27),
+        "ArrowDown" => Some(0x28),
+        "Delete" => Some(0x2E),
+        "Home" => Some(0x24),
+        "End" => Some(0x23),
+        "PageUp" => Some(0x21),
+        "PageDown" => Some(0x22),
+        _ => {
+            let upper = key.to_uppercase();
+            if upper.len() == 1 {
+                let byte = upper.as_bytes()[0];
+                if byte.is_ascii_alphanumeric() {
+                    return Some(byte as u16);
+                }
+            }
+            if let Some(number) = upper.strip_prefix('F').and_then(|value| value.parse::<u16>().ok()) {
+                if (1..=24).contains(&number) {
+                    return Some(0x70 + number - 1);
+                }
+            }
+            None
+        }
+    }
+}
+
+#[cfg(windows)]
+fn send_remote_mouse_event(event: &Value) -> Result<(), String> {
+    let width = unsafe { GetSystemMetrics(SM_CXSCREEN) }.max(1) as f64;
+    let height = unsafe { GetSystemMetrics(SM_CYSCREEN) }.max(1) as f64;
+    let x = event.get("x").and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, 1.0);
+    let y = event.get("y").and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, 1.0);
+    let absolute_x = ((x * (width - 1.0)) * 65535.0 / (width - 1.0)).round() as i32;
+    let absolute_y = ((y * (height - 1.0)) * 65535.0 / (height - 1.0)).round() as i32;
+    let event_type = event.get("event").and_then(Value::as_str).unwrap_or("move");
+    let button = event.get("button").and_then(Value::as_i64).unwrap_or(0);
+    let mut flags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+    let mut mouse_data = 0u32;
+    match event_type {
+        "down" => {
+            flags |= match button {
+                1 => MOUSEEVENTF_MIDDLEDOWN,
+                2 => MOUSEEVENTF_RIGHTDOWN,
+                _ => MOUSEEVENTF_LEFTDOWN,
+            };
+        }
+        "up" => {
+            flags |= match button {
+                1 => MOUSEEVENTF_MIDDLEUP,
+                2 => MOUSEEVENTF_RIGHTUP,
+                _ => MOUSEEVENTF_LEFTUP,
+            };
+        }
+        "wheel" => {
+            flags |= MOUSEEVENTF_WHEEL;
+            mouse_data = event.get("delta").and_then(Value::as_i64).unwrap_or(0).clamp(-120, 120) as u32;
+        }
+        _ => {}
+    }
+    let input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: absolute_x,
+                dy: absolute_y,
+                mouseData: mouse_data,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
+    if sent == 0 {
+        Err("Windows recusou o evento de mouse remoto.".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn send_remote_key_event(event: &Value) -> Result<(), String> {
+    let key = event.get("key").and_then(Value::as_str).unwrap_or("");
+    let Some(vk) = browser_key_to_vk(key) else {
+        return Ok(());
+    };
+    let is_up = event.get("event").and_then(Value::as_str).unwrap_or("down") == "up";
+    let input = INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(vk),
+                wScan: 0,
+                dwFlags: if is_up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
+    if sent == 0 {
+        Err("Windows recusou o evento de teclado remoto.".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn handle_agent_remote_control_event(event: Value) -> Result<Value, String> {
+    #[cfg(not(windows))]
+    {
+        let _ = event;
+        return Err("Controle remoto por mouse/teclado esta disponivel apenas no Windows.".to_string());
+    }
+    #[cfg(windows)]
+    {
+        match event.get("kind").and_then(Value::as_str).unwrap_or("") {
+            "mouse" => send_remote_mouse_event(&event)?,
+            "key" => send_remote_key_event(&event)?,
+            _ => {}
+        }
+        Ok(serde_json::json!({ "ok": true }))
+    }
 }
 
 fn remote_agent_last_contact_store() -> Arc<Mutex<u128>> {
@@ -1120,6 +1359,7 @@ fn execute_remote_automation(
     loop_start: i32,
     start_company: Option<String>,
     minimize_agent: bool,
+    text_overrides: Option<String>,
 ) -> Result<Value, String> {
     let resolved_loop_start = resolve_remote_loop_start(root, loop_start, start_company.as_deref())?;
     append_launcher_log(
@@ -1170,6 +1410,9 @@ fn execute_remote_automation(
         .arg(root.join(".parar_automacao.flag"));
     if has_spreadsheet {
         command.arg("--loop-start").arg(resolved_loop_start.max(1).to_string());
+    }
+    if let Some(value) = text_overrides.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        command.arg("--text-overrides").arg(value);
     }
     configure_no_window(&mut command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -1280,6 +1523,33 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
         }
     } else if method == "GET" && clean_path == "/api/status" {
         http_json_response("200 OK", get_remote_agent_snapshot(&root))
+    } else if method == "GET" && clean_path == "/api/meshcentral/status" {
+        http_json_response("200 OK", meshcentral_status_payload(&root))
+    } else if method == "GET" && clean_path == "/api/screen/snapshot" {
+        match capture_screen_snapshot(&root) {
+            Ok(value) => http_json_response("200 OK", value),
+            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+        }
+    } else if method == "POST" && clean_path == "/api/webrtc/offer" {
+        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let offer = payload.get("offer").cloned().unwrap_or(payload);
+        http_json_response("200 OK", set_webrtc_offer(offer))
+    } else if method == "GET" && clean_path == "/api/webrtc/answer" {
+        http_json_response("200 OK", get_webrtc_signal_payload())
+    } else if method == "DELETE" && clean_path == "/api/webrtc" {
+        http_json_response("200 OK", clear_webrtc_signal())
+    } else if method == "POST" && clean_path == "/api/meshcentral/start" {
+        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let mesh_path = payload
+            .get("mesh_path")
+            .or_else(|| payload.get("meshPath"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let url = payload
+            .get("url")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        http_json_response("200 OK", start_meshcentral_server_async(root.clone(), mesh_path.to_string(), url))
     } else if method == "GET" && clean_path == "/api/spreadsheet-preview" {
         let limit = path
             .split_once('?')
@@ -1378,7 +1648,19 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             .or_else(|| payload.get("minimizeAgent"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        match execute_remote_automation(&app, &root, &automation_id, delay, loop_start, start_company, minimize_agent) {
+        let text_overrides = payload
+            .get("text_overrides")
+            .or_else(|| payload.get("textOverrides"))
+            .and_then(|value| {
+                if value.is_string() {
+                    value.as_str().map(str::to_string)
+                } else if value.is_object() {
+                    serde_json::to_string(value).ok()
+                } else {
+                    None
+                }
+            });
+        match execute_remote_automation(&app, &root, &automation_id, delay, loop_start, start_company, minimize_agent, text_overrides) {
             Ok(value) => http_json_response("200 OK", value),
             Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
         }
@@ -1409,6 +1691,419 @@ fn start_agent_http_server(app: AppHandle, root: PathBuf) {
             thread::spawn(move || handle_agent_http_client(stream, app_clone, root_clone));
         }
     });
+}
+
+fn meshcentral_process_cell() -> Arc<Mutex<Option<Child>>> {
+    MESHCENTRAL_PROCESS
+        .get_or_init(|| Arc::new(Mutex::new(None)))
+        .clone()
+}
+
+fn meshcentral_starting_cell() -> Arc<Mutex<bool>> {
+    MESHCENTRAL_STARTING
+        .get_or_init(|| Arc::new(Mutex::new(false)))
+        .clone()
+}
+
+fn set_meshcentral_starting(value: bool) {
+    if let Ok(mut guard) = meshcentral_starting_cell().lock() {
+        *guard = value;
+    }
+}
+
+fn is_meshcentral_starting() -> bool {
+    meshcentral_starting_cell()
+        .lock()
+        .map(|guard| *guard)
+        .unwrap_or(false)
+}
+
+fn set_meshcentral_message(message: impl Into<String>) {
+    if let Ok(mut guard) = MESHCENTRAL_LAST_MESSAGE
+        .get_or_init(|| Arc::new(Mutex::new(String::new())))
+        .lock()
+    {
+        *guard = message.into();
+    }
+}
+
+fn meshcentral_message() -> String {
+    MESHCENTRAL_LAST_MESSAGE
+        .get_or_init(|| Arc::new(Mutex::new(String::new())))
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default()
+}
+
+fn meshcentral_status_payload(root: &Path) -> Value {
+    if is_meshcentral_starting() {
+        let message = meshcentral_message();
+        let status_message = if message.is_empty() {
+            "Preparando MeshCentral no Agent em segundo plano.".to_string()
+        } else {
+            message
+        };
+        return serde_json::json!({
+            "running": false,
+            "starting": true,
+            "message": status_message,
+            "url": meshcentral_default_url(root)
+        });
+    }
+
+    let cell = meshcentral_process_cell();
+    let mut guard = match cell.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            return serde_json::json!({
+                "running": false,
+                "message": "Nao foi possivel ler o status do MeshCentral.",
+                "url": ""
+            });
+        }
+    };
+
+    if let Some(child) = guard.as_mut() {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                *guard = None;
+                serde_json::json!({
+                    "running": false,
+                    "message": format!("MeshCentral finalizado. Codigo: {:?}", status.code()),
+                    "url": ""
+                })
+            }
+            Ok(None) => serde_json::json!({
+                "running": true,
+                "message": "MeshCentral rodando no Agent.",
+                "url": meshcentral_default_url(root)
+            }),
+            Err(error) => serde_json::json!({
+                "running": false,
+                "message": format!("Falha ao consultar MeshCentral: {error}"),
+                "url": ""
+            }),
+        }
+    } else {
+        let last_message = meshcentral_message();
+        serde_json::json!({
+            "running": false,
+            "starting": false,
+            "message": if last_message.is_empty() { "MeshCentral parado.".to_string() } else { last_message },
+            "url": ""
+        })
+    }
+}
+
+fn meshcentral_default_url(root: &Path) -> String {
+    let configured = root.join("meshcentral_url.txt");
+    if let Ok(value) = fs::read_to_string(configured) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    local_meshcentral_url()
+}
+
+fn capture_screen_snapshot(root: &Path) -> Result<Value, String> {
+    #[cfg(not(windows))]
+    {
+        let _ = root;
+        return Err("A visualizacao remota por snapshot esta disponivel apenas no Windows.".to_string());
+    }
+
+    #[cfg(windows)]
+    {
+        let _ = root;
+        let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+        let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+        if width <= 0 || height <= 0 {
+            return Err("Nao foi possivel detectar o tamanho da tela do Agent.".to_string());
+        }
+
+        let pixel_count = (width as usize)
+            .checked_mul(height as usize)
+            .ok_or_else(|| "Resolucao da tela grande demais para captura.".to_string())?;
+        let mut bgra = vec![0u8; pixel_count * 4];
+
+        unsafe {
+            let desktop_window = HWND(std::ptr::null_mut());
+            let screen_dc = GetDC(desktop_window);
+            if screen_dc.0.is_null() {
+                return Err("Nao foi possivel acessar a tela do Agent.".to_string());
+            }
+            let memory_dc = CreateCompatibleDC(screen_dc);
+            if memory_dc.0.is_null() {
+                let _ = ReleaseDC(desktop_window, screen_dc);
+                return Err("Nao foi possivel preparar a captura da tela.".to_string());
+            }
+            let bitmap = CreateCompatibleBitmap(screen_dc, width, height);
+            if bitmap.0.is_null() {
+                let _ = DeleteDC(memory_dc);
+                let _ = ReleaseDC(desktop_window, screen_dc);
+                return Err("Nao foi possivel criar o bitmap da captura.".to_string());
+            }
+            let old_object = SelectObject(memory_dc, HGDIOBJ(bitmap.0));
+            let copied = BitBlt(memory_dc, 0, 0, width, height, screen_dc, 0, 0, SRCCOPY);
+            if copied.is_err() {
+                let _ = SelectObject(memory_dc, old_object);
+                let _ = DeleteObject(HGDIOBJ(bitmap.0));
+                let _ = DeleteDC(memory_dc);
+                let _ = ReleaseDC(desktop_window, screen_dc);
+                return Err("Nao foi possivel copiar a tela do Agent.".to_string());
+            }
+
+            let mut bitmap_info = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: width,
+                    biHeight: -height,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    ..Default::default()
+                },
+                bmiColors: [RGBQUAD::default(); 1],
+            };
+            let lines = GetDIBits(
+                memory_dc,
+                HBITMAP(bitmap.0),
+                0,
+                height as u32,
+                Some(bgra.as_mut_ptr() as *mut _),
+                &mut bitmap_info,
+                DIB_RGB_COLORS,
+            );
+            let _ = SelectObject(memory_dc, old_object);
+            let _ = DeleteObject(HGDIOBJ(bitmap.0));
+            let _ = DeleteDC(memory_dc);
+            let _ = ReleaseDC(desktop_window, screen_dc);
+            if lines == 0 {
+                return Err("Nao foi possivel converter a captura da tela.".to_string());
+            }
+        }
+
+        for pixel in bgra.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+            pixel[3] = 255;
+        }
+        let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width as u32, height as u32, bgra)
+            .ok_or_else(|| "Nao foi possivel montar a imagem da tela.".to_string())?;
+        let max_width = 960u32;
+        let scaled = if image.width() > max_width {
+            let target_height = ((image.height() as f64) * (max_width as f64 / image.width() as f64)).round().max(1.0) as u32;
+            image::imageops::resize(&image, max_width, target_height, FilterType::Nearest)
+        } else {
+            image
+        };
+        let mut bytes = Vec::new();
+        let mut encoder = JpegEncoder::new_with_quality(&mut bytes, 42);
+        encoder
+            .encode_image(&scaled)
+            .map_err(|err| format!("Nao foi possivel compactar a tela do Agent: {err}"))?;
+        let resolution = format!("{}x{} -> {}x{}", width, height, scaled.width(), scaled.height());
+        Ok(serde_json::json!({
+            "ok": true,
+            "mime": "image/jpeg",
+            "data": general_purpose::STANDARD.encode(bytes),
+            "resolution": resolution,
+            "captured_at": now_millis()
+        }))
+    }
+}
+
+fn find_meshcentral_entry(mesh_dir: &Path) -> Option<PathBuf> {
+    [
+        mesh_dir.join("meshcentral.js"),
+        mesh_dir.join("meshcentral"),
+        mesh_dir.join("node_modules").join("meshcentral").join("meshcentral.js"),
+    ]
+    .into_iter()
+    .find(|path| path.exists() && path.is_file())
+}
+
+fn bundled_node_program(root: &Path) -> Option<PathBuf> {
+    [
+        root.join("nodejs"),
+        root.join("flowdetect_agent").join("src-tauri").join("installer_support").join("nodejs"),
+    ]
+    .into_iter()
+    .map(|base| base.join(if cfg!(windows) { "node.exe" } else { "bin/node" }))
+    .find(|candidate| candidate.exists())
+}
+
+fn bundled_npm_program(root: &Path) -> Option<PathBuf> {
+    [
+        root.join("nodejs"),
+        root.join("flowdetect_agent").join("src-tauri").join("installer_support").join("nodejs"),
+    ]
+    .into_iter()
+    .map(|base| base.join(if cfg!(windows) { "npm.cmd" } else { "bin/npm" }))
+    .find(|candidate| candidate.exists())
+}
+
+fn bundled_npm_cli(root: &Path) -> Option<PathBuf> {
+    [
+        root.join("nodejs"),
+        root.join("flowdetect_agent").join("src-tauri").join("installer_support").join("nodejs"),
+    ]
+    .into_iter()
+    .map(|base| base.join("node_modules").join("npm").join("bin").join("npm-cli.js"))
+    .find(|candidate| candidate.exists())
+}
+
+fn system_npm_program() -> &'static str {
+    #[cfg(windows)]
+    {
+        "npm.cmd"
+    }
+    #[cfg(not(windows))]
+    {
+        "npm"
+    }
+}
+
+fn ensure_meshcentral_dependencies(root: &Path, mesh_dir: &Path) -> Result<(), String> {
+    if mesh_dir.join("node_modules").exists() {
+        return Ok(());
+    }
+    if !mesh_dir.join("package.json").exists() {
+        return Ok(());
+    }
+
+    let bundled_node = bundled_node_program(root);
+    let bundled_npm_cli = bundled_npm_cli(root);
+    let mut command = if let (Some(node), Some(npm_cli)) = (bundled_node, bundled_npm_cli) {
+        let mut command = Command::new(node);
+        command.arg(npm_cli);
+        command
+    } else {
+        Command::new(bundled_npm_program(root).unwrap_or_else(|| PathBuf::from(system_npm_program())))
+    };
+    command
+        .arg("install")
+        .arg("--omit=dev")
+        .current_dir(mesh_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    configure_no_window(&mut command);
+    let status = command
+        .status()
+        .map_err(|err| format!("Nao foi possivel instalar dependencias do MeshCentral. O Agent tentou usar o Node embutido e depois o NPM do sistema. Erro: {err}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("npm install do MeshCentral falhou com codigo {:?}.", status.code()))
+    }
+}
+
+fn default_meshcentral_dir(root: &Path) -> PathBuf {
+    let installed = root.join("meshcentral");
+    if installed.exists() {
+        return installed;
+    }
+    let dev = root
+        .join("flowdetect_agent")
+        .join("src-tauri")
+        .join("installer_support")
+        .join("meshcentral");
+    if dev.exists() {
+        return dev;
+    }
+    installed
+}
+
+fn start_meshcentral_server(root: &Path, mesh_path: &str, url: Option<String>) -> Result<Value, String> {
+    let trimmed_path = mesh_path.trim().trim_matches('"');
+    let mesh_dir = if trimmed_path.is_empty() {
+        default_meshcentral_dir(root)
+    } else {
+        PathBuf::from(trimmed_path)
+    };
+    if !mesh_dir.exists() || !mesh_dir.is_dir() {
+        return Err(format!("Pasta do MeshCentral nao encontrada: {}", mesh_dir.display()));
+    }
+
+    let cell = meshcentral_process_cell();
+    {
+        let mut guard = cell.lock().map_err(|_| "Falha ao acessar processo do MeshCentral.".to_string())?;
+        if let Some(child) = guard.as_mut() {
+            if child.try_wait().map_err(|err| format!("Falha ao consultar MeshCentral: {err}"))?.is_none() {
+                return Ok(meshcentral_status_payload(root));
+            }
+            *guard = None;
+        }
+    }
+
+    let entry = find_meshcentral_entry(&mesh_dir)
+        .ok_or_else(|| format!("Nao encontrei meshcentral.js dentro de {}. Rode npm install nessa pasta ou selecione a pasta correta.", mesh_dir.display()))?;
+
+    ensure_meshcentral_dependencies(root, &mesh_dir)?;
+
+    let mut command = Command::new(
+        bundled_node_program(root).unwrap_or_else(|| PathBuf::from("node"))
+    );
+    command
+        .arg(&entry)
+        .current_dir(&mesh_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    configure_no_window(&mut command);
+
+    let child = command
+        .spawn()
+        .map_err(|err| format!("Nao foi possivel iniciar o MeshCentral com o Node embutido do Agent. Erro: {err}"))?;
+
+    if let Some(url_value) = url.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) {
+        let _ = fs::write(root.join("meshcentral_url.txt"), url_value);
+    } else {
+        let _ = fs::write(root.join("meshcentral_url.txt"), local_meshcentral_url());
+    }
+
+    let mut guard = cell.lock().map_err(|_| "Falha ao registrar processo do MeshCentral.".to_string())?;
+    *guard = Some(child);
+    Ok(meshcentral_status_payload(root))
+}
+
+fn start_meshcentral_server_async(root: PathBuf, mesh_path: String, url: Option<String>) -> Value {
+    if is_meshcentral_starting() {
+        return meshcentral_status_payload(&root);
+    }
+
+    let already_running = {
+        let cell = meshcentral_process_cell();
+        let mut running = false;
+        if let Ok(mut guard) = cell.lock() {
+            if let Some(child) = guard.as_mut() {
+                if child.try_wait().ok().flatten().is_none() {
+                    running = true;
+                } else {
+                    *guard = None;
+                }
+            }
+        }
+        running
+    };
+    if already_running {
+        return meshcentral_status_payload(&root);
+    }
+
+    set_meshcentral_starting(true);
+    set_meshcentral_message("Preparando MeshCentral no Agent em segundo plano. Isso pode levar alguns minutos na primeira vez.");
+    let root_for_thread = root.clone();
+    thread::spawn(move || {
+        let result = start_meshcentral_server(&root_for_thread, &mesh_path, url);
+        match result {
+            Ok(_) => set_meshcentral_message("MeshCentral iniciado no Agent."),
+            Err(error) => set_meshcentral_message(format!("Falha ao iniciar MeshCentral: {error}")),
+        }
+        set_meshcentral_starting(false);
+    });
+
+    meshcentral_status_payload(&root)
 }
 
 fn normalize_agent_address(address: &str) -> String {
@@ -1490,6 +2185,75 @@ fn remote_agent_spreadsheet_preview(address: String, limit: Option<i64>) -> Resu
 }
 
 #[tauri::command]
+fn remote_agent_meshcentral_status(address: String) -> Result<Value, String> {
+    remote_agent_request(&address, "GET", "/api/meshcentral/status", None)
+}
+
+#[tauri::command]
+fn remote_agent_screen_snapshot(address: String) -> Result<Value, String> {
+    remote_agent_request(&address, "GET", "/api/screen/snapshot", None)
+}
+
+#[tauri::command]
+fn remote_agent_webrtc_offer(address: String, offer: Value) -> Result<Value, String> {
+    let body = serde_json::to_vec(&serde_json::json!({ "offer": offer }))
+        .map_err(|err| format!("Falha ao preparar offer WebRTC: {err}"))?;
+    remote_agent_request(&address, "POST", "/api/webrtc/offer", Some(&body))
+}
+
+#[tauri::command]
+fn remote_agent_webrtc_answer(address: String) -> Result<Value, String> {
+    remote_agent_request(&address, "GET", "/api/webrtc/answer", None)
+}
+
+#[tauri::command]
+fn remote_agent_webrtc_clear(address: String) -> Result<Value, String> {
+    remote_agent_request(&address, "DELETE", "/api/webrtc", None)
+}
+
+#[tauri::command]
+fn remote_agent_meshcentral_start(address: String, mesh_path: String, url: Option<String>) -> Result<Value, String> {
+    let body = serde_json::to_vec(&serde_json::json!({
+        "mesh_path": mesh_path,
+        "url": url.unwrap_or_default(),
+    }))
+    .map_err(|err| format!("Falha ao preparar comando do MeshCentral: {err}"))?;
+    remote_agent_request(&address, "POST", "/api/meshcentral/start", Some(&body))
+}
+
+#[tauri::command]
+fn agent_meshcentral_status(app: AppHandle) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    Ok(meshcentral_status_payload(&root))
+}
+
+#[tauri::command]
+fn agent_meshcentral_start(app: AppHandle, mesh_path: String, url: Option<String>) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    Ok(start_meshcentral_server_async(root, mesh_path, url))
+}
+
+#[tauri::command]
+fn agent_webrtc_poll_offer() -> Result<Value, String> {
+    Ok(get_webrtc_signal_payload())
+}
+
+#[tauri::command]
+fn agent_webrtc_set_answer(session_id: String, answer: Value) -> Result<Value, String> {
+    Ok(set_webrtc_answer(session_id, answer))
+}
+
+#[tauri::command]
+fn agent_webrtc_clear() -> Result<Value, String> {
+    Ok(clear_webrtc_signal())
+}
+
+#[tauri::command]
+fn agent_remote_control_event(event: Value) -> Result<Value, String> {
+    handle_agent_remote_control_event(event)
+}
+
+#[tauri::command]
 fn remote_agent_execute(
     address: String,
     id: String,
@@ -1497,6 +2261,7 @@ fn remote_agent_execute(
     loop_start: i32,
     start_company: Option<String>,
     minimize_agent: Option<bool>,
+    text_overrides: Option<String>,
 ) -> Result<Value, String> {
     let encoded = url_encode_component(&id);
     let body = serde_json::to_vec(&serde_json::json!({
@@ -1504,6 +2269,7 @@ fn remote_agent_execute(
         "loop_start": loop_start,
         "start_company": start_company.unwrap_or_default(),
         "minimize_agent": minimize_agent.unwrap_or(false),
+        "text_overrides": text_overrides.unwrap_or_default(),
     }))
     .map_err(|err| format!("Falha ao preparar execucao remota: {err}"))?;
     remote_agent_request(&address, "POST", &format!("/api/automations/{encoded}/execute"), Some(&body))
@@ -4688,6 +5454,18 @@ pub fn run() {
             remote_agent_open_automation,
             remote_agent_status,
             remote_agent_spreadsheet_preview,
+            remote_agent_meshcentral_status,
+            remote_agent_screen_snapshot,
+            remote_agent_webrtc_offer,
+            remote_agent_webrtc_answer,
+            remote_agent_webrtc_clear,
+            remote_agent_meshcentral_start,
+            agent_meshcentral_status,
+            agent_meshcentral_start,
+            agent_webrtc_poll_offer,
+            agent_webrtc_set_answer,
+            agent_webrtc_clear,
+            agent_remote_control_event,
             remote_agent_execute,
             remote_agent_stop,
             remote_agent_import_automation_zip,
