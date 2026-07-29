@@ -67,8 +67,11 @@ const state = {
     webrtcSessionId: "",
     webrtcActive: false,
     webrtcControlChannel: null,
+    webrtcPointerChannel: null,
     webrtcAnswerTimer: null,
+    remoteInputEnabled: false,
     remotePointerInside: false,
+    lastRemoteMouseMoveAt: 0,
     connected: false,
     agentLabel: "Aguardando conexao",
     activeView: "execution",
@@ -106,7 +109,6 @@ const state = {
   },
   commandMapZoom: 0.96,
   commandMapRequestedZoom: 0.96,
-  commandMapChromeCollapsed: true,
   commandMapPageSequence: "principal",
   commandMapPageSequenceLock: null,
   commandMapFocusOrder: null,
@@ -395,6 +397,8 @@ const studioControlSelectedTitle = document.getElementById("studioControlSelecte
 const studioControlProgressPercent = document.getElementById("studioControlProgressPercent");
 const studioControlProgressFill = document.getElementById("studioControlProgressFill");
 const studioControlProgressText = document.getElementById("studioControlProgressText");
+
+const INTERNAL_WATCH_AUTOMATION_NAME = "aceito_compartilhamento";
 const studioControlCompanyText = document.getElementById("studioControlCompanyText");
 const studioControlPageText = document.getElementById("studioControlPageText");
 const studioControlBlockText = document.getElementById("studioControlBlockText");
@@ -412,6 +416,7 @@ const studioControlMeshUrlInput = document.getElementById("studioControlMeshUrlI
 const studioControlMeshPathInput = document.getElementById("studioControlMeshPathInput");
 const studioControlMeshStartButton = document.getElementById("studioControlMeshStartButton");
 const studioControlMeshLoadButton = document.getElementById("studioControlMeshLoadButton");
+const studioControlRemoteInputToggle = document.getElementById("studioControlRemoteInputToggle");
 const studioControlMeshEmbedButton = document.getElementById("studioControlMeshEmbedButton");
 const studioControlMeshOpenButton = document.getElementById("studioControlMeshOpenButton");
 const studioControlMeshClearButton = document.getElementById("studioControlMeshClearButton");
@@ -423,7 +428,6 @@ const mapZoomOutButton = document.getElementById("mapZoomOutButton");
 const mapZoomInButton = document.getElementById("mapZoomInButton");
 const mapZoomRange = document.getElementById("mapZoomRange");
 const mapZoomValue = document.getElementById("mapZoomValue");
-const commandMapChromeToggleButton = document.getElementById("commandMapChromeToggleButton");
 const assistDelayInput = document.getElementById("assistDelayInput");
 const assistLoopStartInput = document.getElementById("assistLoopStartInput");
 const assistWindowModeSelect = document.getElementById("assistWindowModeSelect");
@@ -1000,16 +1004,7 @@ function scheduleStudioTutorialAutoStart() {
 }
 
 function applyCommandMapChromeMode() {
-  const collapsed = state.activeTab === "commands" && Boolean(state.commandMapChromeCollapsed);
-  builderShell?.classList.toggle("is-command-map-chrome-collapsed", collapsed);
-  if (commandMapChromeToggleButton) {
-    commandMapChromeToggleButton.textContent = collapsed ? "Mostrar menu" : "Ocultar menu";
-    commandMapChromeToggleButton.setAttribute("aria-pressed", collapsed ? "true" : "false");
-    commandMapChromeToggleButton.setAttribute(
-      "aria-label",
-      collapsed ? "Mostrar menu superior do mapa" : "Ocultar menu superior do mapa"
-    );
-  }
+  builderShell?.classList.remove("is-command-map-chrome-collapsed");
 }
 
 function applyCommandMapZoom() {
@@ -1205,10 +1200,9 @@ function renderCommandJumpPaths() {
   });
   const maxLane = preparedRoutes.reduce((max, route) => Math.max(max, route.lane || 0), 0);
   row.style.setProperty("--jump-route-lanes", String(maxLane));
-  const zoom = Number(state.commandMapZoom || 1) || 1;
   const rowRect = row.getBoundingClientRect();
-  const rowWidth = Math.max(row.scrollWidth / zoom, rowRect.width / zoom, 1);
-  const rowHeight = Math.max(row.scrollHeight / zoom, rowRect.height / zoom, 1);
+  const rowWidth = Math.max(row.scrollWidth, row.offsetWidth, Math.round(rowRect.width), 1);
+  const rowHeight = Math.max(row.scrollHeight, row.offsetHeight, Math.round(rowRect.height), 1);
   const layer = document.createElement("div");
   layer.className = "command-jump-layer";
   layer.style.width = `${Math.ceil(rowWidth)}px`;
@@ -1228,12 +1222,12 @@ function renderCommandJumpPaths() {
       return;
     }
 
-    const sourceRect = sourceCard.getBoundingClientRect();
-    const targetRect = targetCard.getBoundingClientRect();
-    const sourceCenterX = (sourceRect.left - rowRect.left + sourceRect.width / 2) / zoom;
-    const targetCenterX = (targetRect.left - rowRect.left + targetRect.width / 2) / zoom;
-    const sourceTop = (sourceRect.top - rowRect.top) / zoom;
-    const targetTop = (targetRect.top - rowRect.top) / zoom;
+    const sourceLeft = sourceSegment.offsetLeft + sourceCard.offsetLeft;
+    const targetLeft = targetSegment.offsetLeft + targetCard.offsetLeft;
+    const sourceTop = sourceSegment.offsetTop + sourceCard.offsetTop;
+    const targetTop = targetSegment.offsetTop + targetCard.offsetTop;
+    const sourceCenterX = sourceLeft + sourceCard.offsetWidth / 2;
+    const targetCenterX = targetLeft + targetCard.offsetWidth / 2;
     const isBackward = targetCenterX < sourceCenterX;
     const laneOffset = 38 + Number(route.lane || 0) * 24;
     const pathY = Math.max(16, Math.min(sourceTop, targetTop) - laneOffset);
@@ -8823,7 +8817,23 @@ function renderLauncherLibrary() {
 }
 
 function studioControlSelectedAutomation() {
-  return state.remoteControl.library.find((item) => String(item.id) === String(state.remoteControl.selectedId)) || null;
+  return studioControlVisibleLibrary().find((item) => String(item.id) === String(state.remoteControl.selectedId)) || null;
+}
+
+function normalizedAutomationName(item = {}) {
+  return String(item.nome || item.name || "").trim().toLowerCase();
+}
+
+function isInternalWatchAutomation(item = {}) {
+  return normalizedAutomationName(item) === INTERNAL_WATCH_AUTOMATION_NAME;
+}
+
+function studioControlVisibleLibrary() {
+  return state.remoteControl.library.filter((item) => !isInternalWatchAutomation(item));
+}
+
+function studioControlInternalWatchAutomation() {
+  return state.remoteControl.library.find((item) => isInternalWatchAutomation(item)) || null;
 }
 
 function studioControlAutomationSummary(item) {
@@ -9213,6 +9223,11 @@ function persistMeshCentralPath(path) {
   }
 }
 
+function studioControlWatchAutomationId() {
+  const internalAutomation = studioControlInternalWatchAutomation();
+  return String(internalAutomation?.id || state.remoteControl.selectedId || "").trim();
+}
+
 function renderStudioControlScreen() {
   const remote = state.remoteControl;
   if (remote.connected && !remote.meshUrl) {
@@ -9267,6 +9282,10 @@ function renderStudioControlScreen() {
     studioControlMeshLoadButton.disabled = !remote.connected;
     studioControlMeshLoadButton.textContent = remote.screenStreaming ? "Pausar visualizacao" : "Assistir no Studio";
   }
+  if (studioControlRemoteInputToggle) {
+    studioControlRemoteInputToggle.checked = Boolean(remote.remoteInputEnabled);
+    studioControlRemoteInputToggle.disabled = !remote.webrtcActive;
+  }
   if (studioControlMeshEmbedButton) {
     studioControlMeshEmbedButton.disabled = !remote.meshUrl;
   }
@@ -9278,8 +9297,13 @@ function renderStudioControlScreen() {
   }
 }
 
+function renderStudioControlScreenOnly() {
+  renderStudioControlScreen();
+}
+
 function renderStudioControl() {
   const remote = state.remoteControl;
+  const visibleLibrary = studioControlVisibleLibrary();
   const selected = studioControlSelectedAutomation();
   const percent = Math.max(0, Math.min(100, Number(remote.progress.percent || 0)));
   studioControlViewButtons.forEach((button) => {
@@ -9307,7 +9331,7 @@ function renderStudioControl() {
     studioControlAgentLabel.textContent = remote.agentLabel;
   }
   if (studioControlMeta) {
-    studioControlMeta.textContent = `${remote.library.length} automacao${remote.library.length === 1 ? "" : "es"}`;
+    studioControlMeta.textContent = `${visibleLibrary.length} automacao${visibleLibrary.length === 1 ? "" : "es"}`;
   }
   if (studioControlStopButton) {
     studioControlStopButton.disabled = !remote.connected || !remote.running;
@@ -9322,13 +9346,13 @@ function renderStudioControl() {
     studioControlRefreshButton.disabled = !remote.connected;
   }
   if (studioControlEmpty) {
-    studioControlEmpty.hidden = remote.connected && remote.library.length > 0;
+    studioControlEmpty.hidden = remote.connected && visibleLibrary.length > 0;
     studioControlEmpty.textContent = remote.connected
       ? "Nenhuma automacao no Agent conectado. Importe um ZIP para comecar."
       : "Conecte no Agent para carregar as automacoes remotas.";
   }
   if (studioControlList) {
-    studioControlList.innerHTML = remote.library.map((item) => {
+    studioControlList.innerHTML = visibleLibrary.map((item) => {
       const isSelected = String(item.id) === String(remote.selectedId);
       const name = item.nome || item.name || "Automacao sem nome";
       const description = item.descricao || item.description || "Automacao disponivel no Agent conectado.";
@@ -9394,10 +9418,11 @@ async function refreshStudioControlLibrary(options = {}) {
   }
   const result = await invoke("remote_agent_list_automations", { address: state.remoteControl.address });
   state.remoteControl.library = Array.isArray(result?.items) ? result.items : [];
+  const visibleLibrary = studioControlVisibleLibrary();
   if (options.preferredId) {
     state.remoteControl.selectedId = String(options.preferredId);
-  } else if (!state.remoteControl.selectedId && state.remoteControl.library[0]?.id) {
-    state.remoteControl.selectedId = String(state.remoteControl.library[0].id);
+  } else if (!visibleLibrary.some((item) => String(item.id) === String(state.remoteControl.selectedId))) {
+    state.remoteControl.selectedId = visibleLibrary[0]?.id ? String(visibleLibrary[0].id) : "";
   }
   renderStudioControl();
 }
@@ -9616,6 +9641,7 @@ function stopStudioControlWebRtc({ clearRemote = false } = {}) {
     remote.webrtcPeer = null;
   }
   remote.webrtcControlChannel = null;
+  remote.webrtcPointerChannel = null;
   remote.webrtcSessionId = "";
   remote.webrtcActive = false;
   if (studioControlScreenVideo) {
@@ -9625,6 +9651,9 @@ function stopStudioControlWebRtc({ clearRemote = false } = {}) {
   }
   if (clearRemote && remote.connected) {
     invoke("remote_agent_webrtc_clear", { address: remote.address }).catch(() => null);
+  }
+  if (remote.connected) {
+    startStudioControlPolling();
   }
 }
 
@@ -9649,6 +9678,7 @@ async function startStudioControlWebRtc() {
   const peer = new RTCPeerConnection({ iceServers: [] });
   remote.webrtcPeer = peer;
   remote.webrtcControlChannel = peer.createDataChannel("flowdetect-control", { ordered: true });
+  remote.webrtcPointerChannel = peer.createDataChannel("flowdetect-pointer", { ordered: false, maxRetransmits: 0 });
   peer.addTransceiver("video", { direction: "recvonly" });
   peer.ontrack = (event) => {
     const stream = event.streams?.[0];
@@ -9661,13 +9691,15 @@ async function startStudioControlWebRtc() {
       if (studioControlScreenStatus) {
         studioControlScreenStatus.textContent = "WebRTC ativo. Recebendo video em tempo real do Agent.";
       }
-      renderStudioControl();
+      startStudioControlPolling();
+      renderStudioControlScreenOnly();
     }
   };
   peer.onconnectionstatechange = () => {
     if (["failed", "closed", "disconnected"].includes(peer.connectionState)) {
       remote.webrtcActive = false;
-      renderStudioControl();
+      startStudioControlPolling();
+      renderStudioControlScreenOnly();
     }
   };
   const offer = await peer.createOffer();
@@ -9744,8 +9776,16 @@ function remoteVideoPointFromEvent(event) {
 }
 
 function sendStudioRemoteControlEvent(payload) {
-  const channel = state.remoteControl.webrtcControlChannel;
+  if (!state.remoteControl.remoteInputEnabled) {
+    return;
+  }
+  const channel = payload?.kind === "mouse" && payload?.event === "move"
+    ? state.remoteControl.webrtcPointerChannel
+    : state.remoteControl.webrtcControlChannel;
   if (!channel || channel.readyState !== "open") {
+    return;
+  }
+  if (payload?.kind === "mouse" && payload?.event === "move" && channel.bufferedAmount > 2048) {
     return;
   }
   channel.send(JSON.stringify(payload));
@@ -9788,9 +9828,15 @@ function startStudioControlScreenStream() {
     studioControlMeshFrame.setAttribute("src", "about:blank");
   }
   renderStudioControl();
+  runSelectedAutomationWithScreenStart().catch(() => null);
   startStudioControlWebRtc()
     .then(() => {
-      setMessage("WebRTC iniciado dentro do Studio.", "success");
+      setMessage(
+        studioControlWatchAutomationId()
+          ? "WebRTC iniciado e automacao enviada ao Agent."
+          : "WebRTC iniciado dentro do Studio.",
+        "success"
+      );
     })
     .catch((error) => {
       stopStudioControlWebRtc({ clearRemote: true });
@@ -9810,14 +9856,15 @@ function startStudioControlPolling() {
     window.clearInterval(state.remoteControl.pollTimer);
   }
   state.remoteControl.pollTimer = window.setInterval(() => {
+    const videoActive = state.remoteControl.webrtcActive && state.activeTab === "agent-screen";
     refreshStudioControlStatus({ silent: true }).catch(() => null);
-    if (state.activeTab === "agent-screen") {
+    if (state.activeTab === "agent-screen" && !videoActive) {
       refreshStudioControlMeshStatus({ silent: true }).catch(() => null);
     }
-    if (state.remoteControl.running || state.remoteControl.activeView === "spreadsheet") {
+    if (!videoActive && (state.remoteControl.running || state.remoteControl.activeView === "spreadsheet")) {
       refreshStudioControlSpreadsheet({ silent: true }).catch(() => null);
     }
-  }, 1800);
+  }, state.remoteControl.webrtcActive ? 3000 : 1800);
 }
 
 async function connectStudioControl() {
@@ -9855,7 +9902,7 @@ async function openStudioControlAutomation(id) {
   renderStudioControl();
 }
 
-async function runStudioControlAutomation(id = "") {
+async function runStudioControlAutomation(id = "", options = {}) {
   const normalizedId = String(id || state.remoteControl.selectedId || "").trim();
   if (!normalizedId) {
     throw new Error("Escolha uma automacao remota antes de executar.");
@@ -9872,7 +9919,9 @@ async function runStudioControlAutomation(id = "") {
     delay: Number(testDelayInput?.value || 3),
     loopStart: Math.max(1, Math.trunc(parseNumber(studioControlLoopStartInput?.value || testLoopStartInput?.value, 1))),
     startCompany: String(studioControlCompanyStartInput?.value || "").trim(),
-    minimizeAgent: String(studioControlAgentWindowMode?.value || "minimize") === "minimize",
+    minimizeAgent: typeof options.minimizeAgent === "boolean"
+      ? options.minimizeAgent
+      : String(studioControlAgentWindowMode?.value || "minimize") === "minimize",
     textOverrides: studioControlEditableTextOverridesJson(),
   });
   applyStudioControlStatus(result);
@@ -9884,6 +9933,18 @@ async function stopStudioControlAutomation() {
   const result = await invoke("remote_agent_stop", { address: state.remoteControl.address });
   applyStudioControlStatus(result);
   setMessage("Parada enviada ao Agent.", "info");
+}
+
+async function runSelectedAutomationWithScreenStart() {
+  const automationId = studioControlWatchAutomationId();
+  if (!state.remoteControl.connected || state.remoteControl.running || !automationId) {
+    return;
+  }
+  try {
+    await runStudioControlAutomation(automationId, { minimizeAgent: false });
+  } catch (error) {
+    setMessage(`Tela iniciada, mas nao consegui executar a automacao: ${String(error)}`, "error");
+  }
 }
 
 async function importStudioControlZip(file) {
@@ -13297,14 +13358,6 @@ window.addEventListener("keydown", (event) => {
     studioTutorialPrevButton?.click();
   }
 });
-commandMapChromeToggleButton?.addEventListener("click", () => {
-  state.commandMapChromeCollapsed = !state.commandMapChromeCollapsed;
-  applyCommandMapChromeMode();
-  if (state.activeTab === "commands" && state.commandMapFocusOrder) {
-    requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
-  }
-});
-
 newAutomationButton.addEventListener("click", () => {
   setLauncherCreateOpen(true);
 });
@@ -13712,6 +13765,17 @@ studioControlMeshLoadButton?.addEventListener("click", () => {
   startStudioControlScreenStream();
 });
 
+studioControlRemoteInputToggle?.addEventListener("change", () => {
+  state.remoteControl.remoteInputEnabled = Boolean(studioControlRemoteInputToggle.checked);
+  renderStudioControlScreenOnly();
+  setMessage(
+    state.remoteControl.remoteInputEnabled
+      ? "Controle remoto ativado: mouse e teclado serao enviados ao Agent."
+      : "Modo somente assistir ativado: mouse e teclado nao serao enviados.",
+    "success"
+  );
+});
+
 studioControlMeshEmbedButton?.addEventListener("click", () => {
   const url = currentMeshCentralUrl();
   if (!url) {
@@ -13754,6 +13818,14 @@ studioControlScreenVideo?.addEventListener("mouseleave", () => {
 });
 
 studioControlScreenVideo?.addEventListener("mousemove", (event) => {
+  if (!state.remoteControl.remoteInputEnabled) {
+    return;
+  }
+  const now = performance.now();
+  if (now - Number(state.remoteControl.lastRemoteMouseMoveAt || 0) < 50) {
+    return;
+  }
+  state.remoteControl.lastRemoteMouseMoveAt = now;
   const point = remoteVideoPointFromEvent(event);
   if (!point) {
     return;
@@ -13762,6 +13834,9 @@ studioControlScreenVideo?.addEventListener("mousemove", (event) => {
 });
 
 studioControlScreenVideo?.addEventListener("mousedown", (event) => {
+  if (!state.remoteControl.remoteInputEnabled) {
+    return;
+  }
   const point = remoteVideoPointFromEvent(event);
   if (!point) {
     return;
@@ -13772,6 +13847,9 @@ studioControlScreenVideo?.addEventListener("mousedown", (event) => {
 });
 
 studioControlScreenVideo?.addEventListener("mouseup", (event) => {
+  if (!state.remoteControl.remoteInputEnabled) {
+    return;
+  }
   const point = remoteVideoPointFromEvent(event);
   if (!point) {
     return;
@@ -13781,10 +13859,15 @@ studioControlScreenVideo?.addEventListener("mouseup", (event) => {
 });
 
 studioControlScreenVideo?.addEventListener("contextmenu", (event) => {
-  event.preventDefault();
+  if (state.remoteControl.remoteInputEnabled) {
+    event.preventDefault();
+  }
 });
 
 studioControlScreenVideo?.addEventListener("wheel", (event) => {
+  if (!state.remoteControl.remoteInputEnabled) {
+    return;
+  }
   const point = remoteVideoPointFromEvent(event);
   if (!point) {
     return;
@@ -13800,7 +13883,7 @@ studioControlScreenVideo?.addEventListener("wheel", (event) => {
 }, { passive: false });
 
 window.addEventListener("keydown", (event) => {
-  if (!state.remoteControl.webrtcActive || !state.remoteControl.remotePointerInside) {
+  if (!state.remoteControl.webrtcActive || !state.remoteControl.remoteInputEnabled || !state.remoteControl.remotePointerInside) {
     return;
   }
   if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) {
@@ -13811,7 +13894,7 @@ window.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("keyup", (event) => {
-  if (!state.remoteControl.webrtcActive || !state.remoteControl.remotePointerInside) {
+  if (!state.remoteControl.webrtcActive || !state.remoteControl.remoteInputEnabled || !state.remoteControl.remotePointerInside) {
     return;
   }
   if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) {

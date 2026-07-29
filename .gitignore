@@ -68,6 +68,8 @@ assist_*.png
 relatorios_loop/
 
 # Bundled runtime used by FlowDetect Agent installer
+!tauri_gerador/src-tauri/installer_support/runtime_seed/
+!tauri_gerador/src-tauri/installer_support/runtime_seed/**
 !flowdetect_agent/src-tauri/installer_support/
 !flowdetect_agent/src-tauri/installer_support/meshcentral/
 !flowdetect_agent/src-tauri/installer_support/meshcentral/**

@@ -1,0 +1,1 @@
+[IMAGEM:Screenshot_1.png | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][TAB x2][ENTER]

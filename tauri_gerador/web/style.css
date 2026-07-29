@@ -4045,7 +4045,8 @@ label span {
 }
 
 .studio-control-minimize-option select,
-.studio-control-run-option input {
+.studio-control-run-option input,
+.studio-control-run-option select {
   min-height: 30px;
   min-width: 82px;
   padding: 0 28px 0 12px;
@@ -4062,12 +4063,14 @@ label span {
   min-width: 142px;
 }
 
-.studio-control-run-option-wide input {
+.studio-control-run-option-wide input,
+.studio-control-run-option-wide select {
   width: 150px;
 }
 
 .studio-control-minimize-option select:focus,
-.studio-control-run-option input:focus {
+.studio-control-run-option input:focus,
+.studio-control-run-option select:focus {
   box-shadow:
     inset 0 0 0 1px rgba(18, 181, 203, 0.58),
     0 0 16px rgba(18, 181, 203, 0.16);
@@ -5014,6 +5017,61 @@ label span {
 .studio-control-screen-actions input:focus {
   border-color: rgba(18, 181, 203, 0.58);
   box-shadow: 0 0 0 3px rgba(18, 181, 203, 0.12);
+}
+
+.studio-control-input-toggle {
+  flex: 0 0 auto !important;
+  min-width: 180px !important;
+  min-height: 46px;
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px !important;
+  padding: 8px 10px 8px 14px;
+  border: 1px solid rgba(18, 181, 203, 0.18);
+  border-radius: 16px;
+  background: rgba(7, 17, 31, 0.62);
+}
+
+.studio-control-input-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.studio-control-input-toggle i {
+  width: 42px;
+  height: 24px;
+  padding: 3px;
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  border-radius: 999px;
+  background: rgba(14, 27, 46, 0.95);
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.studio-control-input-toggle i::before {
+  content: "";
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #bfefff;
+  transition: transform 160ms var(--ease-smooth), background 160ms ease;
+}
+
+.studio-control-input-toggle input:checked + i {
+  border-color: rgba(34, 197, 94, 0.54);
+  background: rgba(34, 197, 94, 0.3);
+}
+
+.studio-control-input-toggle input:checked + i::before {
+  transform: translateX(18px);
+  background: #22c55e;
+}
+
+.studio-control-input-toggle input:disabled + i {
+  opacity: 0.45;
 }
 
 .studio-control-screen-frame-wrap {
@@ -6219,73 +6277,6 @@ label span {
 
 .builder-shell.has-insert-panel .command-flow-row.has-jump-paths {
   padding-top: calc(80px + (var(--jump-route-lanes, 0) * 22px));
-}
-
-.builder-shell.is-command-map-chrome-collapsed .workspace-tabs {
-  display: none;
-}
-
-.builder-shell.is-command-map-chrome-collapsed .command-map-shell {
-  grid-template-rows: 1fr;
-  padding: 4px 6px 4px;
-}
-
-.builder-shell.is-command-map-chrome-collapsed .command-map-header {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  left: auto;
-  width: max-content;
-  grid-template-columns: auto;
-  grid-template-areas: "utility";
-  gap: 0;
-  z-index: 12;
-  pointer-events: none;
-}
-
-.builder-shell.is-command-map-chrome-collapsed .command-map-copy {
-  display: none;
-}
-
-.builder-shell.is-command-map-chrome-collapsed .command-map-utility-row {
-  justify-content: flex-end;
-  width: auto;
-  padding-top: 0;
-  pointer-events: auto;
-}
-
-.builder-shell.is-command-map-chrome-collapsed .command-map-save-stack,
-.builder-shell.is-command-map-chrome-collapsed .command-map-side-stack {
-  display: none;
-}
-
-.builder-shell.is-command-map-chrome-collapsed .command-map-list {
-  display: flex;
-  align-items: flex-start;
-  padding: 74px 2px 16px;
-}
-
-.builder-shell.is-command-map-chrome-collapsed .command-flow-row {
-  min-height: calc(100% - 12px);
-  align-items: flex-start;
-  --command-connector-line-top: clamp(138px, 18vh, 164px);
-  padding-top: 6px;
-  padding-bottom: 0;
-}
-
-.builder-shell.is-command-map-chrome-collapsed .command-tree-card {
-  min-height: 0;
-  max-height: min(72vh, 760px);
-}
-
-.builder-shell.is-command-map-chrome-collapsed.has-insert-panel .command-map-list {
-  align-items: flex-start;
-  padding-top: 56px;
-}
-
-.builder-shell.is-command-map-chrome-collapsed.has-insert-panel .command-flow-row {
-  min-height: max-content;
-  align-items: flex-start;
 }
 
 .command-flow-row.is-carousel-focus .command-flow-segment,
