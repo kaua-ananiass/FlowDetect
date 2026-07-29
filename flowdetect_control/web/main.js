@@ -7,6 +7,8 @@ const PAGE_DEFINITIONS = Object.freeze([
   { sequence: "pagina_4", label: "Pagina 4", shortLabel: "4", theme: "pagina_4" },
 ])
 
+const INTERNAL_AUTOMATION_NAMES = new Set(["aceito_compartilhamento"])
+
 const state = {
   address: "127.0.0.1:18452",
   connected: false,
@@ -201,7 +203,19 @@ function getEventByOrder(order, roadmap = state.roadmap) {
 }
 
 function selectedAutomation() {
-  return state.library.find((item) => String(item.id) === String(state.selectedAutomationId)) || null
+  return visibleLibrary().find((item) => String(item.id) === String(state.selectedAutomationId)) || null
+}
+
+function automationNameKey(item = {}) {
+  return String(item.nome || item.name || "").trim().toLowerCase()
+}
+
+function isInternalAutomation(item = {}) {
+  return INTERNAL_AUTOMATION_NAMES.has(automationNameKey(item))
+}
+
+function visibleLibrary() {
+  return state.library.filter((item) => !isInternalAutomation(item))
 }
 
 function blockChipLabel(event = {}) {
@@ -602,7 +616,7 @@ function renderConnection() {
   setElementText(elements.agentIdentityText, state.agentLabel)
   setElementText(
     elements.automationCountText,
-    `${state.library.length} automacao${state.library.length === 1 ? "" : "oes"}`
+    `${visibleLibrary().length} automacao${visibleLibrary().length === 1 ? "" : "oes"}`
   )
   setElementText(
     elements.targetStatusPill,
@@ -643,7 +657,7 @@ function renderSelection() {
 }
 
 function renderLibrary() {
-  const items = [...state.library].sort((left, right) => {
+  const items = visibleLibrary().sort((left, right) => {
     const leftTime = new Date(left.atualizado_em || 0).getTime()
     const rightTime = new Date(right.atualizado_em || 0).getTime()
     return rightTime - leftTime
@@ -1197,26 +1211,25 @@ async function loadAutomationRoadmap(id, options = {}) {
 async function refreshLibrary(options = {}) {
   const result = await invoke("remote_agent_list_automations", { address: state.address })
   state.library = Array.isArray(result?.items) ? result.items : []
-  const knownIds = new Set(state.library.map((item) => String(item.id)))
+  const visibleItems = visibleLibrary()
+  const knownIds = new Set(visibleItems.map((item) => String(item.id)))
   state.libraryFlippedIds.forEach((id) => {
     if (!knownIds.has(String(id))) {
       state.libraryFlippedIds.delete(id)
     }
   })
 
-  if (!state.library.length) {
+  if (!visibleItems.length) {
     await loadAutomationRoadmap("", { silent: true })
     renderConnection()
     renderLibrary()
     return
   }
 
-  const preferredId = String(
-    options.preferredId
-    || state.selectedAutomationId
-    || state.library[0]?.id
-    || ""
-  )
+  const requestedId = String(options.preferredId || state.selectedAutomationId || "").trim()
+  const preferredId = visibleItems.some((item) => String(item.id) === requestedId)
+    ? requestedId
+    : String(visibleItems[0]?.id || "")
 
   renderConnection()
   renderLibrary()

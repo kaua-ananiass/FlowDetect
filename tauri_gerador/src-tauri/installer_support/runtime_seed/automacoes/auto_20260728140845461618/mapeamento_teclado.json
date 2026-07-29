@@ -1,0 +1,90 @@
+{
+  "criado_em": "2026-07-29T08:29:48",
+  "instrucoes": [
+    "Teclas simples e atalhos sao gravados individualmente.",
+    "F8 abre uma caixa de texto grande e salva o bloco como um unico comando.",
+    "O botao Capturar mouse salva a coordenada exata do proximo clique.",
+    "Cada evento tambem salva o intervalo em segundos desde a acao anterior.",
+    "A aba Planilha pode adicionar uma sequencia inteira ou so linhas selecionadas ao roteiro.",
+    "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura."
+  ],
+  "resumo_digitado": "[IMAGEM:Screenshot_1.png | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][TAB x2][ENTER]\n",
+  "eventos": [
+    {
+      "ordem": 1,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Screenshot_1.png | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Screenshot_1.png', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Screenshot_1.png",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 2,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "tab"
+      ],
+      "texto": "[TAB x2]",
+      "intervalo_antes": 1.0,
+      "comando_python": "executar_teclas(['tab'], repeticoes=2)",
+      "detalhes": {
+        "repeticoes": 2,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 3,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "enter"
+      ],
+      "texto": "[ENTER]\n",
+      "intervalo_antes": 2.0,
+      "comando_python": "executar_teclas(['enter'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    }
+  ],
+  "sequencia_inicial": "principal",
+  "configuracoes_sequencia": {}
+}

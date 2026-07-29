@@ -3,6 +3,7 @@ const tauriEvent = window.__TAURI__?.event ?? null;
 const tauriWindow = window.__TAURI__?.window ?? null;
 
 const FLOWDETECT_WINDOW_PATTERN = /flowdetect/i;
+const INTERNAL_AUTOMATION_NAMES = new Set(["aceito_compartilhamento"]);
 const PAGE_DEFINITIONS = Object.freeze([
   { sequence: "principal", label: "Pagina 1", shortLabel: "1", theme: "principal" },
   { sequence: "pagina_2", label: "Pagina 2", shortLabel: "2", theme: "pagina_2" },
@@ -37,6 +38,9 @@ const state = {
   webrtcSessionId: "",
   webrtcPeer: null,
   webrtcStream: null,
+  pendingRemotePointerMove: null,
+  remotePointerMoveTimer: null,
+  remotePointerMoveBusy: false,
   meshStatus: {
     running: false,
     starting: false,
@@ -219,7 +223,19 @@ function getEventByOrder(order, roadmap = state.roadmap) {
 }
 
 function selectedAutomation() {
-  return state.library.find((item) => String(item.id) === String(state.selectedAutomationId)) || null;
+  return visibleLibrary().find((item) => String(item.id) === String(state.selectedAutomationId)) || null;
+}
+
+function automationNameKey(item = {}) {
+  return String(item.nome || item.name || "").trim().toLowerCase();
+}
+
+function isInternalAutomation(item = {}) {
+  return INTERNAL_AUTOMATION_NAMES.has(automationNameKey(item));
+}
+
+function visibleLibrary() {
+  return state.library.filter((item) => !isInternalAutomation(item));
 }
 
 function normalizeWindow(item) {
@@ -691,6 +707,38 @@ function stopAgentWebRtc() {
     state.webrtcStream = null;
   }
   state.webrtcSessionId = "";
+  state.pendingRemotePointerMove = null;
+  state.remotePointerMoveBusy = false;
+  if (state.remotePointerMoveTimer) {
+    window.clearTimeout(state.remotePointerMoveTimer);
+    state.remotePointerMoveTimer = null;
+  }
+}
+
+function scheduleRemotePointerMove(payload) {
+  state.pendingRemotePointerMove = payload;
+  if (state.remotePointerMoveTimer || state.remotePointerMoveBusy) {
+    return;
+  }
+  state.remotePointerMoveTimer = window.setTimeout(async () => {
+    state.remotePointerMoveTimer = null;
+    const nextPayload = state.pendingRemotePointerMove;
+    state.pendingRemotePointerMove = null;
+    if (!nextPayload) {
+      return;
+    }
+    state.remotePointerMoveBusy = true;
+    try {
+      await invoke("agent_remote_control_event", { event: nextPayload });
+    } catch (error) {
+      console.warn("Falha ao executar movimento remoto.", error);
+    } finally {
+      state.remotePointerMoveBusy = false;
+      if (state.pendingRemotePointerMove) {
+        scheduleRemotePointerMove(state.pendingRemotePointerMove);
+      }
+    }
+  }, 24);
 }
 
 function minimizeAgentWindowDuringShare() {
@@ -735,12 +783,16 @@ async function startAgentWebRtcSession(signal) {
     state.webrtcPeer = peer;
     peer.ondatachannel = (event) => {
       const channel = event.channel;
-      if (channel.label !== "flowdetect-control") {
+      if (!["flowdetect-control", "flowdetect-pointer"].includes(channel.label)) {
         return;
       }
       channel.onmessage = (messageEvent) => {
         try {
           const payload = JSON.parse(String(messageEvent.data || "{}"));
+          if (channel.label === "flowdetect-pointer" && payload?.kind === "mouse" && payload?.event === "move") {
+            scheduleRemotePointerMove(payload);
+            return;
+          }
           invoke("agent_remote_control_event", { event: payload }).catch((error) => {
             console.warn("Falha ao executar controle remoto.", error);
           });
@@ -882,7 +934,7 @@ function renderLogs() {
 }
 
 function renderOverview() {
-  elements.overviewAutomationCount.textContent = String(state.library.length);
+  elements.overviewAutomationCount.textContent = String(visibleLibrary().length);
   elements.overviewExecutionStatus.textContent = state.running ? "Executando" : "Pronta";
   elements.overviewTargetStatus.textContent = state.selectedTarget?.title ? "Janela fixa" : "Tela inteira";
   elements.overviewProgressText.textContent = `${Math.round(Math.max(0, Math.min(100, Number(state.progress.percent || 0))))}%`;
@@ -959,7 +1011,7 @@ function renderSelection() {
 }
 
 function renderLibrary() {
-  const items = [...state.library].sort((left, right) => {
+  const items = visibleLibrary().sort((left, right) => {
     const leftTime = new Date(left.atualizado_em || 0).getTime();
     const rightTime = new Date(right.atualizado_em || 0).getTime();
     return rightTime - leftTime;
@@ -1257,17 +1309,16 @@ async function refreshLibrary(options = {}) {
   renderLibrary();
   renderOverview();
 
-  if (!state.library.length) {
+  const visibleItems = visibleLibrary();
+  if (!visibleItems.length) {
     await loadAutomationRoadmap("", { silent: true });
     return;
   }
 
-  const preferredId = String(
-    options.preferredId
-    || state.selectedAutomationId
-    || state.library[0]?.id
-    || ""
-  );
+  const requestedId = String(options.preferredId || state.selectedAutomationId || "").trim();
+  const preferredId = visibleItems.some((item) => String(item.id) === requestedId)
+    ? requestedId
+    : String(visibleItems[0]?.id || "");
   if (preferredId && (changed || options.forceRoadmap || !state.roadmap || String(state.selectedAutomationId) !== preferredId)) {
     await loadAutomationRoadmap(preferredId, { silent: options.silent !== false });
   }
