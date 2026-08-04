@@ -30,6 +30,14 @@ async function openNativeFileDialog(options = {}) {
   return tauriDialog.open(options);
 }
 
+async function openNativeFolderDialog(options = {}) {
+  return openNativeFileDialog({
+    directory: true,
+    multiple: false,
+    ...options,
+  });
+}
+
 async function saveNativeFileDialog(options = {}) {
   if (typeof tauriDialog?.save !== "function") {
     throw new Error("Janela nativa para salvar arquivo indisponivel na interface atual.");
@@ -38,6 +46,8 @@ async function saveNativeFileDialog(options = {}) {
 }
 
 if (!window.__FLOWDETECT_DESIGN_SYSTEM__) {
+const AGENTS_STORAGE_KEY = "flowdetect_agents_vms_v1";
+
 const state = {
   roadmap: null,
   workbook: null,
@@ -49,6 +59,11 @@ const state = {
     previews: {},
     pendingClickId: null,
     pollTimer: null,
+  },
+  agents: {
+    items: [],
+    createOpen: false,
+    editingId: "",
   },
   activeTab: "launcher",
   remoteControl: {
@@ -72,6 +87,8 @@ const state = {
     remoteInputEnabled: false,
     remotePointerInside: false,
     lastRemoteMouseMoveAt: 0,
+    remotePointerMoveFrame: null,
+    pendingRemotePointerMove: null,
     connected: false,
     agentLabel: "Aguardando conexao",
     activeView: "execution",
@@ -87,6 +104,7 @@ const state = {
     statusRefreshing: false,
     sheetRefreshing: false,
     lastSheetRefreshAt: 0,
+    selectedSpreadsheetColumn: "",
     lastStatusSignature: "",
     logs: [],
     spreadsheetPreview: {
@@ -196,6 +214,7 @@ const state = {
   dragPlaceholderHeight: 0,
   recognitionTreeTabs: {},
   spreadsheetTreeTabs: {},
+  downloadTreeTabs: {},
   recognitionTestStatus: {},
   recognitionPreviewCache: {},
   expandedTreeCardOrder: null,
@@ -347,6 +366,7 @@ const commandTabButton = document.getElementById("commandTabButton");
 const workbookTabButton = document.getElementById("workbookTabButton");
 const launcherTabButton = document.getElementById("launcherTabButton");
 const remoteControlTabButton = document.getElementById("remoteControlTabButton");
+const agentsTabButton = document.getElementById("agentsTabButton");
 const agentScreenTabButton = document.getElementById("agentScreenTabButton");
 const smartRecorderTabButton = document.getElementById("smartRecorderTabButton");
 const sessionChip = document.getElementById("sessionChip");
@@ -371,7 +391,16 @@ const mapPrevButton = document.getElementById("mapPrevButton");
 const mapNextButton = document.getElementById("mapNextButton");
 const workbookPanel = document.getElementById("workbookPanel");
 const remoteControlPanel = document.getElementById("remoteControlPanel");
+const agentsPanel = document.getElementById("agentsPanel");
 const agentScreenPanel = document.getElementById("agentScreenPanel");
+const addAgentCardButton = document.getElementById("addAgentCardButton");
+const agentCreatePanel = document.getElementById("agentCreatePanel");
+const agentNameInput = document.getElementById("agentNameInput");
+const agentAddressInput = document.getElementById("agentAddressInput");
+const agentVmNameInput = document.getElementById("agentVmNameInput");
+const saveAgentCardButton = document.getElementById("saveAgentCardButton");
+const cancelAgentCardButton = document.getElementById("cancelAgentCardButton");
+const agentsList = document.getElementById("agentsList");
 const smartRecorderPanel = document.getElementById("smartRecorderPanel");
 const studioControlHint = document.getElementById("studioControlHint");
 const studioControlStatus = document.getElementById("studioControlStatus");
@@ -408,6 +437,7 @@ const studioControlPageChips = document.getElementById("studioControlPageChips")
 const studioControlFlowList = document.getElementById("studioControlFlowList");
 const studioControlLogList = document.getElementById("studioControlLogList");
 const studioControlSheetRefreshButton = document.getElementById("studioControlSheetRefreshButton");
+const studioControlSheetClearColumnButton = document.getElementById("studioControlSheetClearColumnButton");
 const studioControlSheetTitle = document.getElementById("studioControlSheetTitle");
 const studioControlSheetMeta = document.getElementById("studioControlSheetMeta");
 const studioControlSheetStatus = document.getElementById("studioControlSheetStatus");
@@ -464,6 +494,7 @@ const workbookMeta = document.getElementById("workbookMeta");
 const workbookFilesTabs = document.getElementById("workbookFilesTabs");
 const addWorkbookButton = document.getElementById("addWorkbookButton");
 const openWorkbookButton = document.getElementById("openWorkbookButton");
+const clearWorkbookColumnButton = document.getElementById("clearWorkbookColumnButton");
 const deleteWorkbookButton = document.getElementById("deleteWorkbookButton");
 const workbookFileInput = document.getElementById("workbookFileInput");
 const imageFileInput = document.getElementById("imageFileInput");
@@ -597,6 +628,15 @@ const betweenItemsInput = document.getElementById("betweenItemsInput");
 const spreadsheetDelay = document.getElementById("spreadsheetDelay");
 const addLoopStartButton = document.getElementById("addLoopStartButton");
 const addLoopEndButton = document.getElementById("addLoopEndButton");
+const downloadSourceInput = document.getElementById("downloadSourceInput");
+const downloadExtensionInput = document.getElementById("downloadExtensionInput");
+const downloadDestinationInput = document.getElementById("downloadDestinationInput");
+const downloadFileNameInput = document.getElementById("downloadFileNameInput");
+const downloadTimeoutInput = document.getElementById("downloadTimeoutInput");
+const downloadDelayInput = document.getElementById("downloadDelayInput");
+const addSaveDownloadButton = document.getElementById("addSaveDownloadButton");
+const pickDownloadSourceButton = document.getElementById("pickDownloadSourceButton");
+const pickDownloadDestinationButton = document.getElementById("pickDownloadDestinationButton");
 
 if (messageBar) {
   messageBar.textContent = "main.js carregado. Inicializando interface...";
@@ -621,6 +661,20 @@ window.addEventListener("unhandledrejection", (event) => {
     messageBar.classList.add("is-error");
   }
   console.error(event.reason || event);
+});
+
+document.addEventListener("click", (event) => {
+  const templateButton = event.target.closest?.("button[data-download-template]");
+  if (templateButton) {
+    event.preventDefault();
+    applyDownloadNameTemplate(templateButton);
+    return;
+  }
+  const tokenButton = event.target.closest?.("button[data-download-token]");
+  if (tokenButton) {
+    event.preventDefault();
+    insertDownloadNameToken(tokenButton);
+  }
 });
 
 function setTestExecutionState(running) {
@@ -772,6 +826,7 @@ function setWorkspaceTab(tabName) {
   const commandsActive = tabName === "commands";
   const workbookActive = tabName === "workbook";
   const remoteControlActive = tabName === "remote-control";
+  const agentsActive = tabName === "agents";
   const agentScreenActive = tabName === "agent-screen";
   const smartRecorderActive = tabName === "smart-recorder";
   launcherTabButton.classList.toggle("is-active", launcherActive);
@@ -780,6 +835,7 @@ function setWorkspaceTab(tabName) {
   commandTabButton.classList.toggle("is-active", commandsActive);
   workbookTabButton.classList.toggle("is-active", workbookActive);
   remoteControlTabButton?.classList.toggle("is-active", remoteControlActive);
+  agentsTabButton?.classList.toggle("is-active", agentsActive);
   agentScreenTabButton?.classList.toggle("is-active", agentScreenActive);
   smartRecorderTabButton?.classList.toggle("is-active", smartRecorderActive);
   launcherPanel.classList.toggle("is-active", launcherActive);
@@ -788,6 +844,7 @@ function setWorkspaceTab(tabName) {
   commandsPanel.classList.toggle("is-active", commandsActive);
   workbookPanel.classList.toggle("is-active", workbookActive);
   remoteControlPanel?.classList.toggle("is-active", remoteControlActive);
+  agentsPanel?.classList.toggle("is-active", agentsActive);
   agentScreenPanel?.classList.toggle("is-active", agentScreenActive);
   smartRecorderPanel?.classList.toggle("is-active", smartRecorderActive);
   builderShell?.classList.toggle("is-launcher-active", launcherActive);
@@ -1079,29 +1136,8 @@ function updateCommandConnectorPositions() {
     return;
   }
 
-  const rowRect = row.getBoundingClientRect();
   row.querySelectorAll(".command-inline-connector").forEach((connector) => {
-    const previousSegment = findAdjacentCommandFlowSegment(connector, "previous");
-    const nextSegment = findAdjacentCommandFlowSegment(connector, "next");
-    const centers = [previousSegment, nextSegment]
-      .map((segment) => segment?.querySelector(".command-tree-card"))
-      .filter(Boolean)
-      .map((card) => {
-        const rect = card.getBoundingClientRect();
-        const factor = Number.parseFloat(getComputedStyle(card).getPropertyValue("--connector-anchor-factor"));
-        if (Number.isFinite(factor) && factor > 0) {
-          return rect.top - rowRect.top + rect.height * factor;
-        }
-        return rect.top - rowRect.top + rect.height / 2;
-      });
-
-    if (!centers.length) {
-      connector.style.removeProperty("--connector-inline-top");
-      return;
-    }
-
-    const centerTop = centers.reduce((sum, value) => sum + value, 0) / centers.length;
-    connector.style.setProperty("--connector-inline-top", `${Math.round(centerTop)}px`);
+    connector.style.removeProperty("--connector-inline-top");
   });
 }
 
@@ -4109,6 +4145,8 @@ function animateCommandMapLayoutShift(previousPositions) {
 function applyCommandMapFocus(behavior = "smooth", options = {}) {
   const skipConnectorLayout = Boolean(options.skipConnectorLayout);
   const animateFocusPulse = Boolean(options.animateFocusPulse);
+  const suppressScroll = Boolean(options.suppressScroll);
+  const suppressVisualFocus = Boolean(options.suppressVisualFocus);
   const scrollMode = options.scrollMode || "center";
   const events = getCommandMapEvents();
   const focusOrder = resolveNearestCommandMapFocus(state.roadmap, state.commandMapFocusOrder ?? events[0]?.order ?? null);
@@ -4125,11 +4163,11 @@ function applyCommandMapFocus(behavior = "smooth", options = {}) {
     return;
   }
 
-  row.classList.toggle("is-carousel-focus", Boolean(focusOrder));
+  row.classList.toggle("is-carousel-focus", Boolean(focusOrder) && !suppressVisualFocus);
   commandMapList.querySelectorAll(".command-flow-segment").forEach((segment) => {
     const order = Number(segment.dataset.order);
-    const isFocused = order === focusOrder;
-    const isNeighbor = neighborOrders.has(order);
+    const isFocused = !suppressVisualFocus && order === focusOrder;
+    const isNeighbor = !suppressVisualFocus && neighborOrders.has(order);
     segment.classList.toggle("is-focused", isFocused);
     segment.classList.toggle("is-neighbor", isNeighbor);
     if (isFocused && animateFocusPulse) {
@@ -4144,7 +4182,7 @@ function applyCommandMapFocus(behavior = "smooth", options = {}) {
 
   commandMapList.querySelectorAll(".command-inline-connector").forEach((connector) => {
     const targetIndex = Number(connector.dataset.targetIndex);
-    const nearFocus = focusOrder != null && (targetIndex === focusOrder || neighborOrders.has(targetIndex));
+    const nearFocus = !suppressVisualFocus && focusOrder != null && (targetIndex === focusOrder || neighborOrders.has(targetIndex));
     connector.classList.toggle("is-near-focus", nearFocus);
   });
 
@@ -4154,7 +4192,7 @@ function applyCommandMapFocus(behavior = "smooth", options = {}) {
 
   updateCommandMapNavButtons();
 
-  if (state.activeTab === "commands" && focusOrder) {
+  if (!suppressVisualFocus && !suppressScroll && state.activeTab === "commands" && focusOrder) {
     requestAnimationFrame(() => centerCommandMapOrder(focusOrder, behavior, { mode: scrollMode }));
   }
 }
@@ -4162,6 +4200,7 @@ function applyCommandMapFocus(behavior = "smooth", options = {}) {
 function setCommandMapFocus(order, behavior = "smooth", options = {}) {
   const skipConnectorLayout = Boolean(options.skipConnectorLayout);
   const animateFocusPulse = Boolean(options.animateFocusPulse);
+  const suppressScroll = Boolean(options.suppressScroll);
   const scrollMode = options.scrollMode || "center";
   const targetSequence = getCommandMapEventSequenceByOrder(order);
   const lockedSequence = activeCommandMapPageSequenceLock();
@@ -4171,7 +4210,7 @@ function setCommandMapFocus(order, behavior = "smooth", options = {}) {
     renderCommandMapPageTabs();
     updateCommandMapHeaderSummary();
     state.commandMapFocusOrder = resolveNearestCommandMapFocus(state.roadmap, state.commandMapFocusOrder ?? order);
-    applyCommandMapFocus(behavior, { skipConnectorLayout, animateFocusPulse, scrollMode });
+    applyCommandMapFocus(behavior, { skipConnectorLayout, animateFocusPulse, scrollMode, suppressScroll });
     return;
   }
   if (targetSequence && targetSequence !== normalizeSequenceName(state.commandMapPageSequence)) {
@@ -4182,7 +4221,7 @@ function setCommandMapFocus(order, behavior = "smooth", options = {}) {
     renderCommandMap();
   }
   state.commandMapFocusOrder = order;
-  applyCommandMapFocus(behavior, { skipConnectorLayout, animateFocusPulse, scrollMode });
+  applyCommandMapFocus(behavior, { skipConnectorLayout, animateFocusPulse, scrollMode, suppressScroll });
 }
 
 function focusLastCommandMapCard(roadmap) {
@@ -4939,6 +4978,12 @@ function createInsertPanelState(targetOrder, position) {
     programPath: "",
     programParams: "",
     programWait: 2,
+    downloadSource: "",
+    downloadExtension: ".pdf",
+    downloadDestination: "",
+    downloadFileName: "{empresa}_{competencia}_FGTS.pdf",
+    downloadTimeout: 60,
+    downloadTab: "arquivo",
     delay: 0.3,
     workbook: workbookId,
     sheet: workbookSheetsFor(workbookId)[0]?.name ?? "",
@@ -5797,9 +5842,25 @@ function normalizeRecognitionTreeTab(tabName) {
   return ["base", "preview", "action", "advanced"].includes(normalized) ? normalized : "base";
 }
 
+function normalizeRecognitionDetailTab(tabName) {
+  const normalized = String(tabName || "visual").trim().toLowerCase();
+  if (["base", "preview", "visual"].includes(normalized)) {
+    return "visual";
+  }
+  if (["action", "advanced", "behavior"].includes(normalized)) {
+    return "behavior";
+  }
+  return "visual";
+}
+
 function normalizeSpreadsheetTreeTab(tabName) {
   const normalized = String(tabName || "planilha").trim().toLowerCase();
   return ["planilha", "fluxo"].includes(normalized) ? normalized : "planilha";
+}
+
+function normalizeDownloadTreeTab(tabName) {
+  const normalized = String(tabName || "arquivo").trim().toLowerCase();
+  return ["arquivo", "destino", "nome", "fluxo"].includes(normalized) ? normalized : "arquivo";
 }
 
 function applyRecognitionTreeTabState(card, tabName) {
@@ -5807,15 +5868,24 @@ function applyRecognitionTreeTabState(card, tabName) {
     return;
   }
 
-  const activeTab = normalizeRecognitionTreeTab(tabName);
+  const usesDetailTabs = Boolean(card.querySelector('[data-recognition-tab-target="visual"], [data-recognition-tab-target="behavior"]'));
+  const activeTab = usesDetailTabs
+    ? normalizeRecognitionDetailTab(tabName)
+    : normalizeRecognitionTreeTab(tabName);
   card.querySelectorAll("[data-recognition-tab-target]").forEach((button) => {
-    const isActive = button.dataset.recognitionTabTarget === activeTab;
+    const buttonTab = usesDetailTabs
+      ? normalizeRecognitionDetailTab(button.dataset.recognitionTabTarget)
+      : normalizeRecognitionTreeTab(button.dataset.recognitionTabTarget);
+    const isActive = buttonTab === activeTab;
     button.classList.toggle("is-active", isActive);
     button.setAttribute("aria-pressed", isActive ? "true" : "false");
   });
 
   card.querySelectorAll("[data-recognition-tab-panel]").forEach((panel) => {
-    const isActive = panel.dataset.recognitionTabPanel === activeTab;
+    const panelTab = usesDetailTabs
+      ? normalizeRecognitionDetailTab(panel.dataset.recognitionTabPanel)
+      : normalizeRecognitionTreeTab(panel.dataset.recognitionTabPanel);
+    const isActive = panelTab === activeTab;
     panel.classList.toggle("is-active", isActive);
     panel.hidden = !isActive;
   });
@@ -5840,8 +5910,27 @@ function applySpreadsheetTreeTabState(card, tabName) {
   });
 }
 
+function applyDownloadTreeTabState(card, tabName) {
+  if (!card) {
+    return;
+  }
+
+  const activeTab = normalizeDownloadTreeTab(tabName);
+  card.querySelectorAll("[data-download-tab-target]").forEach((button) => {
+    const isActive = button.dataset.downloadTabTarget === activeTab;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+
+  card.querySelectorAll("[data-download-tab-panel]").forEach((panel) => {
+    const isActive = panel.dataset.downloadTabPanel === activeTab;
+    panel.classList.toggle("is-active", isActive);
+    panel.hidden = !isActive;
+  });
+}
+
 function setRecognitionTreeTab(order, tabName) {
-  const activeTab = normalizeRecognitionTreeTab(tabName);
+  const activeTab = normalizeRecognitionDetailTab(tabName);
   state.recognitionTreeTabs = {
     ...state.recognitionTreeTabs,
     [order]: activeTab,
@@ -5867,108 +5956,156 @@ function setSpreadsheetTreeTab(order, tabName) {
   scheduleCommandConnectorLayout();
 }
 
-function animateExpandedTreeCardOpen() {
-  const panel = commandMapList.querySelector(".command-card-overlay-panel");
-  const backdrop = commandMapList.querySelector(".command-card-overlay-backdrop");
-  if (!panel) {
-    return;
-  }
+function setDownloadTreeTab(order, tabName) {
+  const activeTab = normalizeDownloadTreeTab(tabName);
+  state.downloadTreeTabs = {
+    ...state.downloadTreeTabs,
+    [order]: activeTab,
+  };
 
-  const origin = state.expandedTreeCardOrigin;
-  const panelRect = panel.getBoundingClientRect();
-  const panelCenterX = panelRect.left + panelRect.width / 2;
-  const panelCenterY = panelRect.top + panelRect.height / 2;
-
-  let startTransform = "perspective(1200px) rotateX(-8deg) scale(0.92)";
-  if (origin) {
-    const originCenterX = origin.left + origin.width / 2;
-    const originCenterY = origin.top + origin.height / 2;
-    const deltaX = originCenterX - panelCenterX;
-    const deltaY = originCenterY - panelCenterY;
-    const scaleX = Math.max(0.34, Math.min(1, origin.width / panelRect.width));
-    const scaleY = Math.max(0.28, Math.min(1, origin.height / panelRect.height));
-    startTransform = `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`;
-  }
-
-  backdrop?.animate(
-    [
-      { opacity: 0 },
-      { opacity: 1 },
-    ],
-    {
-      duration: 220,
-      easing: "ease-out",
-      fill: "both",
-    }
-  );
-
-  panel.animate(
-    [
-      {
-        opacity: 0.78,
-        transform: startTransform,
-      },
-      {
-        opacity: 1,
-        transform: "translate(0px, 0px) scale(1, 1)",
-      },
-    ],
-    {
-      duration: 260,
-      easing: "cubic-bezier(0.22, 1, 0.36, 1)",
-      fill: "both",
-    }
-  );
+  commandMapList.querySelectorAll(`.command-tree-card[data-order="${order}"]`).forEach((card) => {
+    applyDownloadTreeTabState(card, activeTab);
+  });
+  scheduleCommandConnectorLayout();
 }
 
 function openExpandedTreeCard(order, sourceElement = null) {
-  const sourceCard =
-    sourceElement?.closest(".command-tree-card") ||
-    commandMapList.querySelector(`.command-tree-card[data-order="${order}"]`);
-  const sourceRect = sourceCard?.getBoundingClientRect();
-  state.expandedTreeCardOrigin = sourceRect
-    ? {
-        left: sourceRect.left,
-        top: sourceRect.top,
-        width: sourceRect.width,
-        height: sourceRect.height,
-      }
-    : null;
+  const sourceCard = sourceElement?.closest(".command-tree-card");
+  const previousRect = sourceCard?.getBoundingClientRect();
   state.expandedTreeCardOrder = Number(order) || null;
-  builderShell?.classList.add("has-command-card-overlay");
-  renderCommandMap();
+  state.commandMapFocusOrder = Number(order) || state.commandMapFocusOrder;
+  commandMapList?.classList.remove("is-detail-closing");
+  commandMapList?.classList.add("is-detail-state-changing");
+  renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true });
   requestAnimationFrame(() => {
-    animateExpandedTreeCardOpen();
+    animateExpandedInlineCardOpen(order, previousRect);
+    window.setTimeout(() => commandMapList?.classList.remove("is-detail-state-changing"), 780);
   });
 }
 
 function closeExpandedTreeCard() {
+  const order = Number(state.expandedTreeCardOrder);
+  const card = commandMapList.querySelector(`.command-tree-card.is-inline-expanded[data-order="${order}"]`);
+  const expandedRect = card?.getBoundingClientRect();
+  if (Number.isFinite(order) && order > 0) {
+    state.commandMapFocusOrder = order;
+  }
+  commandMapList?.classList.add("is-detail-state-changing");
+  commandMapList?.classList.add("is-detail-closing");
   state.expandedTreeCardOrder = null;
   state.expandedTreeCardOrigin = null;
-  builderShell?.classList.remove("has-command-card-overlay");
-  renderCommandMap();
+  renderCommandMap({
+    preserveScroll: true,
+    skipAutoFit: true,
+    suppressFocusScroll: true,
+  });
+  requestAnimationFrame(() => {
+    animateCollapsedInlineCardReturn(order, expandedRect);
+    window.setTimeout(() => {
+      commandMapList?.classList.remove("is-detail-state-changing");
+      commandMapList?.classList.remove("is-detail-closing");
+    }, 560);
+  });
+}
+
+function animateExpandedInlineCardOpen(order, previousRect = null) {
+  const card = commandMapList.querySelector(`.command-tree-card[data-order="${order}"]`);
+  if (!card) {
+    return;
+  }
+  const animation = card.animate(
+    [
+      {
+        opacity: 1,
+        transform: "perspective(1400px) rotateY(-16deg) scale(0.975)",
+      },
+      {
+        opacity: 1,
+        transform: "perspective(1400px) rotateY(3deg) scale(1.004)",
+      },
+      {
+        opacity: 1,
+        transform: "perspective(1400px) rotateY(0deg) scale(1)",
+      },
+    ],
+    {
+      duration: 760,
+      easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+      fill: "none",
+    }
+  );
+  const cleanup = () => {
+    card.style.transform = "";
+    card.style.filter = "";
+  };
+  animation.addEventListener("finish", cleanup, { once: true });
+  animation.addEventListener("cancel", cleanup, { once: true });
+}
+
+function animateCollapsedInlineCardReturn(order, expandedRect = null) {
+  const card = commandMapList.querySelector(`.command-tree-card[data-order="${order}"]`);
+  if (!card) {
+    return;
+  }
+  const compactRect = card.getBoundingClientRect();
+  const hasRects = expandedRect && compactRect.width > 0 && compactRect.height > 0;
+  const deltaX = hasRects
+    ? (expandedRect.left + expandedRect.width / 2) - (compactRect.left + compactRect.width / 2)
+    : 0;
+  const deltaY = hasRects
+    ? (expandedRect.top + expandedRect.height / 2) - (compactRect.top + compactRect.height / 2)
+    : 0;
+  const scaleX = hasRects ? Math.max(1, Math.min(1.7, expandedRect.width / compactRect.width)) : 1.04;
+  const scaleY = hasRects ? Math.max(1, Math.min(1.35, expandedRect.height / compactRect.height)) : 1.02;
+  card.animate(
+    [
+      {
+        opacity: 1,
+        transform: `translate(${deltaX}px, ${deltaY}px) perspective(1400px) rotateY(10deg) scale(${scaleX}, ${scaleY})`,
+      },
+      {
+        opacity: 1,
+        transform: "translate(0, 0) perspective(1400px) rotateY(-3deg) scale(1.015)",
+      },
+      {
+        opacity: 1,
+        transform: "translate(0, 0) perspective(1400px) rotateY(0deg) scale(1)",
+      },
+    ],
+    {
+      duration: 560,
+      easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+      fill: "both",
+    }
+  );
 }
 
 function renderRecognitionTreeHiddenFields(details = {}, currentOrder = null) {
   const clickMode = recognitionClickModeFromDetails(details);
   const successAction = String(details.ao_sucesso ?? "continuar");
   const successBlock = String(details.bloco_sucesso ?? "");
+  const successSequence = String(details.sequencia_sucesso ?? "");
   const failureAction = String(details.ao_nao_encontrar ?? "parar");
   const failureBlock = String(details.bloco_nao_encontrar ?? "");
   const failureSequence = String(details.sequencia_nao_encontrar ?? "");
+  const visibleSuccessAction = successAction === "ir_para_sequencia" ? "continuar" : successAction;
+  const visibleFailureAction = failureAction === "ir_para_sequencia" ? "parar" : failureAction;
   return `
     <input data-tree-field="imagePath" type="hidden" value="${escapeHtml(details.imagem ?? "")}" />
     <input data-tree-field="timeout" type="hidden" value="${escapeHtml(details.timeout ?? 10)}" />
     <input data-tree-field="confidence" type="hidden" value="${escapeHtml(details.confianca ?? 0.8)}" />
     <input data-tree-field="searchProfile" type="hidden" value="${escapeHtml(normalizeRecognitionProfile(details.perfil_busca, "balanced"))}" />
     <input data-tree-field="expectedOcrText" type="hidden" value="${escapeHtml(details.texto_ocr_esperado ?? "")}" />
-    <input data-tree-field="windowTitle" type="hidden" value="${escapeHtml(details.janela_alvo ?? "")}" />
+    <input data-tree-field="windowTitle" type="hidden" value="" />
     <input data-tree-field="clickOnFind" type="hidden" value="${escapeHtml(clickMode)}" />
-    <input data-tree-field="successAction" type="hidden" value="${escapeHtml(successAction)}" />
+    <input data-tree-field="successAction" type="hidden" value="${escapeHtml(visibleSuccessAction)}" />
     <input data-tree-field="successBlock" type="hidden" value="${escapeHtml(successBlock)}" />
-    <input data-tree-field="failureAction" type="hidden" value="${escapeHtml(failureAction)}" />
+    <input data-tree-field="successSequence" type="hidden" value="${escapeHtml(successSequence)}" />
+    <input data-tree-field="successSequenceDelay" type="hidden" value="${escapeHtml(formatTransitionDelayValue(details.atraso_antes_sequencia_sucesso ?? 0))}" />
+    <input data-tree-field="failureAction" type="hidden" value="${escapeHtml(visibleFailureAction)}" />
     <input data-tree-field="failureBlock" type="hidden" value="${escapeHtml(failureBlock)}" />
     <input data-tree-field="failureSequence" type="hidden" value="${escapeHtml(failureSequence)}" />
+    <input data-tree-field="failureSequenceDelay" type="hidden" value="${escapeHtml(formatTransitionDelayValue(details.atraso_antes_sequencia_nao_encontrar ?? 0))}" />
     <input data-tree-field="retryCount" type="hidden" value="${escapeHtml(details.quantidade_tentativas ?? 1)}" />
     <input data-tree-field="retryInterval" type="hidden" value="${escapeHtml(details.intervalo_tentativas ?? 1)}" />
     <input data-tree-field="delay" type="hidden" value="${escapeHtml(details.delay ?? "")}" data-recognition-hidden-order="${escapeHtml(currentOrder ?? "")}" />
@@ -5977,144 +6114,374 @@ function renderRecognitionTreeHiddenFields(details = {}, currentOrder = null) {
 
 function renderRecognitionCompactTreeEditor(event) {
   const details = event.details ?? {};
-  const hasReference = Boolean(normalizeRecognitionImagePath(details.imagem));
-  const tested = isRecognitionTestedForEvent(event);
-  const profileLabel = {
-    fast: "Rapido",
-    balanced: "Equilibrado",
-    precise: "Preciso",
-  }[normalizeRecognitionProfile(details.perfil_busca, "balanced")] || "Equilibrado";
+  const imageName = String(details.imagem || "").split(/[\\/]/).pop() || "Nenhuma imagem";
+  const clickMode = recognitionClickModeFromDetails(details);
   const clickLabel = {
     single: "1 clique",
     double: "2 cliques",
-    identify: "Identificar",
-  }[recognitionClickModeFromDetails(details)] || "1 clique";
+    identify: "So identificar",
+  }[clickMode] || "1 clique";
+  const expectedText = String(details.texto_ocr_esperado || "").trim();
+  const successAction = String(details.ao_sucesso ?? "continuar");
+  const failureAction = String(details.ao_nao_encontrar ?? "parar");
+  const visibleSuccessAction = successAction === "ir_para_sequencia" ? "continuar" : successAction;
+  const visibleFailureAction = failureAction === "ir_para_sequencia" ? "parar" : failureAction;
+  const nextLabel = visibleSuccessAction === "ir_para_bloco" && details.bloco_sucesso
+    ? `Vai para bloco ${details.bloco_sucesso}`
+    : "Continua";
   const failureLabel = {
-    parar: "Parar",
-    continuar: "Continuar",
-    pular: "Continuar",
-    tentar_novamente: "Tentar novamente",
+    parar: "Para a automacao",
+    continuar: "Continua mesmo assim",
+    pular: "Continua mesmo assim",
+    tentar_novamente: "Tenta de novo",
     ir_para_bloco: details.bloco_nao_encontrar
-      ? `Ir para ${blockTargetLabelByOrder(details.bloco_nao_encontrar, { includePage: true, includeOrder: false })}`
-      : "Ir para bloco",
-    ir_para_sequencia: `Ir para ${getCommandMapPageLabel(details.sequencia_nao_encontrar || "pagina_2")}`,
-  }[String(details.ao_nao_encontrar ?? "parar")] || "Parar";
-  const windowLabel = normalizeRecognitionWindowTitle(details.janela_alvo || "");
+      ? `Vai para bloco ${details.bloco_nao_encontrar}`
+      : "Vai para outro bloco",
+  }[visibleFailureAction] || "Para a automacao";
 
   return `
-    <div class="recognition-compact-body">
-      <div class="recognition-compact-hero">
-        <div class="recognition-compact-statuses">
-          <span class="recognition-compact-state ${hasReference ? "is-ready" : "is-missing"}" data-recognition-state="true">
-            ${hasReference ? "Reconhecimento feito" : "Sem referencia"}
-          </span>
-          <span class="recognition-compact-test ${tested ? "is-tested" : "is-pending"}" data-recognition-test="true">
-            ${tested ? "Testado" : "Nao testado"}
-          </span>
-        </div>
-        <button class="tree-open-button recognition-test-inline" data-tree-action="test-image-recognition" type="button">Testar</button>
-      </div>
-      <div class="recognition-compact-metrics">
-        <span><small>Timeout</small><strong>${escapeHtml(details.timeout ?? 10)}s</strong></span>
-        <span><small>Confianca</small><strong>${escapeHtml(details.confianca ?? 0.8)}</strong></span>
-        <span><small>Perfil</small><strong>${escapeHtml(profileLabel)}</strong></span>
-      </div>
-      <div class="recognition-compact-summary">
-        <span>Ao reconhecer: <strong>${escapeHtml(clickLabel)}</strong></span>
-        <span>Se falhar: <strong>${escapeHtml(failureLabel)}</strong></span>
-        <span>Janela: <strong>${escapeHtml(windowLabel || "Sem janela fixa")}</strong></span>
-      </div>
+    <div class="recognition-card-compact-editor">
       ${renderRecognitionTreeHiddenFields(details, event.order)}
+      <div class="recognition-card-compact-preview">
+        ${renderRecognitionPreviewPanel(details.imagem ?? "")}
+      </div>
+      <div class="recognition-card-compact-row">
+        <span>O que ele procura</span>
+        <strong>${escapeHtml(imageName)}</strong>
+      </div>
+      ${expectedText ? `
+        <div class="recognition-card-compact-row">
+          <span>Tambem confirma o texto</span>
+          <strong>${escapeHtml(expectedText)}</strong>
+        </div>
+      ` : ""}
+      <div class="recognition-card-compact-flow">
+        <span><small>Se achar</small><strong>${escapeHtml(clickLabel)} e ${escapeHtml(nextLabel.toLowerCase())}</strong></span>
+        <span><small>Se nao achar</small><strong>${escapeHtml(failureLabel)}</strong></span>
+      </div>
+      <button class="tree-open-button recognition-card-details-button" data-tree-action="open-card-details" type="button">Ver detalhes</button>
     </div>
   `;
 }
 
+function hiddenTreeField(name, value = "", options = {}) {
+  if (options.type === "checkbox") {
+    return `<input data-tree-field="${escapeHtml(name)}" type="checkbox" ${value ? "checked" : ""} hidden />`;
+  }
+  return `<input data-tree-field="${escapeHtml(name)}" type="hidden" value="${escapeHtml(value ?? "")}" />`;
+}
+
+function renderSuccessHiddenTreeFields(details = {}) {
+  return `
+    ${hiddenTreeField("successAction", details.ao_sucesso ?? "continuar")}
+    ${hiddenTreeField("successBlock", details.bloco_sucesso ?? "")}
+    ${hiddenTreeField("successSequence", details.sequencia_sucesso ?? "")}
+    ${hiddenTreeField("successSequenceDelay", formatTransitionDelayValue(details.atraso_antes_sequencia_sucesso ?? 0))}
+  `;
+}
+
+function renderFailureHiddenTreeFields(details = {}) {
+  return `
+    ${hiddenTreeField("failureAction", details.ao_falhar ?? details.ao_nao_encontrar ?? "parar")}
+    ${hiddenTreeField("failureBlock", details.bloco_falha ?? details.bloco_nao_encontrar ?? "")}
+    ${hiddenTreeField("failureSequence", details.sequencia_falha ?? details.sequencia_nao_encontrar ?? "")}
+    ${hiddenTreeField("failureSequenceDelay", formatTransitionDelayValue(details.atraso_antes_sequencia_falha ?? details.atraso_antes_sequencia_nao_encontrar ?? 0))}
+  `;
+}
+
+function compactText(value = "", fallback = "-") {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return fallback;
+  }
+  return text.length > 48 ? `${text.slice(0, 45)}...` : text;
+}
+
+function renderCompactRows(rows = []) {
+  return rows
+    .filter((row) => row && (row.value !== undefined && row.value !== null && String(row.value).trim() !== ""))
+    .map((row) => `
+      <div class="command-compact-row">
+        <span>${escapeHtml(row.label)}</span>
+        <strong>${escapeHtml(compactText(row.value))}</strong>
+      </div>
+    `)
+    .join("");
+}
+
+function renderGenericCompactTreeEditor(event, rows = [], hiddenFields = "") {
+  return `
+    <div class="command-card-compact-editor">
+      ${hiddenFields}
+      ${renderCompactRows(rows)}
+      <button class="tree-open-button recognition-card-details-button" data-tree-action="open-card-details" type="button">Ver detalhes</button>
+    </div>
+  `;
+}
+
+function renderCompactTreeEditorFields(event) {
+  const details = event.details ?? {};
+  if (event.type === "clicar_imagem") {
+    return renderRecognitionCompactTreeEditor(event);
+  }
+
+  if (isLoopMarkerType(event.type)) {
+    const isStart = event.type === "inicio_loop";
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Funcao", value: isStart ? "Comeca o loop" : "Finaliza o loop" },
+      { label: "Resumo", value: isStart ? "Tudo depois pode repetir" : "Fecha a repeticao" },
+    ], event.type === "fim_loop" ? renderSuccessHiddenTreeFields(details) : "");
+  }
+
+  if (event.type === "texto_livre") {
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Texto", value: event.text },
+      { label: "Editavel", value: details.editavel_execucao ? (details.rotulo_execucao || "Sim") : "Nao" },
+    ], `
+      ${hiddenTreeField("text", event.text)}
+      ${hiddenTreeField("editableAtRun", Boolean(details.editavel_execucao), { type: "checkbox" })}
+      ${hiddenTreeField("runtimeLabel", details.rotulo_execucao ?? "")}
+      ${renderSuccessHiddenTreeFields(details)}
+    `);
+  }
+
+  if (event.type === "tecla" || event.type === "atalho") {
+    const keys = (event.keys || []).join("+");
+    const repeat = Math.max(1, Number(details.repeticoes ?? 1));
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Tecla", value: keys },
+      { label: "Repeticoes", value: `${repeat} vez(es)` },
+    ], `
+      ${hiddenTreeField("keys", keys)}
+      ${hiddenTreeField("repeat", repeat)}
+      ${renderSuccessHiddenTreeFields(details)}
+    `);
+  }
+
+  if (event.type === "mouse_click") {
+    const clicks = Number(details.clicks ?? details.cliques ?? 1);
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Clique", value: `${clicks} clique(s) ${details.botao || "left"}` },
+      { label: "Posicao", value: `x=${details.x ?? 0} y=${details.y ?? 0}` },
+    ], `
+      ${hiddenTreeField("x", details.x ?? 0)}
+      ${hiddenTreeField("y", details.y ?? 0)}
+      ${hiddenTreeField("button", details.botao ?? "left")}
+      ${hiddenTreeField("clicks", clicks)}
+      ${renderSuccessHiddenTreeFields(details)}
+    `);
+  }
+
+  if (event.type === "abrir_url") {
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Abrir site", value: details.url },
+      { label: "Navegador", value: `${details.navegador ?? "padrao"} | ${details.modo_abertura ?? "nova_janela"}` },
+      { label: "Espera", value: `${details.aguardar_segundos ?? 3}s${details.tela_cheia ? " | tela cheia" : ""}` },
+    ], `
+      ${hiddenTreeField("openUrl", details.url ?? "")}
+      ${hiddenTreeField("openBrowser", details.navegador ?? "padrao")}
+      ${hiddenTreeField("openMode", details.modo_abertura ?? "nova_janela")}
+      ${hiddenTreeField("openFullscreen", Boolean(details.tela_cheia), { type: "checkbox" })}
+      ${hiddenTreeField("openWait", details.aguardar_segundos ?? 3)}
+      ${renderSuccessHiddenTreeFields(details)}
+    `);
+  }
+
+  if (event.type === "abrir_programa") {
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Programa", value: details.caminho },
+      { label: "Parametros", value: details.parametros || "Sem parametros" },
+      { label: "Espera", value: `${details.aguardar_segundos ?? 2}s` },
+    ], `
+      ${hiddenTreeField("programPath", details.caminho ?? "")}
+      ${hiddenTreeField("programParams", details.parametros ?? "")}
+      ${hiddenTreeField("programWait", details.aguardar_segundos ?? 2)}
+      ${renderSuccessHiddenTreeFields(details)}
+    `);
+  }
+
+  if (event.type === "salvar_download") {
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Monitorar", value: details.pasta_origem || "Downloads" },
+      { label: "Destino", value: details.pasta_destino || "Nao definido" },
+      { label: "Nome", value: details.nome_arquivo || "Manter original" },
+    ], `
+      ${hiddenTreeField("downloadSource", details.pasta_origem ?? "")}
+      ${hiddenTreeField("downloadExtension", details.extensao ?? ".pdf")}
+      ${hiddenTreeField("downloadDestination", details.pasta_destino ?? "")}
+      ${hiddenTreeField("downloadFileName", details.nome_arquivo ?? "")}
+      ${hiddenTreeField("downloadTimeout", details.timeout ?? 60)}
+      ${renderSuccessHiddenTreeFields(details)}
+    `);
+  }
+
+  if (event.type === "escrever_planilha") {
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Planilha", value: details.arquivo || details.workbook },
+      { label: "Destino", value: `${details.aba || details.sheet || "Aba"} -> ${details.coluna || details.column || "Coluna"}` },
+      { label: "Escrever", value: details.valor || details.value || "OK" },
+    ], `
+      ${hiddenTreeField("workbook", resolveWorkbookId(details.arquivo || details.workbook || ""))}
+      ${hiddenTreeField("sheet", details.aba || details.sheet || "")}
+      ${hiddenTreeField("column", details.coluna || details.column || "")}
+      ${hiddenTreeField("writeValue", details.valor || details.value || "OK")}
+      ${renderSuccessHiddenTreeFields(details)}
+    `);
+  }
+
+  if (event.type === "sequencia_planilha") {
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Loop", value: getSpreadsheetLoopBadgeLabel(event) },
+      { label: "Planilha", value: details.arquivo || details.workbook },
+      { label: "Coluna", value: details.coluna || details.column },
+    ], `
+      ${hiddenTreeField("workbook", resolveWorkbookId(details.arquivo || details.workbook || ""))}
+      ${hiddenTreeField("sheet", details.aba || details.sheet || "")}
+      ${hiddenTreeField("column", details.coluna || details.column || "")}
+      ${hiddenTreeField("afterAction", details.acao_apos_item_texto ?? "nenhuma")}
+      ${hiddenTreeField("intervalBetween", details.intervalo_entre_itens ?? 0.5)}
+      ${renderSuccessHiddenTreeFields(details)}
+    `);
+  }
+
+  if (event.type === "verificar_estado_botao") {
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Botao ativo", value: details.imagem_ativa ? "Imagem configurada" : "Sem imagem" },
+      { label: "Botao desativado", value: details.imagem_desativada ? "Imagem configurada" : "Sem imagem" },
+      { label: "Se nao achar", value: details.se_nao_encontrar?.acao || "parar" },
+    ], `
+      ${hiddenTreeField("verifyName", details.nome ?? "Verificar botao")}
+      ${hiddenTreeField("verifyActiveImage", details.imagem_ativa ?? "")}
+      ${hiddenTreeField("verifyInactiveImage", details.imagem_desativada ?? "")}
+      ${hiddenTreeField("verifyTimeout", details.timeout ?? 10)}
+      ${hiddenTreeField("verifyConfidence", details.confianca ?? 0.8)}
+      ${hiddenTreeField("verifyActiveAction", details.se_ativo?.acao ?? "continuar")}
+      ${hiddenTreeField("verifyActiveSequence", details.se_ativo?.sequencia ?? "")}
+      ${hiddenTreeField("verifyInactiveAction", details.se_desativado?.acao ?? "ir_para_sequencia")}
+      ${hiddenTreeField("verifyInactiveSequence", details.se_desativado?.sequencia ?? "")}
+      ${hiddenTreeField("verifyMissingAction", details.se_nao_encontrar?.acao ?? "parar")}
+      ${hiddenTreeField("verifyMissingSequence", details.se_nao_encontrar?.sequencia ?? "")}
+    `);
+  }
+
+  if (event.type === "chrome_elemento_html") {
+    const chromeAnalysis = {
+      html_original: details.html_original ?? "",
+      elemento: details.elemento ?? {},
+      tipo_provavel: details.tipo_provavel ?? "",
+      seletores: details.seletores ?? [],
+      alvo_recomendado: details.alvo ?? {},
+      acao_sugerida: details.acao ?? {},
+      nome_sugerido: details.nome ?? "Chrome / Elemento HTML",
+      confianca: details.alvo?.confianca ?? "media",
+    };
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Elemento", value: details.nome || "Elemento do Chrome" },
+      { label: "Acao", value: details.acao?.tipo || "clicar" },
+      { label: "Alvo", value: details.alvo?.valor || details.html_original || "Configurado" },
+    ], `
+      ${hiddenTreeField("chromeName", details.nome ?? "Elemento do Chrome")}
+      ${hiddenTreeField("chromeHtml", details.html_original ?? "")}
+      ${hiddenTreeField("chromeAnalysis", JSON.stringify(chromeAnalysis))}
+      ${hiddenTreeField("chromeTargetMethod", details.alvo?.metodo ?? "texto")}
+      ${hiddenTreeField("chromeTargetValue", details.alvo?.valor ?? "")}
+      ${hiddenTreeField("chromeActionType", details.acao?.tipo ?? "clicar")}
+      ${hiddenTreeField("chromeValueSource", details.acao?.origem_valor ?? "fixo")}
+      ${hiddenTreeField("chromeActionValue", details.acao?.valor ?? "")}
+      ${hiddenTreeField("chromeSaveAs", details.acao?.salvar_em ?? "")}
+      ${hiddenTreeField("chromeTimeout", details.timeout ?? 10)}
+      ${hiddenTreeField("chromePressAfter", details.acao?.pressionar_depois ?? "")}
+      ${hiddenTreeField("chromeRetryCount", details.quantidade_tentativas ?? 1)}
+      ${hiddenTreeField("chromeRetryInterval", details.intervalo_tentativas ?? 1)}
+      ${hiddenTreeField("chromeClearBefore", Boolean(details.acao?.limpar_antes), { type: "checkbox" })}
+      ${hiddenTreeField("chromeFallbackVisual", Boolean(details.fallback_visual), { type: "checkbox" })}
+      ${hiddenTreeField("chromeFallbackImage", details.fallback_imagem ?? "")}
+      ${hiddenTreeField("chromeSuccessAction", details.ao_sucesso ?? "continuar")}
+      ${hiddenTreeField("chromeSuccessBlock", details.bloco_sucesso ?? "")}
+      ${hiddenTreeField("chromeSuccessSequence", details.sequencia_sucesso ?? "")}
+      ${hiddenTreeField("chromeSuccessSequenceDelay", formatTransitionDelayValue(details.atraso_antes_sequencia_sucesso ?? 0))}
+      ${hiddenTreeField("chromeFailureAction", details.ao_falhar ?? "parar")}
+      ${hiddenTreeField("chromeFailureBlock", details.bloco_falha ?? "")}
+      ${hiddenTreeField("chromeFailureSequence", details.sequencia_falha ?? "")}
+      ${hiddenTreeField("chromeFailureSequenceDelay", formatTransitionDelayValue(details.atraso_antes_sequencia_falha ?? 0))}
+    `);
+  }
+
+  return renderGenericCompactTreeEditor(event, [
+    { label: "Tipo", value: typeChipLabel(event.type) },
+    { label: "Resumo", value: event.description || event.command },
+  ], `${renderSuccessHiddenTreeFields(details)}${renderFailureHiddenTreeFields(details)}`);
+}
+
 function renderRecognitionExpandedTreeEditor(event) {
   const details = event.details ?? {};
-  const activeRecognitionTab = normalizeRecognitionTreeTab(state.recognitionTreeTabs?.[event.order] ?? "base");
+  const activeRecognitionTab = normalizeRecognitionDetailTab(state.recognitionTreeTabs?.[event.order] ?? "visual");
+  const imageName = String(details.imagem || "").split(/[\\/]/).pop() || "Nenhuma imagem escolhida";
+  const clickMode = recognitionClickModeFromDetails(details);
+  const successAction = String(details.ao_sucesso ?? "continuar");
+  const failureAction = String(details.ao_nao_encontrar ?? "parar");
+  const visibleSuccessAction = successAction === "ir_para_sequencia" ? "continuar" : successAction;
+  const visibleFailureAction = failureAction === "ir_para_sequencia" ? "parar" : failureAction;
+  const choiceButton = (field, value, label, activeValue) => `
+    <button
+      class="recognition-choice-button ${String(activeValue) === value ? "is-active" : ""}"
+      data-recognition-set-field="${field}"
+      data-recognition-set-value="${value}"
+      type="button"
+    >${label}</button>
+  `;
   return `
     <div class="field-stack field-stack-recognition recognition-expanded-editor">
       <div class="recognition-card-tabs has-preview" role="tablist" aria-label="Configuracoes do reconhecimento visual">
-        <button class="recognition-card-tab ${activeRecognitionTab === "base" ? "is-active" : ""}" data-recognition-tab-target="base" type="button" aria-pressed="${activeRecognitionTab === "base" ? "true" : "false"}">Base</button>
-        <button class="recognition-card-tab ${activeRecognitionTab === "preview" ? "is-active" : ""}" data-recognition-tab-target="preview" type="button" aria-pressed="${activeRecognitionTab === "preview" ? "true" : "false"}">Preview</button>
-        <button class="recognition-card-tab ${activeRecognitionTab === "action" ? "is-active" : ""}" data-recognition-tab-target="action" type="button" aria-pressed="${activeRecognitionTab === "action" ? "true" : "false"}">Acao</button>
-        <button class="recognition-card-tab ${activeRecognitionTab === "advanced" ? "is-active" : ""}" data-recognition-tab-target="advanced" type="button" aria-pressed="${activeRecognitionTab === "advanced" ? "true" : "false"}">Avancado</button>
+        <button class="recognition-card-tab ${activeRecognitionTab === "visual" ? "is-active" : ""}" data-recognition-tab-target="visual" type="button" aria-pressed="${activeRecognitionTab === "visual" ? "true" : "false"}">Imagem e texto</button>
+        <button class="recognition-card-tab ${activeRecognitionTab === "behavior" ? "is-active" : ""}" data-recognition-tab-target="behavior" type="button" aria-pressed="${activeRecognitionTab === "behavior" ? "true" : "false"}">Clique e ajustes</button>
       </div>
 
-      <div class="recognition-card-panel ${activeRecognitionTab === "base" ? "is-active" : ""}" data-recognition-tab-panel="base" ${activeRecognitionTab === "base" ? "" : "hidden"}>
-        <label class="recognition-reference-field">
-          <span>Referencia visual</span>
-          <div class="capture-inline">
-            <input data-tree-field="imagePath" type="text" value="${escapeHtml(details.imagem ?? "")}" placeholder="imagens/botao_salvar.png, painel_erro.png..." />
-            <button class="tree-open-button" data-tree-action="capture-image" type="button">Capturar nova imagem</button>
-            <button class="tree-open-button" data-tree-action="select-image" type="button">Selecionar referencia</button>
-          </div>
-        </label>
-        <button class="tree-open-button recognition-test-inline" data-tree-action="test-image-recognition" type="button">Testar imagem</button>
-        <div class="tree-inline-fields tree-inline-fields-recognition recognition-panel-grid">
-          <label class="recognition-cell recognition-cell-sm">
-            <span>Timeout</span>
-            <input data-tree-field="timeout" type="number" min="0.1" step="0.5" value="${escapeHtml(details.timeout ?? 10)}" />
-          </label>
-          <label class="recognition-cell recognition-cell-sm">
-            <span>Confianca</span>
-            <input data-tree-field="confidence" type="number" min="0.1" max="1" step="0.05" value="${escapeHtml(details.confianca ?? 0.8)}" />
-          </label>
-          <label class="recognition-cell recognition-cell-sm">
-            <span>Perfil</span>
-            <select data-tree-field="searchProfile">
-              <option value="fast" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "fast" ? "selected" : ""}>Rapido</option>
-              <option value="balanced" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "balanced" ? "selected" : ""}>Equilibrado</option>
-              <option value="precise" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "precise" ? "selected" : ""}>Preciso</option>
-            </select>
-          </label>
-          <label class="recognition-cell recognition-cell-full">
-            <span>Texto OCR obrigatorio</span>
-            <input data-tree-field="expectedOcrText" type="text" value="${escapeHtml(details.texto_ocr_esperado ?? "")}" placeholder="Ex: 06/2025" />
-          </label>
-          <label class="recognition-cell recognition-cell-full">
-            <span>Janela deste bloco</span>
-            <select data-tree-field="windowTitle">
-              ${recognitionWindowOptionsMarkup(details.janela_alvo ?? "", "Sem janela fixa neste bloco")}
-            </select>
-          </label>
-          <button class="tree-open-button recognition-window-refresh" data-tree-action="refresh-recognition-windows" type="button">Atualizar janelas</button>
+      <div class="recognition-card-panel ${activeRecognitionTab === "visual" ? "is-active" : ""}" data-recognition-tab-panel="visual" ${activeRecognitionTab === "visual" ? "" : "hidden"}>
+        <input data-tree-field="imagePath" type="hidden" value="${escapeHtml(details.imagem ?? "")}" />
+        <input data-tree-field="windowTitle" type="hidden" value="" />
+        <div class="recognition-preview-compact-wrap">
+          ${renderRecognitionPreviewPanel(details.imagem ?? "")}
         </div>
+        <div class="recognition-simple-actions">
+          <button class="tree-open-button" data-tree-action="capture-image" type="button">Tirar novo print</button>
+          <button class="tree-open-button" data-tree-action="select-image" type="button">Trocar imagem</button>
+        </div>
+        <label class="recognition-cell recognition-cell-full recognition-ocr-field">
+          <span>Texto para confirmar</span>
+          <input data-tree-field="expectedOcrText" type="text" value="${escapeHtml(details.texto_ocr_esperado ?? "")}" placeholder="Opcional. Ex: 06/2025" />
+        </label>
+        <button class="tree-open-button recognition-test-inline" data-tree-action="test-image-recognition" type="button">Procurar agora</button>
       </div>
 
-      <div class="recognition-card-panel ${activeRecognitionTab === "preview" ? "is-active" : ""}" data-recognition-tab-panel="preview" ${activeRecognitionTab === "preview" ? "" : "hidden"}>
-        ${renderRecognitionPreviewPanel(details.imagem ?? "")}
-        <p class="recognition-card-helper">Essa e a imagem atualmente salva nesse bloco para o FlowDetect procurar na tela.</p>
-      </div>
-
-      <div class="recognition-card-panel ${activeRecognitionTab === "action" ? "is-active" : ""}" data-recognition-tab-panel="action" ${activeRecognitionTab === "action" ? "" : "hidden"}>
+      <div class="recognition-card-panel ${activeRecognitionTab === "behavior" ? "is-active" : ""}" data-recognition-tab-panel="behavior" ${activeRecognitionTab === "behavior" ? "" : "hidden"}>
         <div class="insert-outcome-groups">
           <section class="insert-outcome-group is-success">
             <div class="insert-outcome-header">
-              <strong>Se der certo</strong>
-              <p>Quando a imagem for encontrada, escolha o que acontece em seguida.</p>
+              <strong>Imagem encontrada</strong>
             </div>
             <div class="tree-inline-fields recognition-panel-grid recognition-panel-grid-actions">
-              <label class="recognition-cell recognition-cell-full">
-                <span>Quando encontrar a imagem</span>
-                <select data-tree-field="clickOnFind">
-                  <option value="single" ${recognitionClickModeFromDetails(details) === "single" ? "selected" : ""}>Dar 1 clique</option>
-                  <option value="double" ${recognitionClickModeFromDetails(details) === "double" ? "selected" : ""}>Dar 2 cliques</option>
-                  <option value="identify" ${recognitionClickModeFromDetails(details) === "identify" ? "selected" : ""}>So identificar</option>
-                </select>
-              </label>
-              <label class="recognition-cell recognition-cell-sm">
-                <span>Depois disso</span>
-                <select data-tree-field="successAction">
-                  <option value="continuar" ${String(details.ao_sucesso ?? "continuar") === "continuar" ? "selected" : ""}>Continuar a sequencia</option>
-                  <option value="ir_para_sequencia" ${String(details.ao_sucesso ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para outra pagina</option>
-                  <option value="ir_para_bloco" ${String(details.ao_sucesso ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para outro bloco</option>
-                </select>
-              </label>
+              <input data-tree-field="clickOnFind" type="hidden" value="${escapeHtml(clickMode)}" />
+              <input data-tree-field="successAction" type="hidden" value="${escapeHtml(visibleSuccessAction)}" />
+              <div class="recognition-choice-group recognition-cell-full">
+                <span>Clique</span>
+                <div class="recognition-choice-row">
+                  ${choiceButton("clickOnFind", "single", "1 clique", clickMode)}
+                  ${choiceButton("clickOnFind", "double", "2 cliques", clickMode)}
+                  ${choiceButton("clickOnFind", "identify", "So confirmar", clickMode)}
+                </div>
+              </div>
+              <div class="recognition-choice-group recognition-cell-full">
+                <span>Proximo passo</span>
+                <div class="recognition-choice-row">
+                  ${choiceButton("successAction", "continuar", "Continuar", visibleSuccessAction)}
+                  ${choiceButton("successAction", "ir_para_bloco", "Ir para bloco", visibleSuccessAction)}
+                </div>
+              </div>
               ${renderActionTargetFields(
                 "data-tree-field",
                 "successAction",
-                details.ao_sucesso ?? "continuar",
+                visibleSuccessAction,
                 "successSequence",
                 details.sequencia_sucesso ?? "pagina_2",
                 "successBlock",
@@ -6133,24 +6500,23 @@ function renderRecognitionExpandedTreeEditor(event) {
 
           <section class="insert-outcome-group is-failure">
             <div class="insert-outcome-header">
-              <strong>Se falhar</strong>
-              <p>Se a imagem nao aparecer, escolha como o fluxo deve continuar.</p>
+              <strong>Imagem nao encontrada</strong>
             </div>
             <div class="tree-inline-fields recognition-panel-grid recognition-panel-grid-actions">
-              <label class="recognition-cell recognition-cell-sm">
-                <span>O que fazer na falha</span>
-                <select data-tree-field="failureAction">
-                  <option value="parar" ${String(details.ao_nao_encontrar ?? "parar") === "parar" ? "selected" : ""}>Parar a automacao</option>
-                  <option value="continuar" ${String(details.ao_nao_encontrar ?? "") === "continuar" || String(details.ao_nao_encontrar ?? "") === "pular" ? "selected" : ""}>Continuar a sequencia</option>
-                  <option value="tentar_novamente" ${String(details.ao_nao_encontrar ?? "") === "tentar_novamente" ? "selected" : ""}>Tentar novamente</option>
-                  <option value="ir_para_sequencia" ${String(details.ao_nao_encontrar ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para outra pagina</option>
-                  <option value="ir_para_bloco" ${String(details.ao_nao_encontrar ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para outro bloco</option>
-                </select>
-              </label>
+              <input data-tree-field="failureAction" type="hidden" value="${escapeHtml(visibleFailureAction)}" />
+              <div class="recognition-choice-group recognition-cell-full">
+                <span>O que fazer</span>
+                <div class="recognition-choice-row">
+                  ${choiceButton("failureAction", "parar", "Parar", visibleFailureAction)}
+                  ${choiceButton("failureAction", "continuar", "Continuar", visibleFailureAction === "pular" ? "continuar" : visibleFailureAction)}
+                  ${choiceButton("failureAction", "tentar_novamente", "Tentar de novo", visibleFailureAction)}
+                  ${choiceButton("failureAction", "ir_para_bloco", "Ir para bloco", visibleFailureAction)}
+                </div>
+              </div>
               ${renderActionTargetFields(
                 "data-tree-field",
                 "failureAction",
-                details.ao_nao_encontrar ?? "parar",
+                visibleFailureAction,
                 "failureSequence",
                 details.sequencia_nao_encontrar ?? "pagina_2",
                 "failureBlock",
@@ -6167,17 +6533,31 @@ function renderRecognitionExpandedTreeEditor(event) {
             </div>
           </section>
         </div>
-      </div>
 
-      <div class="recognition-card-panel ${activeRecognitionTab === "advanced" ? "is-active" : ""}" data-recognition-tab-panel="advanced" ${activeRecognitionTab === "advanced" ? "" : "hidden"}>
-        <p class="recognition-card-helper">Essas opcoes costumam ser ajustadas uma vez e depois quase nao mudam.</p>
-        <div class="tree-inline-fields tree-inline-fields-recognition recognition-panel-grid">
+        <div class="recognition-advanced-compact">
+          <span>Ajustes finos</span>
+          <label class="recognition-cell recognition-cell-sm">
+            <span>Tempo</span>
+            <input data-tree-field="timeout" type="number" min="0.1" step="0.5" value="${escapeHtml(details.timeout ?? 10)}" />
+          </label>
+          <label class="recognition-cell recognition-cell-sm">
+            <span>Precisao</span>
+            <input data-tree-field="confidence" type="number" min="0.1" max="1" step="0.05" value="${escapeHtml(details.confianca ?? 0.8)}" />
+          </label>
+          <label class="recognition-cell recognition-cell-sm">
+            <span>Modo</span>
+            <select data-tree-field="searchProfile">
+              <option value="fast" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "fast" ? "selected" : ""}>Rapido</option>
+              <option value="balanced" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "balanced" ? "selected" : ""}>Normal</option>
+              <option value="precise" ${normalizeRecognitionProfile(details.perfil_busca, "balanced") === "precise" ? "selected" : ""}>Preciso</option>
+            </select>
+          </label>
           <label class="recognition-cell recognition-cell-sm">
             <span>Tentativas</span>
             <input data-tree-field="retryCount" type="number" min="1" step="1" value="${escapeHtml(details.quantidade_tentativas ?? 1)}" />
           </label>
           <label class="recognition-cell recognition-cell-sm">
-            <span>Intervalo entre tentativas</span>
+            <span>Pausa</span>
             <input data-tree-field="retryInterval" type="number" min="0" step="0.5" value="${escapeHtml(details.intervalo_tentativas ?? 1)}" />
           </label>
         </div>
@@ -6187,50 +6567,7 @@ function renderRecognitionExpandedTreeEditor(event) {
 }
 
 function renderExpandedCommandCardOverlay(events = []) {
-  const order = Number(state.expandedTreeCardOrder);
-  if (!order) {
-    return "";
-  }
-
-  const event = events.find((item) => Number(item.order) === order && item.type === "clicar_imagem");
-  if (!event) {
-    return "";
-  }
-
-  return `
-    <div class="command-card-overlay">
-      <div class="command-card-overlay-backdrop" data-close-expanded-card="true"></div>
-      <div class="command-card-overlay-panel">
-        <article class="command-tree-card command-tree-card-overlay-card is-visual-recognition" data-order="${event.order}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}">
-          <div class="command-tree-top">
-            <div class="command-tree-main">
-              <span class="command-index">${String(event.order).padStart(2, "0")}</span>
-              <div>
-                <h3>${escapeHtml(event.title)}</h3>
-                <p data-recognition-subtitle="true">${escapeHtml(recognitionSubtitleLabel(event))}</p>
-              </div>
-            </div>
-            <div class="command-tree-side">
-              <span class="type-chip ${escapeHtml(event.type)}">${escapeHtml(typeChipLabel(event.type))}</span>
-              <button class="tree-open-button" data-tree-action="close-card-details" type="button">Fechar</button>
-            </div>
-          </div>
-          <div class="command-tree-grid command-tree-grid-overlay">
-            <div class="tree-editor">
-              ${renderRecognitionExpandedTreeEditor(event)}
-            </div>
-          </div>
-          <div class="command-tree-actions command-tree-actions-overlay">
-            <div class="command-action-group command-action-group-primary has-recognition-button">
-              <button class="tree-save-button" data-tree-action="save">Salvar</button>
-              <button class="tree-open-button" data-tree-action="test-image-recognition">Testar</button>
-              <button class="tree-open-button" data-tree-action="close-card-details">Fechar</button>
-            </div>
-          </div>
-        </article>
-      </div>
-    </div>
-  `;
+  return "";
 }
 
 function populateImageFailureBlockSelect() {
@@ -6305,6 +6642,8 @@ function typeChipLabel(type) {
       return "ABRIR URL";
     case "abrir_programa":
       return "ABRIR PROGRAMA";
+    case "salvar_download":
+      return "DOWNLOAD";
     case "sequencia_planilha":
       return "SEQUENCIA PLANILHA";
     case "escrever_planilha":
@@ -7225,7 +7564,7 @@ function readCurrentImagePathFromTarget(target) {
   if (target.scope === "update-tree") {
     return (
       commandMapList
-        ?.querySelector(`.command-tree-card-overlay-card[data-order="${target.order}"] [data-tree-field="imagePath"]`)
+        ?.querySelector(`.command-tree-card.is-inline-expanded[data-order="${target.order}"] [data-tree-field="imagePath"]`)
         ?.value
       || commandMapList
         ?.querySelector(`.command-tree-card[data-order="${target.order}"] [data-tree-field="imagePath"]`)
@@ -7329,7 +7668,7 @@ function writeImportedImagePath(target, imageId) {
 
   if (target.scope === "update-tree") {
     const card =
-      commandMapList.querySelector(`.command-tree-card-overlay-card[data-order="${target.order}"]`) ||
+      commandMapList.querySelector(`.command-tree-card.is-inline-expanded[data-order="${target.order}"]`) ||
       commandMapList.querySelector(`.command-tree-card[data-order="${target.order}"]`);
     const input = card?.querySelector('[data-tree-field="imagePath"]');
     if (input) {
@@ -7417,7 +7756,7 @@ async function persistCapturedRecognitionImage(target) {
 
   if (target.scope === "update-tree") {
     const card =
-      commandMapList?.querySelector(`.command-tree-card-overlay-card[data-order="${target.order}"]`)
+      commandMapList?.querySelector(`.command-tree-card.is-inline-expanded[data-order="${target.order}"]`)
       || commandMapList?.querySelector(`.command-tree-card[data-order="${target.order}"]`);
     if (!card) {
       return false;
@@ -8233,6 +8572,9 @@ function renderWorkbookPreview() {
   }
   if (deleteWorkbookButton) {
     deleteWorkbookButton.disabled = !selectedPreviewWorkbookMeta()?.id;
+  }
+  if (clearWorkbookColumnButton) {
+    clearWorkbookColumnButton.disabled = !selectedPreviewWorkbookMeta()?.id || !state.workbookSelectedSheet || !state.workbookSelectedColumn;
   }
   const preview = state.workbookPreview;
   if (!preview?.headers?.length) {
@@ -9094,6 +9436,11 @@ function renderStudioControlSpreadsheet() {
     studioControlSheetRefreshButton.disabled = !state.remoteControl.connected || state.remoteControl.sheetRefreshing;
     studioControlSheetRefreshButton.textContent = state.remoteControl.sheetRefreshing ? "Atualizando..." : "Atualizar planilha";
   }
+  if (studioControlSheetClearColumnButton) {
+    const selectedColumn = String(state.remoteControl.selectedSpreadsheetColumn || "");
+    studioControlSheetClearColumnButton.disabled = !state.remoteControl.connected || state.remoteControl.sheetRefreshing || !available || !headers.includes(selectedColumn);
+    studioControlSheetClearColumnButton.textContent = "Limpar coluna";
+  }
   if (studioControlSheetTitle) {
     studioControlSheetTitle.textContent = available ? `${preview.workbook_id || "Planilha"}` : "Aguardando planilha";
   }
@@ -9133,7 +9480,12 @@ function renderStudioControlSpreadsheet() {
         <tr>
           <th>Linha</th>
           ${headers.map((header) => `
-            <th class="${writeColumns.has(String(header)) ? "is-write-column" : ""}">${escapeHtml(header)}</th>
+            <th
+              class="${writeColumns.has(String(header)) ? "is-write-column" : ""} ${String(header) === String(state.remoteControl.selectedSpreadsheetColumn || "") ? "is-selected" : ""}"
+              data-studio-control-sheet-column="${escapeHtml(header)}"
+            >
+              <button class="studio-control-sheet-column-button" type="button" data-studio-control-sheet-column="${escapeHtml(header)}">${escapeHtml(header)}</button>
+            </th>
           `).join("")}
         </tr>
       </thead>
@@ -9144,7 +9496,7 @@ function renderStudioControlSpreadsheet() {
             <tr>
               <td class="studio-control-sheet-row-number">${escapeHtml(row.row_number ?? "")}</td>
               ${headers.map((header, index) => `
-                <td class="${writeColumns.has(String(header)) ? "is-write-column" : ""}">${escapeHtml(values[index] ?? "")}</td>
+                <td class="${writeColumns.has(String(header)) ? "is-write-column" : ""} ${String(header) === String(state.remoteControl.selectedSpreadsheetColumn || "") ? "is-selected" : ""}">${escapeHtml(values[index] ?? "")}</td>
               `).join("")}
             </tr>
           `;
@@ -9225,7 +9577,7 @@ function persistMeshCentralPath(path) {
 
 function studioControlWatchAutomationId() {
   const internalAutomation = studioControlInternalWatchAutomation();
-  return String(internalAutomation?.id || state.remoteControl.selectedId || "").trim();
+  return String(internalAutomation?.id || "").trim();
 }
 
 function renderStudioControlScreen() {
@@ -9299,6 +9651,272 @@ function renderStudioControlScreen() {
 
 function renderStudioControlScreenOnly() {
   renderStudioControlScreen();
+}
+
+function normalizeAgentAddress(address = "") {
+  return String(address || "")
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/+$/g, "");
+}
+
+function agentConnected(agent = {}) {
+  return Boolean(
+    state.remoteControl.connected
+    && normalizeAgentAddress(state.remoteControl.address) === normalizeAgentAddress(agent.address)
+  );
+}
+
+function loadAgentsConfig() {
+  try {
+    const raw = window.localStorage?.getItem(AGENTS_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    state.agents.items = Array.isArray(parsed)
+      ? parsed.map((agent) => ({
+          id: String(agent.id || window.crypto?.randomUUID?.() || Date.now()),
+          name: String(agent.name || "FlowDetect Agent"),
+          address: normalizeAgentAddress(agent.address || ""),
+          vmName: String(agent.vmName || ""),
+          createdAt: Number(agent.createdAt || Date.now()),
+        })).filter((agent) => agent.address)
+      : [];
+  } catch (error) {
+    console.warn("Falha ao carregar agentes salvos.", error);
+    state.agents.items = [];
+  }
+}
+
+function persistAgentsConfig() {
+  try {
+    window.localStorage?.setItem(AGENTS_STORAGE_KEY, JSON.stringify(state.agents.items));
+  } catch (error) {
+    console.warn("Falha ao salvar agentes.", error);
+  }
+}
+
+function resetAgentForm() {
+  state.agents.createOpen = false;
+  state.agents.editingId = "";
+  if (agentNameInput) {
+    agentNameInput.value = "";
+  }
+  if (agentAddressInput) {
+    agentAddressInput.value = "";
+  }
+  if (agentVmNameInput) {
+    agentVmNameInput.value = "";
+  }
+  if (agentCreatePanel) {
+    agentCreatePanel.hidden = true;
+  }
+}
+
+function openAgentForm(agent = null) {
+  state.agents.createOpen = true;
+  state.agents.editingId = agent?.id ? String(agent.id) : "";
+  if (agentCreatePanel) {
+    agentCreatePanel.hidden = false;
+  }
+  if (agentNameInput) {
+    agentNameInput.value = agent?.name || "";
+    window.setTimeout(() => agentNameInput.focus(), 30);
+  }
+  if (agentAddressInput) {
+    agentAddressInput.value = agent?.address || "";
+  }
+  if (agentVmNameInput) {
+    agentVmNameInput.value = agent?.vmName || "";
+  }
+  renderAgents();
+}
+
+function saveAgentFromForm() {
+  const name = String(agentNameInput?.value || "").trim() || "FlowDetect Agent";
+  const address = normalizeAgentAddress(agentAddressInput?.value || "");
+  const vmName = String(agentVmNameInput?.value || "").trim();
+  if (!address && !vmName) {
+    setMessage("Informe o endereco do Agent ou o nome da VM do VirtualBox.", "error");
+    agentAddressInput?.focus();
+    return;
+  }
+  const editingId = String(state.agents.editingId || "");
+  const nextAgent = {
+    id: editingId || String(window.crypto?.randomUUID?.() || Date.now()),
+    name,
+    address,
+    vmName,
+    createdAt: Date.now(),
+  };
+  if (editingId) {
+    state.agents.items = state.agents.items.map((agent) => (
+      String(agent.id) === editingId ? { ...agent, ...nextAgent } : agent
+    ));
+  } else {
+    state.agents.items = [
+      nextAgent,
+      ...state.agents.items.filter((agent) => (
+        address
+          ? agent.address !== address
+          : String(agent.vmName || "").trim() !== vmName
+      )),
+    ];
+  }
+  persistAgentsConfig();
+  resetAgentForm();
+  renderAgents();
+  setMessage(`Agente salvo: ${name}`, "success");
+}
+
+async function connectAgentFromCard(agent, options = {}) {
+  const { silent = false } = options;
+  const address = normalizeAgentAddress(agent?.address || "");
+  if (!address) {
+    if (!silent) {
+      setMessage("Esse agente nao tem endereco configurado.", "error");
+    }
+    return false;
+  }
+  try {
+    if (!silent) {
+      setBusy("Conectando Agent");
+    }
+    state.remoteControl.address = address;
+    if (studioControlAddressInput) {
+      studioControlAddressInput.value = address;
+    }
+    await connectStudioControl();
+    renderAgents();
+    if (!silent) {
+      setBusy("Pronto");
+    }
+    return true;
+  } catch (error) {
+    if (!silent) {
+      setBusy("Erro");
+      setMessage(`Nao foi possivel conectar em ${address}: ${String(error)}`, "error");
+    }
+    renderAgents();
+    return false;
+  }
+}
+
+async function startAgentVm(agent) {
+  const vmName = String(agent?.vmName || "").trim();
+  if (!vmName) {
+    setMessage("Esse agente nao tem nome de VM configurado. Edite o card e informe o nome do VirtualBox.", "error");
+    return false;
+  }
+  try {
+    setBusy("Iniciando VM");
+    await invoke("start_virtualbox_vm_headless", { vmName });
+    setBusy("Pronto");
+    setMessage(`VM iniciada em segundo plano: ${vmName}`, "success");
+    return true;
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+    return false;
+  }
+}
+
+async function waitAndConnectAgent(agent, attempts = 18) {
+  for (let index = 0; index < attempts; index += 1) {
+    const connected = await connectAgentFromCard(agent, { silent: true });
+    if (connected) {
+      return true;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 1600));
+  }
+  return false;
+}
+
+async function startAndWatchAgent(agent) {
+  if (!agent) {
+    return;
+  }
+  if (agent.vmName) {
+    await startAgentVm(agent);
+  }
+  if (!normalizeAgentAddress(agent.address || "")) {
+    setBusy("Pronto");
+    setMessage("VM iniciada. Quando o FlowDetect Agent mostrar o IP, edite este card e preencha o endereco para conectar.", "success");
+    renderAgents();
+    return;
+  }
+  const connected = agentConnected(agent) || await waitAndConnectAgent(agent, agent.vmName ? 22 : 1);
+  if (!connected) {
+    setBusy("Erro");
+    setMessage(`Nao consegui conectar no Agent ${agent.address}. Confira se o Agent esta aberto e na mesma rede.`, "error");
+    return;
+  }
+  setWorkspaceTab("agent-screen");
+  if (!state.remoteControl.screenStreaming) {
+    startStudioControlScreenStream();
+  }
+}
+
+function deleteAgentCard(id) {
+  const agent = state.agents.items.find((item) => String(item.id) === String(id));
+  if (!agent) {
+    return;
+  }
+  if (!window.confirm(`Remover o agente "${agent.name}" da lista do Studio?`)) {
+    return;
+  }
+  state.agents.items = state.agents.items.filter((item) => String(item.id) !== String(id));
+  persistAgentsConfig();
+  renderAgents();
+}
+
+function renderAgents() {
+  if (agentCreatePanel) {
+    agentCreatePanel.hidden = !state.agents.createOpen;
+  }
+  if (saveAgentCardButton) {
+    saveAgentCardButton.textContent = state.agents.editingId ? "Salvar alteracoes" : "Salvar agente";
+  }
+  if (!agentsList) {
+    return;
+  }
+  if (!state.agents.items.length) {
+    agentsList.innerHTML = `
+      <article class="agents-empty-card">
+        <span class="panel-kicker">Nenhum ambiente</span>
+        <h3>Cadastre o primeiro Agent</h3>
+        <p>Voce pode cadastrar apenas o nome da VM primeiro. Depois que o Agent iniciar e mostrar o IP, edite o card e complete o endereco.</p>
+        <button class="primary-button" type="button" data-agent-action="new">Adicionar agente</button>
+      </article>
+    `;
+    return;
+  }
+  agentsList.innerHTML = state.agents.items.map((agent) => {
+    const connected = agentConnected(agent);
+    const hasAddress = Boolean(normalizeAgentAddress(agent.address || ""));
+    return `
+      <article class="agent-card ${connected ? "is-connected" : ""}" data-agent-id="${escapeHtml(agent.id)}">
+        <div class="agent-card-top">
+          <span class="agent-card-status ${connected ? "is-online" : ""}">${connected ? "Conectado" : hasAddress ? "Pronto" : "Aguardando IP"}</span>
+          ${agent.vmName ? '<span class="agent-card-chip">VM</span>' : '<span class="agent-card-chip">PC</span>'}
+        </div>
+        <h3>${escapeHtml(agent.name)}</h3>
+        <div class="agent-card-meta">
+          <span>Agent</span>
+          <strong>${escapeHtml(agent.address || "Preencha depois que o Agent abrir")}</strong>
+        </div>
+        <div class="agent-card-meta">
+          <span>VirtualBox</span>
+          <strong>${escapeHtml(agent.vmName || "Sem VM vinculada")}</strong>
+        </div>
+        <div class="agent-card-actions">
+          <button class="primary-button" type="button" data-agent-action="watch" data-agent-id="${escapeHtml(agent.id)}">${hasAddress ? "Conectar e assistir" : "Iniciar VM"}</button>
+          <button class="ghost-button" type="button" data-agent-action="connect" data-agent-id="${escapeHtml(agent.id)}" ${hasAddress ? "" : "disabled"}>Conectar</button>
+          <button class="ghost-button" type="button" data-agent-action="start-vm" data-agent-id="${escapeHtml(agent.id)}" ${agent.vmName ? "" : "disabled"}>Iniciar VM</button>
+          <button class="ghost-button" type="button" data-agent-action="edit" data-agent-id="${escapeHtml(agent.id)}">Editar</button>
+          <button class="danger-button" type="button" data-agent-action="delete" data-agent-id="${escapeHtml(agent.id)}">Excluir</button>
+        </div>
+      </article>
+    `;
+  }).join("");
 }
 
 function renderStudioControl() {
@@ -9521,6 +10139,9 @@ async function refreshStudioControlSpreadsheet(options = {}) {
       limited: Boolean(result?.limited),
       write_columns: Array.isArray(result?.write_columns) ? result.write_columns : [],
     };
+    if (!state.remoteControl.spreadsheetPreview.headers.includes(state.remoteControl.selectedSpreadsheetColumn)) {
+      state.remoteControl.selectedSpreadsheetColumn = "";
+    }
     state.remoteControl.lastSheetRefreshAt = Date.now();
   } catch (error) {
     const errorText = String(error);
@@ -9542,6 +10163,48 @@ async function refreshStudioControlSpreadsheet(options = {}) {
   } finally {
     state.remoteControl.sheetRefreshing = false;
     renderStudioControlSpreadsheet();
+  }
+}
+
+async function clearStudioControlSpreadsheetColumn() {
+  const preview = state.remoteControl.spreadsheetPreview || {};
+  const column = String(state.remoteControl.selectedSpreadsheetColumn || "").trim();
+  const workbook = String(preview.workbook_id || "").trim();
+  const sheet = String(preview.sheet || "").trim();
+  if (!state.remoteControl.connected) {
+    setMessage("Conecte no Agent antes de limpar uma coluna.", "error");
+    return;
+  }
+  if (!workbook || !sheet || !column) {
+    setMessage("Selecione uma coluna na planilha remota antes de limpar.", "error");
+    return;
+  }
+  const confirmed = window.confirm(
+    `Limpar todos os valores da coluna "${column}" na aba "${sheet}" do Agent?\n\nO cabecalho sera mantido.`
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    setBusy("Limpando coluna remota");
+    const result = await invoke("remote_agent_clear_spreadsheet_column", {
+      address: state.remoteControl.address,
+      workbook,
+      sheet,
+      column,
+    });
+    state.remoteControl.lastSheetRefreshAt = 0;
+    await refreshStudioControlSpreadsheet({ force: true, silent: true });
+    setBusy("Pronto");
+    setMessage(`Coluna ${column} limpa no Agent em ${result.cleared || 0} linha(s).`, "success");
+  } catch (error) {
+    const errorText = String(error);
+    const friendlyMessage = errorText.includes("Endpoint nao encontrado") || errorText.includes("Endpoint nÃ£o encontrado")
+      ? "O Agent conectado ainda nao tem a limpeza remota de coluna. Atualize/build o Agent e abra ele novamente."
+      : errorText;
+    setBusy("Erro");
+    setMessage(friendlyMessage, "error");
   }
 }
 
@@ -9644,6 +10307,11 @@ function stopStudioControlWebRtc({ clearRemote = false } = {}) {
   remote.webrtcPointerChannel = null;
   remote.webrtcSessionId = "";
   remote.webrtcActive = false;
+  remote.pendingRemotePointerMove = null;
+  if (remote.remotePointerMoveFrame) {
+    window.cancelAnimationFrame(remote.remotePointerMoveFrame);
+    remote.remotePointerMoveFrame = null;
+  }
   if (studioControlScreenVideo) {
     studioControlScreenVideo.srcObject = null;
     studioControlScreenVideo.hidden = true;
@@ -9779,13 +10447,30 @@ function sendStudioRemoteControlEvent(payload) {
   if (!state.remoteControl.remoteInputEnabled) {
     return;
   }
-  const channel = payload?.kind === "mouse" && payload?.event === "move"
+  const isMouseMove = payload?.kind === "mouse" && payload?.event === "move";
+  const channel = isMouseMove
     ? state.remoteControl.webrtcPointerChannel
     : state.remoteControl.webrtcControlChannel;
   if (!channel || channel.readyState !== "open") {
     return;
   }
-  if (payload?.kind === "mouse" && payload?.event === "move" && channel.bufferedAmount > 2048) {
+  if (isMouseMove) {
+    state.remoteControl.pendingRemotePointerMove = payload;
+    if (state.remoteControl.remotePointerMoveFrame) {
+      return;
+    }
+    state.remoteControl.remotePointerMoveFrame = window.requestAnimationFrame(() => {
+      state.remoteControl.remotePointerMoveFrame = null;
+      const nextPayload = state.remoteControl.pendingRemotePointerMove;
+      state.remoteControl.pendingRemotePointerMove = null;
+      if (!nextPayload || !channel || channel.readyState !== "open") {
+        return;
+      }
+      if (channel.bufferedAmount > 2048) {
+        return;
+      }
+      channel.send(JSON.stringify(nextPayload));
+    });
     return;
   }
   channel.send(JSON.stringify(payload));
@@ -9831,12 +10516,7 @@ function startStudioControlScreenStream() {
   runSelectedAutomationWithScreenStart().catch(() => null);
   startStudioControlWebRtc()
     .then(() => {
-      setMessage(
-        studioControlWatchAutomationId()
-          ? "WebRTC iniciado e automacao enviada ao Agent."
-          : "WebRTC iniciado dentro do Studio.",
-        "success"
-      );
+      setMessage("WebRTC iniciado e automacao fixa do botao Assistir enviada ao Agent.", "success");
     })
     .catch((error) => {
       stopStudioControlWebRtc({ clearRemote: true });
@@ -9936,12 +10616,14 @@ async function stopStudioControlAutomation() {
 }
 
 async function runSelectedAutomationWithScreenStart() {
-  const automationId = studioControlWatchAutomationId();
-  if (!state.remoteControl.connected || state.remoteControl.running || !automationId) {
+  if (!state.remoteControl.connected || state.remoteControl.running) {
     return;
   }
   try {
-    await runStudioControlAutomation(automationId, { minimizeAgent: false });
+    await invoke("remote_agent_execute_watch_automation", {
+      address: state.remoteControl.address,
+      automationName: "Aceito_Compartilhamento",
+    });
   } catch (error) {
     setMessage(`Tela iniciada, mas nao consegui executar a automacao: ${String(error)}`, "error");
   }
@@ -10053,6 +10735,98 @@ function renderOpenProgramFields(fieldAttr, details = {}, currentOrder = null) {
         </label>
         ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
       </div>
+    </div>
+  `;
+}
+
+function renderSaveDownloadFields(fieldAttr, details = {}, currentOrder = null) {
+  const actionAttr = fieldAttr === "data-insert-field"
+    ? "data-insert-action"
+    : fieldAttr === "data-tree-field"
+      ? "data-tree-action"
+      : "data-action";
+  const nameValue = details.nome_arquivo ?? "{empresa}_{competencia}_FGTS.pdf";
+  const activeTab = fieldAttr === "data-insert-field"
+    ? normalizeDownloadTreeTab(state.insertPanel?.downloadTab ?? "arquivo")
+    : normalizeDownloadTreeTab(state.downloadTreeTabs?.[currentOrder] ?? "arquivo");
+  const tabButton = (tab, label) => `
+    <button
+      class="recognition-card-tab ${activeTab === tab ? "is-active" : ""}"
+      data-download-tab-target="${tab}"
+      type="button"
+      aria-pressed="${activeTab === tab ? "true" : "false"}"
+    >${label}</button>
+  `;
+  const tabPanel = (tab, content) => `
+    <div
+      class="recognition-card-panel download-card-panel ${activeTab === tab ? "is-active" : ""}"
+      data-download-tab-panel="${tab}"
+      ${activeTab === tab ? "" : "hidden"}
+    >
+      ${content}
+    </div>
+  `;
+  return `
+    <div class="field-stack download-card-editor">
+      <div class="recognition-card-tabs download-card-tabs" role="tablist" aria-label="Configuracoes do download">
+        ${tabButton("arquivo", "Arquivo")}
+        ${tabButton("destino", "Destino")}
+        ${tabButton("nome", "Nome")}
+        ${tabButton("fluxo", "Fluxo")}
+      </div>
+      ${tabPanel("arquivo", `
+        <label>
+          <span>Pasta monitorada</span>
+          <div class="capture-inline">
+            <input ${fieldAttr}="downloadSource" type="text" value="${escapeHtml(details.pasta_origem ?? "")}" placeholder="Vazio = Downloads" />
+            <button class="tree-open-button" ${actionAttr}="pick-download-source" type="button">Escolher</button>
+          </div>
+        </label>
+        <div class="tree-inline-fields">
+          <label>
+            <span>Tipo de arquivo</span>
+            <input ${fieldAttr}="downloadExtension" type="text" value="${escapeHtml(details.extensao ?? ".pdf")}" placeholder=".pdf" />
+          </label>
+          <label>
+            <span>Aguardar ate (s)</span>
+            <input ${fieldAttr}="downloadTimeout" type="number" min="1" step="1" value="${escapeHtml(details.timeout ?? 60)}" />
+          </label>
+        </div>
+      `)}
+      ${tabPanel("destino", `
+        <label>
+          <span>Pasta destino</span>
+          <div class="capture-inline">
+            <input ${fieldAttr}="downloadDestination" type="text" value="${escapeHtml(details.pasta_destino ?? "")}" placeholder="C:\\Guias\\FGTS" />
+            <button class="tree-open-button" ${actionAttr}="pick-download-destination" type="button">Escolher</button>
+          </div>
+        </label>
+        <p class="recognition-card-helper">Escolha onde o arquivo sera guardado depois que o download terminar.</p>
+      `)}
+      ${tabPanel("nome", `
+        <div class="download-name-builder">
+          <label>
+            <span>Como salvar</span>
+            <input ${fieldAttr}="downloadFileName" type="text" value="${escapeHtml(nameValue)}" placeholder="Vazio = manter nome original" />
+          </label>
+          <div class="download-template-row">
+            <button class="mini-pill-button" data-download-template="{empresa}_{competencia}_FGTS.pdf" type="button">Modelo FGTS</button>
+            <button class="mini-pill-button" data-download-template="" type="button">Manter original</button>
+          </div>
+          <div class="download-token-row" aria-label="Adicionar dado da planilha ao nome">
+            <span>Adicionar:</span>
+            <button class="mini-pill-button" data-download-token="{empresa}" type="button">Empresa</button>
+            <button class="mini-pill-button" data-download-token="{cnpj}" type="button">CNPJ</button>
+            <button class="mini-pill-button" data-download-token="{competencia}" type="button">Competencia</button>
+            <button class="mini-pill-button" data-download-token="{linha}" type="button">Linha</button>
+          </div>
+        </div>
+      `)}
+      ${tabPanel("fluxo", `
+        <div class="tree-inline-fields">
+          ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
+        </div>
+      `)}
     </div>
   `;
 }
@@ -10317,6 +11091,13 @@ function renderEditorFields(event) {
     `;
   }
 
+  if (event.type === "salvar_download") {
+    return `
+      ${renderSaveDownloadFields("data-field", details, event.order)}
+      ${delayField}
+    `;
+  }
+
   if (event.type === "escrever_planilha") {
     return `
       ${renderWriteSpreadsheetFields("data-field", details, event.order)}
@@ -10538,6 +11319,10 @@ function renderTreeEditorFields(event) {
 
   if (event.type === "abrir_programa") {
     return renderOpenProgramFields("data-tree-field", details, event.order);
+  }
+
+  if (event.type === "salvar_download") {
+    return renderSaveDownloadFields("data-tree-field", details, event.order);
   }
 
   if (event.type === "escrever_planilha") {
@@ -11155,6 +11940,18 @@ function renderInsertPanel(order) {
       sequencia_sucesso: panel.successSequence,
       atraso_antes_sequencia_sucesso: panel.successSequenceDelay,
     }, order);
+  } else if (panel.type === "save_download") {
+    body = renderSaveDownloadFields("data-insert-field", {
+      pasta_origem: panel.downloadSource,
+      extensao: panel.downloadExtension,
+      pasta_destino: panel.downloadDestination,
+      nome_arquivo: panel.downloadFileName,
+      timeout: panel.downloadTimeout,
+      ao_sucesso: panel.successAction,
+      bloco_sucesso: panel.successBlock,
+      sequencia_sucesso: panel.successSequence,
+      atraso_antes_sequencia_sucesso: panel.successSequenceDelay,
+    }, order);
   } else if (panel.type === "write_spreadsheet") {
     body = renderWriteSpreadsheetFields("data-insert-field", {
       arquivo: panel.workbook,
@@ -11214,6 +12011,7 @@ function renderInsertPanel(order) {
         <button class="insert-type-button ${panel.type === "chrome" ? "is-active" : ""}" data-insert-type="chrome">Chrome HTML</button>
         <button class="insert-type-button ${panel.type === "open_url" ? "is-active" : ""}" data-insert-type="open_url">Abrir URL</button>
         <button class="insert-type-button ${panel.type === "open_program" ? "is-active" : ""}" data-insert-type="open_program">Abrir Programa</button>
+        <button class="insert-type-button ${panel.type === "save_download" ? "is-active" : ""}" data-insert-type="save_download">Salvar download</button>
         <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet">Planilha</button>
         <button class="insert-type-button ${panel.type === "write_spreadsheet" ? "is-active" : ""}" data-insert-type="write_spreadsheet">Escrever celula</button>
         <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start">Inicio loop</button>
@@ -11254,6 +12052,7 @@ function renderEmptyCommandMapStarter() {
           <button class="insert-type-button" data-empty-insert-type="chrome" type="button">Chrome HTML</button>
           <button class="insert-type-button" data-empty-insert-type="open_url" type="button">Abrir URL</button>
           <button class="insert-type-button" data-empty-insert-type="open_program" type="button">Abrir Programa</button>
+          <button class="insert-type-button" data-empty-insert-type="save_download" type="button">Salvar download</button>
           <button class="insert-type-button" data-empty-insert-type="spreadsheet" type="button">Planilha</button>
           <button class="insert-type-button" data-empty-insert-type="write_spreadsheet" type="button">Escrever celula</button>
           <button class="insert-type-button" data-empty-insert-type="loop_start" type="button">Inicio loop</button>
@@ -11517,17 +12316,25 @@ function renderTimeline() {
 }
 
 function renderCommandMap(options = {}) {
-  const { layoutSnapshot = null } = options;
+  const {
+    layoutSnapshot = null,
+    preserveScroll = false,
+    skipAutoFit = false,
+    suppressFocusScroll = false,
+    suppressVisualFocus = false,
+  } = options;
+  const previousScrollLeft = preserveScroll ? commandMapList.scrollLeft : null;
+  const previousScrollTop = preserveScroll ? commandMapList.scrollTop : null;
   const events = getCommandMapEvents().map((event) => applyCommandMapDraftToEvent(event));
   state.commandMapOrderCache = events
     .map((event) => Number(event.order))
     .filter((order) => Number.isFinite(order));
   const pageDefinition = getCommandMapPageDefinition(state.commandMapPageSequence);
   builderShell?.classList.toggle("has-insert-panel", Boolean(state.insertPanel));
-  builderShell?.classList.toggle("has-command-card-overlay", Boolean(state.expandedTreeCardOrder));
   updateCommandMapHeaderSummary();
   renderCommandMapPageTabs();
   if (!events.length) {
+    state.expandedTreeCardOrder = null;
     commandMapList.innerHTML = renderEmptyCommandMapStarter();
     applyCommandMapZoom();
     updateCommandMapNavButtons();
@@ -11540,6 +12347,7 @@ function renderCommandMap(options = {}) {
     const isLastCard = index === events.length - 1;
     const hasRecordButton = event.type === "tecla" || event.type === "atalho";
     const isRecognitionCard = event.type === "clicar_imagem";
+    const isInlineExpanded = Number(state.expandedTreeCardOrder) === Number(event.order);
     const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha";
     const isLoopMarkerCard = isLoopMarkerType(event.type);
     const isRuntimeEditable = event.type === "texto_livre" && Boolean(event.details?.editavel_execucao);
@@ -11561,15 +12369,21 @@ function renderCommandMap(options = {}) {
       `;
     const card = `
       <div class="command-flow-segment ${isRecognitionCard ? "visual-recognition-segment" : ""} ${isSpreadsheetCard ? "spreadsheet-segment" : ""} ${state.insertPanel?.targetOrder === event.order ? "has-insert-panel" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}">
-      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarkerCard ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
-        <div class="command-tree-top">
+      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isInlineExpanded ? "is-inline-expanded" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarkerCard ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
+        <div class="command-tree-top ${isRecognitionCard ? "is-recognition-top" : ""}">
           <div class="command-tree-main">
             <span class="command-index">${String(event.order).padStart(2, "0")}</span>
             <div>
               ${event.type === "sequencia_planilha" ? `<span class="command-tree-loop-badge">${escapeHtml(getSpreadsheetLoopBadgeLabel(event))}</span>` : ""}
               ${event.type === "escrever_planilha" ? `<span class="command-tree-loop-badge">Linha atual</span>` : ""}
-              <h3>${escapeHtml(event.title)}</h3>
-              <p data-recognition-subtitle="true">${escapeHtml(recognitionSubtitleLabel(event))}</p>
+              ${isRecognitionCard
+                ? `
+                  <span class="type-chip ${escapeHtml(event.type)} recognition-title-chip">Reconhecimento visual</span>
+                `
+                : `
+                  <h3>${escapeHtml(event.title)}</h3>
+                  <p data-recognition-subtitle="true">${escapeHtml(recognitionSubtitleLabel(event))}</p>
+                `}
             </div>
           </div>
           <div class="command-tree-side">
@@ -11579,7 +12393,7 @@ function renderCommandMap(options = {}) {
                 <i></i>
               </label>
             ` : ""}
-            <span class="type-chip ${escapeHtml(event.type)} ${isRuntimeEditable ? "runtime-editable" : ""}">${escapeHtml(isRuntimeEditable ? "Bloco editavel" : typeChipLabel(event.type))}</span>
+            ${isInlineExpanded ? `<button class="tree-open-button inline-details-close" data-tree-action="close-card-details" type="button">Fechar</button>` : isRecognitionCard ? "" : `<span class="type-chip ${escapeHtml(event.type)} ${isRuntimeEditable ? "runtime-editable" : ""}">${escapeHtml(isRuntimeEditable ? "Bloco editavel" : typeChipLabel(event.type))}</span>`}
             <button class="drag-handle" data-drag-handle="true" data-order="${event.order}" title="Arrastar card" type="button">
               <span>Arrastar</span>
             </button>
@@ -11588,7 +12402,7 @@ function renderCommandMap(options = {}) {
 
         <div class="command-tree-grid">
           <div class="tree-editor">
-            ${renderTreeEditorFields(event)}
+            ${isInlineExpanded ? renderTreeEditorFields(event) : renderCompactTreeEditorFields(event)}
           </div>
           <div class="tree-command-preview">${escapeHtml(event.command)}</div>
         </div>
@@ -11650,16 +12464,28 @@ function renderCommandMap(options = {}) {
     `;
   });
 
+  if (state.expandedTreeCardOrder && !events.some((event) => Number(event.order) === Number(state.expandedTreeCardOrder))) {
+    state.expandedTreeCardOrder = null;
+  }
+
   commandMapList.innerHTML = `<div class="command-flow-row">${events
     .map((event, index) => {
       const zone = `<div class="command-drop-zone" data-target-index="${event.order}" aria-label="Soltar antes do bloco ${event.order}"></div>`;
       return `${zone}${segments[index]}`;
     })
     .join("")}<div class="command-drop-zone command-drop-zone-end" data-target-index="${Number(events.at(-1)?.order ?? 0) + 1}" aria-label="Soltar no final de ${escapeHtml(pageDefinition.label.toLowerCase())}"></div></div>`;
+  if (preserveScroll) {
+    commandMapList.scrollLeft = previousScrollLeft ?? commandMapList.scrollLeft;
+    commandMapList.scrollTop = previousScrollTop ?? commandMapList.scrollTop;
+  }
   hydrateRecognitionPreviewCards(commandMapList);
   applyCommandMapZoom();
-  scheduleCommandMapAutoFit();
-  applyCommandMapFocus();
+  if (skipAutoFit) {
+    scheduleCommandConnectorLayout();
+  } else {
+    scheduleCommandMapAutoFit();
+  }
+  applyCommandMapFocus("auto", { suppressScroll: suppressFocusScroll, suppressVisualFocus });
   if (layoutSnapshot) {
     requestAnimationFrame(() => {
       animateCommandMapLayoutShift(layoutSnapshot);
@@ -11910,6 +12736,11 @@ function formValuesFromCard(card) {
     programPath: get("programPath")?.value ?? "",
     programParams: get("programParams")?.value ?? "",
     programWait: parseNumber(get("programWait")?.value, 2),
+    downloadSource: get("downloadSource")?.value ?? "",
+    downloadExtension: get("downloadExtension")?.value ?? ".pdf",
+    downloadDestination: get("downloadDestination")?.value ?? "",
+    downloadFileName: get("downloadFileName")?.value ?? "{empresa}_{competencia}_FGTS.pdf",
+    downloadTimeout: parseNumber(get("downloadTimeout")?.value, 60),
     workbook: get("workbook")?.value ?? "",
     sheet: get("sheet")?.value ?? "",
     column: get("column")?.value ?? "",
@@ -11997,6 +12828,11 @@ function treeValuesFromCard(card) {
     programPath: get("programPath")?.value ?? "",
     programParams: get("programParams")?.value ?? "",
     programWait: parseNumber(get("programWait")?.value, 2),
+    downloadSource: get("downloadSource")?.value ?? "",
+    downloadExtension: get("downloadExtension")?.value ?? ".pdf",
+    downloadDestination: get("downloadDestination")?.value ?? "",
+    downloadFileName: get("downloadFileName")?.value ?? "{empresa}_{competencia}_FGTS.pdf",
+    downloadTimeout: parseNumber(get("downloadTimeout")?.value, 60),
     workbook: get("workbook")?.value ?? "",
     sheet: get("sheet")?.value ?? "",
     column: get("column")?.value ?? "",
@@ -12016,6 +12852,92 @@ function approxEqual(a, b, epsilon = 0.0001) {
 
 function normalizeStringValue(value) {
   return String(value ?? "").trim();
+}
+
+async function pickFolderIntoInput(input) {
+  if (!input) {
+    return null;
+  }
+  const selected = await openNativeFolderDialog({
+    title: "Escolha uma pasta",
+  });
+  if (!selected) {
+    return null;
+  }
+  const folderPath = Array.isArray(selected) ? selected[0] : selected;
+  if (!folderPath) {
+    return null;
+  }
+  input.value = folderPath;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  return folderPath;
+}
+
+function folderFieldSelector(action, attrName) {
+  const field = action === "pick-download-source" ? "downloadSource" : "downloadDestination";
+  return `[${attrName}="${field}"]`;
+}
+
+function downloadNameInputFromButton(button) {
+  const host = button?.closest?.(".download-name-builder");
+  return host?.querySelector?.(
+    '#downloadFileNameInput, [data-field="downloadFileName"], [data-tree-field="downloadFileName"], [data-insert-field="downloadFileName"]'
+  ) || null;
+}
+
+function applyDownloadNameTemplate(button) {
+  const input = downloadNameInputFromButton(button);
+  if (!input) {
+    return;
+  }
+  input.value = button.dataset.downloadTemplate ?? "";
+  input.focus();
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function insertDownloadNameToken(button) {
+  const input = downloadNameInputFromButton(button);
+  const token = button?.dataset?.downloadToken ?? "";
+  if (!input || !token) {
+    return;
+  }
+  const start = Number.isFinite(input.selectionStart) ? input.selectionStart : input.value.length;
+  const end = Number.isFinite(input.selectionEnd) ? input.selectionEnd : input.value.length;
+  const prefix = input.value.slice(0, start);
+  const suffix = input.value.slice(end);
+  const separator = prefix && !prefix.endsWith("_") ? "_" : "";
+  input.value = `${prefix}${separator}${token}${suffix}`;
+  const nextPosition = prefix.length + separator.length + token.length;
+  input.focus();
+  input.setSelectionRange?.(nextPosition, nextPosition);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function applyRecognitionChoiceButton(button) {
+  const field = button?.dataset?.recognitionSetField || "";
+  const value = button?.dataset?.recognitionSetValue || "";
+  const container = button?.closest?.(".command-tree-card, .flow-card, .insert-card-panel");
+  if (!field || !container) {
+    return;
+  }
+  const input = container.querySelector(
+    `[data-tree-field="${field}"], [data-field="${field}"], [data-insert-field="${field}"]`
+  );
+  if (!input) {
+    return;
+  }
+  input.value = value;
+  button.closest(".recognition-choice-row")?.querySelectorAll(".recognition-choice-button").forEach((item) => {
+    item.classList.toggle("is-active", item === button);
+  });
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  if (container.classList.contains("command-tree-card") || container.classList.contains("flow-card")) {
+    syncCommandMapDraftFromCard(container);
+  }
 }
 
 function successFlowChanged(values, details = {}) {
@@ -12275,6 +13197,17 @@ function commandCardHasUnsavedChanges(snapshot) {
     );
   }
 
+  if (snapshot.type === "salvar_download") {
+    return (
+      normalizeStringValue(values.downloadSource) !== normalizeStringValue(details.pasta_origem ?? "")
+      || normalizeStringValue(values.downloadExtension) !== normalizeStringValue(details.extensao ?? ".pdf")
+      || normalizeStringValue(values.downloadDestination) !== normalizeStringValue(details.pasta_destino ?? "")
+      || normalizeStringValue(values.downloadFileName) !== normalizeStringValue(details.nome_arquivo ?? "")
+      || !approxEqual(values.downloadTimeout, details.timeout ?? 60)
+      || successFlowChanged(values, details)
+    );
+  }
+
   if (snapshot.type === "verificar_estado_botao") {
     return (
       normalizeStringValue(values.verifyName) !== normalizeStringValue(details.nome ?? "Verificar botao")
@@ -12473,6 +13406,27 @@ async function invokeCommandCardUpdate(snapshot) {
       caminho: values.programPath,
       parametros: values.programParams || null,
       aguardarSegundos: values.programWait,
+      delay: values.delay,
+      aoSucesso: values.successAction,
+      blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
+    });
+  }
+
+  if (type === "salvar_download") {
+    if (!normalizeStringValue(values.downloadDestination)) {
+      throw new Error(`O bloco ${order} de Salvar download esta sem pasta destino.`);
+    }
+    return invoke("update_save_download_block", {
+      order,
+      pastaOrigem: values.downloadSource || null,
+      extensao: values.downloadExtension || ".pdf",
+      pastaDestino: values.downloadDestination,
+      nomeArquivo: values.downloadFileName || "",
+      timeout: values.downloadTimeout,
       delay: values.delay,
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
@@ -12754,6 +13708,11 @@ function insertValuesFromPanel(panelElement) {
     programPath: get("programPath")?.value ?? state.insertPanel?.programPath ?? "",
     programParams: get("programParams")?.value ?? state.insertPanel?.programParams ?? "",
     programWait: parseNumber(get("programWait")?.value, state.insertPanel?.programWait ?? 2),
+    downloadSource: get("downloadSource")?.value ?? state.insertPanel?.downloadSource ?? "",
+    downloadExtension: get("downloadExtension")?.value ?? state.insertPanel?.downloadExtension ?? ".pdf",
+    downloadDestination: get("downloadDestination")?.value ?? state.insertPanel?.downloadDestination ?? "",
+    downloadFileName: get("downloadFileName")?.value ?? state.insertPanel?.downloadFileName ?? "{empresa}_{competencia}_FGTS.pdf",
+    downloadTimeout: parseNumber(get("downloadTimeout")?.value, state.insertPanel?.downloadTimeout ?? 60),
     delay: parseNumber(get("delay")?.value, 0),
     workbook: get("workbook")?.value ?? state.insertPanel?.workbook ?? "",
     sheet: get("sheet")?.value ?? state.insertPanel?.sheet ?? "",
@@ -13250,6 +14209,34 @@ document.getElementById("addSpreadsheetButton").addEventListener("click", () => 
   , focusLastCommandMapCard);
 });
 
+addSaveDownloadButton?.addEventListener("click", () => {
+  if (!downloadDestinationInput?.value?.trim()) {
+    setMessage("Informe a pasta destino do download.", "error");
+    return;
+  }
+  runMutation("Bloco Salvar download adicionado", () =>
+    invoke("add_save_download_block", {
+      pastaOrigem: downloadSourceInput?.value?.trim() || null,
+      extensao: downloadExtensionInput?.value?.trim() || ".pdf",
+      pastaDestino: downloadDestinationInput.value.trim(),
+      nomeArquivo: downloadFileNameInput?.value?.trim() || "{empresa}_{competencia}_FGTS.pdf",
+      timeout: parseNumber(downloadTimeoutInput?.value, 60),
+      delay: parseNumber(downloadDelayInput?.value, 0.3),
+      sequencia: currentSequenceName(),
+      aoSucesso: "continuar",
+      blocoSucesso: null,
+    })
+  , focusLastCommandMapCard);
+});
+
+pickDownloadSourceButton?.addEventListener("click", () => {
+  pickFolderIntoInput(downloadSourceInput).catch((error) => setMessage(String(error), "error"));
+});
+
+pickDownloadDestinationButton?.addEventListener("click", () => {
+  pickFolderIntoInput(downloadDestinationInput).catch((error) => setMessage(String(error), "error"));
+});
+
 addLoopStartButton?.addEventListener("click", () => {
   runMutation("Inicio do loop adicionado", () =>
     invoke("add_loop_start_block", {
@@ -13287,8 +14274,42 @@ commandTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
 workbookTabButton.addEventListener("click", () => setWorkspaceTab("workbook"));
 launcherTabButton.addEventListener("click", () => setWorkspaceTab("launcher"));
 remoteControlTabButton?.addEventListener("click", () => setWorkspaceTab("remote-control"));
+agentsTabButton?.addEventListener("click", () => setWorkspaceTab("agents"));
 agentScreenTabButton?.addEventListener("click", () => setWorkspaceTab("agent-screen"));
 smartRecorderTabButton?.addEventListener("click", () => setWorkspaceTab("smart-recorder"));
+addAgentCardButton?.addEventListener("click", () => openAgentForm());
+cancelAgentCardButton?.addEventListener("click", () => {
+  resetAgentForm();
+  renderAgents();
+});
+saveAgentCardButton?.addEventListener("click", saveAgentFromForm);
+agentsList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-agent-action]");
+  if (!button) {
+    return;
+  }
+  const action = button.dataset.agentAction;
+  const id = button.dataset.agentId || "";
+  const agent = state.agents.items.find((item) => String(item.id) === String(id));
+  if (action === "new") {
+    openAgentForm();
+    return;
+  }
+  if (!agent) {
+    return;
+  }
+  if (action === "connect") {
+    connectAgentFromCard(agent);
+  } else if (action === "watch") {
+    startAndWatchAgent(agent);
+  } else if (action === "start-vm") {
+    startAgentVm(agent);
+  } else if (action === "edit") {
+    openAgentForm(agent);
+  } else if (action === "delete") {
+    deleteAgentCard(id);
+  }
+});
 smartRecorderStartButton?.addEventListener("click", () => {
   startSmartRecorder();
 });
@@ -13821,11 +14842,6 @@ studioControlScreenVideo?.addEventListener("mousemove", (event) => {
   if (!state.remoteControl.remoteInputEnabled) {
     return;
   }
-  const now = performance.now();
-  if (now - Number(state.remoteControl.lastRemoteMouseMoveAt || 0) < 50) {
-    return;
-  }
-  state.remoteControl.lastRemoteMouseMoveAt = now;
   const point = remoteVideoPointFromEvent(event);
   if (!point) {
     return;
@@ -13906,6 +14922,19 @@ window.addEventListener("keyup", (event) => {
 
 studioControlSheetRefreshButton?.addEventListener("click", () => {
   refreshStudioControlSpreadsheet({ force: true }).catch((error) => setMessage(String(error), "error"));
+});
+
+studioControlSheetClearColumnButton?.addEventListener("click", () => {
+  clearStudioControlSpreadsheetColumn().catch((error) => setMessage(String(error), "error"));
+});
+
+studioControlSheetTableWrap?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-studio-control-sheet-column]");
+  if (!button) {
+    return;
+  }
+  state.remoteControl.selectedSpreadsheetColumn = String(button.dataset.studioControlSheetColumn || "");
+  renderStudioControlSpreadsheet();
 });
 
 studioControlList?.addEventListener("click", async (event) => {
@@ -14135,6 +15164,42 @@ openWorkbookButton?.addEventListener("click", async () => {
     state.workbookExternalEditOpenedAt = Date.now();
     setBusy("Pronto");
     setMessage("Planilha aberta no editor padrao. Ao voltar para o FlowDetect, a previa sera recarregada.", "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+});
+
+clearWorkbookColumnButton?.addEventListener("click", async () => {
+  const workbook = selectedPreviewWorkbookMeta();
+  const sheet = state.workbookSelectedSheet || workbookSheetSelect?.value || "";
+  const column = state.workbookSelectedColumn || "";
+  if (!workbook?.id || !sheet || !column) {
+    setMessage("Selecione uma planilha, uma aba e uma coluna para limpar.", "error");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Limpar todos os valores da coluna "${column}" na aba "${sheet}"?\n\nO cabecalho sera mantido e apenas as linhas abaixo dele serao apagadas.`
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    setBusy("Limpando coluna");
+    const result = await invoke("clear_workbook_column", {
+      workbook: workbook.id,
+      sheet,
+      column,
+    });
+    await refreshWorkbookMeta();
+    await loadWorkbookPreview(sheet, workbook.id);
+    if (result.roadmap) {
+      applyRoadmap(result.roadmap);
+    }
+    setBusy("Pronto");
+    setMessage(`Coluna ${column} limpa em ${result.cleared || 0} linha(s).`, "success");
   } catch (error) {
     setBusy("Erro");
     setMessage(String(error), "error");
@@ -14463,6 +15528,26 @@ timelineList.addEventListener("change", (event) => {
 });
 
 timelineList.addEventListener("click", (event) => {
+  const downloadTabButton = event.target.closest("button[data-download-tab-target]");
+  if (downloadTabButton) {
+    const card = downloadTabButton.closest(".flow-card");
+    const order = Number(card?.dataset.order);
+    if (order) {
+      state.downloadTreeTabs = {
+        ...state.downloadTreeTabs,
+        [order]: normalizeDownloadTreeTab(downloadTabButton.dataset.downloadTabTarget),
+      };
+      applyDownloadTreeTabState(card, state.downloadTreeTabs[order]);
+    }
+    return;
+  }
+
+  const recognitionChoiceButton = event.target.closest("button[data-recognition-set-field]");
+  if (recognitionChoiceButton) {
+    applyRecognitionChoiceButton(recognitionChoiceButton);
+    return;
+  }
+
   const button = event.target.closest("button[data-action]");
   if (!button) {
     return;
@@ -14519,6 +15604,13 @@ timelineList.addEventListener("click", (event) => {
   if (action === "select-chrome-fallback-image") {
     state.commandMapFocusOrder = order;
     openImagePicker({ scope: "update-editor-chrome-fallback", order });
+    return;
+  }
+
+  if (action === "pick-download-source" || action === "pick-download-destination") {
+    state.commandMapFocusOrder = order;
+    pickFolderIntoInput(card.querySelector(folderFieldSelector(action, "data-field")))
+      .catch((error) => setMessage(String(error), "error"));
     return;
   }
 
@@ -14855,6 +15947,22 @@ commandMapList.addEventListener("click", (event) => {
     return;
   }
 
+  const downloadTabButton = event.target.closest("button[data-download-tab-target]");
+  if (downloadTabButton) {
+    const card = downloadTabButton.closest(".command-tree-card");
+    const order = Number(card?.dataset.order);
+    if (order) {
+      setDownloadTreeTab(order, downloadTabButton.dataset.downloadTabTarget || "arquivo");
+      return;
+    }
+  }
+
+  const recognitionChoiceButton = event.target.closest("button[data-recognition-set-field]");
+  if (recognitionChoiceButton) {
+    applyRecognitionChoiceButton(recognitionChoiceButton);
+    return;
+  }
+
   const button = event.target.closest("button[data-tree-action]");
   if (!button) {
     return;
@@ -14866,9 +15974,20 @@ commandMapList.addEventListener("click", (event) => {
   const values = treeValuesFromCard(card);
   const action = button.dataset.treeAction;
 
+  if (action === "close-card-details") {
+    closeExpandedTreeCard();
+    return;
+  }
+
   if (action === "open-editor") {
     setCommandMapFocus(order);
     focusEditorBlock(order);
+    return;
+  }
+
+  if (action === "open-card-details") {
+    setCommandMapFocus(order, "auto", { skipConnectorLayout: true, suppressScroll: true });
+    openExpandedTreeCard(order, button);
     return;
   }
 
@@ -14917,6 +16036,13 @@ commandMapList.addEventListener("click", (event) => {
   if (action === "select-chrome-fallback-image") {
     setCommandMapFocus(order);
     openImagePicker({ scope: "update-tree-chrome-fallback", order });
+    return;
+  }
+
+  if (action === "pick-download-source" || action === "pick-download-destination") {
+    setCommandMapFocus(order);
+    pickFolderIntoInput(card.querySelector(folderFieldSelector(action, "data-tree-field")))
+      .catch((error) => setMessage(String(error), "error"));
     return;
   }
 
@@ -15007,6 +16133,39 @@ commandMapList.addEventListener("click", (event) => {
     return;
   }
 
+  const insertDownloadTabButton = event.target.closest(".insert-card-panel button[data-download-tab-target]");
+  if (insertDownloadTabButton) {
+    if (!state.insertPanel) {
+      return;
+    }
+    const panel = insertDownloadTabButton.closest(".insert-card-panel");
+    if (panel) {
+      state.insertPanel = {
+        ...state.insertPanel,
+        ...insertValuesFromPanel(panel),
+      };
+    }
+    state.insertPanel.downloadTab = normalizeDownloadTreeTab(insertDownloadTabButton.dataset.downloadTabTarget || "arquivo");
+    setCommandMapFocus(Number(panel?.dataset.targetOrder || state.insertPanel.targetOrder));
+    renderCommandMap();
+    return;
+  }
+
+  const recognitionChoiceButton = event.target.closest("button[data-recognition-set-field]");
+  if (recognitionChoiceButton) {
+    applyRecognitionChoiceButton(recognitionChoiceButton);
+    if (state.insertPanel) {
+      const panel = recognitionChoiceButton.closest(".insert-card-panel");
+      if (panel) {
+        state.insertPanel = {
+          ...state.insertPanel,
+          ...insertValuesFromPanel(panel),
+        };
+      }
+    }
+    return;
+  }
+
   const button = event.target.closest("button[data-insert-action], button[data-insert-type]");
   if (!button) {
     return;
@@ -15085,6 +16244,23 @@ commandMapList.addEventListener("click", (event) => {
   if (action === "select-chrome-fallback-image") {
     setCommandMapFocus(Number(panel.dataset.targetOrder));
     openImagePicker({ scope: "insert-panel-chrome-fallback", order: Number(panel.dataset.targetOrder) });
+    return;
+  }
+
+  if (action === "pick-download-source" || action === "pick-download-destination") {
+    setCommandMapFocus(Number(panel.dataset.targetOrder));
+    state.insertPanel = {
+      ...state.insertPanel,
+      ...insertValuesFromPanel(panel),
+    };
+    pickFolderIntoInput(panel.querySelector(folderFieldSelector(action, "data-insert-field")))
+      .then(() => {
+        state.insertPanel = {
+          ...state.insertPanel,
+          ...insertValuesFromPanel(panel),
+        };
+      })
+      .catch((error) => setMessage(String(error), "error"));
     return;
   }
 
@@ -15420,6 +16596,41 @@ commandMapList.addEventListener("click", (event) => {
               sequenciaSucesso: common.sequenciaSucesso,
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
+    } else if (values.type === "save_download") {
+      if (!values.downloadDestination.trim()) {
+        setMessage("Informe a pasta destino antes de inserir esse bloco.", "error");
+        return;
+      }
+      promiseFactory = () =>
+        isFirstBlock
+          ? invoke("add_save_download_block", {
+              pastaOrigem: values.downloadSource || null,
+              extensao: values.downloadExtension || ".pdf",
+              pastaDestino: values.downloadDestination,
+              nomeArquivo: values.downloadFileName || "",
+              timeout: values.downloadTimeout,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            })
+          : invoke("insert_save_download_block", {
+              targetOrder: common.targetOrder,
+              position: common.position,
+              pastaOrigem: values.downloadSource || null,
+              extensao: values.downloadExtension || ".pdf",
+              pastaDestino: values.downloadDestination,
+              nomeArquivo: values.downloadFileName || "",
+              timeout: values.downloadTimeout,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            });
     } else if (values.type === "write_spreadsheet") {
       if (!values.sheet.trim() || !values.column.trim()) {
         setMessage("Informe a aba e a coluna antes de inserir esse bloco.", "error");
@@ -15503,6 +16714,8 @@ async function boot() {
   try {
     setBusy("Carregando");
     updateCommandMapSaveUI();
+    loadAgentsConfig();
+    renderAgents();
     renderStudioControl();
     syncExecutionWindowModeFrom("top");
     setAssistControlTab(state.assistControlTab);
