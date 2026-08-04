@@ -1,1 +1,0 @@
-{"default":{"identifier":"default","description":"Permite a interface principal usar invoke e escutar eventos da automacao.","local":true,"windows":["main"],"permissions":["core:default"]}}
