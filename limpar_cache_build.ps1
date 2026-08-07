@@ -2,7 +2,7 @@ $ErrorActionPreference = "SilentlyContinue"
 
 $targets = @(
     "tauri_gerador\src-tauri\target",
-    "tauri_ui\src-tauri\target",
+    "flowdetect_agent\src-tauri\target",
     "diagnosticos_reconhecimento",
     "__pycache__"
 )

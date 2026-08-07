@@ -50,6 +50,7 @@ TIPOS_IMAGEM = {"clicar_imagem"}
 TIPOS_VERIFICACAO = {"verificar_estado_botao"}
 TIPOS_CHROME = {"chrome_elemento_html"}
 TIPOS_PREPARACAO_TELA = {"abrir_url", "abrir_programa"}
+TIPOS_DOWNLOAD = {"salvar_download"}
 TIPOS_SUPORTADOS_RUNTIME = {
     "texto_livre",
     "tecla",
@@ -62,6 +63,7 @@ TIPOS_SUPORTADOS_RUNTIME = {
     *TIPOS_VERIFICACAO,
     *TIPOS_CHROME,
     *TIPOS_PREPARACAO_TELA,
+    *TIPOS_DOWNLOAD,
 }
 MODOS_EXECUCAO_SEQUENCIA = {"normal", "loop_planilha"}
 ARQUIVOS_RUNTIME_ATUALIZACAO = [
@@ -1008,6 +1010,9 @@ def gerar_seletores(elemento):
     aria_labelledby = str(elemento.get("aria_labelledby", "")).strip()
     element_id = str(elemento.get("id", "")).strip()
     texto = str(elemento.get("text", "")).strip()
+    texto_proximo = str(elemento.get("texto_proximo", "") or elemento.get("nearby_text", "")).strip()
+    css_capturado = str(elemento.get("css_selector", "") or elemento.get("css", "")).strip()
+    xpath_capturado = str(elemento.get("xpath", "")).strip()
     tipo = str(elemento.get("type", "")).strip().lower()
 
     adicionar(
@@ -1058,6 +1063,14 @@ def gerar_seletores(elemento):
             "media",
             extra={"seletor_css": tag},
         )
+    if texto_proximo:
+        adicionar(
+            "nearby_text",
+            texto_proximo,
+            f"page.get_by_text({texto_proximo!r})",
+            "media",
+            "Texto perto do elemento capturado.",
+        )
     if role and texto:
         adicionar(
             "role",
@@ -1065,6 +1078,16 @@ def gerar_seletores(elemento):
             f"page.get_by_role({role!r}, name={texto!r})",
             "alta",
             extra={"role": role},
+        )
+
+    if css_capturado:
+        adicionar(
+            "css",
+            css_capturado,
+            f"page.locator({css_capturado!r})",
+            "media",
+            "CSS capturado direto da pagina.",
+            extra={"seletor_css": css_capturado},
         )
 
     atributos_css = []
@@ -1095,24 +1118,25 @@ def gerar_seletores(elemento):
         predicados_xpath.append(f"normalize-space(.)={xpath_literal(texto)}")
     if not predicados_xpath:
         predicados_xpath.append("1=1")
-    xpath = f"//{tag}[{' and '.join(predicados_xpath)}]"
+    xpath = xpath_capturado or f"//{tag}[{' and '.join(predicados_xpath)}]"
     adicionar(
         "xpath",
         xpath,
         f"page.locator({f'xpath={xpath}'!r})",
-        "baixa",
-        "XPath deve ser ultimo recurso.",
+        "baixa" if not xpath_capturado else "media",
+        "XPath deve ser ultimo recurso." if not xpath_capturado else "XPath capturado direto da pagina.",
     )
 
     prioridade = {
-        "placeholder": 0,
+        "id": 0,
         "name": 1,
-        "aria-label": 2,
-        "role": 3,
-        "labelledby": 4,
-        "id": 5,
+        "placeholder": 2,
+        "aria-label": 3,
+        "text": 4,
+        "nearby_text": 5,
         "css": 6,
-        "text": 7,
+        "labelledby": 7,
+        "role": 8,
         "xpath": 8,
     }
     confianca_score = {"alta": 0, "media": 1, "baixa": 2}
@@ -1282,6 +1306,14 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         sufixo = f" | params:{parametros[:32]}" if parametros else ""
         return f"[ABRIR PROGRAMA:{caminho}{sufixo} | aguardar={aguardar:g}s]"
 
+    if tipo_evento == "salvar_download":
+        detalhes = metadados or {}
+        extensao = str(detalhes.get("extensao", ".pdf") or ".pdf").strip() or ".pdf"
+        destino = str(detalhes.get("pasta_destino", "") or "").strip() or "Destino manual"
+        nome = str(detalhes.get("nome_arquivo", "") or "").strip() or "nome original"
+        timeout = float(detalhes.get("timeout", 60) or 60)
+        return f"[SALVAR DOWNLOAD:{extensao} -> {destino[:42]} | nome:{nome[:32]} | timeout={timeout:g}s]"
+
     if tipo_evento in TIPOS_VERIFICACAO:
         detalhes = metadados or {}
         ativo = Path(str(detalhes.get("imagem_ativo", ""))).name or "ativo"
@@ -1403,6 +1435,18 @@ def montar_comando_python(teclas, tipo_evento, texto_livre=None, metadados=None)
             ")"
         )
 
+    if tipo_evento == "salvar_download":
+        detalhes = metadados or {}
+        return (
+            "salvar_download("
+            f"pasta_origem={str(detalhes.get('pasta_origem', ''))!r}, "
+            f"extensao={str(detalhes.get('extensao', '.pdf') or '.pdf')!r}, "
+            f"pasta_destino={str(detalhes.get('pasta_destino', ''))!r}, "
+            f"nome_arquivo={str(detalhes.get('nome_arquivo', ''))!r}, "
+            f"timeout={float(detalhes.get('timeout', 60) or 60)!r}"
+            ")"
+        )
+
     if tipo_evento in TIPOS_VERIFICACAO:
         detalhes = metadados or {}
         return (
@@ -1429,11 +1473,63 @@ def montar_script_python(eventos):
     linhas = [
         "import pyautogui",
         "import time",
+        "import ctypes",
         "",
         f"INTERVALO_TEXTO = {INTERVALO_TEXTO}",
         "",
         "",
+        "def definir_texto_clipboard_windows(texto):",
+        '    if not hasattr(ctypes, "windll"):',
+        "        return False",
+        "    user32 = ctypes.windll.user32",
+        "    kernel32 = ctypes.windll.kernel32",
+        "    kernel32.GlobalAlloc.restype = ctypes.c_void_p",
+        "    kernel32.GlobalLock.restype = ctypes.c_void_p",
+        "    user32.SetClipboardData.restype = ctypes.c_void_p",
+        '    dados = (str(texto or "") + "\\0").encode("utf-16-le")',
+        "    memoria = None",
+        "    try:",
+        "        aberto = False",
+        "        for _ in range(6):",
+        "            if user32.OpenClipboard(None):",
+        "                aberto = True",
+        "                break",
+        "            time.sleep(0.01)",
+        "        if not aberto:",
+        "            return False",
+        "        user32.EmptyClipboard()",
+        "        memoria = kernel32.GlobalAlloc(0x0002, len(dados))",
+        "        if not memoria:",
+        "            return False",
+        "        destino = kernel32.GlobalLock(memoria)",
+        "        if not destino:",
+        "            return False",
+        "        ctypes.memmove(destino, dados, len(dados))",
+        "        kernel32.GlobalUnlock(memoria)",
+        "        if not user32.SetClipboardData(13, memoria):",
+        "            return False",
+        "        memoria = None",
+        "        return True",
+        "    except Exception:",
+        "        return False",
+        "    finally:",
+        "        try:",
+        "            user32.CloseClipboard()",
+        "        except Exception:",
+        "            pass",
+        "        if memoria:",
+        "            try:",
+        "                kernel32.GlobalFree(memoria)",
+        "            except Exception:",
+        "                pass",
+        "",
+        "",
         "def digitar_texto(texto):",
+        "    texto = str(texto)",
+        "    if texto and definir_texto_clipboard_windows(texto):",
+        '        pyautogui.hotkey("ctrl", "v")',
+        "        time.sleep(0.008)",
+        "        return",
         "    for caractere in texto:",
         '        if caractere == "\\r":',
         "            continue",
@@ -2230,6 +2326,49 @@ def criar_bloco_abrir_programa(
     }
 
 
+def normalizar_extensao_download(extensao):
+    valor = str(extensao or ".pdf").strip().lower()
+    if not valor or valor == "*":
+        return "*"
+    return valor if valor.startswith(".") else f".{valor}"
+
+
+def criar_bloco_salvar_download(
+    pasta_origem="",
+    extensao=".pdf",
+    pasta_destino="",
+    nome_arquivo="{empresa}_{competencia}_FGTS.pdf",
+    timeout=60,
+    delay=0,
+    sequencia="principal",
+    ao_sucesso="continuar",
+    bloco_sucesso="",
+    sequencia_sucesso="",
+    atraso_sequencia_sucesso=0,
+):
+    pasta_destino_normalizada = str(pasta_destino or "").strip()
+    if not pasta_destino_normalizada:
+        raise ValueError("Informe a pasta de destino do download.")
+    detalhes = aplicar_fluxo_sucesso({
+        "pasta_origem": str(pasta_origem or "").strip(),
+        "extensao": normalizar_extensao_download(extensao),
+        "pasta_destino": pasta_destino_normalizada,
+        "nome_arquivo": str(nome_arquivo or "").strip(),
+        "timeout": max(1.0, float(timeout or 60)),
+        "ultimo_arquivo_variavel": "ultimo_download",
+    }, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
+    return {
+        "ordem": 0,
+        "sequencia": normalizar_nome_sequencia(sequencia),
+        "tipo": "salvar_download",
+        "teclas": ["salvar_download"],
+        "texto": formatar_evento(["salvar_download"], "salvar_download", metadados=detalhes),
+        "intervalo_antes": round(float(delay), 3),
+        "comando_python": montar_comando_python(["salvar_download"], "salvar_download", metadados=detalhes),
+        "detalhes": detalhes,
+    }
+
+
 def criar_bloco_planilha(
     sheet,
     column,
@@ -2414,6 +2553,13 @@ def card_do_evento(evento):
             f"Parametros: {resumir_texto(parametros, 48)} | "
             f"Aguarda {float(detalhes.get('aguardar_segundos', 2) or 0):g}s"
         )
+    elif tipo == "salvar_download":
+        titulo = "Salvar download"
+        destino = str(detalhes.get("pasta_destino", "") or "").strip()
+        extensao = str(detalhes.get("extensao", ".pdf") or ".pdf")
+        nome = str(detalhes.get("nome_arquivo", "") or "").strip() or "nome original"
+        subtitulo = f"{extensao} -> {Path(destino).name or destino or 'Destino'}"
+        descricao = f"Nome: {resumir_texto(nome, 44)} | Timeout {float(detalhes.get('timeout', 60) or 60):g}s"
     elif tipo == "verificar_estado_botao":
         titulo = detalhes.get("nome", "Verificar estado do botao")
         subtitulo = (
@@ -3041,6 +3187,26 @@ def comando_adicionar_abrir_programa(args):
     return salvar_e_retornar(payload)
 
 
+def comando_adicionar_salvar_download(args):
+    payload = carregar_e_normalizar()
+    payload["eventos"].append(
+        criar_bloco_salvar_download(
+            args.pasta_origem,
+            args.extensao,
+            args.pasta_destino,
+            args.nome_arquivo,
+            args.timeout,
+            args.delay,
+            args.sequencia,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+        )
+    )
+    return salvar_e_retornar(payload)
+
+
 def comando_adicionar_planilha(args):
     payload = carregar_e_normalizar()
     payload["eventos"].append(
@@ -3269,6 +3435,29 @@ def comando_inserir_abrir_programa(args):
             args.caminho,
             args.parametros,
             args.aguardar_segundos,
+            args.delay,
+            args.sequencia,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+        ),
+        args.target_order,
+        args.position,
+    )
+    return salvar_e_retornar(payload)
+
+
+def comando_inserir_salvar_download(args):
+    payload = carregar_e_normalizar()
+    inserir_evento(
+        payload,
+        criar_bloco_salvar_download(
+            args.pasta_origem,
+            args.extensao,
+            args.pasta_destino,
+            args.nome_arquivo,
+            args.timeout,
             args.delay,
             args.sequencia,
             args.ao_sucesso,
@@ -3562,6 +3751,29 @@ def comando_atualizar_abrir_programa(args):
     return salvar_e_retornar(payload)
 
 
+def comando_atualizar_salvar_download(args):
+    payload = carregar_e_normalizar()
+    _, evento = localizar_evento(payload, args.order)
+    if evento.get("tipo") != "salvar_download":
+        raise ValueError("O bloco selecionado nao eh do tipo Salvar download.")
+    detalhes_atuais = evento.get("detalhes") or {}
+    bloco = criar_bloco_salvar_download(
+        args.pasta_origem if args.pasta_origem is not None else detalhes_atuais.get("pasta_origem", ""),
+        args.extensao if args.extensao is not None else detalhes_atuais.get("extensao", ".pdf"),
+        args.pasta_destino if args.pasta_destino is not None else detalhes_atuais.get("pasta_destino", ""),
+        args.nome_arquivo if args.nome_arquivo is not None else detalhes_atuais.get("nome_arquivo", ""),
+        args.timeout if args.timeout is not None else detalhes_atuais.get("timeout", 60),
+        args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
+        args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
+        args.ao_sucesso,
+        args.bloco_sucesso,
+        args.sequencia_sucesso,
+        args.atraso_sequencia_sucesso,
+    )
+    evento.update(bloco)
+    return salvar_e_retornar(payload)
+
+
 def comando_atualizar_planilha(args):
     payload = carregar_e_normalizar()
     _, evento = localizar_evento(payload, args.order)
@@ -3732,6 +3944,13 @@ def build_parser():
         parser_destino.add_argument("--parametros", default="")
         parser_destino.add_argument("--aguardar-segundos", type=float, default=2)
 
+    def adicionar_argumentos_salvar_download(parser_destino):
+        parser_destino.add_argument("--pasta-origem", default="")
+        parser_destino.add_argument("--extensao", default=".pdf")
+        parser_destino.add_argument("--pasta-destino", required=True)
+        parser_destino.add_argument("--nome-arquivo", default="{empresa}_{competencia}_FGTS.pdf")
+        parser_destino.add_argument("--timeout", type=float, default=60)
+
     subparsers.add_parser("list")
     subparsers.add_parser("automation-library-list")
     subparsers.add_parser("workbook-meta")
@@ -3880,6 +4099,12 @@ def build_parser():
     add_open_program.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(add_open_program)
 
+    add_save_download = subparsers.add_parser("add-save-download")
+    adicionar_argumentos_salvar_download(add_save_download)
+    add_save_download.add_argument("--delay", type=float, default=0)
+    add_save_download.add_argument("--sequencia", default="principal")
+    adicionar_argumentos_fluxo_sucesso(add_save_download)
+
     add_sheet = subparsers.add_parser("add-planilha")
     add_sheet.add_argument("--workbook")
     add_sheet.add_argument("--sheet", required=True)
@@ -4022,6 +4247,14 @@ def build_parser():
     insert_open_program.add_argument("--delay", type=float, default=0)
     insert_open_program.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(insert_open_program)
+
+    insert_save_download = subparsers.add_parser("insert-save-download")
+    insert_save_download.add_argument("--target-order", type=int, required=True)
+    insert_save_download.add_argument("--position", choices=["before", "after"], required=True)
+    adicionar_argumentos_salvar_download(insert_save_download)
+    insert_save_download.add_argument("--delay", type=float, default=0)
+    insert_save_download.add_argument("--sequencia", default="principal")
+    adicionar_argumentos_fluxo_sucesso(insert_save_download)
 
     insert_sheet = subparsers.add_parser("insert-planilha")
     insert_sheet.add_argument("--workbook")
@@ -4172,6 +4405,13 @@ def build_parser():
     update_open_program.add_argument("--sequencia")
     adicionar_argumentos_fluxo_sucesso(update_open_program)
 
+    update_save_download = subparsers.add_parser("update-save-download")
+    update_save_download.add_argument("--order", type=int, required=True)
+    adicionar_argumentos_salvar_download(update_save_download)
+    update_save_download.add_argument("--delay", type=float)
+    update_save_download.add_argument("--sequencia")
+    adicionar_argumentos_fluxo_sucesso(update_save_download)
+
     update_sheet = subparsers.add_parser("update-planilha")
     update_sheet.add_argument("--workbook")
     update_sheet.add_argument("--order", type=int, required=True)
@@ -4249,6 +4489,7 @@ COMANDOS = {
     "add-chrome-html": comando_adicionar_chrome_html,
     "add-open-url": comando_adicionar_abrir_url,
     "add-open-program": comando_adicionar_abrir_programa,
+    "add-save-download": comando_adicionar_salvar_download,
     "add-planilha": comando_adicionar_planilha,
     "add-write-planilha": comando_adicionar_escrita_planilha,
     "add-loop-start": comando_adicionar_inicio_loop,
@@ -4261,6 +4502,7 @@ COMANDOS = {
     "insert-chrome-html": comando_inserir_chrome_html,
     "insert-open-url": comando_inserir_abrir_url,
     "insert-open-program": comando_inserir_abrir_programa,
+    "insert-save-download": comando_inserir_salvar_download,
     "insert-planilha": comando_inserir_planilha,
     "insert-write-planilha": comando_inserir_escrita_planilha,
     "insert-loop-start": comando_inserir_inicio_loop,
@@ -4273,6 +4515,7 @@ COMANDOS = {
     "update-chrome-html": comando_atualizar_chrome_html,
     "update-open-url": comando_atualizar_abrir_url,
     "update-open-program": comando_atualizar_abrir_programa,
+    "update-save-download": comando_atualizar_salvar_download,
     "update-planilha": comando_atualizar_planilha,
     "update-write-planilha": comando_atualizar_escrita_planilha,
     "update-loop-marker": comando_atualizar_marcador_loop,

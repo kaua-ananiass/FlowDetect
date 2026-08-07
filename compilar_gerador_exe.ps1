@@ -249,7 +249,6 @@ $itemsToCopy = @(
     "validar_dependencias_instaladas.py",
     "requirements.txt",
     "instalar_dependencias_silencioso.bat",
-    "COMO USAR.txt",
     "README_AGENTE.md",
     "mapeamento_teclado.json"
 )

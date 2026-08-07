@@ -48,7 +48,6 @@
       "../../instalar_dependencias_silencioso.bat": "instalar_dependencias_silencioso.bat",
       "../../README.md": "README.md",
       "../../README_AGENTE.md": "README_AGENTE.md",
-      "../../COMO USAR.txt": "COMO USAR.txt",
       "../../COMO_COMPILAR_GERADOR.txt": "COMO_COMPILAR_GERADOR.txt",
       "../../tauri_gerador/src-tauri/installer_support/python-installer.exe": "python-installer.exe",
       "../../tauri_gerador/src-tauri/installer_support/python-wheels/": "python-wheels/",

@@ -1,9 +1,7 @@
 # Node / Tauri / Rust
 node_modules/
 tauri_gerador/node_modules/
-tauri_ui/node_modules/
 flowdetect_agent/node_modules/
-flowdetect_control/node_modules/
 dist/
 build/
 target/
@@ -27,10 +25,14 @@ tauri_gerador_dev_stderr.log
 ultimo_log_launcher.txt
 .parar_automacao.flag
 .flowdetect_temp/
+.flowdetect_recorder/
 .agents/
+dados_execucao/
+diagnosticos_chrome/
 
 # Build outputs / exported packages
 saida_exe/
+FlowDetect-Builds/
 build_automacao/
 automacoes_exportadas/
 Versao_01/
@@ -42,6 +44,7 @@ desenvolvimento_teste.zip
 *.exe
 *.msi
 *.zip
+tauri_gerador/web.zip
 
 # Spreadsheets and local runtime data
 planilhas/
@@ -70,12 +73,22 @@ relatorios_loop/
 # Bundled runtime used by FlowDetect Agent installer
 !tauri_gerador/src-tauri/installer_support/runtime_seed/
 !tauri_gerador/src-tauri/installer_support/runtime_seed/**
+tauri_gerador/src-tauri/installer_support/runtime_seed/automacoes/*
+!tauri_gerador/src-tauri/installer_support/runtime_seed/automacoes/
+!tauri_gerador/src-tauri/installer_support/runtime_seed/automacoes/biblioteca.json
+tauri_gerador/src-tauri/installer_support/runtime_seed/**/imagens/
+tauri_gerador/src-tauri/installer_support/runtime_seed/**/planilhas/
+tauri_gerador/src-tauri/installer_support/runtime_seed/**/*.xlsx
+tauri_gerador/src-tauri/installer_support/runtime_seed/**/*.xls
+tauri_gerador/src-tauri/installer_support/runtime_seed/**/*.png
 !flowdetect_agent/src-tauri/installer_support/
 !flowdetect_agent/src-tauri/installer_support/meshcentral/
 !flowdetect_agent/src-tauri/installer_support/meshcentral/**
 !flowdetect_agent/src-tauri/installer_support/nodejs/
 !flowdetect_agent/src-tauri/installer_support/nodejs/**
 flowdetect_agent/src-tauri/installer_support/*.zip
+tauri_gerador/src-tauri/installer_support/python-installer.exe
+tauri_gerador/src-tauri/installer_assets/__pycache__/
 
 # OS / editor
 .DS_Store
