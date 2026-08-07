@@ -268,18 +268,75 @@ fn sanitize_export_folder_name(name: &str) -> String {
     }
 }
 
-fn newest_timestamp(paths: &[PathBuf]) -> Option<std::time::SystemTime> {
-    paths.iter()
-        .filter_map(|path| fs::metadata(path).ok())
-        .filter_map(|metadata| metadata.modified().ok())
-        .max()
-}
-
 fn configure_no_window(command: &mut Command) {
     #[cfg(windows)]
     {
         command.creation_flags(0x08000000);
     }
+}
+
+fn virtualbox_manage_program() -> PathBuf {
+    let env_candidates = ["VBOX_MSI_INSTALL_PATH", "VBOX_INSTALL_PATH"]
+        .iter()
+        .filter_map(|key| std::env::var_os(key))
+        .map(PathBuf::from)
+        .map(|path| path.join("VBoxManage.exe"));
+    let fixed_candidates = [
+        PathBuf::from(r"C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"),
+        PathBuf::from(r"C:\Program Files (x86)\Oracle\VirtualBox\VBoxManage.exe"),
+    ];
+
+    env_candidates
+        .chain(fixed_candidates)
+        .find(|path| path.exists())
+        .unwrap_or_else(|| PathBuf::from("VBoxManage"))
+}
+
+#[tauri::command]
+fn start_virtualbox_vm_headless(vm_name: String) -> Result<Value, String> {
+    let trimmed_name = vm_name.trim();
+    if trimmed_name.is_empty() {
+        return Err("Informe o nome da VM do VirtualBox.".to_string());
+    }
+
+    let vbox_manage = virtualbox_manage_program();
+    let mut command = Command::new(&vbox_manage);
+    command
+        .arg("startvm")
+        .arg(trimmed_name)
+        .arg("--type")
+        .arg("headless");
+    configure_no_window(&mut command);
+
+    let output = command
+        .output()
+        .map_err(|err| {
+            format!(
+                "Nao foi possivel executar o VirtualBox. Verifique se ele esta instalado. Detalhe: {err}"
+            )
+        })?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let already_running = stderr.to_lowercase().contains("already locked")
+        || stderr.to_lowercase().contains("is already running")
+        || stdout.to_lowercase().contains("already running");
+
+    if output.status.success() || already_running {
+        return Ok(serde_json::json!({
+            "ok": true,
+            "vm_name": trimmed_name,
+            "mode": "headless",
+            "already_running": already_running,
+            "stdout": stdout,
+            "stderr": stderr,
+        }));
+    }
+
+    Err(if stderr.is_empty() {
+        format!("Falha ao iniciar a VM {trimmed_name}.")
+    } else {
+        stderr
+    })
 }
 
 fn python_command(root: &PathBuf) -> Result<(String, Vec<String>), String> {
@@ -342,6 +399,11 @@ fn run_python_script(root: &PathBuf, script_name: &str, extra_args: &[String]) -
 fn run_helper_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
     let raw = run_python_script(root, "gerenciar_roteiro.py", args)?;
     serde_json::from_str(&raw).map_err(|err| format!("Falha ao interpretar retorno do gerador: {err}"))
+}
+
+fn run_chrome_bridge_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
+    let raw = run_python_script(root, "chrome_web_bridge.py", args)?;
+    serde_json::from_str(&raw).map_err(|err| format!("Falha ao interpretar retorno do Chrome/Web: {err}"))
 }
 
 fn launch_executor_for_current_root(
@@ -783,6 +845,87 @@ fn remove_workbook_preview_row(app: AppHandle, workbook: Option<String>, sheet: 
         "removed": removal_result,
         "roadmap": roadmap_result,
     }))
+}
+
+fn clear_workbook_column_in_root(root: &PathBuf, workbook: String, sheet: String, column: String) -> Result<Value, String> {
+    let workbook_path = resolve_safe_workbook_path(root, &workbook)?;
+    let (python_program, python_args) = python_command(root)?;
+    let script = r#"
+import json
+import sys
+from openpyxl import load_workbook
+
+workbook_path, sheet_name, column_name = sys.argv[1], sys.argv[2], sys.argv[3]
+workbook = load_workbook(workbook_path)
+try:
+    if sheet_name not in workbook.sheetnames:
+        raise ValueError(f"Aba nao encontrada: {sheet_name}")
+    worksheet = workbook[sheet_name]
+    if not hasattr(worksheet, "iter_rows"):
+        raise ValueError(f"Aba nao editavel: {sheet_name}")
+    headers = [
+        str(value).strip() if value is not None else f"Coluna {index + 1}"
+        for index, value in enumerate(next(worksheet.iter_rows(min_row=1, max_row=1, values_only=True), []))
+    ]
+    target_index = None
+    for index, header in enumerate(headers, start=1):
+        if header == column_name:
+            target_index = index
+            break
+    if target_index is None:
+        raise ValueError(f"Coluna nao encontrada: {column_name}")
+    cleared = 0
+    for row in range(2, worksheet.max_row + 1):
+        cell = worksheet.cell(row=row, column=target_index)
+        if cell.value is not None:
+            cleared += 1
+        cell.value = None
+    workbook.save(workbook_path)
+    print(json.dumps({"ok": True, "cleared": cleared, "sheet": sheet_name, "column": column_name}, ensure_ascii=False))
+finally:
+    workbook.close()
+"#;
+    let mut command = Command::new(&python_program);
+    command
+        .current_dir(root)
+        .args(&python_args)
+        .arg("-c")
+        .arg(script)
+        .arg(workbook_path.display().to_string())
+        .arg(sheet.trim())
+        .arg(column.trim());
+    configure_no_window(&mut command);
+    let output = command
+        .output()
+        .map_err(|err| format!("Falha ao limpar coluna da planilha: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Err(if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            "Falha ao limpar coluna da planilha.".to_string()
+        });
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let cleared_result: Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("Falha ao interpretar limpeza da planilha: {err}"))?;
+    let roadmap_result = run_helper_json(root, &["sync-spreadsheets".into()])?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "cleared": cleared_result.get("cleared").and_then(Value::as_i64).unwrap_or(0),
+        "sheet": sheet,
+        "column": column,
+        "roadmap": roadmap_result,
+    }))
+}
+
+#[tauri::command]
+fn clear_workbook_column(app: AppHandle, workbook: String, sheet: String, column: String) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    clear_workbook_column_in_root(&root, workbook, sheet, column)
 }
 
 fn http_json_response(status: &str, body: Value) -> Vec<u8> {
@@ -1490,6 +1633,38 @@ fn execute_remote_automation(
     Ok(started_snapshot)
 }
 
+fn normalize_internal_automation_name(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .replace(' ', "_")
+        .replace('-', "_")
+}
+
+fn find_remote_automation_id_by_name(root: &PathBuf, automation_name: &str) -> Result<String, String> {
+    let wanted = normalize_internal_automation_name(automation_name);
+    let library = run_helper_json(root, &["automation-library-list".into()])?;
+    let items = library
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Nao foi possivel ler a biblioteca do Agent.".to_string())?;
+    for item in items {
+        let name = item
+            .get("nome")
+            .or_else(|| item.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if normalize_internal_automation_name(name) == wanted {
+            return item
+                .get("id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| format!("Automacao interna sem ID: {automation_name}"));
+        }
+    }
+    Err(format!("Automacao fixa do botao Assistir nao encontrada no Agent: {automation_name}"))
+}
+
 fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf) {
     let (request, body) = match read_http_request(&mut stream) {
         Ok(value) => value,
@@ -1568,6 +1743,29 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             Ok(value) => http_json_response("200 OK", value),
             Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
         }
+    } else if method == "POST" && clean_path == "/api/spreadsheet-column/clear" {
+        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let workbook = payload
+            .get("workbook")
+            .or_else(|| payload.get("workbook_id"))
+            .or_else(|| payload.get("workbookId"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let sheet = payload
+            .get("sheet")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let column = payload
+            .get("column")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        match clear_workbook_column_in_root(&root, workbook, sheet, column) {
+            Ok(value) => http_json_response("200 OK", value),
+            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+        }
     } else if method == "POST" && clean_path == "/api/stop" {
         let _ = fs::write(root.join(".parar_automacao.flag"), b"stop");
         let snapshot = remote_status_payload(&root, false, None, Some(serde_json::json!({
@@ -1622,6 +1820,19 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             .trim_end_matches('/');
         let automation_id = url_decode_component(encoded_id);
         match open_remote_automation(&root, &automation_id) {
+            Ok(value) => http_json_response("200 OK", value),
+            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+        }
+    } else if method == "POST" && clean_path == "/api/watch-automation/execute" {
+        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let automation_name = payload
+            .get("automation_name")
+            .or_else(|| payload.get("automationName"))
+            .and_then(Value::as_str)
+            .unwrap_or("Aceito_Compartilhamento");
+        match find_remote_automation_id_by_name(&root, automation_name)
+            .and_then(|automation_id| execute_remote_automation(&app, &root, &automation_id, 0.0, 1, None, false, None))
+        {
             Ok(value) => http_json_response("200 OK", value),
             Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
         }
@@ -2185,6 +2396,26 @@ fn remote_agent_spreadsheet_preview(address: String, limit: Option<i64>) -> Resu
 }
 
 #[tauri::command]
+fn remote_agent_clear_spreadsheet_column(address: String, workbook: String, sheet: String, column: String) -> Result<Value, String> {
+    let body = serde_json::to_vec(&serde_json::json!({
+        "workbook": workbook,
+        "sheet": sheet,
+        "column": column,
+    }))
+    .map_err(|err| format!("Falha ao preparar limpeza remota da planilha: {err}"))?;
+    remote_agent_request(&address, "POST", "/api/spreadsheet-column/clear", Some(&body))
+}
+
+#[tauri::command]
+fn remote_agent_execute_watch_automation(address: String, automation_name: String) -> Result<Value, String> {
+    let body = serde_json::to_vec(&serde_json::json!({
+        "automation_name": automation_name,
+    }))
+    .map_err(|err| format!("Falha ao preparar automacao fixa do botao Assistir: {err}"))?;
+    remote_agent_request(&address, "POST", "/api/watch-automation/execute", Some(&body))
+}
+
+#[tauri::command]
 fn remote_agent_meshcentral_status(address: String) -> Result<Value, String> {
     remote_agent_request(&address, "GET", "/api/meshcentral/status", None)
 }
@@ -2385,14 +2616,18 @@ fn automation_launcher() -> String {
         "setlocal",
         "cd /d \"%~dp0\"",
         "",
-        "if not exist \"Automacao.exe\" (",
-        "    echo Arquivo Automacao.exe nao encontrado nesta pasta.",
+        "set \"PYTHON_CMD=python\"",
+        "where py >nul 2>&1",
+        "if not errorlevel 1 set \"PYTHON_CMD=py -3\"",
+        "",
+        "if not exist \"executar_automacao.py\" (",
+        "    echo Arquivo executar_automacao.py nao encontrado nesta pasta.",
         "    pause",
         "    endlocal",
         "    exit /b 1",
         ")",
         "",
-        "start \"\" \"%~dp0Automacao.exe\"",
+        "call %PYTHON_CMD% executar_automacao.py --modo normal",
         "endlocal",
         "",
     ]
@@ -2405,9 +2640,7 @@ fn build_guide() -> String {
         "==============================",
         "",
         "Arquivos desta pasta:",
-        "- executar_automacao.bat: abre a interface da automacao.",
-        "- Automacao.exe: painel visual em Tauri com HTML/CSS, quando disponivel.",
-        "- interface_automacao.py: fallback visual em Python com progresso e empresa atual.",
+        "- executar_automacao.bat: inicia a automacao pelo executor atual.",
         "- executar_automacao.py: executor separado do roteiro gravado.",
         "- gerenciar_dados_planilha.py: utilitario para listar e editar os itens do loop na planilha.",
         "- mapeamento_teclado.json: roteiro completo salvo pela interface.",
@@ -2417,8 +2650,8 @@ fn build_guide() -> String {
         "Como usar:",
         "1. Edite a planilha db.xlsx se precisar atualizar os dados.",
         "2. Clique duas vezes em executar_automacao.bat.",
-        "3. Ajuste o atraso inicial na interface da automacao.",
-        "4. Acompanhe a barra de porcentagem e a empresa atual durante a execucao.",
+        "3. Para editar visualmente, abra a automacao no FlowDetect Studio.",
+        "4. Para rodar em outro computador, importe o ZIP no FlowDetect Agent.",
     ]
     .join("\n")
 }
@@ -2431,11 +2664,10 @@ fn export_guide(automation_name: &str) -> String {
         &format!("Nome da automacao: {automation_name}"),
         "",
         "Esta pasta contem apenas os arquivos necessarios para rodar a automacao gerada.",
-        "O programa principal do projeto continua separado no main.py.",
+        "A edicao visual continua no FlowDetect Studio.",
         "",
         "Arquivos principais desta pasta:",
-        "- iniciar.bat: abre a interface principal da automacao.",
-        "- Automacao.exe: interface visual da automacao.",
+        "- iniciar.bat: inicia a automacao pelo executor atual.",
         "- executar_automacao.py: executor do roteiro.",
         "- gerenciar_dados_planilha.py: edita dados do loop e textos livres.",
         "- mapeamento_teclado.json: roteiro atual salvo.",
@@ -2450,7 +2682,7 @@ fn export_guide(automation_name: &str) -> String {
         "5. Inicie a rotina pela propria interface da automacao exportada.",
         "",
         "Observacao:",
-        "- Esta exportacao foi pensada para sair com interface propria da automacao.",
+        "- Esta exportacao foi pensada para o executor atual do FlowDetect.",
         "- O Python precisa estar instalado no Windows para a parte de execucao funcionar.",
     ]
     .join("\n")
@@ -3709,6 +3941,47 @@ fn add_open_program_block(
 }
 
 #[tauri::command]
+fn add_save_download_block(
+    app: AppHandle,
+    pasta_origem: Option<String>,
+    extensao: String,
+    pasta_destino: String,
+    nome_arquivo: String,
+    timeout: f64,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "add-save-download".into(),
+        "--pasta-origem".into(),
+        pasta_origem.unwrap_or_default(),
+        "--extensao".into(),
+        extensao,
+        "--pasta-destino".into(),
+        pasta_destino,
+        "--nome-arquivo".into(),
+        nome_arquivo,
+        "--timeout".into(),
+        timeout.max(1.0).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn insert_text_block(
     app: AppHandle,
     target_order: i32,
@@ -4280,6 +4553,53 @@ fn insert_open_program_block(
 }
 
 #[tauri::command]
+fn insert_save_download_block(
+    app: AppHandle,
+    target_order: i32,
+    position: String,
+    pasta_origem: Option<String>,
+    extensao: String,
+    pasta_destino: String,
+    nome_arquivo: String,
+    timeout: f64,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "insert-save-download".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+        "--pasta-origem".into(),
+        pasta_origem.unwrap_or_default(),
+        "--extensao".into(),
+        extensao,
+        "--pasta-destino".into(),
+        pasta_destino,
+        "--nome-arquivo".into(),
+        nome_arquivo,
+        "--timeout".into(),
+        timeout.max(1.0).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn update_text_block(app: AppHandle, order: i32, text: String, delay: f64, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>, editavel_execucao: Option<bool>, rotulo_execucao: Option<String>) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -4766,6 +5086,43 @@ fn update_open_program_block(
 }
 
 #[tauri::command]
+fn update_save_download_block(
+    app: AppHandle,
+    order: i32,
+    pasta_origem: Option<String>,
+    extensao: String,
+    pasta_destino: String,
+    nome_arquivo: String,
+    timeout: f64,
+    delay: f64,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "update-save-download".into(),
+        "--order".into(),
+        order.to_string(),
+        "--pasta-origem".into(),
+        pasta_origem.unwrap_or_default(),
+        "--extensao".into(),
+        extensao,
+        "--pasta-destino".into(),
+        pasta_destino,
+        "--nome-arquivo".into(),
+        nome_arquivo,
+        "--timeout".into(),
+        timeout.max(1.0).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn update_block_delay(app: AppHandle, order: i32, delay: f64) -> Result<Value, String> {
     let root = workspace_root(&app);
     run_helper_json(
@@ -4957,6 +5314,51 @@ fn analyze_html_element(app: AppHandle, html: String) -> Result<Value, String> {
             "analyze-html-element".into(),
             "--html".into(),
             html,
+        ],
+    )
+}
+
+#[tauri::command]
+fn chrome_web_capture_element(app: AppHandle, url: Option<String>, timeout: Option<i32>) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "capture-element".into(),
+        "--timeout".into(),
+        timeout.unwrap_or(60000).max(5000).to_string(),
+    ];
+    if let Some(value) = url {
+        if !value.trim().is_empty() {
+            args.push("--url".into());
+            args.push(value);
+        }
+    }
+    run_chrome_bridge_json(&root, &args)
+}
+
+#[tauri::command]
+fn chrome_web_test_element(app: AppHandle, details: Value, timeout: Option<i32>) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    run_chrome_bridge_json(
+        &root,
+        &[
+            "test-element".into(),
+            "--details-json".into(),
+            serde_json::to_string(&details).map_err(|err| format!("Falha ao serializar ficha Chrome/Web: {err}"))?,
+            "--timeout".into(),
+            timeout.unwrap_or(10000).max(500).to_string(),
+        ],
+    )
+}
+
+#[tauri::command]
+fn chrome_web_open_site(app: AppHandle, url: String) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    run_chrome_bridge_json(
+        &root,
+        &[
+            "open-site".into(),
+            "--url".into(),
+            url,
         ],
     )
 }
@@ -5206,14 +5608,8 @@ fn export_automation_bundle(app: AppHandle, automation_name: String) -> Result<E
         "db.xlsx",
         "executar_automacao.py",
         "executar_automacao.bat",
-        "interface_automacao.py",
         "gerenciar_dados_planilha.py",
         "requirements.txt",
-    ];
-
-    let built_exe_candidates = [
-        root.join("tauri_ui").join("src-tauri").join("target").join("release").join("Automacao.exe"),
-        root.join("tauri_ui").join("src-tauri").join("target").join("release").join("automacao_tauri_ui.exe"),
     ];
 
     let mut copied = Vec::new();
@@ -5273,44 +5669,6 @@ fn export_automation_bundle(app: AppHandle, automation_name: String) -> Result<E
         }
     }
 
-    let ui_source_files = [
-        root.join("tauri_ui").join("web").join("index.html"),
-        root.join("tauri_ui").join("web").join("style.css"),
-        root.join("tauri_ui").join("web").join("main.js"),
-        root.join("tauri_ui").join("src-tauri").join("src").join("lib.rs"),
-        root.join("tauri_ui").join("src-tauri").join("tauri.conf.json"),
-    ];
-
-    let source_timestamp = newest_timestamp(&ui_source_files.iter().cloned().collect::<Vec<_>>());
-    let built_exe = built_exe_candidates.iter().find(|candidate| candidate.exists());
-
-    if let Some(exe) = built_exe {
-        let exe_timestamp = fs::metadata(exe)
-            .ok()
-            .and_then(|metadata| metadata.modified().ok());
-
-        if let (Some(source_time), Some(binary_time)) = (source_timestamp, exe_timestamp) {
-            if binary_time < source_time {
-                return Err(
-                    "A interface da automacao foi alterada, mas o Automacao.exe ainda esta desatualizado. "
-                        .to_string()
-                        + "Rode a build do tauri_ui novamente antes de exportar."
-                );
-            }
-        }
-
-        let _ = fs::copy(exe, build_dir.join("Automacao.exe"));
-        let _ = fs::copy(exe, export_dir.join("Automacao.exe"));
-        let _ = fs::copy(exe, root.join("Automacao.exe"));
-        copied.push("Automacao.exe".into());
-    } else {
-        return Err(
-            "Nao foi encontrado o arquivo Automacao.exe da interface final. "
-                .to_string()
-                + "Gere a interface da automacao primeiro em tauri_ui e depois clique novamente em Gerar automacao."
-        );
-    }
-
     let config = AutomationConfig {
         name: normalized_name.clone(),
     };
@@ -5359,12 +5717,14 @@ pub fn run() {
             get_workbook_meta,
             get_workbook_preview,
             remove_workbook_preview_row,
+            clear_workbook_column,
             list_saved_automations,
             list_open_windows,
             show_target_window_overlay,
             hide_target_window_overlay,
             get_agent_connection_info,
             get_agent_remote_snapshot,
+            start_virtualbox_vm_headless,
             get_login_session,
             save_login_session,
             create_saved_automation,
@@ -5407,6 +5767,7 @@ pub fn run() {
             add_chrome_html_block,
             add_open_url_block,
             add_open_program_block,
+            add_save_download_block,
             add_spreadsheet_block,
             add_write_spreadsheet_block,
             insert_text_block,
@@ -5418,6 +5779,7 @@ pub fn run() {
             insert_chrome_html_block,
             insert_open_url_block,
             insert_open_program_block,
+            insert_save_download_block,
             insert_spreadsheet_block,
             insert_write_spreadsheet_block,
             update_text_block,
@@ -5429,6 +5791,7 @@ pub fn run() {
             update_chrome_html_block,
             update_open_url_block,
             update_open_program_block,
+            update_save_download_block,
             update_spreadsheet_block,
             update_write_spreadsheet_block,
             update_sequence_settings,
@@ -5441,6 +5804,9 @@ pub fn run() {
             clear_blocks,
             launch_legacy_capture,
             analyze_html_element,
+            chrome_web_capture_element,
+            chrome_web_test_element,
+            chrome_web_open_site,
             test_image_recognition,
             get_test_loop_data,
             get_test_execution_state,
@@ -5454,6 +5820,8 @@ pub fn run() {
             remote_agent_open_automation,
             remote_agent_status,
             remote_agent_spreadsheet_preview,
+            remote_agent_clear_spreadsheet_column,
+            remote_agent_execute_watch_automation,
             remote_agent_meshcentral_status,
             remote_agent_screen_snapshot,
             remote_agent_webrtc_offer,

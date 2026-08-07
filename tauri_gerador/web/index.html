@@ -144,6 +144,7 @@
         <button id="commandTabButton" class="workspace-tab" data-tab="commands">Mapa dos comandos</button>
         <button id="workbookTabButton" class="workspace-tab" data-tab="workbook">Planilha e dados</button>
         <button id="remoteControlTabButton" class="workspace-tab" data-tab="remote-control">Controle remoto</button>
+        <button id="agentsTabButton" class="workspace-tab" data-tab="agents">Agentes</button>
         <button id="agentScreenTabButton" class="workspace-tab" data-tab="agent-screen">Tela do Agent</button>
         <button id="smartRecorderTabButton" class="workspace-tab" data-tab="smart-recorder">Gravador inteligente</button>
         <div id="sessionChip" class="workspace-session-chip">Sessao bloqueada</div>
@@ -480,20 +481,22 @@
 
             <article class="composer-card">
               <header>
-                <p class="panel-kicker">Chrome / HTML</p>
-                <h2>Chrome: Usar Elemento HTML</h2>
+                <p class="panel-kicker">Chrome / Web</p>
+                <h2>Capturar elemento no Chrome</h2>
               </header>
               <label>
                 <span>Nome do bloco</span>
-                <input id="chromeBlockNameInput" type="text" value="Chrome / Elemento HTML" />
+                <input id="chromeBlockNameInput" type="text" value="Chrome / Elemento" />
               </label>
               <label>
-                <span>HTML do elemento</span>
-                <textarea id="chromeHtmlInput" rows="6" placeholder="<input ...> ou <button ...>Salvar</button>"></textarea>
+                <span>Ficha do elemento</span>
+                <textarea id="chromeHtmlInput" rows="4" placeholder="Clique em Capturar elemento para preencher automaticamente."></textarea>
               </label>
               <div class="recognition-action-row">
-                <button id="analyzeChromeHtmlButton" class="recognition-test-button" type="button">Analisar HTML</button>
-                <span class="recognition-action-help">Cole o elemento e deixe o gerador sugerir automaticamente o que fazer.</span>
+                <button id="captureChromeElementButton" class="recognition-test-button" type="button">Capturar elemento</button>
+                <button id="analyzeChromeHtmlButton" class="tree-open-button" type="button">Analisar ficha</button>
+                <button id="testChromeElementButton" class="tree-open-button" type="button">Testar</button>
+                <span class="recognition-action-help">Abra o site no Chrome, clique em capturar e selecione o campo, botao ou texto na pagina.</span>
               </div>
               <input id="chromeAnalysisJsonInput" type="hidden" />
               <div id="chromeHtmlPreview" class="chrome-preview-card">
@@ -639,6 +642,61 @@
                   <input id="chromeDelayInput" type="number" min="0" step="0.1" value="0.5" />
                 </label>
                 <button id="addChromeHtmlButton" class="primary-button">Adicionar Chrome HTML</button>
+              </div>
+            </article>
+
+            <article class="composer-card">
+              <header>
+                <p class="panel-kicker">Arquivo baixado</p>
+                <h2>Salvar download</h2>
+              </header>
+              <label>
+                <span>Pasta monitorada</span>
+                <div class="capture-inline">
+                  <input id="downloadSourceInput" type="text" placeholder="Vazio = Downloads" />
+                  <button id="pickDownloadSourceButton" class="tree-open-button" type="button">Escolher</button>
+                </div>
+              </label>
+              <div class="double-grid">
+                <label>
+                  <span>Tipo</span>
+                  <input id="downloadExtensionInput" type="text" value=".pdf" placeholder=".pdf" />
+                </label>
+                <label>
+                  <span>Timeout</span>
+                  <input id="downloadTimeoutInput" type="number" min="1" step="1" value="60" />
+                </label>
+              </div>
+              <label>
+                <span>Pasta destino</span>
+                <div class="capture-inline">
+                  <input id="downloadDestinationInput" type="text" placeholder="C:\Guias\FGTS" />
+                  <button id="pickDownloadDestinationButton" class="tree-open-button" type="button">Escolher</button>
+                </div>
+              </label>
+              <div class="download-name-builder">
+                <label>
+                  <span>Como salvar</span>
+                  <input id="downloadFileNameInput" type="text" value="{empresa}_{competencia}_FGTS.pdf" placeholder="Vazio = manter nome original" />
+                </label>
+                <div class="download-template-row">
+                  <button class="mini-pill-button" data-download-template="{empresa}_{competencia}_FGTS.pdf" type="button">Modelo FGTS</button>
+                  <button class="mini-pill-button" data-download-template="" type="button">Manter original</button>
+                </div>
+                <div class="download-token-row" aria-label="Adicionar dado da planilha ao nome">
+                  <span>Adicionar:</span>
+                  <button class="mini-pill-button" data-download-token="{empresa}" type="button">Empresa</button>
+                  <button class="mini-pill-button" data-download-token="{cnpj}" type="button">CNPJ</button>
+                  <button class="mini-pill-button" data-download-token="{competencia}" type="button">Competencia</button>
+                  <button class="mini-pill-button" data-download-token="{linha}" type="button">Linha</button>
+                </div>
+              </div>
+              <div class="inline-field">
+                <label>
+                  <span>Tempo antes</span>
+                  <input id="downloadDelayInput" type="number" min="0" step="0.1" value="0.3" />
+                </label>
+                <button id="addSaveDownloadButton" class="primary-button" type="button">Adicionar download</button>
               </div>
             </article>
 
@@ -905,6 +963,7 @@
             <div class="workbook-header-actions">
               <button id="addWorkbookButton" class="primary-button" type="button">Adicionar planilha</button>
               <button id="openWorkbookButton" class="ghost-button" type="button">Abrir planilha atual</button>
+              <button id="clearWorkbookColumnButton" class="ghost-button" type="button">Limpar coluna</button>
               <button id="deleteWorkbookButton" class="danger-button" type="button">Excluir planilha</button>
               <input id="workbookFileInput" type="file" accept=".xlsx,.xlsm,.xltx,.xltm" hidden />
               <input id="imageFileInput" type="file" accept=".png,.jpg,.jpeg,.bmp,.gif,.webp" hidden />
@@ -1166,13 +1225,58 @@
                   <h3 id="studioControlSheetTitle">Aguardando planilha</h3>
                   <span id="studioControlSheetMeta">Conecte no Agent para visualizar os dados do projeto.</span>
                 </div>
-                <button id="studioControlSheetRefreshButton" class="ghost-button" type="button">Atualizar planilha</button>
+                <div class="studio-control-sheet-actions">
+                  <button id="studioControlSheetRefreshButton" class="ghost-button" type="button">Atualizar planilha</button>
+                  <button id="studioControlSheetClearColumnButton" class="danger-button" type="button">Limpar coluna</button>
+                </div>
               </div>
               <div id="studioControlSheetStatus" class="studio-control-sheet-status">A planilha preenchida pelo Agent vai aparecer aqui.</div>
               <div id="studioControlSheetTableWrap" class="studio-control-sheet-table-wrap"></div>
             </section>
           </section>
 
+        </section>
+      </section>
+
+      <section id="agentsPanel" class="workspace-panel">
+        <section class="agents-shell">
+          <header class="agents-header">
+            <div>
+              <p class="panel-kicker">Ambientes</p>
+              <h2>Agentes e VMs</h2>
+              <p>Cadastre VMs ou PCs com FlowDetect Agent e abra a tela direto no Studio via WebRTC.</p>
+            </div>
+            <div class="agents-header-actions">
+              <button id="addAgentCardButton" class="primary-button" type="button">+ Adicionar agente</button>
+            </div>
+          </header>
+
+          <section id="agentCreatePanel" class="agents-create-panel" hidden>
+            <label>
+              <span>Nome do ambiente</span>
+              <input id="agentNameInput" type="text" placeholder="Ex.: VM FGTS Digital" />
+            </label>
+            <label>
+                  <span>Endereco do Agent opcional</span>
+                  <input id="agentAddressInput" type="text" placeholder="Preencha depois. Ex.: 192.168.1.150:18452" />
+            </label>
+            <label>
+              <span>Nome da VM no VirtualBox</span>
+              <input id="agentVmNameInput" type="text" placeholder="Opcional. Ex.: FlowDetect-FGTS" />
+            </label>
+            <div class="agents-create-actions">
+              <button id="saveAgentCardButton" class="primary-button" type="button">Salvar agente</button>
+              <button id="cancelAgentCardButton" class="ghost-button" type="button">Cancelar</button>
+            </div>
+          </section>
+
+          <div id="agentsList" class="agents-grid"></div>
+
+          <section class="agents-help-card">
+            <p class="panel-kicker">Fluxo recomendado</p>
+            <strong>VM invisivel, tela dentro do Studio</strong>
+            <span>Use VirtualBox em modo headless, deixe o FlowDetect Agent iniciar com o Windows da VM e conecte pelo IP cadastrado.</span>
+          </section>
         </section>
       </section>
 

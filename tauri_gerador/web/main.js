@@ -581,6 +581,8 @@ const imageDelayInput = document.getElementById("imageDelayInput");
 const chromeBlockNameInput = document.getElementById("chromeBlockNameInput");
 const chromeHtmlInput = document.getElementById("chromeHtmlInput");
 const analyzeChromeHtmlButton = document.getElementById("analyzeChromeHtmlButton");
+const captureChromeElementButton = document.getElementById("captureChromeElementButton");
+const testChromeElementButton = document.getElementById("testChromeElementButton");
 const chromeAnalysisJsonInput = document.getElementById("chromeAnalysisJsonInput");
 const chromeHtmlPreview = document.getElementById("chromeHtmlPreview");
 const chromeTargetMethodInput = document.getElementById("chromeTargetMethodInput");
@@ -676,6 +678,38 @@ document.addEventListener("click", (event) => {
     insertDownloadNameToken(tokenButton);
   }
 });
+
+document.addEventListener("click", (event) => {
+  const chromeCaptureButton = chromeCaptureButtonFromPointerEvent(event);
+  if (chromeCaptureButton) {
+    handleChromeCaptureDirectButton(chromeCaptureButton, event);
+  }
+}, true);
+
+document.addEventListener("pointerdown", (event) => {
+  const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+  const chromeCaptureButton =
+    chromeCaptureButtonFromPointerEvent(event)
+    || event.target.closest?.(".chrome-capture-direct-button")
+    || path.find((item) => item?.matches?.(".chrome-capture-direct-button"));
+  if (chromeCaptureButton) {
+    handleChromeCaptureDirectButton(chromeCaptureButton, event);
+  }
+}, true);
+
+document.addEventListener("mousedown", (event) => {
+  const chromeCaptureButton = chromeCaptureButtonFromPointerEvent(event);
+  if (chromeCaptureButton) {
+    handleChromeCaptureDirectButton(chromeCaptureButton, event);
+  }
+}, true);
+
+document.addEventListener("click", (event) => {
+  const chromeOpenButton = event.target.closest?.(".chrome-open-direct-button");
+  if (chromeOpenButton) {
+    handleChromeOpenForCaptureButton(chromeOpenButton, event);
+  }
+}, true);
 
 function setTestExecutionState(running) {
   const active = Boolean(running);
@@ -5127,8 +5161,17 @@ function chromeActionOptionsForKind(kind) {
       ["verificar_existe", "Verificar se existe"],
     ];
   }
+  if (kind === "choice") {
+    return [
+      ["marcar_checkbox", "Marcar checkbox"],
+      ["clicar", "Clicar"],
+      ["esperar", "Esperar aparecer"],
+      ["verificar_existe", "Verificar se existe"],
+    ];
+  }
   return [
     ["clicar", "Clicar"],
+    ["clicar_real", "Clique real (certificado)"],
     ["esperar", "Esperar aparecer"],
     ["verificar_existe", "Verificar se existe"],
     ["pegar_texto", "Pegar texto"],
@@ -5160,18 +5203,29 @@ function chromeActionSupportsSaveAs(actionType = "") {
   return String(actionType || "").trim() === "pegar_texto";
 }
 
+function chromeWebFriendlyError(resultOrError) {
+  const rawMessage = typeof resultOrError === "string"
+    ? resultOrError
+    : String(resultOrError?.message || resultOrError || "");
+  if (rawMessage.includes("9222") || rawMessage.toLowerCase().includes("conectar na aba atual do chrome")) {
+    return "Nao consegui acessar essa aba do Chrome. Feche todas as janelas do Chrome e abra o site pelo bloco Abrir URL do FlowDetect. Assim ele abre no perfil normal com a porta Web ativa.";
+  }
+  return rawMessage || "Nao foi possivel acessar o Chrome.";
+}
+
 function renderChromeMethodOptions(analysis, selectedValue = "") {
   const selected = String(selectedValue || analysis?.alvo_recomendado?.metodo || "css").trim();
   const selectors = Array.isArray(analysis?.seletores) ? analysis.seletores : [];
   const defaults = [
-    ["placeholder", "Placeholder"],
-    ["name", "Name"],
-    ["aria-label", "Aria-label"],
-    ["labelledby", "Label / aria-labelledby"],
     ["id", "ID"],
+    ["name", "Name"],
+    ["placeholder", "Placeholder"],
+    ["aria-label", "Aria-label"],
+    ["text", "Texto visivel"],
+    ["nearby_text", "Texto proximo"],
     ["css", "CSS"],
     ["xpath", "XPath"],
-    ["text", "Texto"],
+    ["labelledby", "Label / aria-labelledby"],
     ["role", "Role"],
   ];
   const available = new Set(selectors.map((item) => String(item?.metodo || "").trim()).filter(Boolean));
@@ -5188,7 +5242,79 @@ function findChromeSelectorByMethod(analysis, method) {
     || null;
 }
 
-function renderChromePreviewHtml(analysis) {
+function chromeSelectorEntry(method, value, extra = {}) {
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedValue) return null;
+  return {
+    metodo: method,
+    valor: normalizedValue,
+    confianca: extra.confianca || "media",
+    seletor_css: extra.seletor_css || "",
+    role: extra.role || "",
+    motivo: extra.motivo || "",
+  };
+}
+
+function chromeAnalysisFromCapturedElement(captured) {
+  const element = captured?.element || captured || {};
+  const probableType = element.tipo_elemento || element.tipo_provavel || "generic";
+  const suggestedAction = element.acao_sugerida || (
+    ["text_input", "textarea", "editable"].includes(probableType)
+      ? "preencher"
+      : probableType === "select"
+        ? "selecionar_texto"
+        : probableType === "choice"
+          ? "marcar_checkbox"
+          : "clicar"
+  );
+  const normalizedElement = {
+    tag: element.tag || "",
+    type: element.type || "",
+    id: element.id || "",
+    name: element.name || "",
+    placeholder: element.placeholder || "",
+    aria_label: element.aria_label || element["aria-label"] || "",
+    title: element.title || "",
+    role: element.role || "",
+    text: element.texto_visivel || element.text || "",
+    texto_visivel: element.texto_visivel || element.text || "",
+    texto_proximo: element.texto_proximo || "",
+    css_selector: element.css_selector || "",
+    xpath: element.xpath || "",
+    url_origem: element.url_origem || "",
+    attributes: element.attributes || {},
+  };
+  const selectors = [
+    chromeSelectorEntry("id", normalizedElement.id, { confianca: "alta", seletor_css: normalizedElement.id ? `#${normalizedElement.id}` : "" }),
+    chromeSelectorEntry("name", normalizedElement.name, { confianca: "alta", seletor_css: normalizedElement.name ? `${normalizedElement.tag || "*"}[name="${normalizedElement.name.replace(/"/g, '\\"')}"]` : "" }),
+    chromeSelectorEntry("placeholder", normalizedElement.placeholder, { confianca: "alta", seletor_css: normalizedElement.placeholder ? `${normalizedElement.tag || "*"}[placeholder="${normalizedElement.placeholder.replace(/"/g, '\\"')}"]` : "" }),
+    chromeSelectorEntry("aria-label", normalizedElement.aria_label, { confianca: "alta", seletor_css: normalizedElement.aria_label ? `${normalizedElement.tag || "*"}[aria-label="${normalizedElement.aria_label.replace(/"/g, '\\"')}"]` : "" }),
+    chromeSelectorEntry("text", normalizedElement.texto_visivel, { confianca: "media" }),
+    chromeSelectorEntry("nearby_text", normalizedElement.texto_proximo, { confianca: "media" }),
+    chromeSelectorEntry("css", normalizedElement.css_selector, { confianca: "media", seletor_css: normalizedElement.css_selector }),
+    chromeSelectorEntry("xpath", normalizedElement.xpath, { confianca: "baixa" }),
+  ].filter(Boolean);
+  const target = selectors[0] || { metodo: "css", valor: normalizedElement.css_selector || normalizedElement.tag || "*", confianca: "baixa" };
+  return {
+    html_original: element.html_original || "",
+    elemento: normalizedElement,
+    tipo_provavel: probableType,
+    seletores: selectors,
+    alvo_recomendado: target,
+    acao_sugerida: {
+      tipo: suggestedAction,
+      origem_valor: "texto_fixo",
+      valor: "",
+      limpar_antes: true,
+      pressionar_depois: suggestedAction === "preencher" ? "Enter" : "",
+      salvar_em: "",
+    },
+    nome_sugerido: element.nome_amigavel || "Chrome / Elemento",
+    confianca: target.confianca || "media",
+  };
+}
+
+function renderChromePreviewHtmlOld(analysis) {
   if (!analysis) {
     return `
       <div class="chrome-preview-copy chrome-preview-empty">
@@ -5212,7 +5338,7 @@ function renderChromePreviewHtml(analysis) {
   `;
 }
 
-function renderChromeBlockFields(event, mode = "card", currentOrder = null) {
+function renderChromeBlockFieldsOld(event, mode = "card", currentOrder = null) {
   const details = event.details ?? {};
   const analysis = {
     html_original: details.html_original ?? "",
@@ -5240,8 +5366,11 @@ function renderChromeBlockFields(event, mode = "card", currentOrder = null) {
         <textarea ${fieldAttr}="chromeHtml" rows="5" placeholder="<input ...> ou <button ...>">${escapeHtml(details.html_original ?? "")}</textarea>
       </label>
       <input ${fieldAttr}="chromeAnalysis" type="hidden" value="${escapeHtml(JSON.stringify(analysis))}" />
-      <div class="recognition-action-row">
-        <button class="tree-open-button" ${actionAttr}="analyze-chrome-html" type="button">Analisar HTML</button>
+        <div class="recognition-action-row">
+          <button class="tree-open-button chrome-open-direct-button" ${actionAttr}="open-chrome-capture" type="button">Abrir Chrome para captura</button>
+          <button class="tree-open-button chrome-capture-direct-button" ${actionAttr}="capture-chrome-element" type="button">Capturar elemento</button>
+          <button class="tree-open-button" ${actionAttr}="analyze-chrome-html" type="button">Analisar HTML</button>
+          <button class="tree-open-button" ${actionAttr}="test-chrome-element" type="button">Testar</button>
         <span class="recognition-action-help">Cole o elemento e deixe o gerador sugerir o que fazer.</span>
       </div>
       <div class="chrome-preview-card" data-chrome-preview>
@@ -5373,6 +5502,149 @@ function renderChromeBlockFields(event, mode = "card", currentOrder = null) {
       ` : `
       <div class="chrome-minimal-help">
         <p class="muted-copy">Depois da análise, o gerador mostra automaticamente o melhor método de busca e a ação sugerida para esse elemento.</p>
+      </div>
+      `}
+    </div>
+  `;
+}
+
+function renderChromePreviewHtml(analysis) {
+  if (!analysis) {
+    return `
+      <div class="chrome-preview-copy chrome-preview-empty">
+        <p class="panel-kicker">Elemento do site</p>
+        <h3>Nenhum elemento capturado</h3>
+        <p class="muted-copy">Abra o Chrome de captura e clique no campo, botao ou texto do site.</p>
+      </div>
+    `;
+  }
+  const element = analysis.elemento || {};
+  const best = analysis.alvo_recomendado || {};
+  const friendlyName = analysis.nome_sugerido || element.nome_amigavel || chromeKindLabel(chromeKindFromAnalysis(analysis));
+  const visibleText = element.texto_visivel || element.placeholder || element.aria_label || element.title || best.valor || "-";
+  return `
+    <div class="chrome-preview-copy">
+      <p class="panel-kicker">Elemento escolhido</p>
+      <h3>${escapeHtml(friendlyName)}</h3>
+      <p class="muted-copy">O FlowDetect vai procurar: <strong>${escapeHtml(visibleText)}</strong></p>
+    </div>
+  `;
+}
+
+function renderChromeHiddenFields(fieldAttr, details, analysis, actionType) {
+  const selected = analysis?.alvo_recomendado || {};
+  const target = details.alvo || {};
+  return `
+    <input ${fieldAttr}="chromeHtml" type="hidden" value="${escapeHtml(details.html_original ?? "")}" />
+    <input ${fieldAttr}="chromeAnalysis" type="hidden" value="${escapeHtml(JSON.stringify(analysis || {}))}" />
+    <input ${fieldAttr}="chromeTargetMethod" type="hidden" value="${escapeHtml(target.metodo ?? selected.metodo ?? "css")}" />
+    <input ${fieldAttr}="chromeTargetValue" type="hidden" value="${escapeHtml(target.valor ?? selected.valor ?? "")}" />
+    <input ${fieldAttr}="chromeValueSource" type="hidden" value="${escapeHtml(details.acao?.origem_valor ?? "texto_fixo")}" />
+    <input ${fieldAttr}="chromeSuccessAction" type="hidden" value="${escapeHtml(details.ao_sucesso ?? "continuar")}" />
+    <input ${fieldAttr}="chromeSuccessBlock" type="hidden" value="${escapeHtml(details.bloco_sucesso ?? "")}" />
+    <input ${fieldAttr}="chromeSuccessSequence" type="hidden" value="${escapeHtml(details.sequencia_sucesso ?? "")}" />
+    <input ${fieldAttr}="chromeSuccessSequenceDelay" type="hidden" value="${escapeHtml(formatTransitionDelayValue(details.atraso_antes_sequencia_sucesso ?? 0))}" />
+    <input ${fieldAttr}="chromeFailureAction" type="hidden" value="${escapeHtml(details.ao_falhar ?? "parar")}" />
+    <input ${fieldAttr}="chromeFailureBlock" type="hidden" value="${escapeHtml(details.bloco_falha ?? "")}" />
+    <input ${fieldAttr}="chromeFailureSequence" type="hidden" value="${escapeHtml(details.sequencia_falha ?? "")}" />
+    <input ${fieldAttr}="chromeFailureSequenceDelay" type="hidden" value="${escapeHtml(formatTransitionDelayValue(details.atraso_antes_sequencia_falha ?? 0))}" />
+    <input ${fieldAttr}="chromeFallbackVisual" type="hidden" value="${details.fallback_visual ? "true" : "false"}" />
+    <input ${fieldAttr}="chromeFallbackImage" type="hidden" value="${escapeHtml(details.fallback_imagem ?? "")}" />
+    ${chromeActionNeedsValue(actionType) ? "" : `<input ${fieldAttr}="chromeActionValue" type="hidden" value="${escapeHtml(details.acao?.valor ?? "")}" />`}
+  `;
+}
+
+function renderChromeBlockFields(event, mode = "card", currentOrder = null) {
+  const details = event.details ?? {};
+  const analysis = {
+    html_original: details.html_original ?? "",
+    elemento: details.elemento ?? {},
+    tipo_provavel: details.tipo_provavel ?? "",
+    seletores: details.seletores ?? [],
+    alvo_recomendado: details.alvo ?? {},
+    acao_sugerida: details.acao ?? {},
+    nome_sugerido: details.nome ?? "Chrome / Elemento HTML",
+    confianca: details.alvo?.confianca ?? "media",
+  };
+  const fieldAttr = mode === "tree" ? "data-tree-field" : "data-field";
+  const actionAttr = mode === "tree" ? "data-tree-action" : "data-action";
+  const kind = chromeKindFromAnalysis(analysis);
+  const actionType = String(details.acao?.tipo || analysis?.acao_sugerida?.tipo || "clicar").trim();
+  const hasAnalysis = Boolean((details.html_original ?? "").trim()) || Boolean((details.alvo?.valor ?? "").trim());
+  return `
+    <div class="field-stack chrome-block-fields chrome-block-fields-simple">
+      ${renderChromeHiddenFields(fieldAttr, details, analysis, actionType)}
+      <div class="chrome-simple-actions">
+        <button class="tree-open-button chrome-open-direct-button" ${actionAttr}="open-chrome-capture" type="button">Abrir Chrome</button>
+        <button class="tree-open-button chrome-capture-direct-button" ${actionAttr}="capture-chrome-element" type="button">Capturar elemento</button>
+        <button class="tree-open-button chrome-test-primary" ${actionAttr}="test-chrome-element" type="button">Testar</button>
+      </div>
+      <div class="chrome-preview-card chrome-preview-card-simple" data-chrome-preview>
+        ${renderChromePreviewHtml(hasAnalysis ? analysis : null)}
+      </div>
+      ${hasAnalysis ? `
+      <div class="chrome-quick-grid chrome-quick-grid-simple">
+        <label>
+          <span>Nome do passo</span>
+          <input ${fieldAttr}="chromeName" type="text" value="${escapeHtml(details.nome ?? analysis.nome_sugerido ?? "Elemento do site")}" />
+        </label>
+        <label>
+          <span>O que fazer</span>
+          <select ${fieldAttr}="chromeActionType">
+            ${renderChromeActionOptions(kind, actionType)}
+          </select>
+        </label>
+        ${chromeActionNeedsValue(actionType) ? `
+        <label class="chrome-value-field-simple">
+          <span>Texto que sera usado</span>
+          <input ${fieldAttr}="chromeActionValue" type="text" value="${escapeHtml(details.acao?.valor ?? "")}" placeholder="Ex: texto fixo ou {{coluna}}" />
+        </label>
+        ` : ""}
+      </div>
+      <details class="chrome-advanced-panel chrome-advanced-panel-simple">
+        <summary>Ajustes opcionais</summary>
+        <div class="chrome-advanced-grid">
+          <label>
+            <span>Tempo para encontrar</span>
+            <input ${fieldAttr}="chromeTimeout" type="number" min="500" step="500" value="${escapeHtml(details.timeout ?? 10000)}" />
+          </label>
+          ${chromeActionSupportsSaveAs(actionType) ? `
+          <label>
+            <span>Guardar texto como</span>
+            <input ${fieldAttr}="chromeSaveAs" type="text" value="${escapeHtml(details.acao?.salvar_em ?? "")}" placeholder="Nome simples" />
+          </label>
+          ` : `<input ${fieldAttr}="chromeSaveAs" type="hidden" value="${escapeHtml(details.acao?.salvar_em ?? "")}" />`}
+          ${chromeActionSupportsPressAfter(actionType) ? `
+          <label>
+            <span>Tecla depois</span>
+            <select ${fieldAttr}="chromePressAfter">
+              <option value="" ${!(details.acao?.pressionar_depois) ? "selected" : ""}>Nada</option>
+              <option value="Enter" ${String(details.acao?.pressionar_depois ?? "") === "Enter" ? "selected" : ""}>Enter</option>
+              <option value="Tab" ${String(details.acao?.pressionar_depois ?? "") === "Tab" ? "selected" : ""}>Tab</option>
+            </select>
+          </label>
+          ` : `<input ${fieldAttr}="chromePressAfter" type="hidden" value="${escapeHtml(details.acao?.pressionar_depois ?? "")}" />`}
+          ${chromeActionSupportsClear(actionType) ? `
+          <label class="inline-checkbox">
+            <input ${fieldAttr}="chromeClearBefore" type="checkbox" ${details.acao?.limpar_antes !== false ? "checked" : ""} />
+            <span>Limpar antes</span>
+          </label>
+          ` : `<input ${fieldAttr}="chromeClearBefore" type="hidden" value="${details.acao?.limpar_antes !== false ? "true" : "false"}" />`}
+          <input ${fieldAttr}="chromeRetryCount" type="hidden" value="${escapeHtml(details.quantidade_tentativas ?? 1)}" />
+          <input ${fieldAttr}="chromeRetryInterval" type="hidden" value="${escapeHtml(details.intervalo_tentativas ?? 0.5)}" />
+        </div>
+      </details>
+      ` : `
+      <input ${fieldAttr}="chromeName" type="hidden" value="${escapeHtml(details.nome ?? "Chrome / Elemento HTML")}" />
+      <input ${fieldAttr}="chromeActionType" type="hidden" value="${escapeHtml(actionType)}" />
+      <input ${fieldAttr}="chromeActionValue" type="hidden" value="${escapeHtml(details.acao?.valor ?? "")}" />
+      <input ${fieldAttr}="chromeSaveAs" type="hidden" value="${escapeHtml(details.acao?.salvar_em ?? "")}" />
+      <input ${fieldAttr}="chromePressAfter" type="hidden" value="${escapeHtml(details.acao?.pressionar_depois ?? "")}" />
+      <input ${fieldAttr}="chromeClearBefore" type="hidden" value="${details.acao?.limpar_antes !== false ? "true" : "false"}" />
+      <input ${fieldAttr}="chromeRetryCount" type="hidden" value="${escapeHtml(details.quantidade_tentativas ?? 1)}" />
+      <input ${fieldAttr}="chromeRetryInterval" type="hidden" value="${escapeHtml(details.intervalo_tentativas ?? 0.5)}" />
+      <div class="chrome-minimal-help">
+        <p class="muted-copy">Capture um elemento para liberar as opcoes deste bloco.</p>
       </div>
       `}
     </div>
@@ -5583,6 +5855,211 @@ async function analyzeChromeHtmlInContainer(container, fieldAttr) {
   applyChromeAnalysisToContainer(container, fieldAttr, analysis);
   setMessage("Elemento HTML analisado com sucesso.", "success");
   return analysis;
+}
+
+async function captureChromeElementIntoContainer(container, fieldAttr) {
+  if (!container) {
+    return null;
+  }
+  setBusy("Capturando Chrome");
+  setMessage("Conectando na aba atual do Chrome...", "info");
+  const captured = await invoke("chrome_web_capture_element", { url: null, timeout: 60000 });
+  if (!captured?.ok) {
+    throw new Error(chromeWebFriendlyError(captured));
+  }
+  const analysis = chromeAnalysisFromCapturedElement(captured);
+  const get = (field) => container.querySelector(`[${fieldAttr}="${field}"]`);
+  const htmlField = get("chromeHtml");
+  if (htmlField) {
+    htmlField.value = analysis.html_original || "";
+  }
+  applyChromeAnalysisToContainer(container, fieldAttr, analysis);
+  setBusy("Pronto");
+  setMessage(`Elemento capturado: ${analysis.nome_sugerido || "Chrome / Elemento"}`, "success");
+  return analysis;
+}
+
+async function testChromeElementFromContainer(container, fieldAttr) {
+  if (!container) {
+    return null;
+  }
+  const values = fieldAttr === "data-tree-field"
+    ? treeValuesFromCard(container)
+    : fieldAttr === "data-insert-field"
+      ? insertValuesFromPanel(container)
+      : formValuesFromCard(container);
+  const analysis = values.chromeAnalysis || (values.chromeHtml ? await invoke("analyze_html_element", { html: values.chromeHtml }) : null);
+  if (!analysis) {
+    setMessage("Capture ou analise um elemento antes de testar.", "error");
+    return null;
+  }
+  const details = buildChromeDetailsFromAnalysisAndValues(analysis, values);
+  setBusy("Testando Chrome");
+  const result = await invoke("chrome_web_test_element", { details, timeout: details.timeout });
+  if (!result?.ok) {
+    setBusy("Erro");
+    setMessage(chromeWebFriendlyError(result), "error");
+    return result;
+  }
+  setMessage(result?.message || (result?.ok ? "Elemento encontrado com sucesso." : "Nao encontrei esse elemento. Deseja capturar novamente?"), result?.ok ? "success" : "error");
+  setBusy("Pronto");
+  return result;
+}
+
+function handleInsertChromeCaptureClick(button, event) {
+  const panel = button?.closest?.(".insert-card-panel");
+  if (!panel) {
+    setBusy("Erro");
+    setMessage("Nao encontrei o painel deste bloco Chrome/Web.", "error");
+    return false;
+  }
+  if (panel.dataset.chromeCaptureRunning === "1") {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    event?.stopImmediatePropagation?.();
+    return true;
+  }
+  panel.dataset.chromeCaptureRunning = "1";
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  event?.stopImmediatePropagation?.();
+  setBusy("Capturando Chrome");
+  setMessage("Preparando captura no Chrome...", "info");
+  captureChromeElementIntoContainer(panel, "data-insert-field")
+    .then(() => {
+      if (state.insertPanel) {
+        state.insertPanel = {
+          ...state.insertPanel,
+          ...insertValuesFromPanel(panel),
+        };
+      }
+    })
+    .catch((error) => {
+      setBusy("Erro");
+      setMessage(chromeWebFriendlyError(error), "error");
+    })
+    .finally(() => {
+      if (panel.dataset) {
+        panel.dataset.chromeCaptureRunning = "0";
+      }
+    });
+  return true;
+}
+
+window.__flowDetectCaptureChromeInsert = (event, button) => handleInsertChromeCaptureClick(button, event);
+
+function nearestOpenUrlForChromeContainer(container) {
+  const order = Number(container?.dataset?.order || container?.dataset?.targetOrder || state.insertPanel?.targetOrder || 0);
+  const events = Array.isArray(state.roadmap?.events) ? state.roadmap.events : [];
+  const currentSequence = normalizeSequenceName(state.commandMapPageSequence || currentSequenceName());
+  const candidates = events
+    .filter((event) => event?.type === "abrir_url")
+    .filter((event) => !currentSequence || normalizeSequenceName(event.sequence || event.sequencia || "principal") === currentSequence)
+    .filter((event) => !order || Number(event.order || event.ordem || 0) <= order)
+    .sort((a, b) => Number(b.order || b.ordem || 0) - Number(a.order || a.ordem || 0));
+  return String(candidates[0]?.details?.url || candidates[0]?.detalhes?.url || "").trim();
+}
+
+async function handleChromeOpenForCaptureButton(button, event) {
+  const container = button?.closest?.(".insert-card-panel, .command-tree-card, .flow-card");
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  event?.stopImmediatePropagation?.();
+  const url = nearestOpenUrlForChromeContainer(container);
+  if (!url) {
+    setBusy("Erro");
+    setMessage("Nao encontrei um bloco Abrir URL antes deste Chrome/Web. Crie ou configure o bloco Abrir URL primeiro.", "error");
+    return false;
+  }
+  const previousText = button.textContent;
+  button.textContent = "Abrindo Chrome...";
+  button.disabled = true;
+  setBusy("Abrindo Chrome");
+  setMessage("Abrindo uma janela do Chrome conectada ao FlowDetect para capturar elementos.", "info");
+  try {
+    const result = await invoke("chrome_web_open_site", { url });
+    if (!result?.ok) {
+      throw new Error(chromeWebFriendlyError(result));
+    }
+    setBusy("Pronto");
+    setMessage("Chrome de captura aberto. Use essa janela e clique em Capturar elemento.", "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(chromeWebFriendlyError(error), "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = previousText || "Abrir Chrome para captura";
+  }
+  return true;
+}
+
+function handleChromeCaptureDirectButton(button, event) {
+  if (!button) {
+    return false;
+  }
+  const container = button.closest(".insert-card-panel, .command-tree-card, .flow-card");
+  if (!container) {
+    setBusy("Erro");
+    setMessage("Nao encontrei o bloco Chrome/Web para preencher.", "error");
+    return false;
+  }
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  event?.stopImmediatePropagation?.();
+
+  const fieldAttr = container.classList.contains("insert-card-panel")
+    ? "data-insert-field"
+    : button.hasAttribute("data-tree-action")
+      ? "data-tree-field"
+      : "data-field";
+
+  setBusy("Capturando Chrome");
+  setMessage("Preparando captura no Chrome...", "info");
+  const previousText = button.textContent;
+  button.textContent = "Clique no Chrome...";
+  button.disabled = true;
+  captureChromeElementIntoContainer(container, fieldAttr)
+    .then(() => {
+      button.textContent = "Capturado";
+      if (container.classList.contains("insert-card-panel") && state.insertPanel) {
+        state.insertPanel = {
+          ...state.insertPanel,
+          ...insertValuesFromPanel(container),
+        };
+      }
+    })
+    .catch((error) => {
+      setBusy("Erro");
+      const friendly = chromeWebFriendlyError(error);
+      button.textContent = friendly.includes("9222") || friendly.includes("porta Web") || friendly.includes("Chrome")
+        ? "Chrome nao conectado"
+        : "Erro na captura";
+      setMessage(friendly, "error");
+    })
+    .finally(() => {
+      window.setTimeout(() => {
+        button.disabled = false;
+        button.textContent = previousText || "Capturar elemento";
+      }, 1600);
+    });
+  return true;
+}
+
+function chromeCaptureButtonFromPointerEvent(event) {
+  const directButton = event?.target?.closest?.(".chrome-capture-direct-button");
+  if (directButton) {
+    return directButton;
+  }
+  const clientX = Number(event?.clientX);
+  const clientY = Number(event?.clientY);
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return null;
+  }
+  return Array.from(document.querySelectorAll(".chrome-capture-direct-button"))
+    .find((button) => {
+      const rect = button.getBoundingClientRect();
+      return clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
+    }) || null;
 }
 
 function availableBlockTargets(currentOrder = null) {
@@ -6637,7 +7114,7 @@ function typeChipLabel(type) {
     case "verificar_estado_botao":
       return "ESTADO DO BOTAO";
     case "chrome_elemento_html":
-      return "CHROME HTML";
+      return "CHROME/WEB";
     case "abrir_url":
       return "ABRIR URL";
     case "abrir_programa":
@@ -11789,9 +12266,13 @@ function renderInsertPanel(order) {
           <span>HTML do elemento</span>
           <textarea data-insert-field="chromeHtml" rows="5" placeholder="<input ...> ou <button ...>">${escapeHtml(panel.chromeHtml ?? "")}</textarea>
         </label>
+        <div class="chrome-web-panel-status">Chrome/Web pronto</div>
         <input data-insert-field="chromeAnalysis" type="hidden" value="${escapeHtml(JSON.stringify(analysis))}" />
         <div class="recognition-action-row">
-          <button class="tree-open-button" data-insert-action="analyze-chrome-html" type="button">Analisar HTML</button>
+          <button class="tree-open-button chrome-open-direct-button" data-insert-action="open-chrome-capture" type="button">Abrir Chrome para captura</button>
+          <button class="tree-open-button chrome-capture-direct-button" data-insert-action="capture-chrome-element" type="button">Capturar elemento</button>
+          <button class="tree-open-button" data-insert-action="analyze-chrome-html" type="button">Analisar ficha</button>
+          <button class="tree-open-button" data-insert-action="test-chrome-element" type="button">Testar</button>
         </div>
         <div class="chrome-preview-card" data-chrome-preview>
           ${renderChromePreviewHtml(analysis)}
@@ -12004,11 +12485,11 @@ function renderInsertPanel(order) {
         <button class="micro-button" data-insert-action="cancel">Fechar</button>
       </div>
       <div class="insert-type-row">
+        <button class="insert-type-button ${panel.type === "chrome" ? "is-active" : ""}" data-insert-type="chrome">Chrome/Web</button>
         <button class="insert-type-button ${panel.type === "key" ? "is-active" : ""}" data-insert-type="key">Tecla</button>
         <button class="insert-type-button ${panel.type === "text" ? "is-active" : ""}" data-insert-type="text">Texto</button>
         <button class="insert-type-button ${panel.type === "mouse" ? "is-active" : ""}" data-insert-type="mouse">Mouse</button>
         <button class="insert-type-button ${panel.type === "image" ? "is-active" : ""}" data-insert-type="image">Reconhecimento</button>
-        <button class="insert-type-button ${panel.type === "chrome" ? "is-active" : ""}" data-insert-type="chrome">Chrome HTML</button>
         <button class="insert-type-button ${panel.type === "open_url" ? "is-active" : ""}" data-insert-type="open_url">Abrir URL</button>
         <button class="insert-type-button ${panel.type === "open_program" ? "is-active" : ""}" data-insert-type="open_program">Abrir Programa</button>
         <button class="insert-type-button ${panel.type === "save_download" ? "is-active" : ""}" data-insert-type="save_download">Salvar download</button>
@@ -12049,7 +12530,7 @@ function renderEmptyCommandMapStarter() {
           <button class="insert-type-button" data-empty-insert-type="text" type="button">Texto</button>
           <button class="insert-type-button" data-empty-insert-type="mouse" type="button">Mouse</button>
           <button class="insert-type-button" data-empty-insert-type="image" type="button">Reconhecimento</button>
-          <button class="insert-type-button" data-empty-insert-type="chrome" type="button">Chrome HTML</button>
+          <button class="insert-type-button" data-empty-insert-type="chrome" type="button">Chrome/Web</button>
           <button class="insert-type-button" data-empty-insert-type="open_url" type="button">Abrir URL</button>
           <button class="insert-type-button" data-empty-insert-type="open_program" type="button">Abrir Programa</button>
           <button class="insert-type-button" data-empty-insert-type="save_download" type="button">Salvar download</button>
@@ -12255,12 +12736,22 @@ window.addEventListener("keydown", (event) => {
 
   if (event.key === "ArrowLeft") {
     event.preventDefault();
+    if (state.expandedTreeCardOrder) {
+      closeExpandedTreeCard();
+      requestAnimationFrame(() => moveCommandMapFocus(-1));
+      return;
+    }
     moveCommandMapFocus(-1);
     return;
   }
 
   if (event.key === "ArrowRight") {
     event.preventDefault();
+    if (state.expandedTreeCardOrder) {
+      closeExpandedTreeCard();
+      requestAnimationFrame(() => moveCommandMapFocus(1));
+      return;
+    }
     moveCommandMapFocus(1);
   }
 });
@@ -12370,20 +12861,18 @@ function renderCommandMap(options = {}) {
     const card = `
       <div class="command-flow-segment ${isRecognitionCard ? "visual-recognition-segment" : ""} ${isSpreadsheetCard ? "spreadsheet-segment" : ""} ${state.insertPanel?.targetOrder === event.order ? "has-insert-panel" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}">
       <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isInlineExpanded ? "is-inline-expanded" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarkerCard ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
-        <div class="command-tree-top ${isRecognitionCard ? "is-recognition-top" : ""}">
+        <div class="command-tree-top is-command-chip-top">
           <div class="command-tree-main">
             <span class="command-index">${String(event.order).padStart(2, "0")}</span>
             <div>
-              ${event.type === "sequencia_planilha" ? `<span class="command-tree-loop-badge">${escapeHtml(getSpreadsheetLoopBadgeLabel(event))}</span>` : ""}
-              ${event.type === "escrever_planilha" ? `<span class="command-tree-loop-badge">Linha atual</span>` : ""}
-              ${isRecognitionCard
+              ${event.type === "sequencia_planilha" || event.type === "escrever_planilha"
                 ? `
-                  <span class="type-chip ${escapeHtml(event.type)} recognition-title-chip">Reconhecimento visual</span>
+                  <span class="command-title-row">
+                    <span class="type-chip ${escapeHtml(event.type)} command-title-chip">${escapeHtml(event.title)}</span>
+                    <span class="command-tree-loop-badge">${escapeHtml(event.type === "sequencia_planilha" ? getSpreadsheetLoopBadgeLabel(event) : "Linha atual")}</span>
+                  </span>
                 `
-                : `
-                  <h3>${escapeHtml(event.title)}</h3>
-                  <p data-recognition-subtitle="true">${escapeHtml(recognitionSubtitleLabel(event))}</p>
-                `}
+                : `<span class="type-chip ${escapeHtml(event.type)} command-title-chip ${isRuntimeEditable ? "runtime-editable" : ""}">${escapeHtml(isRuntimeEditable ? "Bloco editavel" : event.title)}</span>`}
             </div>
           </div>
           <div class="command-tree-side">
@@ -12393,7 +12882,7 @@ function renderCommandMap(options = {}) {
                 <i></i>
               </label>
             ` : ""}
-            ${isInlineExpanded ? `<button class="tree-open-button inline-details-close" data-tree-action="close-card-details" type="button">Fechar</button>` : isRecognitionCard ? "" : `<span class="type-chip ${escapeHtml(event.type)} ${isRuntimeEditable ? "runtime-editable" : ""}">${escapeHtml(isRuntimeEditable ? "Bloco editavel" : typeChipLabel(event.type))}</span>`}
+            ${isInlineExpanded ? `<button class="tree-open-button inline-details-close" data-tree-action="close-card-details" type="button">Fechar</button>` : ""}
             <button class="drag-handle" data-drag-handle="true" data-order="${event.order}" title="Arrastar card" type="button">
               <span>Arrastar</span>
             </button>
@@ -14062,6 +14551,51 @@ analyzeChromeHtmlButton?.addEventListener("click", () => {
   analyzeChromeHtmlForComposer().catch((error) => setMessage(String(error), "error"));
 });
 
+captureChromeElementButton?.addEventListener("click", async () => {
+  try {
+    setBusy("Capturando Chrome");
+    setMessage("Conectando na aba atual do Chrome...", "info");
+    const captured = await invoke("chrome_web_capture_element", { url: null, timeout: 60000 });
+    if (!captured?.ok) {
+      throw new Error(chromeWebFriendlyError(captured));
+    }
+    const analysis = chromeAnalysisFromCapturedElement(captured);
+    if (chromeHtmlInput) {
+      chromeHtmlInput.value = analysis.html_original || "";
+    }
+    applyChromeAnalysisToComposer(analysis);
+    setMessage(`Elemento capturado: ${analysis.nome_sugerido || "Chrome / Elemento"}`, "success");
+    setBusy("Pronto");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+});
+
+testChromeElementButton?.addEventListener("click", async () => {
+  try {
+    const values = composerChromeValues();
+    const analysis = values.chromeAnalysis || (values.chromeHtml ? await invoke("analyze_html_element", { html: values.chromeHtml }) : null);
+    if (!analysis) {
+      setMessage("Capture ou analise um elemento antes de testar.", "error");
+      return;
+    }
+    const details = buildChromeDetailsFromAnalysisAndValues(analysis, values);
+    setBusy("Testando Chrome");
+    const result = await invoke("chrome_web_test_element", { details, timeout: details.timeout });
+    if (!result?.ok) {
+      setBusy("Erro");
+      setMessage(chromeWebFriendlyError(result), "error");
+      return;
+    }
+    setMessage(result?.message || (result?.ok ? "Elemento encontrado com sucesso." : "Nao encontrei esse elemento. Deseja capturar novamente?"), result?.ok ? "success" : "error");
+    setBusy("Pronto");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+});
+
 chromeHtmlInput?.addEventListener("paste", () => {
   setTimeout(() => {
     analyzeChromeHtmlForComposer().catch(() => {});
@@ -15601,6 +16135,27 @@ timelineList.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "open-chrome-capture") {
+    state.commandMapFocusOrder = order;
+    handleChromeOpenForCaptureButton(button, event);
+    return;
+  }
+
+  if (action === "capture-chrome-element") {
+    state.commandMapFocusOrder = order;
+    handleChromeCaptureDirectButton(button, event);
+    return;
+  }
+
+  if (action === "test-chrome-element") {
+    state.commandMapFocusOrder = order;
+    testChromeElementFromContainer(card, "data-field").catch((error) => {
+      setBusy("Erro");
+      setMessage(String(error), "error");
+    });
+    return;
+  }
+
   if (action === "select-chrome-fallback-image") {
     state.commandMapFocusOrder = order;
     openImagePicker({ scope: "update-editor-chrome-fallback", order });
@@ -16033,6 +16588,27 @@ commandMapList.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "open-chrome-capture") {
+    setCommandMapFocus(order);
+    handleChromeOpenForCaptureButton(button, event);
+    return;
+  }
+
+  if (action === "capture-chrome-element") {
+    setCommandMapFocus(order);
+    handleChromeCaptureDirectButton(button, event);
+    return;
+  }
+
+  if (action === "test-chrome-element") {
+    setCommandMapFocus(order);
+    testChromeElementFromContainer(card, "data-tree-field").catch((error) => {
+      setBusy("Erro");
+      setMessage(String(error), "error");
+    });
+    return;
+  }
+
   if (action === "select-chrome-fallback-image") {
     setCommandMapFocus(order);
     openImagePicker({ scope: "update-tree-chrome-fallback", order });
@@ -16238,6 +16814,26 @@ commandMapList.addEventListener("click", (event) => {
   if (action === "analyze-chrome-html") {
     setCommandMapFocus(Number(panel.dataset.targetOrder));
     analyzeChromeHtmlInContainer(panel, "data-insert-field");
+    return;
+  }
+
+  if (action === "open-chrome-capture") {
+    handleChromeOpenForCaptureButton(button, event);
+    return;
+  }
+
+  if (action === "capture-chrome-element") {
+    handleChromeCaptureDirectButton(button, event);
+    return;
+  }
+
+  if (action === "test-chrome-element") {
+    setBusy("Testando Chrome");
+    setMessage("Testando elemento no Chrome...", "info");
+    testChromeElementFromContainer(panel, "data-insert-field").catch((error) => {
+      setBusy("Erro");
+      setMessage(String(error), "error");
+    });
     return;
   }
 
@@ -16844,5 +17440,13 @@ async function boot() {
 
 updateLoginResolutionPreview();
 applyLoginStateUI();
+["pointerup", "mouseup", "click"].forEach((eventName) => {
+  document.addEventListener(eventName, (event) => {
+    const button = chromeCaptureButtonFromPointerEvent(event);
+    if (button) {
+      handleChromeCaptureDirectButton(button, event);
+    }
+  }, true);
+});
 boot();
 }

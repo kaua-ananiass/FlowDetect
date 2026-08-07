@@ -1,10 +1,62 @@
 import pyautogui
 import time
+import ctypes
 
 INTERVALO_TEXTO = 0.01
 
 
+def definir_texto_clipboard_windows(texto):
+    if not hasattr(ctypes, "windll"):
+        return False
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GlobalAlloc.restype = ctypes.c_void_p
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    user32.SetClipboardData.restype = ctypes.c_void_p
+    dados = (str(texto or "") + "\0").encode("utf-16-le")
+    memoria = None
+    try:
+        aberto = False
+        for _ in range(6):
+            if user32.OpenClipboard(None):
+                aberto = True
+                break
+            time.sleep(0.01)
+        if not aberto:
+            return False
+        user32.EmptyClipboard()
+        memoria = kernel32.GlobalAlloc(0x0002, len(dados))
+        if not memoria:
+            return False
+        destino = kernel32.GlobalLock(memoria)
+        if not destino:
+            return False
+        ctypes.memmove(destino, dados, len(dados))
+        kernel32.GlobalUnlock(memoria)
+        if not user32.SetClipboardData(13, memoria):
+            return False
+        memoria = None
+        return True
+    except Exception:
+        return False
+    finally:
+        try:
+            user32.CloseClipboard()
+        except Exception:
+            pass
+        if memoria:
+            try:
+                kernel32.GlobalFree(memoria)
+            except Exception:
+                pass
+
+
 def digitar_texto(texto):
+    texto = str(texto)
+    if texto and definir_texto_clipboard_windows(texto):
+        pyautogui.hotkey("ctrl", "v")
+        time.sleep(0.008)
+        return
     for caractere in texto:
         if caractere == "\r":
             continue
@@ -156,45 +208,63 @@ def verificar_estado_botao(
 
 def executar():
     time.sleep(0.3)
-    abrir_url(url='https://fgtsdigital.sistema.gov.br/portal/login', navegador='chrome', modo_abertura='nova_janela', aguardar_segundos=20.0)
-    time.sleep(0.9)
-    clicar_por_imagem(imagem='imagens/botao-01', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
-    time.sleep(0.7)
-    clicar_por_imagem(imagem='imagens/login', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
-    time.sleep(0.7)
-    clicar_por_imagem(imagem='imagens/valida__o', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=2, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='5F16DA0C6142DFB1', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=7, quantidade_tentativas=3, intervalo_tentativas=1.0)
+    abrir_url(url='https://fgtsdigital.sistema.gov.br/portal/login', navegador='chrome', modo_abertura='nova_janela', aguardar_segundos=3.0)
     time.sleep(0.3)
-    clicar_por_imagem(imagem='imagens/primeiro-campo', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    # chrome_elemento_html metodo='text' valor='Entrar com GOV.BR' acao='clicar'
     time.sleep(0.3)
-    executar_sequencia([51708970000187, '03943209000187', 23075323000140, 24811622000168, '02781318000182', '08652127000105', '08652127000105', '08652127000105', '07864058000122', 19502782801, 42723472000112, '03435683000106', '01325653000103', '07233515000180', '04176898000104', 95657754115, 10276992000138, 20024781000161, 35624938000167, 33130776000185, '09071300000136', '06741606149', '04225641000103', 34306882000130, 24786005000150, '01133119158', 52502068000172, 25122243000123, 30244560153, 26306114000158, 34362221000121, 26898163000127, '05566479000141', '07745154000151', 27859973000137, '06885083000120', 37401809000135, 24944681000104, 10539188000102], acao_apos_item=[], intervalo_entre_itens=0.5)
-    time.sleep(0.6)
-    clicar_por_imagem(imagem='imagens/aqui', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
-    time.sleep(0.6)
+    clicar_por_imagem(imagem='imagens/logignign', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='Seu certificado digital', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/login-2', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=2, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='5F16DA0C6142DFB1', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    # chrome_elemento_html metodo='nearby_text' valor='Meu Perfil' acao='clicar'
+    time.sleep(0.3)
     executar_teclas(['down'], repeticoes=1)
     time.sleep(0.3)
     executar_teclas(['enter'], repeticoes=1)
     time.sleep(0.3)
-    executar_teclas(['tab'], repeticoes=1)
+    clicar_por_imagem(imagem='imagens/login-5', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/validaae', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    executar_sequencia([51708970000187, '03943209000187', 23075323000140, 24811622000168, '02781318000182', '08652127000105', '07864058000122', 19502782801, 42723472000112, '03435683000106', '01325653000103', '07233515000180', '04176898000104', 95657754115, 10276992000138, 20024781000161, 35624938000167, 33130776000185, '09071300000136', '06741606149', '04225641000103', 34306882000130, 24786005000150, '01133119158', 52502068000172, 25122243000123, 30244560153, 26306114000158, 34362221000121, 26898163000127, '05566479000141', '07745154000151', 27859973000137, '06885083000120', 37401809000135, 24944681000104, 10539188000102], acao_apos_item=['enter'], intervalo_entre_itens=0.5)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/Definir', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='Definir', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/gestao-guias', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/emissao', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/valida__o-01', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='Não há débitos de interesse', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=16, quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    escrever_planilha(aba='Sheet1', coluna='Status', valor='Não há débitos de interesse.', linha='loop_atual')
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/Valida__o-02', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='Atenção! Verifique', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=18, quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    escrever_planilha(aba='Sheet1', coluna='Status', valor='Verificar parcelas consignado.', linha='loop_atual')
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/data-alteravel', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='06/2026', ao_nao_encontrar='continuar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    time.sleep(0.3)
+    escrever_planilha(aba='Sheet1', coluna='Status', valor='Não possui guia na data referente.', linha='loop_atual')
+    time.sleep(0.3)
+    clicar_por_imagem(imagem='imagens/pesquisar', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='Pesquisar', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
     time.sleep(0.3)
     executar_teclas(['tab'], repeticoes=2)
     time.sleep(0.3)
     executar_teclas(['enter'], repeticoes=1)
     time.sleep(0.3)
-    clicar_por_imagem(imagem='imagens/guiass', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    escrever_planilha(aba='Sheet1', coluna='Status', valor='OK', linha='loop_atual')
     time.sleep(0.3)
-    clicar_por_imagem(imagem='imagens/guiass2', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    clicar_por_imagem(imagem='imagens/downloads', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
     time.sleep(0.3)
-    clicar_por_imagem(imagem='imagens/error', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    executar_teclas(['up'], repeticoes=12)
     time.sleep(0.3)
-    escrever_planilha(aba='Sheet1', coluna='Validação', valor='Não há débitos de interesse.', linha='loop_atual')
+    clicar_por_imagem(imagem='imagens/Sair', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
     time.sleep(0.3)
-    clicar_por_imagem(imagem='imagens/imagem_capturada_008', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    clicar_por_imagem(imagem='imagens/Trocar', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='Trocar Perfil', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
     time.sleep(0.3)
-    clicar_por_imagem(imagem='imagens/imagem_capturada_008s', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    clicar_por_imagem(imagem='imagens/abrir', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
     time.sleep(0.3)
-    clicar_por_imagem(imagem='imagens/imagem_capturada_008ss', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
-    time.sleep(0.3)
-    clicar_por_imagem(imagem='imagens/procurador', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='Procurador', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    clicar_por_imagem(imagem='imagens/selecionar', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', texto_ocr_esperado='Procurador', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
     time.sleep(0.3)
     executar_teclas(['tab'], repeticoes=1)
 

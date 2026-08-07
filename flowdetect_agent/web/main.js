@@ -715,43 +715,59 @@ function stopAgentWebRtc() {
   }
 }
 
-function scheduleRemotePointerMove(payload) {
-  state.pendingRemotePointerMove = payload;
-  if (state.remotePointerMoveTimer || state.remotePointerMoveBusy) {
+function flushRemotePointerMove() {
+  if (state.remotePointerMoveBusy) {
     return;
   }
-  state.remotePointerMoveTimer = window.setTimeout(async () => {
-    state.remotePointerMoveTimer = null;
-    const nextPayload = state.pendingRemotePointerMove;
-    state.pendingRemotePointerMove = null;
-    if (!nextPayload) {
-      return;
-    }
-    state.remotePointerMoveBusy = true;
-    try {
-      await invoke("agent_remote_control_event", { event: nextPayload });
-    } catch (error) {
+  const nextPayload = state.pendingRemotePointerMove;
+  state.pendingRemotePointerMove = null;
+  if (!nextPayload) {
+    return;
+  }
+  state.remotePointerMoveBusy = true;
+  invoke("agent_remote_control_event", { event: nextPayload })
+    .catch((error) => {
       console.warn("Falha ao executar movimento remoto.", error);
-    } finally {
+    })
+    .finally(() => {
       state.remotePointerMoveBusy = false;
       if (state.pendingRemotePointerMove) {
-        scheduleRemotePointerMove(state.pendingRemotePointerMove);
+        queueMicrotask(flushRemotePointerMove);
       }
-    }
-  }, 24);
+    });
 }
 
-function minimizeAgentWindowDuringShare() {
+function scheduleRemotePointerMove(payload) {
+  state.pendingRemotePointerMove = payload;
+  if (state.remotePointerMoveBusy) {
+    return;
+  }
+  flushRemotePointerMove();
+}
+
+function restoreAgentWindowDuringShare() {
   window.setTimeout(() => {
     try {
       const currentWindow = tauriWindow?.getCurrentWindow?.();
-      if (currentWindow?.minimize) {
-        currentWindow.minimize().catch(() => {});
+      if (!currentWindow) {
+        return;
+      }
+      if (currentWindow.show) {
+        currentWindow.show().catch(() => {});
+      }
+      if (currentWindow.unminimize) {
+        currentWindow.unminimize().catch(() => {});
+      }
+      if (currentWindow.maximize) {
+        currentWindow.maximize().catch(() => {});
+      }
+      if (currentWindow.setFocus) {
+        currentWindow.setFocus().catch(() => {});
       }
     } catch (error) {
-      console.warn("Nao foi possivel minimizar o Agent durante o compartilhamento.", error);
+      console.warn("Nao foi possivel restaurar o Agent durante o compartilhamento.", error);
     }
-  }, 700);
+  }, 200);
 }
 
 async function startAgentWebRtcSession(signal) {
@@ -778,7 +794,7 @@ async function startAgentWebRtcSession(signal) {
       audio: false,
     });
     state.webrtcStream = stream;
-    minimizeAgentWindowDuringShare();
+    restoreAgentWindowDuringShare();
     const peer = new RTCPeerConnection({ iceServers: [] });
     state.webrtcPeer = peer;
     peer.ondatachannel = (event) => {

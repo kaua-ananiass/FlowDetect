@@ -142,6 +142,7 @@ TIPOS_IMAGEM = {"clicar_imagem"}
 TIPOS_VERIFICACAO = {"verificar_estado_botao"}
 TIPOS_CHROME = {"chrome_elemento_html"}
 TIPOS_PREPARACAO_TELA = {"abrir_url", "abrir_programa"}
+TIPOS_DOWNLOAD = {"salvar_download"}
 TIPOS_SUPORTADOS_EXECUTOR = {
     "texto_livre",
     "tecla",
@@ -154,6 +155,7 @@ TIPOS_SUPORTADOS_EXECUTOR = {
     *TIPOS_VERIFICACAO,
     *TIPOS_CHROME,
     *TIPOS_PREPARACAO_TELA,
+    *TIPOS_DOWNLOAD,
 }
 MAPA_PYAUTOGUI = {
     "space": "space",
@@ -191,6 +193,55 @@ def safe_print(*args, **kwargs):
         pass
 
 
+def definir_texto_clipboard_windows(texto):
+    if not hasattr(ctypes, "windll"):
+        return False
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GlobalAlloc.restype = ctypes.c_void_p
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    user32.SetClipboardData.restype = ctypes.c_void_p
+    texto_clipboard = str(texto or "")
+    dados = (texto_clipboard + "\0").encode("utf-16-le")
+    global_moveable = 0x0002
+    cf_unicode_text = 13
+    memoria = None
+    try:
+        aberto = False
+        for _ in range(6):
+            if user32.OpenClipboard(None):
+                aberto = True
+                break
+            time.sleep(0.01)
+        if not aberto:
+            return False
+        user32.EmptyClipboard()
+        memoria = kernel32.GlobalAlloc(global_moveable, len(dados))
+        if not memoria:
+            return False
+        destino = kernel32.GlobalLock(memoria)
+        if not destino:
+            return False
+        ctypes.memmove(destino, dados, len(dados))
+        kernel32.GlobalUnlock(memoria)
+        if not user32.SetClipboardData(cf_unicode_text, memoria):
+            return False
+        memoria = None
+        return True
+    except Exception:
+        return False
+    finally:
+        try:
+            user32.CloseClipboard()
+        except Exception:
+            pass
+        if memoria:
+            try:
+                kernel32.GlobalFree(memoria)
+            except Exception:
+                pass
+
+
 class ExecutorAutomacao:
     def __init__(
         self,
@@ -217,6 +268,7 @@ class ExecutorAutomacao:
         self._ultimo_diagnostico_reconhecimento = None
         self._cache_template_imagem = {}
         self._historico_reconhecimento = {}
+        self._templates_precarregados = False
         self._ultimo_clique_visual_em = 0.0
         self._ultima_posicao_clique_visual = None
         self._ultima_origem_captura_logada = ""
@@ -242,6 +294,7 @@ class ExecutorAutomacao:
         self.sequencias = self.agrupar_eventos_por_sequencia()
         self.sequencia_inicial = self.resolver_sequencia_inicial(self.payload)
         self.configuracoes_sequencia = self.carregar_configuracoes_sequencia(self.payload)
+        self.precarregar_templates_reconhecimento()
         self.planilha_cache = self.carregar_planilha()
 
     def normalizar_text_overrides(self, raw):
@@ -1012,12 +1065,20 @@ class ExecutorAutomacao:
     def registrar_reconhecimento_bem_sucedido(self, imagem_id, local, janela_alvo=None, bloco_id=None, janela_info=None):
         esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
         chave = self.chave_historico_reconhecimento(imagem_id, janela_alvo=janela_alvo, bloco_id=bloco_id)
+        anterior = self._historico_reconhecimento.get(chave) or {}
+        acertos = int(anterior.get("hits", 0) or 0) + 1
+        info_template = self._ultima_busca_template_info or {}
+        info_ocr = self._ultima_busca_ocr_info or {}
         dados = {
             "left": esquerda,
             "top": topo,
             "width": largura,
             "height": altura,
             "updated_at": time.time(),
+            "hits": acertos,
+            "last_score": float(info_template.get("score", info_ocr.get("score", 0.0)) or 0.0),
+            "last_capture_ms": float(info_template.get("capture_ms", info_ocr.get("capture_ms", 0.0)) or 0.0),
+            "last_recognition_ms": float(info_template.get("recognition_ms", info_ocr.get("ocr_ms", 0.0)) or 0.0),
         }
         janela_base = janela_info or (
             self.obter_janela_alvo_execucao_atual(obrigatoria=False)
@@ -1032,6 +1093,10 @@ class ExecutorAutomacao:
             dados["left_rel"] = int(esquerda - int(janela_base.get("left", 0) or 0))
             dados["top_rel"] = int(topo - int(janela_base.get("top", 0) or 0))
         self._historico_reconhecimento[chave] = dados
+
+    def obter_dados_historico_reconhecimento(self, imagem_id, janela_alvo=None, bloco_id=None):
+        chave = self.chave_historico_reconhecimento(imagem_id, janela_alvo=janela_alvo, bloco_id=bloco_id)
+        return self._historico_reconhecimento.get(chave) or {}
 
     def obter_regiao_historica_reconhecimento(self, imagem_id, janela_alvo=None, bloco_id=None, janela_info=None):
         chave = self.chave_historico_reconhecimento(imagem_id, janela_alvo=janela_alvo, bloco_id=bloco_id)
@@ -1051,8 +1116,22 @@ class ExecutorAutomacao:
             topo = int(dados.get("top", 0))
         largura = max(24, int(dados.get("width", 0) or 24))
         altura = max(24, int(dados.get("height", 0) or 24))
-        margem_x = max(40, int(largura * 1.8))
-        margem_y = max(28, int(altura * 1.8))
+        acertos = int(dados.get("hits", 1) or 1)
+        if acertos >= 8:
+            margem_x = max(10, int(largura * 0.30))
+            margem_y = max(8, int(altura * 0.30))
+        elif acertos >= 5:
+            margem_x = max(14, int(largura * 0.42))
+            margem_y = max(10, int(altura * 0.42))
+        elif acertos >= 3:
+            margem_x = max(20, int(largura * 0.62))
+            margem_y = max(16, int(altura * 0.62))
+        elif acertos >= 2:
+            margem_x = max(26, int(largura * 0.88))
+            margem_y = max(20, int(altura * 0.88))
+        else:
+            margem_x = max(40, int(largura * 1.8))
+            margem_y = max(28, int(altura * 1.8))
         limite = None
         if janela_base:
             limite = (
@@ -1313,6 +1392,7 @@ class ExecutorAutomacao:
         confianca=0.8,
         perfil_busca="balanced",
         texto_ocr_esperado="",
+        cache_acertos=0,
     ):
         perfil_busca = str(perfil_busca or "balanced").strip().lower()
         if perfil_busca not in {"fast", "balanced", "precise"}:
@@ -1322,6 +1402,12 @@ class ExecutorAutomacao:
         if perfil_busca == "fast" and isinstance(local, dict):
             score_local = float(local.get("score", 0.0) or 0.0)
             if score_local >= max(0.9, float(confianca or 0.8) - 0.04):
+                return local
+            if int(cache_acertos or 0) >= 5 and score_local >= max(0.84, float(confianca or 0.8) - 0.08):
+                return local
+        elif perfil_busca == "balanced" and isinstance(local, dict):
+            score_local = float(local.get("score", 0.0) or 0.0)
+            if int(cache_acertos or 0) >= 8 and score_local >= max(0.82, float(confianca or 0.8) - 0.12):
                 return local
 
         esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
@@ -1564,7 +1650,7 @@ class ExecutorAutomacao:
         except Exception:
             return None
 
-    def carregar_template_imagem(self, caminho_imagem):
+    def carregar_template_imagem(self, caminho_imagem, incluir_ocr=True):
         if not OPENCV_DISPONIVEL or np is None:
             return None
 
@@ -1575,23 +1661,29 @@ class ExecutorAutomacao:
             mtime = None
 
         cache = self._cache_template_imagem.get(caminho)
-        if cache and cache.get("mtime") == mtime:
+        if cache and cache.get("mtime") == mtime and (not incluir_ocr or cache.get("ocr_loaded")):
             return cache
 
         try:
-            referencia_bgr = cv2.imread(caminho, cv2.IMREAD_COLOR)
-            if referencia_bgr is None:
-                return None
-            referencia_gray = cv2.cvtColor(referencia_bgr, cv2.COLOR_BGR2GRAY)
-            referencia_edges = cv2.Canny(referencia_gray, 60, 160)
-            referencia_binary = cv2.threshold(
-                referencia_gray,
-                0,
-                255,
-                cv2.THRESH_BINARY + cv2.THRESH_OTSU,
-            )[1]
+            if cache and cache.get("mtime") == mtime:
+                referencia_bgr = cache.get("bgr")
+                referencia_gray = cache.get("gray")
+                referencia_edges = cache.get("edges")
+                referencia_binary = cache.get("binary")
+            else:
+                referencia_bgr = cv2.imread(caminho, cv2.IMREAD_COLOR)
+                if referencia_bgr is None:
+                    return None
+                referencia_gray = cv2.cvtColor(referencia_bgr, cv2.COLOR_BGR2GRAY)
+                referencia_edges = cv2.Canny(referencia_gray, 60, 160)
+                referencia_binary = cv2.threshold(
+                    referencia_gray,
+                    0,
+                    255,
+                    cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+                )[1]
             ocr_variants = []
-            if OCR_DISPONIVEL and PIL_DISPONIVEL:
+            if incluir_ocr and OCR_DISPONIVEL and PIL_DISPONIVEL:
                 try:
                     imagem_rgb = Image.fromarray(cv2.cvtColor(referencia_bgr, cv2.COLOR_BGR2RGB))
                     ocr_variants = self.extrair_variantes_texto_ocr_imagem(imagem_rgb)
@@ -1605,6 +1697,7 @@ class ExecutorAutomacao:
                 "binary": referencia_binary,
                 "ocr_text": ocr_variants[0] if ocr_variants else "",
                 "ocr_variants": ocr_variants,
+                "ocr_loaded": bool(incluir_ocr),
                 "width": int(referencia_gray.shape[1]),
                 "height": int(referencia_gray.shape[0]),
             }
@@ -1612,6 +1705,25 @@ class ExecutorAutomacao:
             return cache
         except Exception:
             return None
+
+    def precarregar_templates_reconhecimento(self):
+        if self._templates_precarregados:
+            return
+        self._templates_precarregados = True
+        if not OPENCV_DISPONIVEL:
+            return
+        carregados = 0
+        for evento in self.eventos:
+            if str((evento or {}).get("tipo") or "").strip() not in TIPOS_IMAGEM:
+                continue
+            detalhes = (evento or {}).get("detalhes") or {}
+            caminho_imagem, imagem_id = self.resolver_imagem(detalhes.get("imagem"))
+            if not imagem_id or not caminho_imagem.exists():
+                continue
+            if self.carregar_template_imagem(caminho_imagem, incluir_ocr=False):
+                carregados += 1
+        if carregados:
+            safe_print(f"Templates de reconhecimento pre-carregados: {carregados}", flush=True)
 
     def avaliar_patch_template(self, patch_bgr, patch_gray, template):
         if not OPENCV_DISPONIVEL or np is None or not template:
@@ -2212,7 +2324,8 @@ class ExecutorAutomacao:
         perfil_busca = str(perfil_busca or "balanced").strip().lower()
         if perfil_busca not in {"fast", "balanced", "precise"}:
             perfil_busca = "balanced"
-        template = self.carregar_template_imagem(caminho_imagem)
+        carregar_ocr_template = perfil_busca == "precise" or bool(str(texto_ocr_esperado or "").strip())
+        template = self.carregar_template_imagem(caminho_imagem, incluir_ocr=carregar_ocr_template)
         if not template:
             return True
 
@@ -2657,7 +2770,10 @@ class ExecutorAutomacao:
         try:
             tela_bgr = cv2.cvtColor(np.array(captura), cv2.COLOR_RGB2BGR)
             tela_gray = cv2.cvtColor(tela_bgr, cv2.COLOR_BGR2GRAY)
-            template = self.carregar_template_imagem(caminho_imagem)
+            template = self.carregar_template_imagem(
+                caminho_imagem,
+                incluir_ocr=bool(perfil_busca == "precise" or modo_estrito),
+            )
             if not template:
                 return None
             referencia_gray = template["gray"]
@@ -3679,6 +3795,50 @@ class ExecutorAutomacao:
 
         return re.sub(r"\{\{\s*([^{}]+?)\s*\}\}", substituir, bruto)
 
+    def slug_variavel_arquivo(self, texto):
+        base = unicodedata.normalize("NFKD", str(texto or ""))
+        base = "".join(ch for ch in base if not unicodedata.combining(ch))
+        base = re.sub(r"[^a-zA-Z0-9]+", "_", base).strip("_").lower()
+        return base
+
+    def montar_contexto_download(self, contexto_loop=None):
+        contexto = self.montar_contexto_substituicao(contexto_loop)
+        expandido = dict(contexto)
+        for chave, valor in list(contexto.items()):
+            slug = self.slug_variavel_arquivo(chave)
+            if slug:
+                expandido.setdefault(slug, valor)
+        linha = contexto.get("linha")
+        if isinstance(linha, dict):
+            for chave, valor in linha.items():
+                if str(chave).startswith("__"):
+                    continue
+                slug = self.slug_variavel_arquivo(chave)
+                if slug:
+                    expandido.setdefault(slug, valor)
+        expandido.setdefault("linha", contexto.get("linha_atual", ""))
+        expandido.setdefault("linha_atual", contexto.get("linha_atual", ""))
+        return expandido
+
+    def substituir_variaveis_nome_arquivo(self, texto, contexto_loop=None):
+        contexto = self.montar_contexto_download(contexto_loop)
+        bruto = self.substituir_variaveis_texto(texto, contexto_loop)
+
+        def substituir(match):
+            token = str(match.group(1) or "").strip()
+            valor = contexto.get(token)
+            if valor is None:
+                valor = contexto.get(self.slug_variavel_arquivo(token), "")
+            return "" if valor is None else str(valor)
+
+        return re.sub(r"(?<!\{)\{\s*([^{}]+?)\s*\}(?!\})", substituir, bruto)
+
+    def limpar_nome_arquivo(self, nome, fallback="download"):
+        texto = str(nome or "").strip() or fallback
+        texto = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", texto)
+        texto = re.sub(r"\s+", " ", texto).strip().strip(".")
+        return texto or fallback
+
     def resumir_html(self, html, limite=140):
         texto = re.sub(r"\s+", " ", str(html or "")).strip()
         if len(texto) <= limite:
@@ -3699,14 +3859,52 @@ class ExecutorAutomacao:
             self._playwright_runtime = sync_playwright().start()
         return self._playwright_runtime
 
-    def selecionar_pagina_chrome(self, browser):
+    def url_referencia_chrome(self, detalhes):
+        detalhes = detalhes or {}
+        elemento = detalhes.get("elemento") or {}
+        return str(
+            elemento.get("url_origem")
+            or elemento.get("url")
+            or detalhes.get("url_origem")
+            or ""
+        ).strip()
+
+    def pagina_chrome_compativel(self, pagina, url_referencia):
+        if not url_referencia:
+            return False
+        try:
+            url_atual = str(getattr(pagina, "url", "") or "")
+        except Exception:
+            return False
+        if not url_atual or url_atual.startswith("about:"):
+            return False
+        referencia_base = re.sub(r"([?#].*)$", "", url_referencia).rstrip("/")
+        atual_base = re.sub(r"([?#].*)$", "", url_atual).rstrip("/")
+        if referencia_base and atual_base and (referencia_base in atual_base or atual_base in referencia_base):
+            return True
+        try:
+            host_ref = re.sub(r"^https?://", "", url_referencia, flags=re.I).split("/")[0]
+            host_atual = re.sub(r"^https?://", "", url_atual, flags=re.I).split("/")[0]
+            return bool(host_ref and host_ref == host_atual)
+        except Exception:
+            return False
+
+    def selecionar_pagina_chrome(self, browser, url_referencia=""):
         contextos = list(getattr(browser, "contexts", []) or [])
         if contextos:
             for contexto in contextos:
                 paginas = list(getattr(contexto, "pages", []) or [])
+                if url_referencia:
+                    for pagina in reversed(paginas):
+                        try:
+                            if not pagina.is_closed() and self.pagina_chrome_compativel(pagina, url_referencia):
+                                return contexto, pagina
+                        except Exception:
+                            continue
                 for pagina in reversed(paginas):
                     try:
-                        if not pagina.is_closed():
+                        url_atual = str(getattr(pagina, "url", "") or "")
+                        if not pagina.is_closed() and not url_atual.startswith("about:"):
                             return contexto, pagina
                     except Exception:
                         continue
@@ -3718,7 +3916,7 @@ class ExecutorAutomacao:
         contexto = browser.new_context(no_viewport=True, accept_downloads=True)
         return contexto, contexto.new_page()
 
-    def garantir_sessao_chrome(self):
+    def garantir_sessao_chrome(self, detalhes=None):
         if self._chrome_page is not None:
             try:
                 if not self._chrome_page.is_closed():
@@ -3733,7 +3931,7 @@ class ExecutorAutomacao:
         for cdp_url in ("http://127.0.0.1:9222", "http://localhost:9222"):
             try:
                 browser = chromium.connect_over_cdp(cdp_url)
-                contexto, pagina = self.selecionar_pagina_chrome(browser)
+                contexto, pagina = self.selecionar_pagina_chrome(browser, self.url_referencia_chrome(detalhes))
                 self._chrome_browser = browser
                 self._chrome_context = contexto
                 self._chrome_page = pagina
@@ -3744,49 +3942,101 @@ class ExecutorAutomacao:
             except Exception as erro:
                 ultimo_erro = erro
 
-        candidatos_launch = [
-            {
-                "channel": "chrome",
-                "headless": False,
-                "args": ["--start-maximized"],
-            },
-            {
-                "headless": False,
-                "args": ["--start-maximized"],
-            },
-        ]
-        for parametros in candidatos_launch:
-            try:
-                browser = chromium.launch(**parametros)
-                contexto = browser.new_context(no_viewport=True, accept_downloads=True)
-                pagina = contexto.new_page()
-                self._chrome_browser = browser
-                self._chrome_context = contexto
-                self._chrome_page = pagina
-                self._chrome_source = "launch:chrome" if parametros.get("channel") == "chrome" else "launch:chromium"
-                self._chrome_launched_by_executor = True
-                safe_print(
-                    "Sessao Chrome iniciada em modo controlado. "
-                    "Se voce queria usar uma aba ja aberta, abra o Chrome com --remote-debugging-port=9222.",
-                    flush=True,
-                )
-                return pagina
-            except Exception as erro:
-                ultimo_erro = erro
-
         raise RuntimeError(
-            "Nao foi possivel conectar ou iniciar uma sessao Playwright/Chrome. "
+            "Nao foi possivel conectar ao Chrome aberto para automacao Web. "
+            "Feche o Chrome e deixe o bloco Abrir URL abrir novamente em Chrome/Edge, "
+            "ou abra o Chrome com --remote-debugging-port=9222. "
             f"Ultimo erro: {ultimo_erro}"
         )
 
-    def obter_pagina_chrome(self):
-        pagina = self.garantir_sessao_chrome()
+    def obter_pagina_chrome(self, detalhes=None):
+        pagina = self.garantir_sessao_chrome(detalhes)
         if self._chrome_context is None and self._chrome_browser is not None:
             try:
-                self._chrome_context, self._chrome_page = self.selecionar_pagina_chrome(self._chrome_browser)
+                self._chrome_context, self._chrome_page = self.selecionar_pagina_chrome(
+                    self._chrome_browser,
+                    self.url_referencia_chrome(detalhes),
+                )
                 pagina = self._chrome_page
             except Exception:
                 pass
+        return pagina
+
+    def clicar_elemento_chrome_com_mouse_real(self, page, locator, timeout=10000):
+        locator.wait_for(state="visible", timeout=timeout)
+        locator.scroll_into_view_if_needed(timeout=timeout)
+        caixa = locator.bounding_box(timeout=timeout)
+        if not caixa:
+            raise RuntimeError("Elemento encontrado, mas nao foi possivel calcular a posicao para clique real.")
+
+        ponto = page.evaluate(
+            """() => ({
+                screenX: window.screenX || 0,
+                screenY: window.screenY || 0,
+                outerHeight: window.outerHeight || 0,
+                innerHeight: window.innerHeight || 0,
+                outerWidth: window.outerWidth || 0,
+                innerWidth: window.innerWidth || 0
+            })"""
+        )
+        barra_superior = max(0, int((ponto.get("outerHeight") or 0) - (ponto.get("innerHeight") or 0)))
+        borda_lateral = max(0, int(((ponto.get("outerWidth") or 0) - (ponto.get("innerWidth") or 0)) / 2))
+        x = int((ponto.get("screenX") or 0) + borda_lateral + caixa["x"] + (caixa["width"] / 2))
+        y = int((ponto.get("screenY") or 0) + barra_superior + caixa["y"] + (caixa["height"] / 2))
+        try:
+            page.bring_to_front()
+        except Exception:
+            pass
+        time.sleep(0.12)
+        pyautogui.click(x=x, y=y)
+        safe_print(f"Chrome/Web clique real em X={x} Y={y}", flush=True)
+        return True
+
+    def abrir_url_em_sessao_chrome_controlada(self, url, navegador="chrome", nova_janela=True, tela_cheia=False):
+        runtime = self.garantir_playwright()
+        chromium = runtime.chromium
+        channel = "msedge" if str(navegador or "").lower() == "edge" else "chrome"
+        args = []
+        if tela_cheia:
+            args.extend(["--start-fullscreen", "--start-maximized"])
+        if nova_janela:
+            args.append("--new-window")
+
+        if self._chrome_page is not None:
+            try:
+                if not self._chrome_page.is_closed():
+                    self._chrome_page.goto(url, wait_until="domcontentloaded")
+                    try:
+                        self._chrome_page.bring_to_front()
+                    except Exception:
+                        pass
+                    return self._chrome_page
+            except Exception:
+                self._chrome_page = None
+
+        perfil = APP_ROOT / "dados_execucao" / "chrome_web_profile"
+        perfil.mkdir(parents=True, exist_ok=True)
+        contexto = chromium.launch_persistent_context(
+            str(perfil),
+            channel=channel,
+            headless=False,
+            no_viewport=True,
+            accept_downloads=True,
+            args=args,
+        )
+        paginas = [pagina for pagina in contexto.pages if not pagina.is_closed()]
+        pagina = paginas[-1] if paginas else contexto.new_page()
+        pagina.goto(url, wait_until="domcontentloaded")
+        try:
+            pagina.bring_to_front()
+        except Exception:
+            pass
+        self._chrome_browser = getattr(contexto, "browser", None)
+        self._chrome_context = contexto
+        self._chrome_page = pagina
+        self._chrome_source = f"controlled:{channel}"
+        self._chrome_launched_by_executor = True
+        safe_print(f"Sessao {channel} controlada aberta para Chrome/Web.", flush=True)
         return pagina
 
     def criar_locator_playwright(self, page, alvo):
@@ -3811,6 +4061,8 @@ class ExecutorAutomacao:
             return page.locator(seletor)
         if metodo == "text":
             return page.get_by_text(valor, exact=True)
+        if metodo == "nearby_text":
+            return page.get_by_text(valor, exact=False)
         if metodo == "role":
             if not role:
                 raise ValueError("O metodo Role exige que o bloco tenha um role salvo.")
@@ -3819,7 +4071,7 @@ class ExecutorAutomacao:
             xpath = valor if valor.startswith("xpath=") else f"xpath={valor}"
             return page.locator(xpath)
         if metodo == "id":
-            seletor = seletor_css or f'[id="{valor.replace("\\", "\\\\").replace("\"", "\\\"")}"]'
+            seletor = f'[id="{valor.replace("\\", "\\\\").replace("\"", "\\\"")}"]'
             return page.locator(seletor)
         if metodo == "css":
             return page.locator(valor or seletor_css)
@@ -3827,6 +4079,54 @@ class ExecutorAutomacao:
         if seletor_css:
             return page.locator(seletor_css)
         return page.locator(valor)
+
+    def alvos_chrome_por_prioridade(self, detalhes):
+        detalhes = detalhes or {}
+        elemento = dict(detalhes.get("elemento") or {})
+        alvo_principal = dict(detalhes.get("alvo") or {})
+        seletores = [item for item in (detalhes.get("seletores") or []) if isinstance(item, dict)]
+        por_metodo = {str(item.get("metodo") or "").strip().lower(): item for item in seletores}
+        vistos = set()
+
+        def adicionar(metodo, valor="", seletor_css="", role=""):
+            metodo = str(metodo or "").strip().lower()
+            valor = str(valor or "").strip()
+            seletor_css = str(seletor_css or "").strip()
+            role = str(role or "").strip()
+            chave = (metodo, valor, seletor_css, role)
+            if not metodo or (not valor and not seletor_css) or chave in vistos:
+                return
+            vistos.add(chave)
+            alvos.append({"metodo": metodo, "valor": valor, "seletor_css": seletor_css, "role": role})
+
+        alvos = []
+        adicionar("id", elemento.get("id") or por_metodo.get("id", {}).get("valor"), por_metodo.get("id", {}).get("seletor_css"))
+        adicionar("name", elemento.get("name") or por_metodo.get("name", {}).get("valor"), por_metodo.get("name", {}).get("seletor_css"))
+        adicionar("placeholder", elemento.get("placeholder") or por_metodo.get("placeholder", {}).get("valor"), por_metodo.get("placeholder", {}).get("seletor_css"))
+        adicionar("aria-label", elemento.get("aria_label") or por_metodo.get("aria-label", {}).get("valor"), por_metodo.get("aria-label", {}).get("seletor_css"))
+        adicionar("text", elemento.get("texto_visivel") or elemento.get("text") or por_metodo.get("text", {}).get("valor"))
+        adicionar("nearby_text", elemento.get("texto_proximo") or por_metodo.get("nearby_text", {}).get("valor"))
+        adicionar("css", elemento.get("css_selector") or alvo_principal.get("seletor_css") or por_metodo.get("css", {}).get("valor"))
+        adicionar("xpath", elemento.get("xpath") or por_metodo.get("xpath", {}).get("valor"))
+        if alvo_principal:
+            adicionar(
+                alvo_principal.get("metodo") or "css",
+                alvo_principal.get("valor"),
+                alvo_principal.get("seletor_css"),
+                alvo_principal.get("role"),
+            )
+        return alvos
+
+    def encontrar_locator_chrome(self, page, detalhes, timeout):
+        ultimo_erro = None
+        for alvo in self.alvos_chrome_por_prioridade(detalhes):
+            try:
+                locator = self.criar_locator_playwright(page, alvo).first
+                locator.wait_for(state="attached", timeout=max(300, min(1200, int(timeout))))
+                return locator, alvo
+            except Exception as erro:
+                ultimo_erro = erro
+        raise RuntimeError(f"Nao encontrei o elemento Chrome/Web por nenhuma estrategia. Ultimo erro: {ultimo_erro}")
 
     def salvar_captura_erro_chrome(self, nome_bloco, page=None):
         PASTA_DIAGNOSTICOS_CHROME.mkdir(parents=True, exist_ok=True)
@@ -3958,12 +4258,16 @@ class ExecutorAutomacao:
             )
 
             try:
-                page = self.obter_pagina_chrome()
+                page = self.obter_pagina_chrome(detalhes)
                 try:
                     page.bring_to_front()
                 except Exception:
                     pass
-                locator = self.criar_locator_playwright(page, alvo).first
+                locator, alvo_usado = self.encontrar_locator_chrome(page, detalhes, timeout)
+                safe_print(
+                    f"[Chrome: {nome_bloco}] Estrategia usada: {alvo_usado.get('metodo')} | {alvo_usado.get('valor') or alvo_usado.get('seletor_css')}",
+                    flush=True,
+                )
 
                 valor_acao = self.substituir_variaveis_texto(acao.get("valor", ""), contexto_loop)
                 tecla_depois = str(acao.get("pressionar_depois", "") or "").strip()
@@ -3985,6 +4289,16 @@ class ExecutorAutomacao:
                 elif tipo_acao == "clicar":
                     locator.wait_for(state="visible", timeout=timeout)
                     locator.click(timeout=timeout)
+
+                elif tipo_acao == "clicar_real":
+                    self.clicar_elemento_chrome_com_mouse_real(page, locator, timeout=timeout)
+
+                elif tipo_acao == "marcar_checkbox":
+                    locator.wait_for(state="visible", timeout=timeout)
+                    try:
+                        locator.check(timeout=timeout)
+                    except Exception:
+                        locator.click(timeout=timeout)
 
                 elif tipo_acao == "esperar":
                     locator.wait_for(state="visible", timeout=timeout)
@@ -4167,6 +4481,11 @@ class ExecutorAutomacao:
                 f"{self.limpar_saida_status(acao.get('tipo', 'clicar'))}]"
             )
 
+        if tipo == "salvar_download":
+            detalhes = evento.get("detalhes", {})
+            extensao = str(detalhes.get("extensao", ".pdf") or ".pdf")
+            return f"Evento #{ordem}: salvar download {extensao}"
+
         return f"Evento #{ordem}: {self.limpar_saida_status(evento.get('texto', 'acao'))}"
 
     def descrever_iteracao_loop(self, indice, total_iteracoes, linha_referencia=None, empresa="", contexto="loop"):
@@ -4345,10 +4664,17 @@ class ExecutorAutomacao:
     def eh_texto_simples(self, nome):
         return len(nome) == 1 and nome not in {"\r", "\n", "\t"}
 
-    def escrever_texto(self, texto):
-        if not self.preparar_foco_para_digitacao():
+    def escrever_texto(self, texto, preparar_foco=True):
+        if preparar_foco and not self.preparar_foco_para_digitacao():
             return False
-        for caractere in str(texto):
+        texto_final = str(texto)
+        if texto_final and definir_texto_clipboard_windows(texto_final):
+            pyautogui.hotkey("ctrl", "v")
+            time.sleep(0.008)
+            safe_print(f"Texto colado em modo rapido ({len(texto_final)} caractere(s)).", flush=True)
+            return not self.cancelamento_solicitado()
+
+        for caractere in texto_final:
             if self.cancelamento_solicitado():
                 return False
             if caractere == "\r":
@@ -4445,6 +4771,7 @@ class ExecutorAutomacao:
         ultima_falha = None
         ultima_tentativa_ocr = 0.0
         ultima_ativacao_janela = 0.0
+        cache_adaptativo_logado = False
         self._ultima_regiao_reconhecimento = None
         self._ultimo_template_debug = None
         self._ultimo_diagnostico_reconhecimento = None
@@ -4517,6 +4844,18 @@ class ExecutorAutomacao:
                 bloco_id=bloco_id,
                 janela_info=janela_info_cache,
             )
+            dados_historico = self.obter_dados_historico_reconhecimento(
+                imagem_id,
+                janela_alvo=janela_alvo,
+                bloco_id=bloco_id,
+            )
+            acertos_historico = int(dados_historico.get("hits", 0) or 0)
+            janela_cache_quente = min(1.15, max(0.28, timeout_total * (0.12 if acertos_historico < 5 else 0.36)))
+            usar_somente_cache_neste_inicio = bool(
+                regiao_historica
+                and acertos_historico >= 2
+                and tempo_decorrido < janela_cache_quente
+            )
             regiao_personalizada = self.construir_regiao_personalizada(
                 area_personalizada,
                 janela_info=janela_info_cache,
@@ -4524,11 +4863,45 @@ class ExecutorAutomacao:
             regioes_busca = []
             if regiao_historica:
                 adicionar_regiao_busca(regioes_busca, regiao_historica, "cache", fallback=False)
+                if usar_somente_cache_neste_inicio and not cache_adaptativo_logado:
+                    safe_print(
+                        "Cache adaptativo ativo: buscando primeiro perto da ultima posicao "
+                        f"(acertos={acertos_historico}, janela={janela_cache_quente:.2f}s).",
+                        flush=True,
+                    )
+                    cache_adaptativo_logado = True
+                if acertos_historico >= 5:
+                    try:
+                        if self.validar_correspondencia_visual(
+                            caminho_imagem,
+                            regiao_historica,
+                            confianca,
+                            perfil_busca="fast" if perfil_busca != "precise" else "precise",
+                            texto_ocr_esperado=texto_ocr_esperado,
+                        ):
+                            self.registrar_reconhecimento_bem_sucedido(
+                                imagem_id,
+                                regiao_historica,
+                                janela_alvo=janela_alvo,
+                                bloco_id=bloco_id,
+                                janela_info=janela_info_cache,
+                            )
+                            info_quente = self._ultima_busca_template_info or {}
+                            safe_print(
+                                "Cache quente confirmou a imagem sem busca completa "
+                                f"(acertos={acertos_historico}, captura={float(info_quente.get('capture_ms', 0.0) or 0.0):.0f}ms, "
+                                f"reconhecimento={float(info_quente.get('recognition_ms', 0.0) or 0.0):.0f}ms, "
+                                f"area={self.formatar_regiao_log(regiao_historica)}).",
+                                flush=True,
+                            )
+                            return regiao_historica
+                    except Exception:
+                        pass
 
-            if modo_area_busca == "custom_area" and regiao_personalizada:
+            if not usar_somente_cache_neste_inicio and modo_area_busca == "custom_area" and regiao_personalizada:
                 adicionar_regiao_busca(regioes_busca, regiao_personalizada, "custom_area", fallback=bool(regiao_historica))
 
-            if usando_alvo_execucao or janela_alvo or self.janela_alvo:
+            if not usar_somente_cache_neste_inicio and (usando_alvo_execucao or janela_alvo or self.janela_alvo):
                 for margem in margens_busca:
                     if janela_info_cache:
                         margem = max(0, int(margem or 0))
@@ -4546,7 +4919,7 @@ class ExecutorAutomacao:
                         "target_window",
                         fallback=(modo_area_busca != "target_window") or bool(regiao_historica),
                     )
-            elif modo_area_busca == "custom_area" and regiao_personalizada:
+            elif not usar_somente_cache_neste_inicio and modo_area_busca == "custom_area" and regiao_personalizada:
                 adicionar_regiao_busca(regioes_busca, regiao_personalizada, "custom_area", fallback=bool(regiao_historica))
 
             self._ultima_regiao_reconhecimento = regioes_busca[-1]["region"] if regioes_busca else None
@@ -4588,6 +4961,7 @@ class ExecutorAutomacao:
                         local_template_preferencial,
                         confianca,
                         perfil_busca=perfil_busca_tentativa,
+                        cache_acertos=acertos_historico if etapa_busca == "cache" else 0,
                     )
                     if local_confirmado:
                         if not self.confirmar_ocr_obrigatorio_apos_visual(
@@ -4699,6 +5073,7 @@ class ExecutorAutomacao:
                                     local,
                                     confianca_atual,
                                     perfil_busca=perfil_busca,
+                                    cache_acertos=acertos_historico if etapa_busca == "cache" else 0,
                                 )
                                 if local_confirmado:
                                     if not self.confirmar_ocr_obrigatorio_apos_visual(
@@ -4747,6 +5122,7 @@ class ExecutorAutomacao:
                                     local_template,
                                     confianca_atual,
                                     perfil_busca=perfil_iteracao,
+                                    cache_acertos=acertos_historico if etapa_busca == "cache" else 0,
                                 )
                                 if local_confirmado:
                                     if not self.confirmar_ocr_obrigatorio_apos_visual(
@@ -5033,17 +5409,29 @@ class ExecutorAutomacao:
             f"Abrindo URL: {url} | navegador={navegador} | modo={modo_abertura} | tela_cheia={tela_cheia}",
             flush=True,
         )
-        executavel = self.localizar_executavel_navegador(navegador)
-        if executavel:
-            argumentos = [executavel]
-            if nova_janela:
-                argumentos.append("--new-window")
-            if tela_cheia:
-                argumentos.extend(["--start-fullscreen", "--start-maximized"])
-            argumentos.append(url)
-            popen_silencioso(argumentos)
+        if navegador in {"chrome", "edge"}:
+            self.abrir_url_em_sessao_chrome_controlada(
+                url,
+                navegador=navegador,
+                nova_janela=nova_janela,
+                tela_cheia=tela_cheia,
+            )
+            safe_print(
+                "Chrome/Web aberto em sessao controlada pelo FlowDetect para os proximos blocos HTML.",
+                flush=True,
+            )
         else:
-            webbrowser.open(url, new=1 if nova_janela else 2)
+            executavel = self.localizar_executavel_navegador(navegador)
+            if not executavel:
+                webbrowser.open(url, new=1 if nova_janela else 2)
+            else:
+                argumentos = [executavel]
+                if nova_janela:
+                    argumentos.append("--new-window")
+                if tela_cheia:
+                    argumentos.extend(["--start-fullscreen", "--start-maximized"])
+                argumentos.append(url)
+                popen_silencioso(argumentos)
         tempo_fullscreen = 0.0
         if tela_cheia:
             tempo_fullscreen = min(1.2, aguardar) if aguardar > 0 else 1.2
@@ -5084,6 +5472,110 @@ class ExecutorAutomacao:
             return self.resultado_fluxo("parar")
         return self.resultado_sucesso_evento(evento)
 
+    def resolver_pasta_download_origem(self, pasta_origem):
+        origem = str(pasta_origem or "").strip().strip('"')
+        if origem:
+            return Path(origem).expanduser()
+        return Path.home() / "Downloads"
+
+    def normalizar_extensao_download(self, extensao):
+        valor = str(extensao or ".pdf").strip().lower()
+        if not valor or valor == "*":
+            return "*"
+        return valor if valor.startswith(".") else f".{valor}"
+
+    def arquivo_download_pronto(self, caminho):
+        try:
+            if not caminho.exists() or not caminho.is_file():
+                return False
+            tamanho = caminho.stat().st_size
+            time.sleep(0.18)
+            if not caminho.exists() or caminho.stat().st_size != tamanho:
+                return False
+            with caminho.open("rb"):
+                return True
+        except Exception:
+            return False
+
+    def encontrar_download_finalizado(self, pasta_origem, extensao, inicio_em):
+        if not pasta_origem.exists():
+            raise FileNotFoundError(f"Pasta monitorada nao encontrada: {pasta_origem}")
+        extensao_normalizada = self.normalizar_extensao_download(extensao)
+        temporarios = {".crdownload", ".tmp", ".part"}
+        candidatos = []
+        for item in pasta_origem.iterdir():
+            if not item.is_file():
+                continue
+            sufixo = item.suffix.lower()
+            if sufixo in temporarios:
+                continue
+            if extensao_normalizada != "*" and sufixo != extensao_normalizada:
+                continue
+            try:
+                if item.stat().st_mtime < inicio_em:
+                    continue
+            except OSError:
+                continue
+            if Path(str(item) + ".crdownload").exists():
+                continue
+            candidatos.append(item)
+        candidatos.sort(key=lambda caminho: caminho.stat().st_mtime, reverse=True)
+        for candidato in candidatos:
+            if self.arquivo_download_pronto(candidato):
+                return candidato
+        return None
+
+    def destino_unico_download(self, pasta_destino, nome_arquivo):
+        pasta_destino.mkdir(parents=True, exist_ok=True)
+        destino = pasta_destino / nome_arquivo
+        if not destino.exists():
+            return destino
+        stem = destino.stem
+        suffix = destino.suffix
+        for indice in range(2, 1000):
+            candidato = pasta_destino / f"{stem}_{indice}{suffix}"
+            if not candidato.exists():
+                return candidato
+        raise RuntimeError(f"Nao foi possivel criar nome unico para: {destino}")
+
+    def executar_bloco_salvar_download(self, evento, contexto_loop=None):
+        detalhes = evento.get("detalhes") or {}
+        pasta_origem = self.resolver_pasta_download_origem(detalhes.get("pasta_origem", ""))
+        pasta_destino_texto = str(detalhes.get("pasta_destino", "") or "").strip()
+        if not pasta_destino_texto:
+            raise RuntimeError("Bloco Salvar download sem pasta de destino configurada.")
+        pasta_destino = Path(pasta_destino_texto).expanduser()
+        extensao = self.normalizar_extensao_download(detalhes.get("extensao", ".pdf"))
+        timeout = max(1.0, float(detalhes.get("timeout", 60) or 60))
+        inicio_em = time.time() - 2.0
+        nome_modelo = str(detalhes.get("nome_arquivo", "") or "").strip()
+        safe_print(
+            f"Aguardando download em {pasta_origem} | tipo={extensao} | timeout={timeout:g}s",
+            flush=True,
+        )
+        fim = time.time() + timeout
+        arquivo = None
+        while time.time() < fim:
+            if self.cancelamento_solicitado():
+                return self.resultado_fluxo("parar")
+            arquivo = self.encontrar_download_finalizado(pasta_origem, extensao, inicio_em)
+            if arquivo:
+                break
+            time.sleep(0.35)
+        if not arquivo:
+            safe_print(f"Nenhum download {extensao} finalizado em {timeout:g}s.", flush=True)
+            return self.resultado_fluxo("parar")
+
+        nome_final = self.substituir_variaveis_nome_arquivo(nome_modelo, contexto_loop) if nome_modelo else arquivo.name
+        nome_final = self.limpar_nome_arquivo(nome_final, fallback=arquivo.stem)
+        if extensao != "*" and not Path(nome_final).suffix:
+            nome_final = f"{nome_final}{extensao}"
+        destino = self.destino_unico_download(pasta_destino, nome_final)
+        shutil.move(str(arquivo), str(destino))
+        self.salvar_variavel_contexto("ultimo_download", str(destino))
+        safe_print(f"Download salvo: {destino}", flush=True)
+        return self.resultado_sucesso_evento(evento)
+
     def executar_evento(self, evento, contexto_loop=None):
         tipo = evento.get("tipo")
 
@@ -5096,6 +5588,9 @@ class ExecutorAutomacao:
         if tipo == "abrir_programa":
             return self.executar_bloco_abrir_programa(evento)
 
+        if tipo == "salvar_download":
+            return self.executar_bloco_salvar_download(evento, contexto_loop)
+
         if tipo == "texto_livre":
             self.preparar_janela_para_acao()
             ordem = str(evento.get("ordem", ""))
@@ -5107,6 +5602,8 @@ class ExecutorAutomacao:
         if tipo in TIPOS_SEQUENCIA_PLANILHA:
             detalhes = evento.get("detalhes", {})
             self.preparar_janela_para_acao()
+            if not self.preparar_foco_para_digitacao():
+                return self.resultado_fluxo("parar")
             acao_apos_item = detalhes.get("acao_apos_item")
             if acao_apos_item is None and detalhes.get("pressionar_enter"):
                 acao_apos_item = ["enter"]
@@ -5118,7 +5615,7 @@ class ExecutorAutomacao:
                     contexto_loop.get("indice", 0),
                 )
                 if valor_loop is not None:
-                    if not self.escrever_texto(str(valor_loop)):
+                    if not self.escrever_texto(str(valor_loop), preparar_foco=False):
                         return self.resultado_fluxo("parar")
                     if acao_apos_item and not self.executar_acao(acao_apos_item):
                         return self.resultado_fluxo("parar")
@@ -5132,7 +5629,7 @@ class ExecutorAutomacao:
             for indice, valor in enumerate(valores):
                 if self.cancelamento_solicitado():
                     return self.resultado_fluxo("parar")
-                if not self.escrever_texto(valor):
+                if not self.escrever_texto(valor, preparar_foco=False):
                     return self.resultado_fluxo("parar")
                 if indice < len(valores) - 1 and acao_apos_item:
                     if not self.executar_acao(acao_apos_item):
@@ -5323,7 +5820,12 @@ class ExecutorAutomacao:
         tecla = teclas[0]
         repeticoes = max(1, int((evento.get("detalhes") or {}).get("repeticoes", 1) or 1))
         if self.eh_texto_simples(tecla):
-            pyautogui.write(tecla * repeticoes, interval=INTERVALO_TEXTO)
+            texto_repetido = tecla * repeticoes
+            if len(texto_repetido) >= 2 and definir_texto_clipboard_windows(texto_repetido):
+                pyautogui.hotkey("ctrl", "v")
+                time.sleep(0.02)
+            else:
+                pyautogui.write(texto_repetido, interval=0)
             return self.resultado_sucesso_evento(evento)
 
         for _ in range(repeticoes):

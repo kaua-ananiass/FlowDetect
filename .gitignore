@@ -1,9 +1,7 @@
 # Node / Tauri / Rust
 node_modules/
 tauri_gerador/node_modules/
-tauri_ui/node_modules/
 flowdetect_agent/node_modules/
-flowdetect_control/node_modules/
 dist/
 build/
 target/

@@ -1,0 +1,893 @@
+
+
+
+
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="utf-8">
+  <title>gov.br - Acesse sua conta</title>
+  <meta property="creator.productor" content="http://estruturaorganizacional.dados.gov.br/id/unidade-organizacional/2981">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
+
+  <link rel="icon" href="/assets/govbr/img/favicon.ico" type="image/x-icon">
+  <link rel="stylesheet" href="/assets/govbr/fontawesome/css/all.min.css">
+  <link rel="stylesheet" href="/assets/govbr/fonts/rawline/rawline.css">
+  <link rel="stylesheet" href="/assets/govbr/css/govbr-highcontrast.css">
+  <link rel="stylesheet" href="/assets/govbr/css/govbr-templates.css?v=15">
+  <link rel="stylesheet" href="/assets/govbr/css/govbr-modal.css?v=9">
+  <link rel="stylesheet" href="/assets/govbr/css/govbr-eula.css?v=4">
+  <script src="/assets/govbr/js/contrast.class.js"></script>
+  <script src="/assets/govbr/js/modal.js"></script>
+</head>
+
+<body>
+    <a tabindex="0" href="#conteudo" class="sr-only sr-only-focusable" aria-label="Pular para o conteÃºdo principal. Navegue sempre com a tecla TAB">Pular para o conteÃºdo principal</a>
+
+    <header>
+        <a href="https://www.gov.br"><img src="/assets/govbr/img/govbr.png" alt="Logomarca GovBR" /></a>
+        <div id="acessibilidade">
+            <span>
+                <a href="#" onClick="contrastScript().toggleContrast(event)"><i class="fas fa-adjust"></i><span>Alto Contraste</span></a>
+            </span>
+            <span>
+                <a href="//www.vlibras.gov.br" target="_BLANK"><i class="fas fa-deaf"></i><span>VLibras</span></a>
+            </span>
+        </div>
+        
+    </header>
+<style>
+	.button-continuar:disabled {
+        opacity: 0.6 !important;
+        cursor: not-allowed !important;
+        background: #1351B4 0 0 no-repeat padding-box !important;
+    }
+</style>
+<div class="container">
+	<aside id="aside-signin">
+		<img id="identidade-govbr" src="assets/govbr/img/conta_govbr_v2_defeso-eleitoral.jpg" alt="Logomarca GovBR" />
+	</aside>
+	<main id="main-signin">
+	<form method="post" id="loginData" action="https://sso.acesso.gov.br/login?client_id=por-p-fgtsd.estaleiro.serpro.gov.br&amp;authorization_id=19fd2b4c893" autocomplete="off" novalidate>
+		<div class="card" id="login-cpf">
+			<h3>Identifique-se no gov.br com:</h3>
+			<div class="item-login-signup-ways" onclick="accordion('accordion-panel-id')">
+					<a tabindex="3">
+						<img src="assets/govbr/img/icons/id-card-solid.png">
+						Número do CPF
+					</a>
+				</div>
+				<div class="accordion-panel" id="accordion-panel-id">
+					<p>Digite seu CPF para <strong>criar</strong> ou <strong>acessar</strong> sua conta gov.br</p>
+					<label for="cpf">CPF</label>
+					<input id="accountId" name="accountId" autocomplete="new-password" tabindex="1" type="tel" inputmode="numeric" value="" placeholder="Digite seu CPF" aria-invalid="false">
+					<div class="button-panel" id="login-button-panel">
+						<button id="enter-account-id" type="submit" name="operation" value="enter-account-id" class="button-continuar" tabindex="2">Continuar</button>
+            			<script>
+	  							document.getElementById("enter-account-id").addEventListener("click", event=>onSubmit(event));
+	  						</script>
+            			</div>
+				</div>
+				<label id="title-outras-op">Outras opções de identificação:</label>
+				<hr id="hr-outras-op" style="margin: 0 0 0">
+	
+	           
+	            <div class="item-login-signup-ways" onclick="showModal('modal-bancos-credenciados')" >
+						<button type="button" tabindex="5" class="button-href-mimic2" style="color:#008C32" onclick="showModal('modal-bancos-credenciados')" >
+							<img src="assets/govbr/img/icons/InternetBanking-green.png" />
+							Login com seu banco
+							<span style="font-size: 7px; background-color: #008C32; color: white; padding: 3px; top: -3px; position: relative; margin-left: 8px;">SUA CONTA SERÁ PRATA</span>
+						</button>
+					</div>
+					<div class="modal-bancos-credenciados">
+						<div class="modal-content">
+							<h3>Bancos Credenciados</h3>
+							<p><b>Crie</b> ou <b>aumente o nível</b> da sua conta para <b>PRATA</b>, fazendo login com seu banco.</p>
+							<div id="providers-list" class="modal-providers-list">
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-banco-do-brasil"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/bb_logo.png"/>
+											Banco do Brasil</button>				
+										<script>
+											document.getElementById("login-external-authentication-banco-do-brasil").addEventListener("click", event => { 
+												setProviderId("banco-do-brasil");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-itau"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/itau_logo.png"/>
+											Itaú</button>				
+										<script>
+											document.getElementById("login-external-authentication-itau").addEventListener("click", event => { 
+												setProviderId("itau");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-caixa-economica"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/cef_logo.png"/>
+											Caixa Econômica</button>				
+										<script>
+											document.getElementById("login-external-authentication-caixa-economica").addEventListener("click", event => { 
+												setProviderId("caixa-economica");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-bradesco"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/bradesco_logo.png"/>
+											Bradesco</button>				
+										<script>
+											document.getElementById("login-external-authentication-bradesco").addEventListener("click", event => { 
+												setProviderId("bradesco");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-santander"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/santander_logo.png"/>
+											Santander</button>				
+										<script>
+											document.getElementById("login-external-authentication-santander").addEventListener("click", event => { 
+												setProviderId("santander");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-picpay"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/picpay.png"/>
+											PicPay/Original</button>				
+										<script>
+											document.getElementById("login-external-authentication-picpay").addEventListener("click", event => { 
+												setProviderId("picpay");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-nubank"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/nubank_logo.png"/>
+											Nubank</button>				
+										<script>
+											document.getElementById("login-external-authentication-nubank").addEventListener("click", event => { 
+												setProviderId("nubank");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-sicoob"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/sicoob_logo.png"/>
+											Sicoob</button>				
+										<script>
+											document.getElementById("login-external-authentication-sicoob").addEventListener("click", event => { 
+												setProviderId("sicoob");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-sicredi"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/sicredi_logo.png"/>
+											Sicredi</button>				
+										<script>
+											document.getElementById("login-external-authentication-sicredi").addEventListener("click", event => { 
+												setProviderId("sicredi");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-banrisul"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/banrisul_logo.png"/>
+											Banrisul</button>				
+										<script>
+											document.getElementById("login-external-authentication-banrisul").addEventListener("click", event => { 
+												setProviderId("banrisul");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-agibank"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/agibank_logo.png"/>
+											Agibank</button>				
+										<script>
+											document.getElementById("login-external-authentication-agibank").addEventListener("click", event => { 
+												setProviderId("agibank");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-banco-de-brasilia"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/brb_logo.png"/>
+											Banco de Brasília</button>				
+										<script>
+											document.getElementById("login-external-authentication-banco-de-brasilia").addEventListener("click", event => { 
+												setProviderId("banco-de-brasilia");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-mercantil"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/mercantil_logo.png"/>
+											Banco Mercantil</button>				
+										<script>
+											document.getElementById("login-external-authentication-mercantil").addEventListener("click", event => { 
+												setProviderId("mercantil");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-btgpactual"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/btgpactual_logo.png"/>
+											BTG Pactual</button>				
+										<script>
+											document.getElementById("login-external-authentication-btgpactual").addEventListener("click", event => { 
+												setProviderId("btgpactual");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-inter"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/inter.png"/>
+											Banco Inter</button>				
+										<script>
+											document.getElementById("login-external-authentication-inter").addEventListener("click", event => { 
+												setProviderId("inter");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-c6bank"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/c6-bank.png"/>
+											C6 Bank</button>				
+										<script>
+											document.getElementById("login-external-authentication-c6bank").addEventListener("click", event => { 
+												setProviderId("c6bank");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								<div class="item-login-signup-ways">
+										<button id="login-external-authentication-bancobmg"
+											type="submit"
+											name="operation" value="login-external-authentication"
+											class="button-href-mimic2" 
+											tabindex="3">
+											<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/bmg.png"/>
+											Banco Bmg</button>				
+										<script>
+											document.getElementById("login-external-authentication-bancobmg").addEventListener("click", event => { 
+												setProviderId("bancobmg");
+												
+												return onSubmit(event);
+												
+											});
+										</script>
+									</div>
+								</div>
+							<hr>
+							<div class="button-panel" id="modal-bancos-credenciados-button-panel">
+								<button class="button-cancel" type="button" id="btn-close-modal-bancos-credenciados" onclick="closeModal('modal-bancos-credenciados')">Cancelar</button>
+							</div>
+						</div>
+					</div>
+				<div class="item-login-signup-ways" onclick="showQrCode('51483b48-d1c8-4eb4-9912-e8d7e366452d');">
+						<a tabindex="5" href="#">
+						    <img src="assets/govbr/img/icons/qrcode.png" />
+								Login com QR code
+					   		</a>
+					</div>
+				<div class="item-login-signup-ways" id="cert-digital">
+					<button id="login-certificate" type="submit" formaction="https://certificado.sso.acesso.gov.br/login?client_id=por-p-fgtsd.estaleiro.serpro.gov.br&authorization_id=19fd2b4c893" name="operation" value="login-certificate" class="button-href-mimic2" tabindex="4">
+						<img src="assets/govbr/img/icons/CD.png" />
+						Seu certificado digital
+					</button>
+          <script>
+  						document.getElementById("login-certificate").addEventListener("click", event=>onSubmit(event));
+  					</script>
+          </div>
+				<div class="item-login-signup-ways" id="cert-digital-cloud">
+						<button type="button" onclick="showModal('modal-certificado-nuvem')" class="button-href-mimic2" tabindex="5">
+							<img src="assets/govbr/img/icons/CD-Nuvem.png" id="cert-digital-cloud-img" />
+							Seu certificado digital em nuvem
+						</button>
+					</div>
+					<div class="modal-certificado-nuvem">
+						<div class="modal-content">
+							<h3>Provedores de Certificados em Nuvem</h3>
+							<div class="item-login-signup-ways">
+									<button id="login-external-authentication-neoid"
+										type="submit"
+										name="operation" value="login-external-authentication"
+										class="button-href-mimic2" 
+										tabindex="3">
+										<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/serproid_logo.png"/>
+										SerproID</button>
+									<script>
+										document.getElementById("login-external-authentication-neoid").addEventListener("click", event => { 
+											setProviderId("neoid");
+											
+											return onSubmit(event);
+											
+										});
+									</script>
+								</div>
+							<div class="item-login-signup-ways">
+									<button id="login-external-authentication-safeid"
+										type="submit"
+										name="operation" value="login-external-authentication"
+										class="button-href-mimic2" 
+										tabindex="3">
+										<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/safeid_logo.png"/>
+										SafeID</button>
+									<script>
+										document.getElementById("login-external-authentication-safeid").addEventListener("click", event => { 
+											setProviderId("safeid");
+											
+											return onSubmit(event);
+											
+										});
+									</script>
+								</div>
+							<div class="item-login-signup-ways">
+									<button id="login-external-authentication-birdid"
+										type="submit"
+										name="operation" value="login-external-authentication"
+										class="button-href-mimic2" 
+										tabindex="3">
+										<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/birdid_logo.png"/>
+										BirdID</button>
+									<script>
+										document.getElementById("login-external-authentication-birdid").addEventListener("click", event => { 
+											setProviderId("birdid");
+											
+											return onSubmit(event);
+											
+										});
+									</script>
+								</div>
+							<div class="item-login-signup-ways">
+									<button id="login-external-authentication-remoteid"
+										type="submit"
+										name="operation" value="login-external-authentication"
+										class="button-href-mimic2" 
+										tabindex="3">
+										<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/remoteid_logo.png"/>
+										Certisign</button>
+									<script>
+										document.getElementById("login-external-authentication-remoteid").addEventListener("click", event => { 
+											setProviderId("remoteid");
+											
+											return onSubmit(event);
+											
+										});
+									</script>
+								</div>
+							<div class="item-login-signup-ways">
+									<button id="login-external-authentication-vidaas"
+										type="submit"
+										name="operation" value="login-external-authentication"
+										class="button-href-mimic2" 
+										tabindex="3">
+										<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/vidaas_logo.png"/>
+										Vidaas</button>
+									<script>
+										document.getElementById("login-external-authentication-vidaas").addEventListener("click", event => { 
+											setProviderId("vidaas");
+											
+											return onSubmit(event);
+											
+										});
+									</script>
+								</div>
+							<div class="item-login-signup-ways">
+									<button id="login-external-authentication-dscloud"
+										type="submit"
+										name="operation" value="login-external-authentication"
+										class="button-href-mimic2" 
+										tabindex="3">
+										<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/digitalsign_logo.png"/>
+										DS Cloud</button>
+									<script>
+										document.getElementById("login-external-authentication-dscloud").addEventListener("click", event => { 
+											setProviderId("dscloud");
+											
+											return onSubmit(event);
+											
+										});
+									</script>
+								</div>
+							<div class="item-login-signup-ways">
+									<button id="login-external-authentication-syngular"
+										type="submit"
+										name="operation" value="login-external-authentication"
+										class="button-href-mimic2" 
+										tabindex="3">
+										<img src="https://sso.acesso.gov.br/assets/govbr/img/icons/syngular_logo.png"/>
+										Syngular</button>
+									<script>
+										document.getElementById("login-external-authentication-syngular").addEventListener("click", event => { 
+											setProviderId("syngular");
+											
+											return onSubmit(event);
+											
+										});
+									</script>
+								</div>
+							<hr>
+							<div class="button-panel" id="modal-bancos-credenciados-button-panel">
+								<button class="button-cancel" type="button" id="btn-close-modal-certificado-nuvem" onclick="closeModal('modal-certificado-nuvem')">Cancelar</button>
+							</div>
+						</div>
+					</div>
+				<div class="entenda-id-govbr" id="entenda-id-govbr">
+				<span>
+					<a tabindex="6" href="https://www.gov.br/governodigital/pt-br/conta-gov-br/ajuda-da-conta-gov.br" id="entenda-id-govbr-a">
+							<img src="assets/govbr/fontawesome/webfonts/circle-question-solid.svg" style="margin: 0px 13px -2px 0px; height: 1em;"/>
+							Est&aacute; com d&uacute;vidas e precisa de ajuda?
+						</a>
+					<a tabindex="6" href="https://cadastro.acesso.gov.br/termo-de-uso" style="display: block;" target="_blank" id="termo-de-uso">Termo de Uso e Aviso de Privacidade</a>
+				</span>
+			</div>
+		</div>
+			
+        <input type="hidden" name="_csrf" value="51483b48-d1c8-4eb4-9912-e8d7e366452d" />
+       	<input id="operation-field" type="hidden"/> 
+		<input id="provider-id-field" type="hidden"/>
+		<input id="flow-token-field" type="hidden"/> 
+		<script>
+			function setProviderId(providerId) {
+				const input = document.getElementById("provider-id-field");
+				input.name = "provider-id";
+				input.value = providerId;
+			}
+
+			function submitTestProviderAccountIdOnEnter(e, testProviderId) {
+				if(e.key === "Enter") {
+					e.preventDefault();
+                    document.getElementById("login-external-authentication-"+testProviderId).click();
+                }
+			}
+		</script>
+		<div id="hcaptcha"></div>
+			<script>
+				function onLoadHcaptcha() {
+					console.log('hCaptcha is ready.');
+					window.hcaptchaWidgetId = hcaptcha.render(
+						'hcaptcha', { 
+							sitekey: "93b08d40-d46c-400a-ba07-6f91cda815b9", 
+							size: "invisible", 
+							callback: onHcaptchaCallback,
+							"error-callback": e=>onHcaptchaErrorCallback("error"),
+							"expired-callback": e=>onHcaptchaErrorCallback("expired"),
+							"chalexpired-callback": e=>onHcaptchaErrorCallback("challenge expired"),
+							"close-callback": e=>onHcaptchaClose("closed"),
+							hl : 'pt' 
+						}
+					);
+				};
+
+				function onHcaptchaClose(reason) {
+					window.eventTargetSubmitting.classList.remove("loading");
+					delete window.eventTargetSubmitting;
+				}
+
+				function onHcaptchaErrorCallback(reason) {
+					console.log("Hcaptcha Error Reason: ", reason);
+				}
+
+				function onHcaptchaCallback(token) {
+				    document.getElementById("loginData").submit();
+				}
+				
+				function onSubmit(event) {
+					event.preventDefault();
+					if(window.eventTargetSubmitting) {
+						return;
+					}
+					window.eventTargetSubmitting = event.target;
+					
+					event.target.classList.add("loading");
+				    const form = document.getElementById("loginData");
+					event.target.disabled=true;
+
+				    if (event?.target?.attributes?.name?.value) {
+						const input = document.getElementById("operation-field");
+						input.setAttribute("name", event?.target?.attributes?.name?.value);
+						input.setAttribute("value", event?.target?.attributes?.value?.value || "");
+					} 
+					if (event?.target?.attributes?.formaction?.value) {
+						form.setAttribute("action", event?.target?.attributes?.formaction?.value);
+					} 
+					hcaptcha.execute(window.hcaptchaWidgetId);
+				}
+			</script>
+			<script src="https://js.hcaptcha.com/1/api.js?onload=onLoadHcaptcha&recaptchacompat=off&render=explicit&hl=pt" async defer></script>
+		</form>
+	</main>
+</div>
+<div class="modal-qrcode">
+		<div class="modal-content" style="text-align: center; justify-content: space-evenly">
+			<h3>Login sem senha com QR code</h3>
+				<p style="text-align: justify; justify-content: space-evenly">Utilize o <strong>aplicativo gov.br</strong> para logar sem senha, usando apenas o leitor de QR code.</p>
+				<div id="qrcode" style="display: inline-block"></div>
+				<p style="text-align: justify; justify-content: space-evenly">
+					Você pode baixar o aplicativo <strong>gov.br</strong> gratuitamente nas lojas de aplicativos.
+				</p>
+				<p style="text-align: center">
+					<a href="https://play.google.com/store/apps/details?id=br.gov.meugovbr">
+						<img src="assets/govbr/img/disponivel-no-google-play.png" alt="Android" style="width: 125px">
+					</a>
+					<a href="https://apps.apple.com/br/app/meu-gov-br/id1506827551">
+						<img src="assets/govbr/img/disponivel-na-apple-store.png" alt="iOS" style="width: 125px">
+					</a>
+				</p>
+				<div class="button-panel">
+					<button class="button-cancel" type="button" id="btn-close-modal-qrcode" onclick="stopQrCode()">Cancelar</button>
+				</div>
+			<form id="formLoginQrCode" method="post" style="display: none">
+        		<input type="hidden" name="operation" value="qrcode-login" />
+				<input type="hidden" name="token" />
+				<input type="hidden" name="_csrf" value="51483b48-d1c8-4eb4-9912-e8d7e366452d" />
+			</form>
+		</div>
+	</div>
+
+
+
+
+<footer> </footer>
+<script src="/assets/vendors/jquery/jquery-2.2.4.min.js"></script>
+<script src="/assets/govbr/js/scripts.js"></script>
+<script src="/assets/govbr/js/operations-strategy.js"></script>
+<script src="/assets/vendors/jquery/jquery.maskedinput.js"></script>
+</body>
+
+</html><script>
+	focusOnLoad('accountId');
+	var CNAME_GOVBRCOORD = "Govbrcoord";
+	var cookieValueBase64New = "";
+
+    (function () {
+        window.addEventListener("load", function () {
+            cpfMask("accountId");
+			getLocation();
+        });
+    })();
+
+	function getLocation() {
+		if (navigator.geolocation) {
+			navigator.geolocation.getCurrentPosition(showPosition, showError);
+		}
+	}
+	function showError(error) {
+		switch(error.code) {
+			case error.PERMISSION_DENIED:
+			break;
+		}
+	}
+    function showPosition(position) {
+		
+		cookieValueBase64New = "C" + btoa(precisionWithoutRound(position.coords.latitude, 4) + "_" + precisionWithoutRound(position.coords.longitude, 4));
+		
+		var cookieValueBefore = getCookie(CNAME_GOVBRCOORD);
+		var cookieValueBase64Before = cookieValueBefore ? cookieValueBefore.split('_')[0] : "";
+		
+		
+			if (cookieValueBase64New !== cookieValueBase64Before) {
+				setCookie(CNAME_GOVBRCOORD, cookieValueBase64New)
+			} else {
+				setCookie(CNAME_GOVBRCOORD, cookieValueBefore)
+			}
+		
+    }
+	function precisionWithoutRound(num, precision) {
+		return num.toFixed(precision + 1).slice(0, -1);
+	}
+	function setCookie(cname, value) {
+		const expireDate = new Date();
+		expireDate.setTime(expireDate.getTime() + (3652 * 24 * 60 * 60 * 1000));
+		document.cookie = cname + "=" + encodeURIComponent(value) + ";domain=." + window.location.hostname + ";expires=" + expireDate.toUTCString();
+	}
+	function getCookie(cname) {
+		var name = cname + "=";
+		var decodedCookie = decodeURIComponent(document.cookie);
+		var ca = decodedCookie.split(';');
+		for(var i = 0; i <ca.length; i++) {
+		var c = ca[i];
+		while (c.charAt(0) == ' ') {
+			c = c.substring(1);
+		}
+		if (c.indexOf(name) == 0) {
+			return c.substring(name.length, c.length);
+		}
+		}
+		return "";
+	}
+	function deleteCookie(cname) {
+		document.cookie = cname + "=deleted;domain=." + window.location.hostname + ";expires=Thu, 01 Jan 1970 00:00:01 GMT";
+	}
+	function initMap() {      
+		var geocoder  = new google.maps.Geocoder();             // create a geocoder object
+		const latlngFromBase64 = atob(cookieValueBase64New.slice(1));
+		const latlngStr = latlngFromBase64.split("_", 2);
+		const latlng = {
+		lat: parseFloat(latlngStr[0]),
+		lng: parseFloat(latlngStr[1]),
+		};
+		var location  = new google.maps.LatLng(latlng.lat, latlng.lng);    // turn coordinates into an object          
+		geocoder.geocode({'latLng': location}, function (results, status) {
+		if(status == google.maps.GeocoderStatus.OK) {           // if geocode success
+			var city = findResult(results, "locality");
+			var region = findResult(results, "administrative_area_level_2");
+			var state = findResult(results, "administrative_area_level_1");
+			var country = findResult(results, "country");
+
+			var address = (city ? city.long_name + " - " : (region ? region.long_name + " - " : "")) + state.short_name +", "+country.long_name;
+
+			setCookie(CNAME_GOVBRCOORD, cookieValueBase64New + "_" + btoa(address))
+		}
+		});
+		function findResult(results, type) {
+			var indice = 0;
+			for (var j=0; j<results.length; j++){
+				if (results[j].types[0]=='locality'){
+						indice=j;
+						break;
+				}
+			}
+			for (var i=0; i<results[indice].address_components.length; i++){
+				if (results[indice].address_components[i].types[0] == type) {
+						return results[indice].address_components[i];
+					}
+			}
+			return;
+		}
+	}
+
+    function accordion(elem) {
+        var panel = document.getElementById(elem)
+        if (panel.style.maxHeight) {
+            panel.style.maxHeight = null;
+			document.getElementById("title-outras-op").style = "display: block;";
+			document.getElementById("hr-outras-op").style = "display: block;"
+        } else {
+            panel.style.maxHeight = 0;
+			document.getElementById("title-outras-op").style = "display: none;";
+			document.getElementById("hr-outras-op").style = "display: none;"
+        }
+    }
+
+    setTimeout(function () { location.reload(true); }, 29 /* minutes */ * 60 /* seconds */ * 1000 /* millis */);
+</script>
+<script src="/assets/vendors/qrcode/qrcode.min.js"></script>
+<script>
+var loginQrCode = {};
+
+function startQrCode() {
+  loginQrCode.qrcode = new QRCode("qrcode", {
+    text: "",
+    width: 224,
+    height: 224,
+    colorDark: "#000000",
+    colorLight: "#ffffff",
+    correctLevel: QRCode.CorrectLevel.L
+  });
+  loginQrCode.cancel = false;
+}
+
+function showQrCode(csrfToken) {
+  $.ajax({
+    url: '/login?operation=generate-qrcode',
+    type: "POST",
+    dataType: 'json', 
+    data: JSON.stringify({}),
+    contentType: 'application/json; charset=utf-8',
+    headers: {
+      "X-CSRF-TOKEN": csrfToken
+    },
+    success: function(result) {
+      loginQrCode.verificationUriComplete = result.verificationUriComplete;
+	  loginQrCode.qrcode.makeCode(result.verificationUriComplete);
+
+      loginQrCode.token = result.token;
+      showModal('modal-qrcode');
+      loginQrCode.interval = result.interval || 5
+      loginQrCode.cancel = false;
+      startPollVerifyQrCode(csrfToken);
+    },
+    error: function(xhr, resp, text) {
+      stopQrCode();
+    }
+  });
+}
+
+function callLoginDeepLink(event) {
+  callLink(event, loginQrCode.verificationUriComplete);
+}
+
+
+function startPollVerifyQrCode(csrfToken) {
+  setTimeout(pollVerifyQrCode, loginQrCode.interval * 1000, csrfToken);
+}
+
+function pollVerifyQrCode(csrfToken) {
+  if(typeof loginQrCode.cancel === 'undefined' || loginQrCode.cancel) {
+    return;
+  }
+
+  $.ajax({
+    url: '/login?operation=verify-qrcode-status',
+    type: "POST",
+    dataType: 'json', // data type
+    data: JSON.stringify({
+      "token" : loginQrCode.token	
+    }),
+    contentType: 'application/json; charset=utf-8',
+    headers: {
+      "X-CSRF-TOKEN": csrfToken
+    },
+    success: function(result) {
+      stopQrCode();
+      const form = document.getElementById("loginData");
+      form['flow-token-field'].name = 'token';
+      form['flow-token-field'].value = result.token; 
+      form['operation-field'].name = 'operation';
+      form['operation-field'].value = 'qrcode-login';
+      
+	  	  hcaptcha.execute(window.hcaptchaWidgetId);
+	          
+    },
+    error: function(xhr, resp, text) {
+      const error = xhr.responseJSON.status;
+
+      if(typeof loginQrCode.cancel === 'undefined' || loginQrCode.cancel) {
+        return;
+      }
+      
+      if (error === "AUTHORIZATION_PENDING") {
+        startPollVerifyQrCode(csrfToken);
+        return;
+      }
+
+      if (error === "SLOW_DOWN") {
+        loginQrCode.interval += 5;
+        startPollVerifyQrCode();
+        return;
+      }
+      stopQrCode();
+
+      if(!xhr.responseJSON.token){
+    	  return;
+      }
+      const form = document.getElementById("loginData");
+      form['flow-token-field'].name = 'token';
+      form['flow-token-field'].value = xhr.responseJSON.token; 
+      form['operation-field'].name = 'operation';
+      form['operation-field'].value = 'qrcode-login';
+      
+	  	hcaptcha.execute(window.hcaptchaWidgetId);
+	        
+    }
+  });
+}
+
+function stopQrCode() {
+  loginQrCode.cancel = true;
+  closeModal('modal-qrcode');
+  loginQrCode.qrcode.clear();
+}
+
+startQrCode();
+</script>
