@@ -1173,7 +1173,31 @@ function updateCommandConnectorPositions() {
   }
 
   row.querySelectorAll(".command-inline-connector").forEach((connector) => {
-    connector.style.removeProperty("--connector-inline-top");
+    const previousSegment = findAdjacentCommandFlowSegment(connector, "previous");
+    const nextSegment = findAdjacentCommandFlowSegment(connector, "next");
+    const previousCard = previousSegment?.querySelector(".command-tree-card, .insert-card-panel");
+    const nextCard = nextSegment?.querySelector(".command-tree-card, .insert-card-panel");
+    if (!previousCard && !nextCard) {
+      connector.style.removeProperty("--connector-inline-top");
+      return;
+    }
+
+    const rowRect = row.getBoundingClientRect();
+    const rowZoom = row.offsetWidth ? Math.max(0.2, rowRect.width / row.offsetWidth) : 1;
+    const cardRects = [previousCard, nextCard]
+      .filter(Boolean)
+      .map((card) => card.getBoundingClientRect());
+    const top = Math.max(
+      82,
+      Math.round(
+        cardRects.reduce((sum, rect) => {
+          const visualTop = (rect.top - rowRect.top) / rowZoom;
+          const visualHeight = Math.max(90, Math.min(rect.height / rowZoom, 220));
+          return sum + visualTop + visualHeight * 0.5;
+        }, 0) / cardRects.length
+      )
+    );
+    connector.style.setProperty("--connector-inline-top", `${top}px`);
   });
 }
 
@@ -1273,6 +1297,7 @@ function renderCommandJumpPaths() {
   const maxLane = preparedRoutes.reduce((max, route) => Math.max(max, route.lane || 0), 0);
   row.style.setProperty("--jump-route-lanes", String(maxLane));
   const rowRect = row.getBoundingClientRect();
+  const rowZoom = row.offsetWidth ? Math.max(0.2, rowRect.width / row.offsetWidth) : 1;
   const rowWidth = Math.max(row.scrollWidth, row.offsetWidth, Math.round(rowRect.width), 1);
   const rowHeight = Math.max(row.scrollHeight, row.offsetHeight, Math.round(rowRect.height), 1);
   const layer = document.createElement("div");
@@ -1294,12 +1319,14 @@ function renderCommandJumpPaths() {
       return;
     }
 
-    const sourceLeft = sourceSegment.offsetLeft + sourceCard.offsetLeft;
-    const targetLeft = targetSegment.offsetLeft + targetCard.offsetLeft;
-    const sourceTop = sourceSegment.offsetTop + sourceCard.offsetTop;
-    const targetTop = targetSegment.offsetTop + targetCard.offsetTop;
-    const sourceCenterX = sourceLeft + sourceCard.offsetWidth / 2;
-    const targetCenterX = targetLeft + targetCard.offsetWidth / 2;
+    const sourceRect = sourceCard.getBoundingClientRect();
+    const targetRect = targetCard.getBoundingClientRect();
+    const sourceLeft = (sourceRect.left - rowRect.left) / rowZoom;
+    const targetLeft = (targetRect.left - rowRect.left) / rowZoom;
+    const sourceTop = (sourceRect.top - rowRect.top) / rowZoom;
+    const targetTop = (targetRect.top - rowRect.top) / rowZoom;
+    const sourceCenterX = sourceLeft + sourceRect.width / rowZoom / 2;
+    const targetCenterX = targetLeft + targetRect.width / rowZoom / 2;
     const isBackward = targetCenterX < sourceCenterX;
     const laneOffset = 38 + Number(route.lane || 0) * 24;
     const pathY = Math.max(16, Math.min(sourceTop, targetTop) - laneOffset);
@@ -1368,7 +1395,7 @@ function renderCommandJumpPaths() {
   row.prepend(layer);
 }
 
-function scheduleCommandConnectorLayout() {
+function scheduleCommandConnectorLayout(options = {}) {
   if (state.commandConnectorLayoutFrame) {
     cancelAnimationFrame(state.commandConnectorLayoutFrame);
   }
@@ -1377,6 +1404,24 @@ function scheduleCommandConnectorLayout() {
     updateCommandConnectorPositions();
     renderCommandJumpPaths();
   });
+
+  const duration = Math.max(0, Number(options.burstMs || 0));
+  if (duration > 0) {
+    scheduleCommandConnectorLayoutBurst(duration);
+  }
+}
+
+function scheduleCommandConnectorLayoutBurst(duration = 420) {
+  if (!commandMapList || state.activeTab !== "commands") {
+    return;
+  }
+
+  updateCommandConnectorPositions();
+  renderCommandJumpPaths();
+  window.setTimeout(() => {
+    updateCommandConnectorPositions();
+    renderCommandJumpPaths();
+  }, duration);
 }
 
 function scheduleCommandMapAutoFit() {
@@ -4075,7 +4120,11 @@ function captureCommandMapCardPositions() {
     if (!key || !card) {
       return;
     }
-    positions.set(key, card.getBoundingClientRect());
+    positions.set(`segment:${key}`, card.getBoundingClientRect());
+  });
+  commandMapList.querySelectorAll(".command-inline-connector").forEach((connector, index) => {
+    const key = connector.dataset.layoutKey || `connector-index:${index}`;
+    positions.set(`connector:${key}`, connector.getBoundingClientRect());
   });
   return positions;
 }
@@ -4086,11 +4135,11 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
   }
   const mode = options.mode || "arc";
 
-  const animatedCards = [];
+  const animatedItems = [];
   commandMapList.querySelectorAll(".command-flow-segment[data-client-key]").forEach((segment) => {
     const key = segment.dataset.clientKey;
     const card = segment.querySelector(".command-tree-card");
-    const previousRect = previousPositions.get(key);
+    const previousRect = previousPositions.get(`segment:${key}`);
     if (!key || !card || !previousRect) {
       return;
     }
@@ -4107,55 +4156,82 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
     const initialTransform = mode === "slide"
       ? `translate(${deltaX}px, ${deltaY}px) scale(0.996)`
       : `translate(${deltaX}px, ${deltaY}px) rotate(${tilt}deg) scale(0.985)`;
-    animatedCards.push({
-      card,
+    animatedItems.push({
+      element: card,
       deltaX,
       deltaY,
       tilt,
       initialTransform,
+      kind: "segment",
     });
   });
 
-  if (!animatedCards.length) {
+  commandMapList.querySelectorAll(".command-inline-connector").forEach((connector, index) => {
+    const key = connector.dataset.layoutKey || `connector-index:${index}`;
+    const previousRect = previousPositions.get(`connector:${key}`);
+    if (!previousRect) {
+      return;
+    }
+
+    const nextRect = connector.getBoundingClientRect();
+    const deltaX = previousRect.left - nextRect.left;
+    const deltaY = previousRect.top - nextRect.top;
+
+    if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) {
+      return;
+    }
+
+    animatedItems.push({
+      element: connector,
+      deltaX,
+      deltaY,
+      tilt: 0,
+      initialTransform: `translate(${deltaX}px, ${deltaY}px)`,
+      kind: "connector",
+    });
+  });
+
+  if (!animatedItems.length) {
     return;
   }
 
-  animatedCards.forEach(({ card, initialTransform }) => {
-    if (card.__commandMapShiftAnimation) {
-      card.__commandMapShiftAnimation.cancel();
-      card.__commandMapShiftAnimation = null;
+  const animationDuration = mode === "slide" ? 360 : 320;
+  scheduleCommandConnectorLayoutBurst(animationDuration + 60);
+
+  animatedItems.forEach(({ element, initialTransform, kind }) => {
+    if (element.__commandMapShiftAnimation) {
+      element.__commandMapShiftAnimation.cancel();
+      element.__commandMapShiftAnimation = null;
     }
-    card.style.transition = "none";
-    card.style.transform = initialTransform;
-    card.style.willChange = "transform";
-    card.style.zIndex = "7";
+    element.style.transition = "none";
+    element.style.transform = initialTransform;
+    element.style.willChange = "transform";
+    element.style.zIndex = kind === "connector" ? "0" : "7";
   });
 
   commandMapList.getBoundingClientRect();
 
   requestAnimationFrame(() => {
-    animatedCards.forEach(({ card, deltaX, deltaY, tilt, initialTransform }) => {
+    animatedItems.forEach(({ element, deltaX, deltaY, tilt, initialTransform, kind }) => {
       const distance = Math.abs(deltaX);
       const arcLift = mode === "slide" ? 0 : distance > 20 ? Math.min(18, Math.max(8, distance * 0.085)) : 0;
       const arcY = deltaY + (deltaX > 0 ? arcLift : -arcLift);
 
       const cleanup = () => {
-        card.style.transition = "";
-        card.style.transform = "";
-        card.style.willChange = "";
-        card.style.zIndex = "";
-        card.__commandMapShiftAnimation = null;
+        element.style.transition = "";
+        element.style.transform = "";
+        element.style.willChange = "";
+        element.style.zIndex = "";
+        element.__commandMapShiftAnimation = null;
       };
 
-      if (typeof card.animate === "function") {
+      if (typeof element.animate === "function") {
         const keyframes = mode === "slide"
           ? [
               {
-                opacity: 0.94,
                 transform: initialTransform,
               },
               {
-                opacity: 1,
                 transform: "translate(0px, 0px) scale(1)",
               },
             ]
@@ -4171,25 +4247,25 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
                 transform: "translate(0px, 0px) rotate(0deg) scale(1)",
               },
             ];
-        const animation = card.animate(
+        const animation = element.animate(
           keyframes,
           {
-            duration: mode === "slide" ? 360 : 320,
+            duration: animationDuration,
             easing: "cubic-bezier(0.22, 1, 0.36, 1)",
             fill: "both",
           }
         );
 
-        card.__commandMapShiftAnimation = animation;
+        element.__commandMapShiftAnimation = animation;
         animation.addEventListener("finish", cleanup, { once: true });
         animation.addEventListener("cancel", cleanup, { once: true });
         return;
       }
 
-      card.style.transition = `transform ${mode === "slide" ? 360 : 320}ms cubic-bezier(0.22, 1, 0.36, 1)`;
-      card.style.transform = "";
+      element.style.transition = `transform ${animationDuration}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+      element.style.transform = "";
 
-      card.addEventListener("transitionend", cleanup, { once: true });
+      element.addEventListener("transitionend", cleanup, { once: true });
     });
   });
 }
@@ -5671,6 +5747,10 @@ function renderChromeBlockFields(event, mode = "card", currentOrder = null) {
 
 function buildChromeDetailsFromAnalysisAndValues(analysis, values) {
   const selector = findChromeSelectorByMethod(analysis, values.chromeTargetMethod);
+  const hasCapturedTarget = Boolean(
+    String(values.chromeTargetValue || selector?.valor || analysis?.alvo_recomendado?.valor || "").trim()
+    || String(values.chromeHtml || analysis?.html_original || "").trim()
+  );
   const targetMethod = String(values.chromeTargetMethod || selector?.metodo || analysis?.alvo_recomendado?.metodo || "css").trim();
   const targetValue = String(values.chromeTargetValue || selector?.valor || analysis?.alvo_recomendado?.valor || "").trim();
   const selectorCss = selector?.seletor_css || analysis?.alvo_recomendado?.seletor_css || "";
@@ -5685,14 +5765,14 @@ function buildChromeDetailsFromAnalysisAndValues(analysis, values) {
   };
   const target = {
     metodo: targetMethod,
-    valor: targetValue,
+    valor: targetValue || (hasCapturedTarget ? "" : "__capturar_elemento__"),
     confianca: selector?.confianca || analysis?.alvo_recomendado?.confianca || analysis?.confianca || "media",
     seletor_css: selectorCss,
     codigo_playwright: selector?.codigo_playwright || "",
     role: selector?.role || element.role || "",
   };
   return {
-    nome: values.chromeName || analysis?.nome_sugerido || "Chrome / Elemento HTML",
+    nome: values.chromeName || analysis?.nome_sugerido || (hasCapturedTarget ? "Chrome / Elemento HTML" : "Chrome: capturar elemento"),
     html_original: values.chromeHtml,
     elemento: element,
     tipo_provavel: chromeKindFromAnalysis(analysis),
@@ -8654,6 +8734,9 @@ async function startSmartRecorder() {
     startSmartRecorderPolling();
     setMessage(result.message || "Gravador iniciado. Use ESC para finalizar.", "success");
   } catch (error) {
+    if (typeof options.onError === "function") {
+      options.onError(error);
+    }
     setBusy("Erro");
     setMessage(String(error), "error");
   }
@@ -12255,27 +12338,27 @@ function renderInsertPanel(order) {
   const selectedMeta = typeMeta[panel.type] || typeMeta.key;
 
   return `
-    <div class="insert-card-panel is-compact-create ${panel.suppressIntro ? "is-stable" : ""}" data-target-order="${order}">
+    <div class="insert-card-panel is-compact-create ${panel.suppressIntro ? "is-stable" : ""} ${panel.isSaving ? "is-saving" : ""}" data-target-order="${order}">
       <div class="insert-card-header">
         <div>
           <p class="panel-kicker">Novo bloco</p>
           <h4>${panel.position === "before" ? "Criar antes" : "Criar depois"} do bloco ${order}</h4>
         </div>
-        <button class="micro-button" data-insert-action="cancel" type="button">Fechar</button>
+        <button class="micro-button" data-insert-action="cancel" type="button" ${panel.isSaving ? "disabled" : ""}>Fechar</button>
       </div>
       <div class="insert-type-row is-compact">
-        <button class="insert-type-button ${panel.type === "chrome" ? "is-active" : ""}" data-insert-type="chrome" type="button">Chrome/Web</button>
-        <button class="insert-type-button ${panel.type === "key" ? "is-active" : ""}" data-insert-type="key" type="button">Tecla</button>
-        <button class="insert-type-button ${panel.type === "text" ? "is-active" : ""}" data-insert-type="text" type="button">Texto</button>
-        <button class="insert-type-button ${panel.type === "mouse" ? "is-active" : ""}" data-insert-type="mouse" type="button">Mouse</button>
-        <button class="insert-type-button ${panel.type === "image" ? "is-active" : ""}" data-insert-type="image" type="button">Reconhecimento</button>
-        <button class="insert-type-button ${panel.type === "open_url" ? "is-active" : ""}" data-insert-type="open_url" type="button">Abrir URL</button>
-        <button class="insert-type-button ${panel.type === "open_program" ? "is-active" : ""}" data-insert-type="open_program" type="button">Abrir Programa</button>
-        <button class="insert-type-button ${panel.type === "save_download" ? "is-active" : ""}" data-insert-type="save_download" type="button">Salvar download</button>
-        <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet" type="button">Planilha</button>
-        <button class="insert-type-button ${panel.type === "write_spreadsheet" ? "is-active" : ""}" data-insert-type="write_spreadsheet" type="button">Escrever celula</button>
-        <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start" type="button">Inicio loop</button>
-        <button class="insert-type-button ${panel.type === "loop_end" ? "is-active" : ""}" data-insert-type="loop_end" type="button">Fim loop</button>
+        <button class="insert-type-button ${panel.type === "chrome" ? "is-active" : ""}" data-insert-type="chrome" type="button" ${panel.isSaving ? "disabled" : ""}>Chrome/Web</button>
+        <button class="insert-type-button ${panel.type === "key" ? "is-active" : ""}" data-insert-type="key" type="button" ${panel.isSaving ? "disabled" : ""}>Tecla</button>
+        <button class="insert-type-button ${panel.type === "text" ? "is-active" : ""}" data-insert-type="text" type="button" ${panel.isSaving ? "disabled" : ""}>Texto</button>
+        <button class="insert-type-button ${panel.type === "mouse" ? "is-active" : ""}" data-insert-type="mouse" type="button" ${panel.isSaving ? "disabled" : ""}>Mouse</button>
+        <button class="insert-type-button ${panel.type === "image" ? "is-active" : ""}" data-insert-type="image" type="button" ${panel.isSaving ? "disabled" : ""}>Reconhecimento</button>
+        <button class="insert-type-button ${panel.type === "open_url" ? "is-active" : ""}" data-insert-type="open_url" type="button" ${panel.isSaving ? "disabled" : ""}>Abrir URL</button>
+        <button class="insert-type-button ${panel.type === "open_program" ? "is-active" : ""}" data-insert-type="open_program" type="button" ${panel.isSaving ? "disabled" : ""}>Abrir Programa</button>
+        <button class="insert-type-button ${panel.type === "save_download" ? "is-active" : ""}" data-insert-type="save_download" type="button" ${panel.isSaving ? "disabled" : ""}>Salvar download</button>
+        <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Planilha</button>
+        <button class="insert-type-button ${panel.type === "write_spreadsheet" ? "is-active" : ""}" data-insert-type="write_spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Escrever celula</button>
+        <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start" type="button" ${panel.isSaving ? "disabled" : ""}>Inicio loop</button>
+        <button class="insert-type-button ${panel.type === "loop_end" ? "is-active" : ""}" data-insert-type="loop_end" type="button" ${panel.isSaving ? "disabled" : ""}>Fim loop</button>
       </div>
       <div class="insert-preview-card">
         <div class="insert-preview-top">
@@ -12286,7 +12369,7 @@ function renderInsertPanel(order) {
         <small>${escapeHtml(selectedMeta.hint)}</small>
       </div>
       <div class="insert-card-actions">
-        <button class="tree-save-button" data-insert-action="save" type="button">Criar bloco</button>
+        <button class="tree-save-button" data-insert-action="save" type="button" ${panel.isSaving ? "disabled" : ""}>${panel.isSaving ? "Criando..." : "Criar bloco"}</button>
       </div>
     </div>
   `;
@@ -12965,7 +13048,7 @@ function renderCommandMap(options = {}) {
   }
 
   const renderInlineConnector = ({ label, value, order = "", insertDelay = false }) => `
-    <div class="command-inline-connector ${insertDelay ? "is-insert-connector" : ""}" data-target-index="${escapeHtml(order || "")}">
+    <div class="command-inline-connector ${insertDelay ? "is-insert-connector" : ""}" data-target-index="${escapeHtml(order || "")}" data-layout-key="${escapeHtml(insertDelay ? `insert:${label}` : `next:${order || label}`)}">
       <label class="connector-time connector-time-inline">
         <span class="connector-link-label">${escapeHtml(label)}</span>
         <input
@@ -13157,7 +13240,7 @@ function renderCommandMap(options = {}) {
   hydrateRecognitionPreviewCards(commandMapList);
   applyCommandMapZoom();
   if (skipAutoFit) {
-    scheduleCommandConnectorLayout();
+    scheduleCommandConnectorLayout({ burstMs: layoutSnapshot ? 440 : 0 });
   } else {
     scheduleCommandMapAutoFit();
   }
@@ -13178,6 +13261,8 @@ function renderCommandMap(options = {}) {
     requestAnimationFrame(() => {
       animateCommandMapLayoutShift(layoutSnapshot, { mode: layoutAnimationMode });
     });
+  } else if (state.insertPanel) {
+    scheduleCommandConnectorLayout({ burstMs: 460 });
   }
 }
 
@@ -13362,6 +13447,18 @@ async function runMutation(label, promiseFactory, focusResolver = null, options 
     setBusy("Erro");
     setMessage(String(error), "error");
   }
+}
+
+function withOperationTimeout(promise, timeoutMs = 12000, message = "A operacao demorou demais para responder.") {
+  let timeoutId = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
+  });
 }
 
 function formValuesFromCard(card) {
@@ -17154,6 +17251,9 @@ commandMapList.addEventListener("click", (event) => {
     if (!state.insertPanel) {
       return;
     }
+    if (state.insertPanel.isSaving) {
+      return;
+    }
     const panel = button.closest(".insert-card-panel");
     if (panel) {
       state.insertPanel = {
@@ -17180,6 +17280,9 @@ commandMapList.addEventListener("click", (event) => {
   }
 
   const action = button.dataset.insertAction;
+  if (state.insertPanel.isSaving) {
+    return;
+  }
   if (action === "cancel") {
     closeInsertPanelWithAnimation(panel);
     return;
@@ -17470,9 +17573,7 @@ commandMapList.addEventListener("click", (event) => {
             });
     } else if (values.type === "chrome") {
       promiseFactory = async () => {
-        const analysis = values.chromeAnalysis || (values.chromeHtml.trim()
-          ? await invoke("analyze_html_element", { html: values.chromeHtml })
-          : null);
+        const analysis = values.chromeAnalysis || null;
         const details = buildChromeDetailsFromAnalysisAndValues(analysis, values);
         return isFirstBlock
           ? invoke("add_chrome_html_block", {
@@ -17685,10 +17786,45 @@ commandMapList.addEventListener("click", (event) => {
             });
     }
 
+    state.insertPanel = {
+      ...state.insertPanel,
+      ...insertValuesFromPanel(panel),
+      isSaving: true,
+      suppressIntro: true,
+    };
+    const saveButton = panel.querySelector('[data-insert-action="save"]');
+    if (saveButton) {
+      saveButton.disabled = true;
+      saveButton.textContent = "Criando...";
+    }
+    panel.classList.add("is-saving");
+    setBusy("Criando bloco");
+    setMessage("Criando bloco no mapa...", "info");
+    const savingPanelState = state.insertPanel;
+    const savingWatchdog = window.setTimeout(() => {
+      if (state.insertPanel === savingPanelState && state.insertPanel?.isSaving) {
+        state.insertPanel.isSaving = false;
+        panel.classList.remove("is-saving", "is-creating");
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = saveButton.closest(".is-compact-create") ? "Criar bloco" : "Adicionar bloco";
+        }
+        setBusy("Pronto");
+        setMessage("A criacao demorou demais. Tente novamente; se for Chrome/Web, crie o bloco e capture o elemento nos detalhes.", "error");
+      }
+    }, values.type === "chrome" ? 5000 : 9000);
+
     runMutation("Bloco inserido", async () => {
       void playInsertCreateAnimation(panel);
-      const roadmap = await promiseFactory();
+      const roadmap = await withOperationTimeout(
+        promiseFactory(),
+        values.type === "chrome" ? 8000 : 12000,
+        values.type === "chrome"
+          ? "Nao consegui criar o bloco Chrome/Web. Tente criar novamente ou crie outro tipo de bloco."
+          : "A criacao do bloco demorou demais para responder."
+      );
       state.insertPanel = null;
+      window.clearTimeout(savingWatchdog);
       return roadmap;
     }, (roadmap) => {
       const createdOrder = resolveNearestCommandMapFocus(
@@ -17697,6 +17833,18 @@ commandMapList.addEventListener("click", (event) => {
       );
       state.createdBlockAnimationOrder = createdOrder;
       return createdOrder;
+    }, {
+      onError: () => {
+        window.clearTimeout(savingWatchdog);
+        if (state.insertPanel) {
+          state.insertPanel.isSaving = false;
+        }
+        panel.classList.remove("is-saving", "is-creating");
+        if (saveButton) {
+          saveButton.disabled = false;
+          saveButton.textContent = saveButton.closest(".is-compact-create") ? "Criar bloco" : "Adicionar bloco";
+        }
+      },
     });
   }
 });
