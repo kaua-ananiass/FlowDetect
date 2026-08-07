@@ -1118,17 +1118,17 @@ class ExecutorAutomacao:
         altura = max(24, int(dados.get("height", 0) or 24))
         acertos = int(dados.get("hits", 1) or 1)
         if acertos >= 8:
-            margem_x = max(10, int(largura * 0.30))
-            margem_y = max(8, int(altura * 0.30))
+            margem_x = max(36, int(largura * 1.20))
+            margem_y = max(28, int(altura * 1.20))
         elif acertos >= 5:
-            margem_x = max(14, int(largura * 0.42))
-            margem_y = max(10, int(altura * 0.42))
+            margem_x = max(44, int(largura * 1.50))
+            margem_y = max(34, int(altura * 1.50))
         elif acertos >= 3:
-            margem_x = max(20, int(largura * 0.62))
-            margem_y = max(16, int(altura * 0.62))
+            margem_x = max(56, int(largura * 2.00))
+            margem_y = max(42, int(altura * 2.00))
         elif acertos >= 2:
-            margem_x = max(26, int(largura * 0.88))
-            margem_y = max(20, int(altura * 0.88))
+            margem_x = max(70, int(largura * 2.40))
+            margem_y = max(54, int(altura * 2.40))
         else:
             margem_x = max(40, int(largura * 1.8))
             margem_y = max(28, int(altura * 1.8))
@@ -4850,12 +4850,8 @@ class ExecutorAutomacao:
                 bloco_id=bloco_id,
             )
             acertos_historico = int(dados_historico.get("hits", 0) or 0)
-            janela_cache_quente = min(1.15, max(0.28, timeout_total * (0.12 if acertos_historico < 5 else 0.36)))
-            usar_somente_cache_neste_inicio = bool(
-                regiao_historica
-                and acertos_historico >= 2
-                and tempo_decorrido < janela_cache_quente
-            )
+            janela_cache_quente = min(0.18, max(0.06, timeout_total * 0.03))
+            usar_somente_cache_neste_inicio = False
             regiao_personalizada = self.construir_regiao_personalizada(
                 area_personalizada,
                 janela_info=janela_info_cache,
@@ -4863,40 +4859,14 @@ class ExecutorAutomacao:
             regioes_busca = []
             if regiao_historica:
                 adicionar_regiao_busca(regioes_busca, regiao_historica, "cache", fallback=False)
-                if usar_somente_cache_neste_inicio and not cache_adaptativo_logado:
+                if not cache_adaptativo_logado:
                     safe_print(
-                        "Cache adaptativo ativo: buscando primeiro perto da ultima posicao "
+                        "Cache adaptativo ativo: tentando primeiro perto da ultima posicao, "
+                        "mas mantendo fallback amplo na mesma tentativa "
                         f"(acertos={acertos_historico}, janela={janela_cache_quente:.2f}s).",
                         flush=True,
                     )
                     cache_adaptativo_logado = True
-                if acertos_historico >= 5:
-                    try:
-                        if self.validar_correspondencia_visual(
-                            caminho_imagem,
-                            regiao_historica,
-                            confianca,
-                            perfil_busca="fast" if perfil_busca != "precise" else "precise",
-                            texto_ocr_esperado=texto_ocr_esperado,
-                        ):
-                            self.registrar_reconhecimento_bem_sucedido(
-                                imagem_id,
-                                regiao_historica,
-                                janela_alvo=janela_alvo,
-                                bloco_id=bloco_id,
-                                janela_info=janela_info_cache,
-                            )
-                            info_quente = self._ultima_busca_template_info or {}
-                            safe_print(
-                                "Cache quente confirmou a imagem sem busca completa "
-                                f"(acertos={acertos_historico}, captura={float(info_quente.get('capture_ms', 0.0) or 0.0):.0f}ms, "
-                                f"reconhecimento={float(info_quente.get('recognition_ms', 0.0) or 0.0):.0f}ms, "
-                                f"area={self.formatar_regiao_log(regiao_historica)}).",
-                                flush=True,
-                            )
-                            return regiao_historica
-                    except Exception:
-                        pass
 
             if not usar_somente_cache_neste_inicio and modo_area_busca == "custom_area" and regiao_personalizada:
                 adicionar_regiao_busca(regioes_busca, regiao_personalizada, "custom_area", fallback=bool(regiao_historica))

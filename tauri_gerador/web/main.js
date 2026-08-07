@@ -191,6 +191,8 @@ const state = {
   executionWindowMode: "normal",
   testLaunchPending: false,
   insertPanel: null,
+  createdBlockAnimationOrder: null,
+  createdBlockMorphRect: null,
   captureTarget: null,
   captureBlurTimer: null,
   captureSequence: 0,
@@ -4078,10 +4080,11 @@ function captureCommandMapCardPositions() {
   return positions;
 }
 
-function animateCommandMapLayoutShift(previousPositions) {
+function animateCommandMapLayoutShift(previousPositions, options = {}) {
   if (!(previousPositions instanceof Map) || !previousPositions.size) {
     return;
   }
+  const mode = options.mode || "arc";
 
   const animatedCards = [];
   commandMapList.querySelectorAll(".command-flow-segment[data-client-key]").forEach((segment) => {
@@ -4101,11 +4104,15 @@ function animateCommandMapLayoutShift(previousPositions) {
     }
 
     const tilt = Math.max(-2.2, Math.min(2.2, deltaX / 58));
+    const initialTransform = mode === "slide"
+      ? `translate(${deltaX}px, ${deltaY}px) scale(0.996)`
+      : `translate(${deltaX}px, ${deltaY}px) rotate(${tilt}deg) scale(0.985)`;
     animatedCards.push({
       card,
       deltaX,
       deltaY,
       tilt,
+      initialTransform,
     });
   });
 
@@ -4113,12 +4120,23 @@ function animateCommandMapLayoutShift(previousPositions) {
     return;
   }
 
+  animatedCards.forEach(({ card, initialTransform }) => {
+    if (card.__commandMapShiftAnimation) {
+      card.__commandMapShiftAnimation.cancel();
+      card.__commandMapShiftAnimation = null;
+    }
+    card.style.transition = "none";
+    card.style.transform = initialTransform;
+    card.style.willChange = "transform";
+    card.style.zIndex = "7";
+  });
+
   commandMapList.getBoundingClientRect();
 
   requestAnimationFrame(() => {
-    animatedCards.forEach(({ card, deltaX, deltaY, tilt }) => {
+    animatedCards.forEach(({ card, deltaX, deltaY, tilt, initialTransform }) => {
       const distance = Math.abs(deltaX);
-      const arcLift = distance > 20 ? Math.min(18, Math.max(8, distance * 0.085)) : 0;
+      const arcLift = mode === "slide" ? 0 : distance > 20 ? Math.min(18, Math.max(8, distance * 0.085)) : 0;
       const arcY = deltaY + (deltaX > 0 ? arcLift : -arcLift);
 
       const cleanup = () => {
@@ -4129,30 +4147,34 @@ function animateCommandMapLayoutShift(previousPositions) {
         card.__commandMapShiftAnimation = null;
       };
 
-      if (card.__commandMapShiftAnimation) {
-        card.__commandMapShiftAnimation.cancel();
-        card.__commandMapShiftAnimation = null;
-      }
-
-      card.style.willChange = "transform";
-      card.style.zIndex = "7";
-
       if (typeof card.animate === "function") {
+        const keyframes = mode === "slide"
+          ? [
+              {
+                opacity: 0.94,
+                transform: initialTransform,
+              },
+              {
+                opacity: 1,
+                transform: "translate(0px, 0px) scale(1)",
+              },
+            ]
+          : [
+              {
+                transform: initialTransform,
+              },
+              {
+                transform: `translate(${Math.round(deltaX * 0.38)}px, ${Math.round(arcY)}px) rotate(${(tilt * 0.42).toFixed(3)}deg) scale(1.018)`,
+                offset: 0.56,
+              },
+              {
+                transform: "translate(0px, 0px) rotate(0deg) scale(1)",
+              },
+            ];
         const animation = card.animate(
-          [
-            {
-              transform: `translate(${deltaX}px, ${deltaY}px) rotate(${tilt}deg) scale(0.985)`,
-            },
-            {
-              transform: `translate(${Math.round(deltaX * 0.38)}px, ${Math.round(arcY)}px) rotate(${(tilt * 0.42).toFixed(3)}deg) scale(1.018)`,
-              offset: 0.56,
-            },
-            {
-              transform: "translate(0px, 0px) rotate(0deg) scale(1)",
-            },
-          ],
+          keyframes,
           {
-            duration: 320,
+            duration: mode === "slide" ? 360 : 320,
             easing: "cubic-bezier(0.22, 1, 0.36, 1)",
             fill: "both",
           }
@@ -4164,12 +4186,8 @@ function animateCommandMapLayoutShift(previousPositions) {
         return;
       }
 
-      card.style.transition = "transform 320ms cubic-bezier(0.22, 1, 0.36, 1)";
-      card.style.transform = `translate(${deltaX}px, ${deltaY}px) rotate(${tilt}deg)`;
-
-      requestAnimationFrame(() => {
-        card.style.transform = "";
-      });
+      card.style.transition = `transform ${mode === "slide" ? 360 : 320}ms cubic-bezier(0.22, 1, 0.36, 1)`;
+      card.style.transform = "";
 
       card.addEventListener("transitionend", cleanup, { once: true });
     });
@@ -6726,7 +6744,7 @@ function renderCompactTreeEditorFields(event) {
     const keys = (event.keys || []).join("+");
     const repeat = Math.max(1, Number(details.repeticoes ?? 1));
     return renderGenericCompactTreeEditor(event, [
-      { label: "Tecla", value: keys },
+      { label: "Tecla", value: keys || "Configurar tecla" },
       { label: "Repeticoes", value: `${repeat} vez(es)` },
     ], `
       ${hiddenTreeField("keys", keys)}
@@ -12160,6 +12178,119 @@ function renderInsertPanel(order) {
     )
     .join("");
 
+  const typeMeta = {
+    chrome: {
+      title: "Chrome/Web",
+      label: "Site",
+      description: "Para clicar, preencher ou ler elementos de paginas no Chrome.",
+      hint: "Depois de criar, abra os detalhes e capture o elemento.",
+    },
+    key: {
+      title: "Tecla",
+      label: "Atalho",
+      description: "Para pressionar uma tecla ou combinacao como TAB, ENTER ou CTRL+V.",
+      hint: "Depois de criar, abra os detalhes e grave a tecla.",
+    },
+    text: {
+      title: "Texto",
+      label: "Escrita",
+      description: "Para digitar um texto fixo ou um valor editavel antes da execucao.",
+      hint: "Depois de criar, abra os detalhes e escreva o texto.",
+    },
+    mouse: {
+      title: "Mouse",
+      label: "Clique",
+      description: "Para clicar em uma posicao especifica da tela.",
+      hint: "Depois de criar, abra os detalhes e capture o mouse.",
+    },
+    image: {
+      title: "Reconhecimento visual",
+      label: "Imagem",
+      description: "Para procurar uma imagem na tela e decidir o proximo passo.",
+      hint: "Depois de criar, abra os detalhes e tire o print de referencia.",
+    },
+    open_url: {
+      title: "Abrir URL",
+      label: "Inicio",
+      description: "Para abrir um site antes da automacao continuar.",
+      hint: "Depois de criar, abra os detalhes e informe o link.",
+    },
+    open_program: {
+      title: "Abrir programa",
+      label: "Inicio",
+      description: "Para abrir um sistema ou aplicativo no computador.",
+      hint: "Depois de criar, abra os detalhes e escolha o executavel.",
+    },
+    save_download: {
+      title: "Salvar download",
+      label: "Arquivo",
+      description: "Para mover e renomear o arquivo baixado durante o fluxo.",
+      hint: "Depois de criar, abra os detalhes e escolha as pastas.",
+    },
+    spreadsheet: {
+      title: "Loop da planilha",
+      label: "Dados",
+      description: "Para repetir um trecho usando as linhas de uma planilha.",
+      hint: selectedColumn ? `Vai começar usando a coluna ${selectedColumn}.` : "Importe uma planilha para configurar esse bloco.",
+    },
+    write_spreadsheet: {
+      title: "Escrever na planilha",
+      label: "Resultado",
+      description: "Para marcar um status ou texto na linha atual do loop.",
+      hint: selectedColumn ? `Vai começar escrevendo na coluna ${selectedColumn}.` : "Importe uma planilha para configurar esse bloco.",
+    },
+    loop_start: {
+      title: "Inicio do loop",
+      label: "Marcador",
+      description: "Marca onde a repeticao por planilha deve comecar.",
+      hint: "Coloque antes dos blocos que precisam repetir.",
+    },
+    loop_end: {
+      title: "Fim do loop",
+      label: "Marcador",
+      description: "Marca onde a repeticao por planilha deve terminar.",
+      hint: "Coloque depois dos blocos que precisam repetir.",
+    },
+  };
+  const selectedMeta = typeMeta[panel.type] || typeMeta.key;
+
+  return `
+    <div class="insert-card-panel is-compact-create ${panel.suppressIntro ? "is-stable" : ""}" data-target-order="${order}">
+      <div class="insert-card-header">
+        <div>
+          <p class="panel-kicker">Novo bloco</p>
+          <h4>${panel.position === "before" ? "Criar antes" : "Criar depois"} do bloco ${order}</h4>
+        </div>
+        <button class="micro-button" data-insert-action="cancel" type="button">Fechar</button>
+      </div>
+      <div class="insert-type-row is-compact">
+        <button class="insert-type-button ${panel.type === "chrome" ? "is-active" : ""}" data-insert-type="chrome" type="button">Chrome/Web</button>
+        <button class="insert-type-button ${panel.type === "key" ? "is-active" : ""}" data-insert-type="key" type="button">Tecla</button>
+        <button class="insert-type-button ${panel.type === "text" ? "is-active" : ""}" data-insert-type="text" type="button">Texto</button>
+        <button class="insert-type-button ${panel.type === "mouse" ? "is-active" : ""}" data-insert-type="mouse" type="button">Mouse</button>
+        <button class="insert-type-button ${panel.type === "image" ? "is-active" : ""}" data-insert-type="image" type="button">Reconhecimento</button>
+        <button class="insert-type-button ${panel.type === "open_url" ? "is-active" : ""}" data-insert-type="open_url" type="button">Abrir URL</button>
+        <button class="insert-type-button ${panel.type === "open_program" ? "is-active" : ""}" data-insert-type="open_program" type="button">Abrir Programa</button>
+        <button class="insert-type-button ${panel.type === "save_download" ? "is-active" : ""}" data-insert-type="save_download" type="button">Salvar download</button>
+        <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet" type="button">Planilha</button>
+        <button class="insert-type-button ${panel.type === "write_spreadsheet" ? "is-active" : ""}" data-insert-type="write_spreadsheet" type="button">Escrever celula</button>
+        <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start" type="button">Inicio loop</button>
+        <button class="insert-type-button ${panel.type === "loop_end" ? "is-active" : ""}" data-insert-type="loop_end" type="button">Fim loop</button>
+      </div>
+      <div class="insert-preview-card">
+        <div class="insert-preview-top">
+          <span>${escapeHtml(selectedMeta.label)}</span>
+          <strong>${escapeHtml(selectedMeta.title)}</strong>
+        </div>
+        <p>${escapeHtml(selectedMeta.description)}</p>
+        <small>${escapeHtml(selectedMeta.hint)}</small>
+      </div>
+      <div class="insert-card-actions">
+        <button class="tree-save-button" data-insert-action="save" type="button">Criar bloco</button>
+      </div>
+    </div>
+  `;
+
   let body = "";
   if (panel.type === "text") {
     body = `
@@ -12809,6 +12940,7 @@ function renderTimeline() {
 function renderCommandMap(options = {}) {
   const {
     layoutSnapshot = null,
+    layoutAnimationMode = "arc",
     preserveScroll = false,
     skipAutoFit = false,
     suppressFocusScroll = false,
@@ -12832,6 +12964,30 @@ function renderCommandMap(options = {}) {
     return;
   }
 
+  const renderInlineConnector = ({ label, value, order = "", insertDelay = false }) => `
+    <div class="command-inline-connector ${insertDelay ? "is-insert-connector" : ""}" data-target-index="${escapeHtml(order || "")}">
+      <label class="connector-time connector-time-inline">
+        <span class="connector-link-label">${escapeHtml(label)}</span>
+        <input
+          ${insertDelay ? 'data-insert-field="delay"' : 'data-connector-delay="true"'}
+          ${insertDelay ? "" : `data-order="${escapeHtml(order)}"`}
+          type="number"
+          min="0"
+          step="0.1"
+          value="${escapeHtml(value)}"
+        />
+        <strong>s</strong>
+      </label>
+      <div class="connector-track"></div>
+    </div>
+  `;
+
+  const renderInsertSegment = (order) => `
+    <div class="command-flow-segment insert-preview-segment" data-insert-origin-order="${escapeHtml(order)}" data-insert-segment="true">
+      ${renderInsertPanel(order)}
+    </div>
+  `;
+
   const segments = events.map((event, index) => {
     const nextEvent = events[index + 1];
     const isFirstCard = index === 0;
@@ -12842,6 +12998,7 @@ function renderCommandMap(options = {}) {
     const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha";
     const isLoopMarkerCard = isLoopMarkerType(event.type);
     const isRuntimeEditable = event.type === "texto_livre" && Boolean(event.details?.editavel_execucao);
+    const isNewlyCreated = Number(state.createdBlockAnimationOrder) === Number(event.order);
     const primaryActionClass = isRecognitionCard
       ? "has-recognition-button"
       : hasRecordButton
@@ -12859,8 +13016,8 @@ function renderCommandMap(options = {}) {
         ${hasRecordButton ? '<button class="tree-open-button" data-tree-action="record-key">Gravar</button>' : ""}
       `;
     const card = `
-      <div class="command-flow-segment ${isRecognitionCard ? "visual-recognition-segment" : ""} ${isSpreadsheetCard ? "spreadsheet-segment" : ""} ${state.insertPanel?.targetOrder === event.order ? "has-insert-panel" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}">
-      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isInlineExpanded ? "is-inline-expanded" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarkerCard ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
+      <div class="command-flow-segment ${isRecognitionCard ? "visual-recognition-segment" : ""} ${isSpreadsheetCard ? "spreadsheet-segment" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}">
+      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isInlineExpanded ? "is-inline-expanded" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarkerCard ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""} ${isNewlyCreated ? "is-newly-created" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
         <div class="command-tree-top is-command-chip-top">
           <div class="command-tree-main">
             <span class="command-index">${String(event.order).padStart(2, "0")}</span>
@@ -12925,32 +13082,62 @@ function renderCommandMap(options = {}) {
           </div>
         </div>
       </article>
-      ${renderInsertPanel(event.order)}
       </div>
     `;
+    const shouldRenderInsert = state.insertPanel?.targetOrder === event.order;
+    const insertDelayValue = state.insertPanel?.delay ?? 0.3;
+    const insertSegment = shouldRenderInsert ? renderInsertSegment(event.order) : "";
+    const nextConnector = nextEvent
+      ? renderInlineConnector({
+          label: `${event.order} > ${nextEvent.order}`,
+          value: nextEvent.delay,
+          order: nextEvent.order,
+        })
+      : "";
+
+    if (shouldRenderInsert && state.insertPanel.position === "before") {
+      const beforeConnector = renderInlineConnector({
+        label: `novo > ${event.order}`,
+        value: event.delay,
+        order: event.order,
+      });
+      return `
+        ${insertSegment}
+        ${beforeConnector}
+        ${card}
+        ${nextConnector || `<div class="command-flow-end">Fim da ${escapeHtml(pageDefinition.label.toLowerCase())}</div>`}
+      `;
+    }
 
     if (!nextEvent) {
+      if (shouldRenderInsert) {
+        return `
+          ${card}
+          ${renderInlineConnector({ label: `${event.order} > novo`, value: insertDelayValue, insertDelay: true })}
+          ${insertSegment}
+          <div class="command-flow-end">Fim da ${escapeHtml(pageDefinition.label.toLowerCase())}</div>
+        `;
+      }
       return `${card}<div class="command-flow-end">Fim da ${escapeHtml(pageDefinition.label.toLowerCase())}</div>`;
     }
 
-    return `
-      ${card}
-      <div class="command-inline-connector" data-target-index="${nextEvent.order}">
-        <label class="connector-time connector-time-inline">
-          <span class="connector-link-label">${event.order} > ${nextEvent.order}</span>
-          <input
-            data-connector-delay="true"
-            data-order="${nextEvent.order}"
-            type="number"
-            min="0"
-            step="0.1"
-            value="${escapeHtml(nextEvent.delay)}"
-          />
-          <strong>s</strong>
-        </label>
-        <div class="connector-track"></div>
-      </div>
-    `;
+    if (state.insertPanel?.position === "before" && Number(state.insertPanel.targetOrder) === Number(nextEvent.order)) {
+      return `
+        ${card}
+        ${renderInlineConnector({ label: `${event.order} > novo`, value: state.insertPanel.delay ?? 0.3, insertDelay: true })}
+      `;
+    }
+
+    if (shouldRenderInsert) {
+      return `
+        ${card}
+        ${renderInlineConnector({ label: `${event.order} > novo`, value: insertDelayValue, insertDelay: true })}
+        ${insertSegment}
+        ${renderInlineConnector({ label: `novo > ${nextEvent.order}`, value: nextEvent.delay, order: nextEvent.order })}
+      `;
+    }
+
+    return `${card}${nextConnector}`;
   });
 
   if (state.expandedTreeCardOrder && !events.some((event) => Number(event.order) === Number(state.expandedTreeCardOrder))) {
@@ -12975,9 +13162,21 @@ function renderCommandMap(options = {}) {
     scheduleCommandMapAutoFit();
   }
   applyCommandMapFocus("auto", { suppressScroll: suppressFocusScroll, suppressVisualFocus });
+  if (state.createdBlockAnimationOrder) {
+    const createdOrder = Number(state.createdBlockAnimationOrder);
+    const usedMorphAnimation = animateCreatedBlockFromPreview(createdOrder);
+    window.setTimeout(() => {
+      if (Number(state.createdBlockAnimationOrder) === createdOrder) {
+        state.createdBlockAnimationOrder = null;
+      }
+      commandMapList
+        ?.querySelector(`.command-tree-card.is-newly-created[data-order="${createdOrder}"]`)
+        ?.classList.remove("is-newly-created");
+    }, usedMorphAnimation ? 520 : 520);
+  }
   if (layoutSnapshot) {
     requestAnimationFrame(() => {
-      animateCommandMapLayoutShift(layoutSnapshot);
+      animateCommandMapLayoutShift(layoutSnapshot, { mode: layoutAnimationMode });
     });
   }
 }
@@ -12985,6 +13184,8 @@ function renderCommandMap(options = {}) {
 function applyRoadmap(roadmap, options = {}) {
   const resetCommandMapDrafts = Boolean(options.resetCommandMapDrafts);
   const resetCommandMapNavigation = Boolean(options.resetCommandMapNavigation);
+  const commandMapLayoutSnapshot = options.commandMapLayoutSnapshot || null;
+  const commandMapLayoutAnimationMode = options.commandMapLayoutAnimationMode || "arc";
   const preserveCommandMapSequence = options.preserveCommandMapSequence
     ? normalizeSequenceName(options.preserveCommandMapSequence)
     : "";
@@ -13036,7 +13237,19 @@ function applyRoadmap(roadmap, options = {}) {
   }
   syncAssistTheme();
   markWorkspaceRenderDirty({ commandMap: true, assist: true, workbook: true });
-  renderActiveWorkspaceContent();
+  if (state.activeTab === "commands" && state.renderDirty.commandMap && commandMapLayoutSnapshot) {
+    renderCommandMap({
+      layoutSnapshot: commandMapLayoutSnapshot,
+      layoutAnimationMode: commandMapLayoutAnimationMode,
+      preserveScroll: true,
+      skipAutoFit: true,
+      suppressFocusScroll: true,
+      suppressVisualFocus: true,
+    });
+    state.renderDirty.commandMap = false;
+  } else {
+    renderActiveWorkspaceContent();
+  }
   syncCommandMapSaveStateWithPending();
 }
 
@@ -13121,7 +13334,7 @@ async function loadWorkbookPreview(
   }
 }
 
-async function runMutation(label, promiseFactory, focusResolver = null) {
+async function runMutation(label, promiseFactory, focusResolver = null, options = {}) {
   const activeCommandMapSequence = normalizeSequenceName(state.commandMapPageSequence);
   try {
     setBusy(label);
@@ -13137,7 +13350,11 @@ async function runMutation(label, promiseFactory, focusResolver = null) {
     if (typeof focusResolver === "function") {
       state.commandMapFocusOrder = focusResolver(roadmap);
     }
-    applyRoadmap(roadmap, { preserveCommandMapSequence: activeCommandMapSequence });
+    applyRoadmap(roadmap, {
+      preserveCommandMapSequence: activeCommandMapSequence,
+      commandMapLayoutSnapshot: options.commandMapLayoutSnapshot || null,
+      commandMapLayoutAnimationMode: options.commandMapLayoutAnimationMode || "arc",
+    });
     await refreshAutomationLibrary();
     setBusy("Pronto");
     setMessage(`${label} com sucesso.`, "success");
@@ -13155,10 +13372,10 @@ function formValuesFromCard(card) {
     successBlock: get("successBlock")?.value ?? "",
     successSequence: get("successSequence")?.value ?? "",
     successSequenceDelay: normalizeTransitionDelay(get("successSequenceDelay")?.value),
-    text: get("text")?.value ?? "",
+    text: get("text")?.value ?? state.insertPanel?.text ?? "",
     editableAtRun: Boolean(get("editableAtRun")?.checked),
     runtimeLabel: get("runtimeLabel")?.value ?? "",
-    keys: get("keys")?.value ?? "",
+    keys: get("keys")?.value ?? state.insertPanel?.keys ?? "",
     repeat: Math.max(1, Math.trunc(parseNumber(get("repeat")?.value, 1))),
     x: parseNumber(get("x")?.value, 0),
     y: parseNumber(get("y")?.value, 0),
@@ -13250,7 +13467,7 @@ function treeValuesFromCard(card) {
     text: get("text")?.value ?? "",
     editableAtRun: Boolean(get("editableAtRun")?.checked),
     runtimeLabel: get("runtimeLabel")?.value ?? "",
-    keys: get("keys")?.value ?? "",
+    keys: get("keys")?.value ?? state.insertPanel?.keys ?? "",
     repeat: Math.max(1, Math.trunc(parseNumber(get("repeat")?.value, 1))),
     x: parseNumber(get("x")?.value, 0),
     y: parseNumber(get("y")?.value, 0),
@@ -14202,14 +14419,155 @@ function insertValuesFromPanel(panelElement) {
     downloadDestination: get("downloadDestination")?.value ?? state.insertPanel?.downloadDestination ?? "",
     downloadFileName: get("downloadFileName")?.value ?? state.insertPanel?.downloadFileName ?? "{empresa}_{competencia}_FGTS.pdf",
     downloadTimeout: parseNumber(get("downloadTimeout")?.value, state.insertPanel?.downloadTimeout ?? 60),
-    delay: parseNumber(get("delay")?.value, 0),
+    delay: parseNumber(get("delay")?.value, state.insertPanel?.delay ?? 0),
     workbook: get("workbook")?.value ?? state.insertPanel?.workbook ?? "",
     sheet: get("sheet")?.value ?? state.insertPanel?.sheet ?? "",
     column: get("column")?.value ?? state.insertPanel?.column ?? "",
     writeValue: get("writeValue")?.value ?? state.insertPanel?.writeValue ?? "OK",
-    afterAction: get("afterAction")?.value ?? "nenhuma",
-    intervalBetween: parseNumber(get("intervalBetween")?.value, 0.5),
+    afterAction: get("afterAction")?.value ?? state.insertPanel?.afterAction ?? "nenhuma",
+    intervalBetween: parseNumber(get("intervalBetween")?.value, state.insertPanel?.intervalBetween ?? 0.5),
   };
+}
+
+function closeInsertPanelWithAnimation(panelElement) {
+  const panelState = state.insertPanel;
+  const targetOrder = Number(panelElement?.dataset.targetOrder ?? panelState?.targetOrder);
+  if (!panelElement || !panelState) {
+    state.insertPanel = null;
+    renderCommandMap();
+    return;
+  }
+
+  if (panelElement.classList.contains("is-closing")) {
+    return;
+  }
+
+  panelElement.classList.add("is-closing");
+  const layoutSnapshot = captureCommandMapCardPositions();
+  window.setTimeout(() => {
+    if (state.insertPanel === panelState || Number(state.insertPanel?.targetOrder) === targetOrder) {
+      state.commandMapFocusOrder = targetOrder;
+      state.insertPanel = null;
+      renderCommandMap({
+        layoutSnapshot,
+        layoutAnimationMode: "slide",
+        preserveScroll: true,
+        skipAutoFit: true,
+        suppressFocusScroll: true,
+      });
+    }
+  }, 260);
+}
+
+function playCommandMapBlockRemoval(cardElement) {
+  if (!cardElement || cardElement.classList.contains("is-removing")) {
+    return Promise.resolve();
+  }
+
+  cardElement.classList.add("is-removing");
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 190);
+  });
+}
+
+function playInsertCreateAnimation(panelElement) {
+  if (!panelElement || panelElement.classList.contains("is-creating")) {
+    return Promise.resolve();
+  }
+
+  const rect = panelElement.getBoundingClientRect();
+  state.createdBlockMorphRect = {
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+  panelElement.classList.add("is-creating");
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 120);
+  });
+}
+
+function animateCreatedBlockFromPreview(order) {
+  const fromRect = state.createdBlockMorphRect;
+  if (!fromRect) {
+    return false;
+  }
+
+  const card = commandMapList?.querySelector(`.command-tree-card[data-order="${order}"]`);
+  if (!card) {
+    return false;
+  }
+
+  const toRect = card.getBoundingClientRect();
+  if (!toRect.width || !toRect.height) {
+    return false;
+  }
+
+  const deltaX = fromRect.left - toRect.left;
+  const deltaY = fromRect.top - toRect.top;
+  const scaleX = Math.max(0.72, Math.min(1.35, fromRect.width / toRect.width));
+  const scaleY = Math.max(0.72, Math.min(1.35, fromRect.height / toRect.height));
+  const fromTransform = `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`;
+
+  card.classList.remove("is-newly-created");
+  card.classList.add("is-morph-created");
+  card.style.transformOrigin = "top left";
+  card.style.willChange = "transform, opacity";
+
+  if (card.__commandMapShiftAnimation) {
+    card.__commandMapShiftAnimation.cancel();
+    card.__commandMapShiftAnimation = null;
+  }
+
+  const cleanup = () => {
+    card.classList.remove("is-morph-created");
+    card.style.transformOrigin = "";
+    card.style.willChange = "";
+    card.style.transform = "";
+    card.style.opacity = "";
+    card.__commandMapShiftAnimation = null;
+    state.createdBlockMorphRect = null;
+  };
+
+  if (typeof card.animate === "function") {
+    const animation = card.animate(
+      [
+        {
+          opacity: 0.82,
+          transform: fromTransform,
+        },
+        {
+          opacity: 1,
+          transform: "translate(0px, -3px) scale(1.015, 1.015)",
+          offset: 0.62,
+        },
+        {
+          opacity: 1,
+          transform: "translate(0px, 0px) scale(1, 1)",
+        },
+      ],
+      {
+        duration: 420,
+        easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+        fill: "both",
+      }
+    );
+    card.__commandMapShiftAnimation = animation;
+    animation.addEventListener("finish", cleanup, { once: true });
+    animation.addEventListener("cancel", cleanup, { once: true });
+    return true;
+  }
+
+  card.style.transition = "transform 420ms cubic-bezier(0.16, 1, 0.3, 1), opacity 280ms ease";
+  card.style.opacity = "0.82";
+  card.style.transform = fromTransform;
+  requestAnimationFrame(() => {
+    card.style.opacity = "";
+    card.style.transform = "";
+  });
+  window.setTimeout(cleanup, 460);
+  return true;
 }
 
 async function persistCommandMapDrafts() {
@@ -15680,6 +16038,11 @@ workbookFilesTabs.addEventListener("click", async (event) => {
 });
 
 addWorkbookButton.addEventListener("click", () => {
+  if (!workbookFileInput) {
+    setMessage("Nao encontrei o seletor de planilha. Reinicie o FlowDetect e tente novamente.", "error");
+    return;
+  }
+  workbookFileInput.value = "";
   workbookFileInput.click();
 });
 
@@ -16198,8 +16561,18 @@ timelineList.addEventListener("click", (event) => {
   }
 
   if (action === "remove") {
-    runMutation("Bloco removido", () => invoke("remove_block", { order }), (roadmap) =>
-      resolveNearestCommandMapFocus(roadmap, order)
+    const layoutSnapshot = captureCommandMapCardPositions();
+    runMutation(
+      "Bloco removido",
+      async () => {
+        await playCommandMapBlockRemoval(card);
+        return invoke("remove_block", { order });
+      },
+      (roadmap) => resolveNearestCommandMapFocus(roadmap, order),
+      {
+        commandMapLayoutSnapshot: layoutSnapshot,
+        commandMapLayoutAnimationMode: "slide",
+      }
     );
     return;
   }
@@ -16235,6 +16608,13 @@ commandMapList.addEventListener("change", (event) => {
 
   if (target.matches("[data-jump-delay]")) {
     saveCommandJumpDelayFromInput(target);
+    return;
+  }
+
+  if (target.matches('[data-insert-field="delay"]')) {
+    if (state.insertPanel) {
+      state.insertPanel.delay = parseNumber(target.value, state.insertPanel.delay ?? 0.3);
+    }
     return;
   }
 
@@ -16403,7 +16783,10 @@ commandMapList.addEventListener("pointerdown", (event) => {
 
   const segment = event.target.closest(".command-flow-segment");
   if (segment) {
-    setCommandMapFocus(Number(segment.dataset.order), "auto");
+    const order = Number(segment.dataset.order);
+    if (Number.isFinite(order) && order > 0) {
+      setCommandMapFocus(order, "auto");
+    }
   }
 
   if (!handle || event.button !== 0) {
@@ -16418,7 +16801,10 @@ commandMapList.addEventListener("focusin", (event) => {
 
   const segment = event.target.closest(".command-flow-segment");
   if (segment) {
-    setCommandMapFocus(Number(segment.dataset.order), "smooth");
+    const order = Number(segment.dataset.order);
+    if (Number.isFinite(order) && order > 0) {
+      setCommandMapFocus(order, "smooth");
+    }
   }
 });
 
@@ -16641,13 +17027,20 @@ commandMapList.addEventListener("click", (event) => {
   }
 
   if (action === "insert-before" || action === "insert-after") {
+    const layoutSnapshot = captureCommandMapCardPositions();
     setCommandMapFocus(order);
     state.insertPanel = createInsertPanelState(order, action === "insert-before" ? "before" : "after");
     if (state.commandMapZoom > 1) {
       setCommandMapZoom(1);
     }
     commandMapList.scrollTop = 0;
-    renderCommandMap();
+    renderCommandMap({
+      layoutSnapshot,
+      layoutAnimationMode: "slide",
+      preserveScroll: true,
+      skipAutoFit: true,
+      suppressFocusScroll: true,
+    });
     return;
   }
 
@@ -16662,8 +17055,18 @@ commandMapList.addEventListener("click", (event) => {
   }
 
   if (action === "remove") {
-    runMutation("Bloco removido", () => invoke("remove_block", { order }), (roadmap) =>
-      resolveNearestCommandMapFocus(roadmap, order)
+    const layoutSnapshot = captureCommandMapCardPositions();
+    runMutation(
+      "Bloco removido",
+      async () => {
+        await playCommandMapBlockRemoval(card);
+        return invoke("remove_block", { order });
+      },
+      (roadmap) => resolveNearestCommandMapFocus(roadmap, order),
+      {
+        commandMapLayoutSnapshot: layoutSnapshot,
+        commandMapLayoutAnimationMode: "slide",
+      }
     );
     return;
   }
@@ -16751,14 +17154,23 @@ commandMapList.addEventListener("click", (event) => {
     if (!state.insertPanel) {
       return;
     }
+    const panel = button.closest(".insert-card-panel");
+    if (panel) {
+      state.insertPanel = {
+        ...state.insertPanel,
+        ...insertValuesFromPanel(panel),
+        suppressIntro: true,
+      };
+    }
     state.insertPanel.type = button.dataset.insertType;
+    state.insertPanel.suppressIntro = true;
     if (state.insertPanel.type === "spreadsheet" || state.insertPanel.type === "write_spreadsheet") {
       state.insertPanel.workbook = resolveWorkbookId(state.insertPanel.workbook);
       state.insertPanel.sheet = workbookSheetsFor(state.insertPanel.workbook)[0]?.name || "";
       state.insertPanel.column = columnsForSheetInWorkbook(state.insertPanel.workbook, state.insertPanel.sheet)[0] || "";
     }
     setCommandMapFocus(state.insertPanel.targetOrder);
-    renderCommandMap();
+    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true });
     return;
   }
 
@@ -16769,9 +17181,7 @@ commandMapList.addEventListener("click", (event) => {
 
   const action = button.dataset.insertAction;
   if (action === "cancel") {
-    setCommandMapFocus(Number(panel.dataset.targetOrder));
-    state.insertPanel = null;
-    renderCommandMap();
+    closeInsertPanelWithAnimation(panel);
     return;
   }
 
@@ -16992,10 +17402,6 @@ commandMapList.addEventListener("click", (event) => {
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     } else if (values.type === "image") {
-      if (!values.imagePath.trim()) {
-        setMessage("Selecione uma referencia visual antes de inserir esse bloco.", "error");
-        return;
-      }
       promiseFactory = () =>
         isFirstBlock
           ? invoke("add_image_click_block", {
@@ -17063,12 +17469,10 @@ commandMapList.addEventListener("click", (event) => {
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     } else if (values.type === "chrome") {
-      if (!values.chromeHtml.trim()) {
-        setMessage("Cole o HTML do elemento antes de inserir esse bloco.", "error");
-        return;
-      }
       promiseFactory = async () => {
-        const analysis = values.chromeAnalysis || await invoke("analyze_html_element", { html: values.chromeHtml });
+        const analysis = values.chromeAnalysis || (values.chromeHtml.trim()
+          ? await invoke("analyze_html_element", { html: values.chromeHtml })
+          : null);
         const details = buildChromeDetailsFromAnalysisAndValues(analysis, values);
         return isFirstBlock
           ? invoke("add_chrome_html_block", {
@@ -17127,10 +17531,6 @@ commandMapList.addEventListener("click", (event) => {
             });
       };
     } else if (values.type === "open_url") {
-      if (!values.openUrl.trim()) {
-        setMessage("Informe a URL antes de inserir esse bloco.", "error");
-        return;
-      }
       promiseFactory = () =>
         isFirstBlock
           ? invoke("add_open_url_block", {
@@ -17162,10 +17562,6 @@ commandMapList.addEventListener("click", (event) => {
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     } else if (values.type === "open_program") {
-      if (!values.programPath.trim()) {
-        setMessage("Informe o caminho do programa antes de inserir esse bloco.", "error");
-        return;
-      }
       promiseFactory = () =>
         isFirstBlock
           ? invoke("add_open_program_block", {
@@ -17193,10 +17589,6 @@ commandMapList.addEventListener("click", (event) => {
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     } else if (values.type === "save_download") {
-      if (!values.downloadDestination.trim()) {
-        setMessage("Informe a pasta destino antes de inserir esse bloco.", "error");
-        return;
-      }
       promiseFactory = () =>
         isFirstBlock
           ? invoke("add_save_download_block", {
@@ -17294,15 +17686,18 @@ commandMapList.addEventListener("click", (event) => {
     }
 
     runMutation("Bloco inserido", async () => {
+      void playInsertCreateAnimation(panel);
       const roadmap = await promiseFactory();
       state.insertPanel = null;
       return roadmap;
-    }, (roadmap) =>
-      resolveNearestCommandMapFocus(
+    }, (roadmap) => {
+      const createdOrder = resolveNearestCommandMapFocus(
         roadmap,
         isFirstBlock ? roadmap?.events?.[0]?.order ?? null : common.position === "before" ? common.targetOrder : common.targetOrder + 1
-      )
-    );
+      );
+      state.createdBlockAnimationOrder = createdOrder;
+      return createdOrder;
+    });
   }
 });
 

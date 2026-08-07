@@ -6687,6 +6687,13 @@ label span {
 }
 
 .command-flow-segment.has-insert-panel {
+  --source-card-width: 188px;
+  --insert-panel-width: 236px;
+  --insert-panel-gap: 92px;
+  flex: 0 0 calc(var(--source-card-width) + var(--insert-panel-width) + var(--insert-panel-gap));
+  width: calc(var(--source-card-width) + var(--insert-panel-width) + var(--insert-panel-gap));
+  gap: var(--insert-panel-gap);
+  align-items: flex-start;
   z-index: 14;
 }
 
@@ -6710,6 +6717,27 @@ label span {
 .command-flow-segment.spreadsheet-segment {
   flex: 0 0 236px;
   width: 236px;
+}
+
+.command-flow-segment.insert-preview-segment {
+  flex: 0 0 236px;
+  width: 236px;
+  align-self: flex-start;
+  margin-top: -10px;
+  transform: none !important;
+  opacity: 1 !important;
+  z-index: 14;
+}
+
+.command-flow-row.is-carousel-focus .command-flow-segment.insert-preview-segment {
+  opacity: 1 !important;
+}
+
+.command-flow-segment.visual-recognition-segment.has-insert-panel,
+.command-flow-segment.spreadsheet-segment.has-insert-panel {
+  --source-card-width: 236px;
+  flex: 0 0 calc(var(--source-card-width) + var(--insert-panel-width) + var(--insert-panel-gap));
+  width: calc(var(--source-card-width) + var(--insert-panel-width) + var(--insert-panel-gap));
 }
 
 .command-flow-segment.is-neighbor {
@@ -6790,6 +6818,22 @@ label span {
   opacity: 0;
 }
 
+.command-tree-card.is-newly-created {
+  animation: commandCardCreatedIn 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: center center;
+}
+
+.command-tree-card.is-morph-created {
+  animation: none !important;
+}
+
+.command-tree-card.is-removing,
+.flow-card.is-removing {
+  pointer-events: none;
+  transform-origin: center center;
+  animation: commandCardRemoveOut 190ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
 .command-flow-segment.is-drop-before::before,
 .command-flow-segment.is-drop-after::after {
   content: "";
@@ -6843,6 +6887,27 @@ label span {
 .command-inline-connector.is-near-focus,
 .command-flow-row.is-carousel-focus .command-flow-end:last-child {
   opacity: 0.88;
+}
+
+.command-inline-connector.is-insert-connector {
+  --connector-inline-horizontal-shift: 0px;
+  flex-basis: 120px;
+  opacity: 1;
+  z-index: 12;
+}
+
+.command-inline-connector.is-insert-connector .connector-track {
+  left: 10px;
+  right: 10px;
+  background: linear-gradient(90deg, rgba(94, 234, 212, 0.08), rgba(18, 181, 203, 0.78), rgba(94, 234, 212, 0.08));
+  box-shadow: 0 0 12px rgba(18, 181, 203, 0.16);
+}
+
+.command-inline-connector.is-insert-connector .connector-time-inline {
+  left: 50%;
+  border-color: rgba(18, 181, 203, 0.32);
+  background:
+    linear-gradient(180deg, rgba(18, 181, 203, 0.16), rgba(7, 17, 31, 0.92));
 }
 
 .builder-shell.is-map-dragging,
@@ -9141,6 +9206,158 @@ label span {
   pointer-events: none;
 }
 
+.insert-card-panel.is-compact-create {
+  width: 236px;
+  max-width: 236px;
+  flex-basis: 236px;
+  margin: 0;
+  padding: 12px;
+  border-color: rgba(18, 181, 203, 0.34);
+  background:
+    radial-gradient(circle at top right, rgba(18, 181, 203, 0.16), transparent 34%),
+    linear-gradient(180deg, rgba(10, 25, 39, 0.98), rgba(8, 12, 20, 0.99));
+  box-shadow:
+    0 0 0 1px rgba(18, 181, 203, 0.08),
+    0 18px 46px rgba(18, 181, 203, 0.12),
+    0 18px 42px rgba(0, 0, 0, 0.28);
+  overflow: visible;
+  max-height: none;
+  align-self: flex-start;
+  transform-origin: left top;
+  animation: insertBlockBirth 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.insert-card-panel.is-compact-create.is-stable {
+  animation: none;
+}
+
+.insert-card-panel.is-compact-create.is-closing {
+  pointer-events: none;
+  animation: insertBlockReturn 260ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.insert-card-panel.is-compact-create.is-creating {
+  pointer-events: none;
+  animation: insertBlockBecomeCard 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.insert-card-panel.is-compact-create::before {
+  border-radius: inherit;
+  background:
+    linear-gradient(90deg, rgba(18, 181, 203, 0.07), transparent 22%),
+    radial-gradient(circle at 18% 22%, rgba(94, 234, 212, 0.1), transparent 32%);
+}
+
+.insert-card-panel.is-compact-create .insert-card-header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 8px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid rgba(230, 247, 255, 0.06);
+}
+
+.insert-card-panel.is-compact-create .insert-card-header h4 {
+  font-size: 0.66rem;
+  color: var(--text-soft);
+}
+
+.insert-card-panel.is-compact-create .insert-card-header .micro-button {
+  width: auto;
+  min-height: 28px;
+  padding: 0 12px;
+}
+
+.insert-type-row.is-compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.insert-card-panel.is-compact-create .insert-type-button {
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 0.58rem;
+}
+
+.insert-preview-card {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(18, 181, 203, 0.22);
+  background:
+    linear-gradient(180deg, rgba(14, 27, 46, 0.74), rgba(9, 13, 21, 0.82));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+.insert-preview-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.insert-preview-top span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: #5eead4;
+  background: rgba(18, 181, 203, 0.12);
+  border: 1px solid rgba(18, 181, 203, 0.24);
+  font-size: 0.54rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.insert-preview-top strong {
+  min-width: 0;
+  color: var(--white);
+  font-size: 0.84rem;
+  line-height: 1.08;
+  text-align: right;
+}
+
+.insert-preview-card p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.insert-preview-card small {
+  color: rgba(94, 234, 212, 0.78);
+  font-size: 0.61rem;
+  line-height: 1.3;
+}
+
+.insert-card-body.is-compact {
+  margin-top: 10px;
+}
+
+.insert-card-body.is-compact label {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.insert-card-body.is-compact input {
+  min-height: 32px;
+  text-align: center;
+  font-size: 0.76rem;
+}
+
+.insert-card-panel.is-compact-create .insert-card-actions .tree-save-button {
+  min-height: 36px;
+  border-radius: 999px;
+}
+
 .insert-card-panel button,
 .insert-card-panel input,
 .insert-card-panel select,
@@ -9464,6 +9681,101 @@ label span {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes insertBlockBirth {
+  0% {
+    opacity: 0;
+    transform: translateX(-22px) scaleX(0.72) scaleY(0.96);
+  }
+  58% {
+    opacity: 1;
+    transform: translateX(4px) scaleX(1.025) scaleY(1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scaleX(1) scaleY(1);
+  }
+}
+
+@keyframes insertBlockReturn {
+  0% {
+    opacity: 1;
+    transform: translateX(0) scaleX(1) scaleY(1);
+  }
+  42% {
+    opacity: 0.82;
+    transform: translateX(5px) scaleX(0.985) scaleY(0.995);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-18px) scaleX(0.76) scaleY(0.97);
+  }
+}
+
+@keyframes insertBlockBecomeCard {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    box-shadow:
+      0 0 0 1px rgba(18, 181, 203, 0.08),
+      0 18px 46px rgba(18, 181, 203, 0.12),
+      0 18px 42px rgba(0, 0, 0, 0.28);
+  }
+  58% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.012);
+    box-shadow:
+      0 0 0 1px rgba(34, 197, 94, 0.22),
+      0 0 28px rgba(34, 197, 94, 0.18),
+      0 18px 46px rgba(18, 181, 203, 0.12);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1.004);
+    box-shadow:
+      0 0 0 1px rgba(34, 197, 94, 0.18),
+      0 0 18px rgba(18, 181, 203, 0.18),
+      0 12px 34px rgba(0, 0, 0, 0.26);
+  }
+}
+
+@keyframes commandCardCreatedIn {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.94);
+    box-shadow:
+      0 0 0 1px rgba(34, 197, 94, 0.22),
+      0 0 30px rgba(34, 197, 94, 0.16),
+      0 20px 44px rgba(0, 0, 0, 0.24);
+  }
+  45% {
+    opacity: 1;
+    transform: translateY(-3px) scale(1.025);
+    box-shadow:
+      0 0 0 1px rgba(18, 181, 203, 0.22),
+      0 0 34px rgba(18, 181, 203, 0.2),
+      0 24px 56px rgba(0, 0, 0, 0.28);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes commandCardRemoveOut {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  48% {
+    opacity: 0.72;
+    transform: translateY(-2px) scale(0.988);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.92);
   }
 }
 
