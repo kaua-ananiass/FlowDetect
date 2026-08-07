@@ -797,7 +797,7 @@ def listar_arquivos_planilha():
             }
         )
 
-    if ARQUIVO_PLANILHA.name not in vistos:
+    if ARQUIVO_PLANILHA.exists() and ARQUIVO_PLANILHA.name not in vistos:
         encontrados.insert(
             0,
             {
@@ -1322,6 +1322,9 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
 
     repeticoes = max(1, int((metadados or {}).get("repeticoes", 1) or 1))
 
+    if tipo_evento in {"tecla", "atalho"} and not teclas:
+        return "[TECLA]"
+
     if len(teclas) == 1:
         nome = teclas[0]
         exibicao = tecla_para_exibicao(nome)
@@ -1798,7 +1801,9 @@ def carregar_planilha_meta():
                 workbook_meta["erro"] = f"Nao foi possivel ler esta planilha. Feche o Excel e salve novamente. Detalhe: {erro}"
         workbooks.append(workbook_meta)
 
-    workbook_padrao = next((item for item in workbooks if item["id"] == ARQUIVO_PLANILHA.name), workbooks[0] if workbooks else None)
+    workbook_padrao = next((item for item in workbooks if item["id"] == ARQUIVO_PLANILHA.name), None)
+    if workbook_padrao is None:
+        workbook_padrao = next((item for item in workbooks if item.get("exists")), workbooks[0] if workbooks else None)
     return {
         "path": str(ARQUIVO_PLANILHA),
         "exists": bool(workbook_padrao["exists"]) if workbook_padrao else ARQUIVO_PLANILHA.exists(),
@@ -2016,7 +2021,7 @@ def criar_bloco_teclas(
     sequencia_sucesso="",
     atraso_sequencia_sucesso=0,
 ):
-    teclas = parse_keys_string(keys_string)
+    teclas = parse_keys_string(keys_string) if str(keys_string or "").strip() else []
     tipo = "atalho" if len(teclas) > 1 else "tecla"
     detalhes = aplicar_fluxo_sucesso({
         "repeticoes": max(1, int(repeticoes or 1)),
@@ -2274,8 +2279,6 @@ def criar_bloco_abrir_url(
     atraso_sequencia_sucesso=0,
 ):
     url_normalizada = str(url or "").strip()
-    if not url_normalizada:
-        raise ValueError("Informe a URL que sera aberta.")
     detalhes = aplicar_fluxo_sucesso({
         "url": url_normalizada,
         "navegador": normalizar_navegador_url(navegador),
@@ -2307,8 +2310,6 @@ def criar_bloco_abrir_programa(
     atraso_sequencia_sucesso=0,
 ):
     caminho_normalizado = str(caminho or "").strip()
-    if not caminho_normalizado:
-        raise ValueError("Informe o caminho do programa que sera aberto.")
     detalhes = aplicar_fluxo_sucesso({
         "caminho": caminho_normalizado,
         "parametros": str(parametros or "").strip(),
@@ -2347,8 +2348,6 @@ def criar_bloco_salvar_download(
     atraso_sequencia_sucesso=0,
 ):
     pasta_destino_normalizada = str(pasta_destino or "").strip()
-    if not pasta_destino_normalizada:
-        raise ValueError("Informe a pasta de destino do download.")
     detalhes = aplicar_fluxo_sucesso({
         "pasta_origem": str(pasta_origem or "").strip(),
         "extensao": normalizar_extensao_download(extensao),
@@ -2500,12 +2499,12 @@ def card_do_evento(evento):
         descricao = f"{len(evento.get('texto', ''))} caracteres"
     elif tipo == "atalho":
         titulo = "Atalho"
-        subtitulo = " + ".join(tecla_para_exibicao(tecla) for tecla in evento.get("teclas", []))
+        subtitulo = " + ".join(tecla_para_exibicao(tecla) for tecla in evento.get("teclas", [])) or "Configurar atalho"
         repeticoes = max(1, int(detalhes.get("repeticoes", 1) or 1))
         descricao = "Combinacao de teclas" if repeticoes == 1 else f"Repetir {repeticoes} vezes"
     elif tipo == "tecla":
         titulo = "Tecla"
-        subtitulo = " + ".join(tecla_para_exibicao(tecla) for tecla in evento.get("teclas", []))
+        subtitulo = " + ".join(tecla_para_exibicao(tecla) for tecla in evento.get("teclas", [])) or "Configurar tecla"
         repeticoes = max(1, int(detalhes.get("repeticoes", 1) or 1))
         descricao = "Acao unica" if repeticoes == 1 else f"Repetir {repeticoes} vezes"
     elif tipo == "mouse_click":

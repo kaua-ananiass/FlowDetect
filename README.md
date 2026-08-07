@@ -16,8 +16,14 @@ Ele foi pensado para automatizar tarefas em programas Windows, ERPs, portais web
 - Reconhecer imagens na tela e tomar decisoes de sucesso ou falha.
 - Definir janela alvo para evitar cliques fora do sistema correto.
 - Pular entre blocos ou paginas conforme o resultado de cada etapa.
+- Criar blocos rapidamente com preview no proprio mapa de comandos.
+- Gravar cliques e teclas com o Gravador Inteligente.
+- Automatizar elementos do Chrome sem o usuario precisar entender HTML.
+- Escrever resultados de volta na planilha durante o loop.
+- Mover e renomear downloads automaticamente depois que o arquivo baixar.
 - Exportar automacoes em `.zip` para rodar em outro computador.
-- Controlar execucoes remotamente com Agent/Control.
+- Controlar execucoes remotamente com FlowDetect Agent.
+- Assistir a tela do Agent pelo Studio com transmissao remota integrada.
 
 ## Blocos Disponiveis
 
@@ -26,11 +32,23 @@ Ele foi pensado para automatizar tarefas em programas Windows, ERPs, portais web
 - **Mouse:** realiza cliques configurados.
 - **Reconhecimento visual:** procura uma imagem na tela e decide o fluxo.
 - **Planilha:** usa uma coluna como loop de execucao.
+- **Escrever celula:** grava status, observacoes ou resultados na linha atual da planilha.
 - **Inicio/Fim do loop:** delimita trechos repetidos por linha da planilha.
 - **Verificar estado:** valida imagens/estados antes de continuar.
-- **Chrome/HTML:** automatiza elementos do navegador via seletor HTML.
+- **Chrome/Web:** captura campos, botoes e textos do Chrome para automatizar sites.
 - **Abrir URL:** abre sites no navegador escolhido.
 - **Abrir Programa:** inicia executaveis antes da automacao principal.
+- **Salvar download:** monitora uma pasta, encontra o arquivo baixado e move para o destino escolhido.
+
+## Recursos Recentes
+
+- **Mapa mais fluido:** criacao, exclusao e movimentacao de blocos com animacoes suaves.
+- **Cards compactos e detalhados:** o bloco mostra o essencial no mapa e abre detalhes quando necessario.
+- **Gravador Inteligente:** cria blocos automaticamente a partir de cliques, textos e teclas gravadas.
+- **Captura Chrome/Web:** seleciona elementos direto no navegador e salva uma ficha amigavel do elemento.
+- **Planilha em tempo real:** permite usar linhas como loop e atualizar celulas durante a execucao.
+- **Agent remoto:** o Studio pode enviar automacoes para outro PC, iniciar execucoes e acompanhar o andamento.
+- **Tela remota:** visualizacao da tela do Agent dentro do Studio para acompanhar a automacao.
 
 ## Utilidade
 
@@ -42,6 +60,8 @@ Exemplos de uso:
 - rotinas fiscais e administrativas;
 - navegacao em portais sem API;
 - cliques condicionais por reconhecimento de imagem;
+- organizacao automatica de arquivos baixados;
+- registro de status diretamente em planilhas;
 - execucao de varias empresas, clientes ou codigos em sequencia.
 
 ## Tecnologias
