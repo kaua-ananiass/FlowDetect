@@ -1,4 +1,0 @@
-{"id": 1, "created_at": 1785517470.4985304, "delay": 0.001, "type": "status", "title": "Gravacao iniciada"}
-{"id": 2, "created_at": 1785517488.47156, "delay": 7.723, "type": "clicar_imagem", "title": "Clique visual", "x": 175, "y": 90, "button": "left", "click_action": "clicar", "clicks": 1, "confidence": 0.82, "confirmed": true, "target_sequence": "principal", "image_id": "imagens/gravador/gravador_click_0002.png", "crop": {"x": 85, "y": 35, "width": 180, "height": 110}}
-{"id": 3, "created_at": 1785517505.96717, "delay": 4.622, "type": "clicar_imagem", "title": "Clique visual", "x": 217, "y": 237, "button": "left", "click_action": "clicar", "clicks": 1, "confidence": 0.82, "confirmed": true, "target_sequence": "principal", "image_id": "imagens/gravador/gravador_click_0003.png", "crop": {"x": 197, "y": 198, "width": 55, "height": 67}}
-{"id": 4, "created_at": 1785517531.5221136, "delay": 25.555, "type": "status", "title": "Gravacao finalizada"}

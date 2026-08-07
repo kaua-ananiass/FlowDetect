@@ -1,15 +1,3 @@
 {
-  "items": [
-    {
-      "id": "auto_20260728140845461618",
-      "nome": "Aceito_Compartilhamento",
-      "descricao": "Aceita-compartilhamento",
-      "categoria": "Agent",
-      "criado_em": "2026-07-28T14:08:45",
-      "atualizado_em": "2026-07-29T08:29:49",
-      "vezes_executada": 0,
-      "ultima_execucao": null,
-      "sequencia_inicial": "principal"
-    }
-  ]
+  "items": []
 }
