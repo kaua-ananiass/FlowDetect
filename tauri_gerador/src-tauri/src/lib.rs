@@ -339,6 +339,66 @@ fn start_virtualbox_vm_headless(vm_name: String) -> Result<Value, String> {
     })
 }
 
+#[tauri::command]
+fn list_virtualbox_vms() -> Result<Value, String> {
+    let vbox_manage = virtualbox_manage_program();
+    let mut command = Command::new(&vbox_manage);
+    command.arg("list").arg("vms");
+    configure_no_window(&mut command);
+
+    let output = command
+        .output()
+        .map_err(|err| {
+            format!(
+                "Nao foi possivel executar o VirtualBox. Verifique se ele esta instalado. Detalhe: {err}"
+            )
+        })?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+    if !output.status.success() {
+        return Err(if stderr.is_empty() {
+            "Nao foi possivel listar as VMs do VirtualBox.".to_string()
+        } else {
+            stderr
+        });
+    }
+
+    let items: Vec<Value> = stdout
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let name = trimmed
+                .strip_prefix('"')
+                .and_then(|value| value.split('"').next())
+                .unwrap_or(trimmed)
+                .trim();
+            let uuid = trimmed
+                .rsplit_once('{')
+                .and_then(|(_, tail)| tail.strip_suffix('}'))
+                .unwrap_or("")
+                .trim();
+            if name.is_empty() {
+                None
+            } else {
+                Some(serde_json::json!({
+                    "name": name,
+                    "uuid": uuid,
+                }))
+            }
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "vbox_manage": vbox_manage.to_string_lossy(),
+        "items": items,
+    }))
+}
+
 fn python_command(root: &PathBuf) -> Result<(String, Vec<String>), String> {
     if let Some((program, args)) = PYTHON_COMMAND_CACHE.get() {
         return Ok((program.clone(), args.clone()));
@@ -3717,6 +3777,54 @@ fn add_write_spreadsheet_block(
 }
 
 #[tauri::command]
+fn add_compare_spreadsheet_block(
+    app: AppHandle,
+    workbook: Option<String>,
+    sheet: String,
+    expected_column: String,
+    comparison_mode: Option<String>,
+    status_column: Option<String>,
+    note_column: Option<String>,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec!["add-compare-planilha".into()];
+    if let Some(workbook_file) = workbook {
+        if !workbook_file.trim().is_empty() {
+            args.push("--workbook".into());
+            args.push(workbook_file);
+        }
+    }
+    args.extend([
+        "--sheet".into(),
+        sheet,
+        "--expected-column".into(),
+        expected_column,
+        "--source".into(),
+        "ultimo_ocr".into(),
+        "--comparison-mode".into(),
+        comparison_mode.unwrap_or_else(|| "texto".into()),
+        "--status-column".into(),
+        status_column.unwrap_or_else(|| "Status".into()),
+        "--note-column".into(),
+        note_column.unwrap_or_else(|| "Observacao".into()),
+        "--delay".into(),
+        delay.to_string(),
+    ]);
+    if let Some(sequence_name) = sequencia {
+        args.push("--sequencia".into());
+        args.push(sequence_name);
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn add_verify_button_state_block(
     app: AppHandle,
     nome: String,
@@ -4363,6 +4471,64 @@ fn insert_write_spreadsheet_block(
 }
 
 #[tauri::command]
+fn insert_compare_spreadsheet_block(
+    app: AppHandle,
+    target_order: i32,
+    position: String,
+    workbook: Option<String>,
+    sheet: String,
+    expected_column: String,
+    comparison_mode: Option<String>,
+    status_column: Option<String>,
+    note_column: Option<String>,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "insert-compare-planilha".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+    ];
+    if let Some(workbook_file) = workbook {
+        if !workbook_file.trim().is_empty() {
+            args.push("--workbook".into());
+            args.push(workbook_file);
+        }
+    }
+    args.extend([
+        "--sheet".into(),
+        sheet,
+        "--expected-column".into(),
+        expected_column,
+        "--source".into(),
+        "ultimo_ocr".into(),
+        "--comparison-mode".into(),
+        comparison_mode.unwrap_or_else(|| "texto".into()),
+        "--status-column".into(),
+        status_column.unwrap_or_else(|| "Status".into()),
+        "--note-column".into(),
+        note_column.unwrap_or_else(|| "Observacao".into()),
+        "--delay".into(),
+        delay.to_string(),
+    ]);
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn insert_chrome_html_block(
     app: AppHandle,
     target_order: i32,
@@ -4833,6 +4999,54 @@ fn update_write_spreadsheet_block(
         column,
         "--value".into(),
         value,
+        "--delay".into(),
+        delay.to_string(),
+    ]);
+    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn update_compare_spreadsheet_block(
+    app: AppHandle,
+    order: i32,
+    workbook: Option<String>,
+    sheet: String,
+    expected_column: String,
+    comparison_mode: Option<String>,
+    status_column: Option<String>,
+    note_column: Option<String>,
+    delay: f64,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "update-compare-planilha".into(),
+        "--order".into(),
+        order.to_string(),
+    ];
+    if let Some(workbook_file) = workbook {
+        if !workbook_file.trim().is_empty() {
+            args.push("--workbook".into());
+            args.push(workbook_file);
+        }
+    }
+    args.extend([
+        "--sheet".into(),
+        sheet,
+        "--expected-column".into(),
+        expected_column,
+        "--source".into(),
+        "ultimo_ocr".into(),
+        "--comparison-mode".into(),
+        comparison_mode.unwrap_or_else(|| "texto".into()),
+        "--status-column".into(),
+        status_column.unwrap_or_else(|| "Status".into()),
+        "--note-column".into(),
+        note_column.unwrap_or_else(|| "Observacao".into()),
         "--delay".into(),
         delay.to_string(),
     ]);
@@ -5724,6 +5938,7 @@ pub fn run() {
             hide_target_window_overlay,
             get_agent_connection_info,
             get_agent_remote_snapshot,
+            list_virtualbox_vms,
             start_virtualbox_vm_headless,
             get_login_session,
             save_login_session,
@@ -5770,6 +5985,7 @@ pub fn run() {
             add_save_download_block,
             add_spreadsheet_block,
             add_write_spreadsheet_block,
+            add_compare_spreadsheet_block,
             insert_text_block,
             insert_key_block,
             insert_loop_start_block,
@@ -5782,6 +5998,7 @@ pub fn run() {
             insert_save_download_block,
             insert_spreadsheet_block,
             insert_write_spreadsheet_block,
+            insert_compare_spreadsheet_block,
             update_text_block,
             update_key_block,
             update_loop_marker_block,
@@ -5794,6 +6011,7 @@ pub fn run() {
             update_save_download_block,
             update_spreadsheet_block,
             update_write_spreadsheet_block,
+            update_compare_spreadsheet_block,
             update_sequence_settings,
             update_initial_sequence,
             update_block_delay,

@@ -1243,10 +1243,11 @@
           <header class="agents-header">
             <div>
               <p class="panel-kicker">Ambientes</p>
-              <h2>Agentes e VMs</h2>
-              <p>Cadastre VMs ou PCs com FlowDetect Agent e abra a tela direto no Studio via WebRTC.</p>
+              <h2>Agentes</h2>
+              <p>Crie o ambiente primeiro. Quando a maquina ligar e o Agent aparecer, o Studio conecta e mostra a tela aqui.</p>
             </div>
             <div class="agents-header-actions">
+              <button id="refreshAgentVmsButton" class="ghost-button" type="button">Atualizar VMs</button>
               <button id="addAgentCardButton" class="primary-button" type="button">+ Adicionar agente</button>
             </div>
           </header>
@@ -1257,25 +1258,34 @@
               <input id="agentNameInput" type="text" placeholder="Ex.: VM FGTS Digital" />
             </label>
             <label>
-                  <span>Endereco do Agent opcional</span>
-                  <input id="agentAddressInput" type="text" placeholder="Preencha depois. Ex.: 192.168.1.150:18452" />
+              <span>Endereco atual</span>
+              <input id="agentAddressInput" type="text" placeholder="Aparece depois que o Agent iniciar. Ex.: 192.168.1.150:18452" />
             </label>
             <label>
-              <span>Nome da VM no VirtualBox</span>
-              <input id="agentVmNameInput" type="text" placeholder="Opcional. Ex.: FlowDetect-FGTS" />
+              <span>Maquina virtual</span>
+              <input id="agentVmNameInput" type="text" list="agentVmOptions" placeholder="Opcional. Ex.: FlowDetect-FGTS" />
             </label>
+            <datalist id="agentVmOptions"></datalist>
             <div class="agents-create-actions">
               <button id="saveAgentCardButton" class="primary-button" type="button">Salvar agente</button>
               <button id="cancelAgentCardButton" class="ghost-button" type="button">Cancelar</button>
             </div>
           </section>
 
+          <section id="agentVmListPanel" class="agents-vm-list-panel" hidden>
+            <div>
+              <p class="panel-kicker">VirtualBox</p>
+              <strong>VMs encontradas neste PC</strong>
+            </div>
+            <div id="agentVmList" class="agents-vm-list"></div>
+          </section>
+
           <div id="agentsList" class="agents-grid"></div>
 
           <section class="agents-help-card">
             <p class="panel-kicker">Fluxo recomendado</p>
-            <strong>VM invisivel, tela dentro do Studio</strong>
-            <span>Use VirtualBox em modo headless, deixe o FlowDetect Agent iniciar com o Windows da VM e conecte pelo IP cadastrado.</span>
+            <strong>Agente nasce sem IP fixo</strong>
+            <span>O IP e apenas o endereco atual da maquina. A identidade fica no card; depois vamos vincular a VM para iniciar e conectar automaticamente.</span>
           </section>
         </section>
       </section>

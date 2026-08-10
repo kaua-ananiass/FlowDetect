@@ -62,6 +62,8 @@ const state = {
   },
   agents: {
     items: [],
+    vms: [],
+    vmLoading: false,
     createOpen: false,
     editingId: "",
   },
@@ -396,10 +398,14 @@ const remoteControlPanel = document.getElementById("remoteControlPanel");
 const agentsPanel = document.getElementById("agentsPanel");
 const agentScreenPanel = document.getElementById("agentScreenPanel");
 const addAgentCardButton = document.getElementById("addAgentCardButton");
+const refreshAgentVmsButton = document.getElementById("refreshAgentVmsButton");
 const agentCreatePanel = document.getElementById("agentCreatePanel");
 const agentNameInput = document.getElementById("agentNameInput");
 const agentAddressInput = document.getElementById("agentAddressInput");
 const agentVmNameInput = document.getElementById("agentVmNameInput");
+const agentVmOptions = document.getElementById("agentVmOptions");
+const agentVmListPanel = document.getElementById("agentVmListPanel");
+const agentVmList = document.getElementById("agentVmList");
 const saveAgentCardButton = document.getElementById("saveAgentCardButton");
 const cancelAgentCardButton = document.getElementById("cancelAgentCardButton");
 const agentsList = document.getElementById("agentsList");
@@ -1184,20 +1190,7 @@ function updateCommandConnectorPositions() {
 
     const rowRect = row.getBoundingClientRect();
     const rowZoom = row.offsetWidth ? Math.max(0.2, rowRect.width / row.offsetWidth) : 1;
-    const cardRects = [previousCard, nextCard]
-      .filter(Boolean)
-      .map((card) => card.getBoundingClientRect());
-    const top = Math.max(
-      82,
-      Math.round(
-        cardRects.reduce((sum, rect) => {
-          const visualTop = (rect.top - rowRect.top) / rowZoom;
-          const visualHeight = Math.max(90, Math.min(rect.height / rowZoom, 220));
-          return sum + visualTop + visualHeight * 0.5;
-        }, 0) / cardRects.length
-      )
-    );
-    connector.style.setProperty("--connector-inline-top", `${top}px`);
+    connector.style.setProperty("--connector-inline-top", "var(--command-connector-line-top)");
   });
 }
 
@@ -5117,6 +5110,10 @@ function createInsertPanelState(targetOrder, position) {
     sheet: workbookSheetsFor(workbookId)[0]?.name ?? "",
     column: columnsForSheetInWorkbook(workbookId, workbookSheetsFor(workbookId)[0]?.name ?? "")?.[0] ?? "",
     writeValue: "OK",
+    compareExpectedColumn: columnsForSheetInWorkbook(workbookId, workbookSheetsFor(workbookId)[0]?.name ?? "")?.[0] ?? "",
+    compareMode: "texto",
+    compareStatusColumn: "Status",
+    compareNoteColumn: "Observacao",
     afterAction: "nenhuma",
     intervalBetween: 0.5,
   };
@@ -6904,6 +6901,22 @@ function renderCompactTreeEditorFields(event) {
     `);
   }
 
+  if (event.type === "comparar_planilha_tela") {
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Esperado", value: details.coluna_esperada || details.column || "Coluna" },
+      { label: "Tela", value: "Ultimo OCR" },
+      { label: "Resultado", value: details.coluna_status || "Status" },
+    ], `
+      ${hiddenTreeField("workbook", resolveWorkbookId(details.arquivo || details.workbook || ""))}
+      ${hiddenTreeField("sheet", details.aba || details.sheet || "")}
+      ${hiddenTreeField("compareExpectedColumn", details.coluna_esperada || details.column || "")}
+      ${hiddenTreeField("compareMode", details.modo_comparacao || "texto")}
+      ${hiddenTreeField("compareStatusColumn", details.coluna_status || "Status")}
+      ${hiddenTreeField("compareNoteColumn", details.coluna_observacao || "Observacao")}
+      ${renderSuccessHiddenTreeFields(details)}
+    `);
+  }
+
   if (event.type === "sequencia_planilha") {
     return renderGenericCompactTreeEditor(event, [
       { label: "Loop", value: getSpreadsheetLoopBadgeLabel(event) },
@@ -7223,6 +7236,8 @@ function typeChipLabel(type) {
       return "SEQUENCIA PLANILHA";
     case "escrever_planilha":
       return "ESCREVER PLANILHA";
+    case "comparar_planilha_tela":
+      return "CONFERIR VALOR";
     case "inicio_loop":
       return "INICIO LOOP";
     case "fim_loop":
@@ -9815,6 +9830,9 @@ function studioControlEventTitle(event = {}) {
   if (event.type === "escrever_planilha") {
     return "Escrever na planilha";
   }
+  if (event.type === "comparar_planilha_tela") {
+    return "Conferir valor";
+  }
   if (event.type === "abrir_url") {
     return "Abrir URL";
   }
@@ -9850,6 +9868,9 @@ function studioControlEventSubtitle(event = {}) {
   if (event.type === "escrever_planilha") {
     return `${details.aba || "aba"} -> ${details.coluna || "coluna"} = ${details.valor || ""}`;
   }
+  if (event.type === "comparar_planilha_tela") {
+    return `${details.aba || "aba"} -> ${details.coluna_esperada || "coluna"} x OCR`;
+  }
   if (event.type === "abrir_url") {
     return details.url || "URL configurada";
   }
@@ -9884,6 +9905,12 @@ function studioControlEventDetails(event = {}) {
     rows.push(["Coluna", details.coluna || "-"]);
     rows.push(["Valor", details.valor || "-"]);
     rows.push(["Linha", "Linha atual do loop"]);
+  } else if (event.type === "comparar_planilha_tela") {
+    rows.push(["Arquivo", details.arquivo || "-"]);
+    rows.push(["Aba", details.aba || "-"]);
+    rows.push(["Esperado", details.coluna_esperada || "-"]);
+    rows.push(["Encontrado", "Ultimo OCR"]);
+    rows.push(["Status", details.coluna_status || "Status"]);
   } else if (event.type === "abrir_url") {
     rows.push(["URL", details.url || "-"]);
     rows.push(["Navegador", details.navegador || "padrao"]);
@@ -10238,6 +10265,127 @@ function normalizeAgentAddress(address = "") {
     .replace(/\/+$/g, "");
 }
 
+function createAgentId(name = "") {
+  const slug = String(name || "agent")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 28) || "agent";
+  const suffix = Date.now().toString(36).slice(-5);
+  return `${slug}-${suffix}`;
+}
+
+function normalizeAgent(agent = {}) {
+  const name = String(agent.name || "FlowDetect Agent").trim() || "FlowDetect Agent";
+  const address = normalizeAgentAddress(agent.address || "");
+  const status = String(agent.status || "").trim();
+  return {
+    id: String(agent.id || createAgentId(name)),
+    name,
+    address,
+    vmName: String(agent.vmName || "").trim(),
+    status: status || (address ? "ready" : "waiting"),
+    createdAt: Number(agent.createdAt || Date.now()),
+    lastSeenAt: Number(agent.lastSeenAt || 0),
+  };
+}
+
+function formatAgentLastSeen(timestamp = 0) {
+  const value = Number(timestamp || 0);
+  if (!value) {
+    return "Ainda nao conectado";
+  }
+  try {
+    return new Date(value).toLocaleString("pt-BR");
+  } catch {
+    return "Registrado";
+  }
+}
+
+function renderAgentVmOptions() {
+  if (!agentVmOptions) {
+    return;
+  }
+  agentVmOptions.innerHTML = (state.agents.vms || [])
+    .map((vm) => `<option value="${escapeHtml(vm.name || "")}">${escapeHtml(vm.uuid || "")}</option>`)
+    .join("");
+}
+
+function renderAgentVmList() {
+  const vms = state.agents.vms || [];
+  if (agentVmListPanel) {
+    agentVmListPanel.hidden = !vms.length;
+  }
+  if (!agentVmList) {
+    return;
+  }
+  agentVmList.innerHTML = vms.map((vm) => {
+    const name = String(vm.name || "").trim();
+    const exists = state.agents.items.some((agent) => String(agent.vmName || "").trim() === name);
+    return `
+      <article class="agents-vm-item">
+        <div>
+          <strong>${escapeHtml(name || "VM sem nome")}</strong>
+          <span>${escapeHtml(vm.uuid || "VirtualBox")}</span>
+        </div>
+        <button class="ghost-button" type="button" data-agent-vm-name="${escapeHtml(name)}" ${exists ? "disabled" : ""}>${exists ? "Ja vinculada" : "Usar esta VM"}</button>
+      </article>
+    `;
+  }).join("");
+}
+
+function useVirtualboxVm(vmName = "") {
+  const name = String(vmName || "").trim();
+  if (!name) {
+    return;
+  }
+  openAgentForm({
+    name,
+    vmName: name,
+    address: "",
+  });
+  setMessage(`VM selecionada: ${name}. Salve para criar o Agent.`, "success");
+}
+
+async function refreshAgentVmList(options = {}) {
+  const { silent = false } = options;
+  if (state.agents.vmLoading) {
+    return;
+  }
+  state.agents.vmLoading = true;
+  if (refreshAgentVmsButton) {
+    refreshAgentVmsButton.disabled = true;
+    refreshAgentVmsButton.textContent = "Buscando...";
+  }
+  try {
+    const result = await invoke("list_virtualbox_vms");
+    state.agents.vms = Array.isArray(result?.items) ? result.items : [];
+    renderAgentVmOptions();
+    renderAgentVmList();
+    renderAgents();
+    if (!silent) {
+      setMessage(
+        state.agents.vms.length
+          ? `${state.agents.vms.length} VM(s) encontradas no VirtualBox.`
+          : "VirtualBox encontrado, mas ainda nao existe nenhuma VM criada.",
+        state.agents.vms.length ? "success" : "info"
+      );
+    }
+  } catch (error) {
+    if (!silent) {
+      setMessage(String(error), "error");
+    }
+  } finally {
+    state.agents.vmLoading = false;
+    if (refreshAgentVmsButton) {
+      refreshAgentVmsButton.disabled = false;
+      refreshAgentVmsButton.textContent = "Atualizar VMs";
+    }
+  }
+}
+
 function agentConnected(agent = {}) {
   return Boolean(
     state.remoteControl.connected
@@ -10245,18 +10393,37 @@ function agentConnected(agent = {}) {
   );
 }
 
+function updateAgentFromConnection(address = "", ping = {}) {
+  const normalizedAddress = normalizeAgentAddress(address || ping?.address || "");
+  if (!normalizedAddress || !state.agents.items.length) {
+    return;
+  }
+  let changed = false;
+  state.agents.items = state.agents.items.map((agent) => {
+    if (normalizeAgentAddress(agent.address || "") !== normalizedAddress) {
+      return agent;
+    }
+    changed = true;
+    return {
+      ...agent,
+      address: normalizedAddress,
+      name: agent.name || ping?.agent || "FlowDetect Agent",
+      status: "online",
+      lastSeenAt: Date.now(),
+    };
+  });
+  if (changed) {
+    persistAgentsConfig();
+    renderAgents();
+  }
+}
+
 function loadAgentsConfig() {
   try {
     const raw = window.localStorage?.getItem(AGENTS_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     state.agents.items = Array.isArray(parsed)
-      ? parsed.map((agent) => ({
-          id: String(agent.id || window.crypto?.randomUUID?.() || Date.now()),
-          name: String(agent.name || "FlowDetect Agent"),
-          address: normalizeAgentAddress(agent.address || ""),
-          vmName: String(agent.vmName || ""),
-          createdAt: Number(agent.createdAt || Date.now()),
-        })).filter((agent) => agent.address)
+      ? parsed.map(normalizeAgent)
       : [];
   } catch (error) {
     console.warn("Falha ao carregar agentes salvos.", error);
@@ -10312,19 +10479,22 @@ function saveAgentFromForm() {
   const name = String(agentNameInput?.value || "").trim() || "FlowDetect Agent";
   const address = normalizeAgentAddress(agentAddressInput?.value || "");
   const vmName = String(agentVmNameInput?.value || "").trim();
-  if (!address && !vmName) {
-    setMessage("Informe o endereco do Agent ou o nome da VM do VirtualBox.", "error");
-    agentAddressInput?.focus();
+  if (!name) {
+    setMessage("Informe um nome para identificar este Agent.", "error");
+    agentNameInput?.focus();
     return;
   }
   const editingId = String(state.agents.editingId || "");
-  const nextAgent = {
-    id: editingId || String(window.crypto?.randomUUID?.() || Date.now()),
+  const previousAgent = state.agents.items.find((agent) => String(agent.id) === editingId);
+  const nextAgent = normalizeAgent({
+    ...previousAgent,
+    id: editingId || createAgentId(name),
     name,
     address,
     vmName,
-    createdAt: Date.now(),
-  };
+    status: address ? "ready" : "waiting",
+    createdAt: previousAgent?.createdAt || Date.now(),
+  });
   if (editingId) {
     state.agents.items = state.agents.items.map((agent) => (
       String(agent.id) === editingId ? { ...agent, ...nextAgent } : agent
@@ -10335,7 +10505,7 @@ function saveAgentFromForm() {
       ...state.agents.items.filter((agent) => (
         address
           ? agent.address !== address
-          : String(agent.vmName || "").trim() !== vmName
+          : String(agent.id) !== nextAgent.id
       )),
     ];
   }
@@ -10345,12 +10515,59 @@ function saveAgentFromForm() {
   setMessage(`Agente salvo: ${name}`, "success");
 }
 
+function editAgentCard(id) {
+  state.agents.editingId = String(id || "");
+  state.agents.createOpen = false;
+  if (agentCreatePanel) {
+    agentCreatePanel.hidden = true;
+  }
+  agentsList?.querySelectorAll(".agent-card.is-flipped").forEach((card) => {
+    if (card.dataset.agentId !== state.agents.editingId) {
+      card.classList.remove("is-flipped");
+    }
+  });
+  agentsList?.querySelector(`[data-agent-id="${CSS.escape(state.agents.editingId)}"]`)?.classList.add("is-flipped");
+}
+
+function cancelAgentCardEdit() {
+  const editingId = String(state.agents.editingId || "");
+  state.agents.editingId = "";
+  agentsList?.querySelector(`[data-agent-id="${CSS.escape(editingId)}"]`)?.classList.remove("is-flipped");
+}
+
+function saveAgentCardEdit(id) {
+  const card = agentsList?.querySelector(`[data-agent-id="${CSS.escape(String(id || ""))}"]`);
+  const agent = state.agents.items.find((item) => String(item.id) === String(id));
+  if (!card || !agent) {
+    return;
+  }
+  const readField = (field) => String(card.querySelector(`[data-agent-edit-field="${field}"]`)?.value || "").trim();
+  const name = readField("name") || "FlowDetect Agent";
+  const address = normalizeAgentAddress(readField("address"));
+  const vmName = readField("vmName");
+  state.agents.items = state.agents.items.map((item) => (
+    String(item.id) === String(id)
+      ? normalizeAgent({
+          ...item,
+          name,
+          address,
+          vmName,
+          status: address ? "ready" : "waiting",
+        })
+      : item
+  ));
+  state.agents.editingId = "";
+  persistAgentsConfig();
+  renderAgents();
+  setMessage(`Agent atualizado: ${name}`, "success");
+}
+
 async function connectAgentFromCard(agent, options = {}) {
   const { silent = false } = options;
   const address = normalizeAgentAddress(agent?.address || "");
   if (!address) {
     if (!silent) {
-      setMessage("Esse agente nao tem endereco configurado.", "error");
+      setMessage("Esse Agent ainda esta aguardando a maquina iniciar e informar o endereco.", "error");
     }
     return false;
   }
@@ -10417,7 +10634,7 @@ async function startAndWatchAgent(agent) {
   }
   if (!normalizeAgentAddress(agent.address || "")) {
     setBusy("Pronto");
-    setMessage("VM iniciada. Quando o FlowDetect Agent mostrar o IP, edite este card e preencha o endereco para conectar.", "success");
+    setMessage("Maquina preparada. Quando o FlowDetect Agent mostrar o endereco, edite este card e preencha para conectar.", "success");
     renderAgents();
     return;
   }
@@ -10450,6 +10667,8 @@ function renderAgents() {
   if (agentCreatePanel) {
     agentCreatePanel.hidden = !state.agents.createOpen;
   }
+  renderAgentVmOptions();
+  renderAgentVmList();
   if (saveAgentCardButton) {
     saveAgentCardButton.textContent = state.agents.editingId ? "Salvar alteracoes" : "Salvar agente";
   }
@@ -10460,8 +10679,8 @@ function renderAgents() {
     agentsList.innerHTML = `
       <article class="agents-empty-card">
         <span class="panel-kicker">Nenhum ambiente</span>
-        <h3>Cadastre o primeiro Agent</h3>
-        <p>Voce pode cadastrar apenas o nome da VM primeiro. Depois que o Agent iniciar e mostrar o IP, edite o card e complete o endereco.</p>
+        <h3>Crie o primeiro Agent</h3>
+        <p>Comece pelo nome da maquina. O endereco entra depois, quando o Agent estiver rodando naquele Windows.</p>
         <button class="primary-button" type="button" data-agent-action="new">Adicionar agente</button>
       </article>
     `;
@@ -10470,27 +10689,64 @@ function renderAgents() {
   agentsList.innerHTML = state.agents.items.map((agent) => {
     const connected = agentConnected(agent);
     const hasAddress = Boolean(normalizeAgentAddress(agent.address || ""));
+    const waiting = !hasAddress && !connected;
+    const statusText = connected ? "Online" : hasAddress ? "Pronto para conectar" : "Aguardando maquina";
+    const isEditing = String(state.agents.editingId || "") === String(agent.id);
     return `
-      <article class="agent-card ${connected ? "is-connected" : ""}" data-agent-id="${escapeHtml(agent.id)}">
-        <div class="agent-card-top">
-          <span class="agent-card-status ${connected ? "is-online" : ""}">${connected ? "Conectado" : hasAddress ? "Pronto" : "Aguardando IP"}</span>
-          ${agent.vmName ? '<span class="agent-card-chip">VM</span>' : '<span class="agent-card-chip">PC</span>'}
-        </div>
-        <h3>${escapeHtml(agent.name)}</h3>
-        <div class="agent-card-meta">
-          <span>Agent</span>
-          <strong>${escapeHtml(agent.address || "Preencha depois que o Agent abrir")}</strong>
-        </div>
-        <div class="agent-card-meta">
-          <span>VirtualBox</span>
-          <strong>${escapeHtml(agent.vmName || "Sem VM vinculada")}</strong>
-        </div>
-        <div class="agent-card-actions">
-          <button class="primary-button" type="button" data-agent-action="watch" data-agent-id="${escapeHtml(agent.id)}">${hasAddress ? "Conectar e assistir" : "Iniciar VM"}</button>
-          <button class="ghost-button" type="button" data-agent-action="connect" data-agent-id="${escapeHtml(agent.id)}" ${hasAddress ? "" : "disabled"}>Conectar</button>
-          <button class="ghost-button" type="button" data-agent-action="start-vm" data-agent-id="${escapeHtml(agent.id)}" ${agent.vmName ? "" : "disabled"}>Iniciar VM</button>
-          <button class="ghost-button" type="button" data-agent-action="edit" data-agent-id="${escapeHtml(agent.id)}">Editar</button>
-          <button class="danger-button" type="button" data-agent-action="delete" data-agent-id="${escapeHtml(agent.id)}">Excluir</button>
+      <article class="agent-card ${connected ? "is-connected" : ""} ${waiting ? "is-waiting" : ""} ${isEditing ? "is-flipped" : ""}" data-agent-id="${escapeHtml(agent.id)}">
+        <div class="agent-card-stage">
+          <section class="agent-card-face agent-card-front">
+            <div class="agent-card-top">
+              <span class="agent-card-status ${connected ? "is-online" : waiting ? "is-waiting" : ""}">${statusText}</span>
+              ${agent.vmName ? '<span class="agent-card-chip">VM</span>' : '<span class="agent-card-chip">PC</span>'}
+            </div>
+            <h3>${escapeHtml(agent.name)}</h3>
+            <p class="agent-card-description">${escapeHtml(hasAddress ? "Tela e automacoes remotas liberadas." : "Sem endereco ainda. Inicie o Agent nesta maquina.")}</p>
+            <div class="agent-card-summary">
+              <div class="agent-card-meta">
+                <span>Endereco</span>
+                <strong>${escapeHtml(agent.address || "Aguardando")}</strong>
+              </div>
+              <div class="agent-card-meta">
+                <span>${agent.vmName ? "VM" : "Ultima vez"}</span>
+                <strong>${escapeHtml(agent.vmName || formatAgentLastSeen(agent.lastSeenAt))}</strong>
+              </div>
+            </div>
+            <div class="agent-card-actions">
+              <button class="primary-button" type="button" data-agent-action="watch" data-agent-id="${escapeHtml(agent.id)}" ${hasAddress || agent.vmName ? "" : "disabled"}>${hasAddress ? "Conectar e assistir" : "Iniciar maquina"}</button>
+              <button class="ghost-button" type="button" data-agent-action="connect" data-agent-id="${escapeHtml(agent.id)}" ${hasAddress ? "" : "disabled"}>Conectar</button>
+              <button class="ghost-button" type="button" data-agent-action="start-vm" data-agent-id="${escapeHtml(agent.id)}" ${agent.vmName ? "" : "disabled"}>Iniciar VM</button>
+              <button class="ghost-button" type="button" data-agent-action="edit" data-agent-id="${escapeHtml(agent.id)}">Editar</button>
+              <button class="danger-button" type="button" data-agent-action="delete" data-agent-id="${escapeHtml(agent.id)}">Excluir</button>
+            </div>
+          </section>
+          <section class="agent-card-face agent-card-back">
+            <div class="agent-card-top">
+              <span class="agent-card-status">Detalhes</span>
+              <button class="launcher-flip-trigger" type="button" data-agent-action="cancel-edit" data-agent-id="${escapeHtml(agent.id)}">Voltar</button>
+            </div>
+            <h3>Editar Agent</h3>
+            <div class="agent-card-edit-form">
+              <label>
+                <span>Nome</span>
+                <input data-agent-edit-field="name" type="text" value="${escapeHtml(agent.name)}" />
+              </label>
+              <label>
+                <span>Endereco atual</span>
+                <input data-agent-edit-field="address" type="text" value="${escapeHtml(agent.address || "")}" placeholder="192.168.1.150:18452" />
+              </label>
+              <label>
+                <span>Maquina virtual</span>
+                <input data-agent-edit-field="vmName" type="text" list="agentVmOptions" value="${escapeHtml(agent.vmName || "")}" placeholder="Opcional" />
+              </label>
+              <div class="agent-card-id">ID: ${escapeHtml(agent.id)}</div>
+            </div>
+            <div class="agent-card-actions">
+              <button class="ghost-button" type="button" data-agent-action="cancel-edit" data-agent-id="${escapeHtml(agent.id)}">Cancelar</button>
+              <button class="primary-button" type="button" data-agent-action="save-edit" data-agent-id="${escapeHtml(agent.id)}">Salvar</button>
+              <button class="danger-button" type="button" data-agent-action="delete" data-agent-id="${escapeHtml(agent.id)}">Excluir</button>
+            </div>
+          </section>
         </div>
       </article>
     `;
@@ -11131,6 +11387,7 @@ async function connectStudioControl() {
   const ping = await invoke("remote_agent_ping", { address });
   state.remoteControl.connected = true;
   state.remoteControl.agentLabel = `${ping?.agent || "FlowDetect Agent"} | ${ping?.address || address}`;
+  updateAgentFromConnection(address, ping);
   ensureMeshCentralUrlFromAgent({ force: true });
   setMessage(`Controle remoto conectado em ${address}.`, "success");
   startStudioControlPolling();
@@ -11462,6 +11719,72 @@ function renderWriteSpreadsheetFields(fieldAttr, details = {}, currentOrder = nu
   `;
 }
 
+function renderCompareSpreadsheetFields(fieldAttr, details = {}, currentOrder = null) {
+  const workbooks = availableWorkbooks();
+  const requestedWorkbookId = details.arquivo || details.workbook || "";
+  const workbookId = resolveWorkbookId(requestedWorkbookId);
+  const workbookOptions = workbooks.length
+    ? workbooks
+      .map((workbook) => `<option value="${escapeHtml(workbook.id)}" ${workbook.id === workbookId ? "selected" : ""}>${escapeHtml(workbook.file_name)}</option>`)
+      .join("")
+    : `<option value="">Nenhuma planilha</option>`;
+  const availableSheets = workbookSheetsFor(workbookId);
+  const currentSheet = details.aba || details.sheet || "";
+  const selectedSheet = availableSheets.some((sheet) => sheet.name === currentSheet)
+    ? currentSheet
+    : availableSheets[0]?.name ?? "";
+  const sheetOptions = availableSheets
+    .map((sheet) => `<option value="${escapeHtml(sheet.name)}" ${sheet.name === selectedSheet ? "selected" : ""}>${escapeHtml(sheet.name)}</option>`)
+    .join("");
+  const columns = columnsForSheetInWorkbook(workbookId, selectedSheet);
+  const selectedColumn = details.coluna_esperada || details.expectedColumn || details.coluna || columns[0] || "";
+  const suggestionId = `spreadsheetCompareColumns-${String(currentOrder ?? "new").replace(/[^a-z0-9_-]/gi, "")}`;
+  const columnSuggestions = columns
+    .map((column) => `<option value="${escapeHtml(column)}"></option>`)
+    .join("");
+  const mode = String(details.modo_comparacao || "texto");
+
+  return `
+    <div class="field-stack spreadsheet-write-editor">
+      <div class="tree-inline-fields">
+        <label>
+          <span>Arquivo</span>
+          <select ${fieldAttr}="workbook">${workbookOptions}</select>
+        </label>
+        <label>
+          <span>Aba</span>
+          <select ${fieldAttr}="sheet">${sheetOptions}</select>
+        </label>
+        <label>
+          <span>Valor esperado</span>
+          <input ${fieldAttr}="compareExpectedColumn" type="text" list="${escapeHtml(suggestionId)}" value="${escapeHtml(selectedColumn)}" placeholder="Coluna da planilha" />
+          <datalist id="${escapeHtml(suggestionId)}">${columnSuggestions}</datalist>
+        </label>
+        <label>
+          <span>Comparar como</span>
+          <select ${fieldAttr}="compareMode">
+            <option value="texto" ${mode === "texto" ? "selected" : ""}>Texto</option>
+            <option value="numero" ${mode === "numero" ? "selected" : ""}>Numero</option>
+            <option value="data" ${mode === "data" ? "selected" : ""}>Data/codigo</option>
+          </select>
+        </label>
+        <label>
+          <span>Coluna do status</span>
+          <input ${fieldAttr}="compareStatusColumn" type="text" value="${escapeHtml(details.coluna_status ?? "Status")}" placeholder="Status" />
+        </label>
+        <label>
+          <span>Coluna da observacao</span>
+          <input ${fieldAttr}="compareNoteColumn" type="text" value="${escapeHtml(details.coluna_observacao ?? "Observacao")}" placeholder="Observacao" />
+        </label>
+      </div>
+      <p class="spreadsheet-write-hint">Compara a coluna da linha atual com o ultimo OCR lido pelo reconhecimento visual.</p>
+      <div class="tree-inline-fields">
+        ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
+      </div>
+    </div>
+  `;
+}
+
 function renderEditorFields(event) {
   const details = event.details ?? {};
   const delayField = `
@@ -11679,6 +12002,13 @@ function renderEditorFields(event) {
   if (event.type === "escrever_planilha") {
     return `
       ${renderWriteSpreadsheetFields("data-field", details, event.order)}
+      ${delayField}
+    `;
+  }
+
+  if (event.type === "comparar_planilha_tela") {
+    return `
+      ${renderCompareSpreadsheetFields("data-field", details, event.order)}
       ${delayField}
     `;
   }
@@ -11905,6 +12235,10 @@ function renderTreeEditorFields(event) {
 
   if (event.type === "escrever_planilha") {
     return renderWriteSpreadsheetFields("data-tree-field", details, event.order);
+  }
+
+  if (event.type === "comparar_planilha_tela") {
+    return renderCompareSpreadsheetFields("data-tree-field", details, event.order);
   }
 
   if (event.type === "verificar_estado_botao") {
@@ -12322,6 +12656,12 @@ function renderInsertPanel(order) {
       description: "Para marcar um status ou texto na linha atual do loop.",
       hint: selectedColumn ? `Vai começar escrevendo na coluna ${selectedColumn}.` : "Importe uma planilha para configurar esse bloco.",
     },
+    compare_spreadsheet: {
+      title: "Conferir valor",
+      label: "Conferencia",
+      description: "Compara uma coluna da planilha com o ultimo OCR lido na tela.",
+      hint: selectedColumn ? `Vai conferir a coluna ${selectedColumn}.` : "Importe uma planilha para configurar esse bloco.",
+    },
     loop_start: {
       title: "Inicio do loop",
       label: "Marcador",
@@ -12357,6 +12697,7 @@ function renderInsertPanel(order) {
         <button class="insert-type-button ${panel.type === "save_download" ? "is-active" : ""}" data-insert-type="save_download" type="button" ${panel.isSaving ? "disabled" : ""}>Salvar download</button>
         <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Planilha</button>
         <button class="insert-type-button ${panel.type === "write_spreadsheet" ? "is-active" : ""}" data-insert-type="write_spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Escrever celula</button>
+        <button class="insert-type-button ${panel.type === "compare_spreadsheet" ? "is-active" : ""}" data-insert-type="compare_spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Conferir valor</button>
         <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start" type="button" ${panel.isSaving ? "disabled" : ""}>Inicio loop</button>
         <button class="insert-type-button ${panel.type === "loop_end" ? "is-active" : ""}" data-insert-type="loop_end" type="button" ${panel.isSaving ? "disabled" : ""}>Fim loop</button>
       </div>
@@ -13028,6 +13369,7 @@ function renderCommandMap(options = {}) {
     skipAutoFit = false,
     suppressFocusScroll = false,
     suppressVisualFocus = false,
+    quietUpdate = false,
   } = options;
   const previousScrollLeft = preserveScroll ? commandMapList.scrollLeft : null;
   const previousScrollTop = preserveScroll ? commandMapList.scrollTop : null;
@@ -13078,7 +13420,7 @@ function renderCommandMap(options = {}) {
     const hasRecordButton = event.type === "tecla" || event.type === "atalho";
     const isRecognitionCard = event.type === "clicar_imagem";
     const isInlineExpanded = Number(state.expandedTreeCardOrder) === Number(event.order);
-    const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha";
+    const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "comparar_planilha_tela";
     const isLoopMarkerCard = isLoopMarkerType(event.type);
     const isRuntimeEditable = event.type === "texto_livre" && Boolean(event.details?.editavel_execucao);
     const isNewlyCreated = Number(state.createdBlockAnimationOrder) === Number(event.order);
@@ -13105,7 +13447,7 @@ function renderCommandMap(options = {}) {
           <div class="command-tree-main">
             <span class="command-index">${String(event.order).padStart(2, "0")}</span>
             <div>
-              ${event.type === "sequencia_planilha" || event.type === "escrever_planilha"
+              ${event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "comparar_planilha_tela"
                 ? `
                   <span class="command-title-row">
                     <span class="type-chip ${escapeHtml(event.type)} command-title-chip">${escapeHtml(event.title)}</span>
@@ -13257,12 +13599,14 @@ function renderCommandMap(options = {}) {
         ?.classList.remove("is-newly-created");
     }, usedMorphAnimation ? 520 : 520);
   }
-  if (layoutSnapshot) {
+  if (layoutSnapshot && !quietUpdate) {
     requestAnimationFrame(() => {
       animateCommandMapLayoutShift(layoutSnapshot, { mode: layoutAnimationMode });
     });
-  } else if (state.insertPanel) {
+  } else if (state.insertPanel && !quietUpdate) {
     scheduleCommandConnectorLayout({ burstMs: 460 });
+  } else if (!quietUpdate) {
+    scheduleCommandConnectorLayout();
   }
 }
 
@@ -13548,6 +13892,10 @@ function formValuesFromCard(card) {
     sheet: get("sheet")?.value ?? "",
     column: get("column")?.value ?? "",
     writeValue: get("writeValue")?.value ?? "",
+    compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
+    compareMode: get("compareMode")?.value ?? "texto",
+    compareStatusColumn: get("compareStatusColumn")?.value ?? "Status",
+    compareNoteColumn: get("compareNoteColumn")?.value ?? "Observacao",
     afterAction: get("afterAction")?.value ?? "nenhuma",
     intervalBetween: parseNumber(get("intervalBetween")?.value, 0.5),
   };
@@ -13640,6 +13988,10 @@ function treeValuesFromCard(card) {
     sheet: get("sheet")?.value ?? "",
     column: get("column")?.value ?? "",
     writeValue: get("writeValue")?.value ?? "",
+    compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
+    compareMode: get("compareMode")?.value ?? "texto",
+    compareStatusColumn: get("compareStatusColumn")?.value ?? "Status",
+    compareNoteColumn: get("compareNoteColumn")?.value ?? "Observacao",
     afterAction: get("afterAction")?.value ?? "nenhuma",
     intervalBetween: parseNumber(get("intervalBetween")?.value, 0.5),
   };
@@ -14048,6 +14400,18 @@ function commandCardHasUnsavedChanges(snapshot) {
     );
   }
 
+  if (snapshot.type === "comparar_planilha_tela") {
+    return (
+      normalizeStringValue(values.workbook) !== normalizeStringValue(details.arquivo)
+      || normalizeStringValue(values.sheet) !== normalizeStringValue(details.aba)
+      || normalizeStringValue(values.compareExpectedColumn) !== normalizeStringValue(details.coluna_esperada)
+      || normalizeStringValue(values.compareMode) !== normalizeStringValue(details.modo_comparacao ?? "texto")
+      || normalizeStringValue(values.compareStatusColumn) !== normalizeStringValue(details.coluna_status ?? "Status")
+      || normalizeStringValue(values.compareNoteColumn) !== normalizeStringValue(details.coluna_observacao ?? "Observacao")
+      || successFlowChanged(values, details)
+    );
+  }
+
   if (isLoopMarkerType(snapshot.type)) {
     return snapshot.type === "fim_loop" && successFlowChanged(values, details);
   }
@@ -14299,6 +14663,28 @@ async function invokeCommandCardUpdate(snapshot) {
     });
   }
 
+  if (type === "comparar_planilha_tela") {
+    if (!normalizeStringValue(values.sheet) || !normalizeStringValue(values.compareExpectedColumn)) {
+      throw new Error(`Configure a aba e a coluna esperada do bloco ${order} de conferencia.`);
+    }
+    return invoke("update_compare_spreadsheet_block", {
+      order,
+      workbook: values.workbook || null,
+      sheet: values.sheet,
+      expectedColumn: values.compareExpectedColumn,
+      comparisonMode: values.compareMode || "texto",
+      statusColumn: values.compareStatusColumn || "Status",
+      noteColumn: values.compareNoteColumn || "Observacao",
+      delay: values.delay,
+      aoSucesso: values.successAction,
+      blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
+    });
+  }
+
   if (isLoopMarkerType(type)) {
     return invoke("update_loop_marker_block", {
       order,
@@ -14521,6 +14907,10 @@ function insertValuesFromPanel(panelElement) {
     sheet: get("sheet")?.value ?? state.insertPanel?.sheet ?? "",
     column: get("column")?.value ?? state.insertPanel?.column ?? "",
     writeValue: get("writeValue")?.value ?? state.insertPanel?.writeValue ?? "OK",
+    compareExpectedColumn: get("compareExpectedColumn")?.value ?? state.insertPanel?.compareExpectedColumn ?? state.insertPanel?.column ?? "",
+    compareMode: get("compareMode")?.value ?? state.insertPanel?.compareMode ?? "texto",
+    compareStatusColumn: get("compareStatusColumn")?.value ?? state.insertPanel?.compareStatusColumn ?? "Status",
+    compareNoteColumn: get("compareNoteColumn")?.value ?? state.insertPanel?.compareNoteColumn ?? "Observacao",
     afterAction: get("afterAction")?.value ?? state.insertPanel?.afterAction ?? "nenhuma",
     intervalBetween: parseNumber(get("intervalBetween")?.value, state.insertPanel?.intervalBetween ?? 0.5),
   };
@@ -15263,10 +15653,23 @@ commandTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
 workbookTabButton.addEventListener("click", () => setWorkspaceTab("workbook"));
 launcherTabButton.addEventListener("click", () => setWorkspaceTab("launcher"));
 remoteControlTabButton?.addEventListener("click", () => setWorkspaceTab("remote-control"));
-agentsTabButton?.addEventListener("click", () => setWorkspaceTab("agents"));
+agentsTabButton?.addEventListener("click", () => {
+  setWorkspaceTab("agents");
+  refreshAgentVmList({ silent: true }).catch(() => null);
+});
 agentScreenTabButton?.addEventListener("click", () => setWorkspaceTab("agent-screen"));
 smartRecorderTabButton?.addEventListener("click", () => setWorkspaceTab("smart-recorder"));
 addAgentCardButton?.addEventListener("click", () => openAgentForm());
+refreshAgentVmsButton?.addEventListener("click", () => {
+  refreshAgentVmList().catch((error) => setMessage(String(error), "error"));
+});
+agentVmList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-agent-vm-name]");
+  if (!button) {
+    return;
+  }
+  useVirtualboxVm(button.dataset.agentVmName || "");
+});
 cancelAgentCardButton?.addEventListener("click", () => {
   resetAgentForm();
   renderAgents();
@@ -15294,7 +15697,11 @@ agentsList?.addEventListener("click", (event) => {
   } else if (action === "start-vm") {
     startAgentVm(agent);
   } else if (action === "edit") {
-    openAgentForm(agent);
+    editAgentCard(id);
+  } else if (action === "cancel-edit") {
+    cancelAgentCardEdit();
+  } else if (action === "save-edit") {
+    saveAgentCardEdit(id);
   } else if (action === "delete") {
     deleteAgentCard(id);
   }
@@ -17269,8 +17676,14 @@ commandMapList.addEventListener("click", (event) => {
       state.insertPanel.sheet = workbookSheetsFor(state.insertPanel.workbook)[0]?.name || "";
       state.insertPanel.column = columnsForSheetInWorkbook(state.insertPanel.workbook, state.insertPanel.sheet)[0] || "";
     }
-    setCommandMapFocus(state.insertPanel.targetOrder);
-    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true });
+    state.commandMapFocusOrder = Number(state.insertPanel.targetOrder) || state.commandMapFocusOrder;
+    renderCommandMap({
+      preserveScroll: true,
+      skipAutoFit: true,
+      suppressFocusScroll: true,
+      suppressVisualFocus: true,
+      quietUpdate: true,
+    });
     return;
   }
 
@@ -17713,6 +18126,44 @@ commandMapList.addEventListener("click", (event) => {
               pastaDestino: values.downloadDestination,
               nomeArquivo: values.downloadFileName || "",
               timeout: values.downloadTimeout,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            });
+    } else if (values.type === "compare_spreadsheet") {
+      const expectedColumn = values.compareExpectedColumn || values.column;
+      if (!values.sheet.trim() || !String(expectedColumn || "").trim()) {
+        setMessage("Informe a aba e a coluna esperada antes de inserir esse bloco.", "error");
+        return;
+      }
+      promiseFactory = () =>
+        isFirstBlock
+          ? invoke("add_compare_spreadsheet_block", {
+              workbook: values.workbook || state.composerWorkbookId || null,
+              sheet: values.sheet,
+              expectedColumn,
+              comparisonMode: values.compareMode || "texto",
+              statusColumn: values.compareStatusColumn || "Status",
+              noteColumn: values.compareNoteColumn || "Observacao",
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            })
+          : invoke("insert_compare_spreadsheet_block", {
+              targetOrder: common.targetOrder,
+              position: common.position,
+              workbook: values.workbook || state.composerWorkbookId || null,
+              sheet: values.sheet,
+              expectedColumn,
+              comparisonMode: values.compareMode || "texto",
+              statusColumn: values.compareStatusColumn || "Status",
+              noteColumn: values.compareNoteColumn || "Observacao",
               delay: common.delay,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,

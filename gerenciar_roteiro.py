@@ -44,6 +44,7 @@ INSTRUCOES_PADRAO = [
 ]
 TIPOS_SEQUENCIA_PLANILHA = {"sequencia_planilha"}
 TIPOS_ESCRITA_PLANILHA = {"escrever_planilha"}
+TIPOS_COMPARACAO_PLANILHA = {"comparar_planilha_tela"}
 TIPOS_MARCADORES_LOOP = {"inicio_loop", "fim_loop"}
 TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
@@ -57,6 +58,7 @@ TIPOS_SUPORTADOS_RUNTIME = {
     "atalho",
     *TIPOS_SEQUENCIA_PLANILHA,
     *TIPOS_ESCRITA_PLANILHA,
+    *TIPOS_COMPARACAO_PLANILHA,
     *TIPOS_MARCADORES_LOOP,
     *TIPOS_MOUSE,
     *TIPOS_IMAGEM,
@@ -1235,6 +1237,12 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         valor = str(detalhes.get("valor", "") or "")
         return f"[ESCREVER PLANILHA:{coluna}='{valor[:28]}' | linha atual]"
 
+    if tipo_evento in TIPOS_COMPARACAO_PLANILHA:
+        detalhes = metadados or {}
+        coluna = str(detalhes.get("coluna_esperada", "Coluna") or "Coluna")
+        status = str(detalhes.get("coluna_status", "Status") or "Status")
+        return f"[CONFERIR:{coluna} x OCR | resultado:{status}]"
+
     if tipo_evento in TIPOS_MOUSE:
         detalhes = metadados or {}
         x = detalhes.get("x", 0)
@@ -1371,6 +1379,15 @@ def montar_comando_python(teclas, tipo_evento, texto_livre=None, metadados=None)
             f"coluna={str(detalhes.get('coluna', ''))!r}, "
             f"valor={str(detalhes.get('valor', ''))!r}, "
             "linha='loop_atual')"
+        )
+
+    if tipo_evento in TIPOS_COMPARACAO_PLANILHA:
+        detalhes = metadados or {}
+        return (
+            "comparar_planilha_com_ocr("
+            f"coluna_esperada={str(detalhes.get('coluna_esperada', ''))!r}, "
+            f"origem_ocr={str(detalhes.get('origem_tela', 'ultimo_ocr'))!r}, "
+            f"status={str(detalhes.get('coluna_status', 'Status'))!r})"
         )
 
     if tipo_evento in TIPOS_MOUSE:
@@ -2448,6 +2465,59 @@ def criar_bloco_escrever_planilha(
     }
 
 
+def criar_bloco_comparar_planilha_tela(
+    sheet,
+    expected_column,
+    delay,
+    workbook_file=None,
+    sequencia="principal",
+    source="ultimo_ocr",
+    comparison_mode="texto",
+    status_column="Status",
+    note_column="Observacao",
+    ok_value="OK",
+    fail_value="Divergente",
+    ao_sucesso="continuar",
+    bloco_sucesso="",
+    sequencia_sucesso="",
+    atraso_sequencia_sucesso=0,
+    ao_divergir="continuar",
+    bloco_divergir="",
+    sequencia_divergir="",
+    atraso_sequencia_divergir=0,
+):
+    workbook_id = normalizar_id_planilha(workbook_file)
+    detalhes = aplicar_fluxo_sucesso({
+        "arquivo": workbook_id,
+        "aba": str(sheet or "").strip(),
+        "coluna_esperada": str(expected_column or "").strip(),
+        "origem_tela": str(source or "ultimo_ocr").strip() or "ultimo_ocr",
+        "modo_comparacao": str(comparison_mode or "texto").strip().lower() or "texto",
+        "coluna_status": str(status_column or "Status").strip() or "Status",
+        "coluna_observacao": str(note_column or "Observacao").strip(),
+        "valor_ok": str(ok_value or "OK"),
+        "valor_divergente": str(fail_value or "Divergente"),
+        "ao_divergir": str(ao_divergir or "continuar").strip().lower() or "continuar",
+        "bloco_divergir": bloco_divergir or "",
+        "sequencia_divergir": normalizar_nome_sequencia(sequencia_divergir) if str(sequencia_divergir or "").strip() else "",
+        "atraso_antes_sequencia_divergir": round(float(atraso_sequencia_divergir or 0), 3),
+    }, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
+    return {
+        "ordem": 0,
+        "sequencia": normalizar_nome_sequencia(sequencia),
+        "tipo": "comparar_planilha_tela",
+        "teclas": [f"comparar_planilha:{expected_column}"],
+        "texto": formatar_evento([f"comparar_planilha:{expected_column}"], "comparar_planilha_tela", metadados=detalhes),
+        "intervalo_antes": round(float(delay), 3),
+        "comando_python": montar_comando_python(
+            [f"comparar_planilha:{expected_column}"],
+            "comparar_planilha_tela",
+            metadados=detalhes,
+        ),
+        "detalhes": detalhes,
+    }
+
+
 def criar_bloco_marcador_loop(
     tipo,
     delay=0,
@@ -2587,6 +2657,16 @@ def card_do_evento(evento):
             f"{detalhes.get('aba', 'Sheet1')} -> {detalhes.get('coluna', 'Coluna')}"
         )
         descricao = f"Linha atual do loop recebe: {detalhes.get('valor', '')}"
+    elif tipo == "comparar_planilha_tela":
+        titulo = "Conferir valor"
+        subtitulo = (
+            f"{Path(detalhes.get('arquivo', ARQUIVO_PLANILHA.name)).name} - "
+            f"{detalhes.get('aba', 'Sheet1')} -> {detalhes.get('coluna_esperada', 'Coluna')}"
+        )
+        descricao = (
+            f"Compara com OCR da tela | Resultado em "
+            f"{detalhes.get('coluna_status', 'Status')}"
+        )
     elif tipo == "inicio_loop":
         titulo = "Inicio do loop"
         subtitulo = "Daqui em diante o trecho pode repetir por linha da planilha."
@@ -3245,6 +3325,34 @@ def comando_adicionar_escrita_planilha(args):
     return salvar_e_retornar(payload)
 
 
+def comando_adicionar_comparacao_planilha(args):
+    payload = carregar_e_normalizar()
+    payload["eventos"].append(
+        criar_bloco_comparar_planilha_tela(
+            args.sheet,
+            args.expected_column,
+            args.delay,
+            args.workbook,
+            args.sequencia,
+            args.source,
+            args.comparison_mode,
+            args.status_column,
+            args.note_column,
+            args.ok_value,
+            args.fail_value,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+            args.ao_divergir,
+            args.bloco_divergir,
+            args.sequencia_divergir,
+            args.atraso_sequencia_divergir,
+        )
+    )
+    return salvar_e_retornar(payload)
+
+
 def comando_adicionar_inicio_loop(args):
     payload = carregar_e_normalizar()
     payload["eventos"].append(criar_bloco_marcador_loop("inicio_loop", args.delay, args.sequencia))
@@ -3508,6 +3616,37 @@ def comando_inserir_escrita_planilha(args):
             args.bloco_sucesso,
             args.sequencia_sucesso,
             args.atraso_sequencia_sucesso,
+        ),
+        args.target_order,
+        args.position,
+    )
+    return salvar_e_retornar(payload)
+
+
+def comando_inserir_comparacao_planilha(args):
+    payload = carregar_e_normalizar()
+    inserir_evento(
+        payload,
+        criar_bloco_comparar_planilha_tela(
+            args.sheet,
+            args.expected_column,
+            args.delay,
+            args.workbook,
+            args.sequencia,
+            args.source,
+            args.comparison_mode,
+            args.status_column,
+            args.note_column,
+            args.ok_value,
+            args.fail_value,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+            args.ao_divergir,
+            args.bloco_divergir,
+            args.sequencia_divergir,
+            args.atraso_sequencia_divergir,
         ),
         args.target_order,
         args.position,
@@ -3817,6 +3956,37 @@ def comando_atualizar_escrita_planilha(args):
     return salvar_e_retornar(payload)
 
 
+def comando_atualizar_comparacao_planilha(args):
+    payload = carregar_e_normalizar()
+    _, evento = localizar_evento(payload, args.order)
+    if evento.get("tipo") != "comparar_planilha_tela":
+        raise ValueError("O bloco selecionado nao eh do tipo conferir valor.")
+    detalhes_atuais = evento.get("detalhes") or {}
+    bloco = criar_bloco_comparar_planilha_tela(
+        args.sheet,
+        args.expected_column,
+        args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
+        args.workbook or detalhes_atuais.get("arquivo"),
+        args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
+        args.source,
+        args.comparison_mode,
+        args.status_column,
+        args.note_column,
+        args.ok_value,
+        args.fail_value,
+        args.ao_sucesso,
+        args.bloco_sucesso,
+        args.sequencia_sucesso,
+        args.atraso_sequencia_sucesso,
+        args.ao_divergir,
+        args.bloco_divergir,
+        args.sequencia_divergir,
+        args.atraso_sequencia_divergir,
+    )
+    evento.update(bloco)
+    return salvar_e_retornar(payload)
+
+
 def comando_atualizar_atraso(args):
     payload = carregar_e_normalizar()
     _, evento = localizar_evento(payload, args.order)
@@ -3949,6 +4119,21 @@ def build_parser():
         parser_destino.add_argument("--pasta-destino", required=True)
         parser_destino.add_argument("--nome-arquivo", default="{empresa}_{competencia}_FGTS.pdf")
         parser_destino.add_argument("--timeout", type=float, default=60)
+
+    def adicionar_argumentos_comparar_planilha(parser_destino):
+        parser_destino.add_argument("--workbook")
+        parser_destino.add_argument("--sheet", required=True)
+        parser_destino.add_argument("--expected-column", required=True)
+        parser_destino.add_argument("--source", default="ultimo_ocr")
+        parser_destino.add_argument("--comparison-mode", choices=["texto", "numero", "data"], default="texto")
+        parser_destino.add_argument("--status-column", default="Status")
+        parser_destino.add_argument("--note-column", default="Observacao")
+        parser_destino.add_argument("--ok-value", default="OK")
+        parser_destino.add_argument("--fail-value", default="Divergente")
+        parser_destino.add_argument("--ao-divergir", choices=["continuar", "parar", "ir_para_bloco", "ir_para_sequencia"], default="continuar")
+        parser_destino.add_argument("--bloco-divergir", default="")
+        parser_destino.add_argument("--sequencia-divergir", default="")
+        parser_destino.add_argument("--atraso-sequencia-divergir", type=float, default=0)
 
     subparsers.add_parser("list")
     subparsers.add_parser("automation-library-list")
@@ -4123,6 +4308,12 @@ def build_parser():
     add_write_sheet.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(add_write_sheet)
 
+    add_compare_sheet = subparsers.add_parser("add-compare-planilha")
+    adicionar_argumentos_comparar_planilha(add_compare_sheet)
+    add_compare_sheet.add_argument("--delay", type=float, default=0)
+    add_compare_sheet.add_argument("--sequencia", default="principal")
+    adicionar_argumentos_fluxo_sucesso(add_compare_sheet)
+
     add_loop_start = subparsers.add_parser("add-loop-start")
     add_loop_start.add_argument("--delay", type=float, default=0)
     add_loop_start.add_argument("--sequencia", default="principal")
@@ -4278,6 +4469,14 @@ def build_parser():
     insert_write_sheet.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(insert_write_sheet)
 
+    insert_compare_sheet = subparsers.add_parser("insert-compare-planilha")
+    insert_compare_sheet.add_argument("--target-order", type=int, required=True)
+    insert_compare_sheet.add_argument("--position", choices=["before", "after"], required=True)
+    adicionar_argumentos_comparar_planilha(insert_compare_sheet)
+    insert_compare_sheet.add_argument("--delay", type=float, default=0)
+    insert_compare_sheet.add_argument("--sequencia", default="principal")
+    adicionar_argumentos_fluxo_sucesso(insert_compare_sheet)
+
     update_loop_marker = subparsers.add_parser("update-loop-marker")
     update_loop_marker.add_argument("--order", type=int, required=True)
     update_loop_marker.add_argument("--delay", type=float)
@@ -4432,6 +4631,13 @@ def build_parser():
     update_write_sheet.add_argument("--sequencia")
     adicionar_argumentos_fluxo_sucesso(update_write_sheet)
 
+    update_compare_sheet = subparsers.add_parser("update-compare-planilha")
+    update_compare_sheet.add_argument("--order", type=int, required=True)
+    adicionar_argumentos_comparar_planilha(update_compare_sheet)
+    update_compare_sheet.add_argument("--delay", type=float)
+    update_compare_sheet.add_argument("--sequencia")
+    adicionar_argumentos_fluxo_sucesso(update_compare_sheet)
+
     update_delay = subparsers.add_parser("update-delay")
     update_delay.add_argument("--order", type=int, required=True)
     update_delay.add_argument("--delay", type=float, required=True)
@@ -4491,6 +4697,7 @@ COMANDOS = {
     "add-save-download": comando_adicionar_salvar_download,
     "add-planilha": comando_adicionar_planilha,
     "add-write-planilha": comando_adicionar_escrita_planilha,
+    "add-compare-planilha": comando_adicionar_comparacao_planilha,
     "add-loop-start": comando_adicionar_inicio_loop,
     "add-loop-end": comando_adicionar_fim_loop,
     "insert-text": comando_inserir_texto,
@@ -4504,6 +4711,7 @@ COMANDOS = {
     "insert-save-download": comando_inserir_salvar_download,
     "insert-planilha": comando_inserir_planilha,
     "insert-write-planilha": comando_inserir_escrita_planilha,
+    "insert-compare-planilha": comando_inserir_comparacao_planilha,
     "insert-loop-start": comando_inserir_inicio_loop,
     "insert-loop-end": comando_inserir_fim_loop,
     "update-text": comando_atualizar_texto,
@@ -4517,6 +4725,7 @@ COMANDOS = {
     "update-save-download": comando_atualizar_salvar_download,
     "update-planilha": comando_atualizar_planilha,
     "update-write-planilha": comando_atualizar_escrita_planilha,
+    "update-compare-planilha": comando_atualizar_comparacao_planilha,
     "update-loop-marker": comando_atualizar_marcador_loop,
     "update-delay": comando_atualizar_atraso,
     "update-delay-all": comando_atualizar_atraso_global,
