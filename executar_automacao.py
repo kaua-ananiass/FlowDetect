@@ -136,6 +136,7 @@ TEMPO_ESTABILIZACAO_APOS_CLIQUE = 0.24
 TEMPO_RESPIRO_ANTES_DIGITACAO = 0.05
 TIPOS_SEQUENCIA_PLANILHA = {"sequencia_planilha"}
 TIPOS_ESCRITA_PLANILHA = {"escrever_planilha"}
+TIPOS_COMPARACAO_PLANILHA = {"comparar_planilha_tela"}
 TIPOS_MARCADORES_LOOP = {"inicio_loop", "fim_loop"}
 TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
@@ -149,6 +150,7 @@ TIPOS_SUPORTADOS_EXECUTOR = {
     "atalho",
     *TIPOS_SEQUENCIA_PLANILHA,
     *TIPOS_ESCRITA_PLANILHA,
+    *TIPOS_COMPARACAO_PLANILHA,
     *TIPOS_MARCADORES_LOOP,
     *TIPOS_MOUSE,
     *TIPOS_IMAGEM,
@@ -275,6 +277,7 @@ class ExecutorAutomacao:
         self._ultima_captura_visual_info = None
         self._ultima_busca_template_info = None
         self._ultima_busca_ocr_info = None
+        self._ultimo_texto_ocr_reconhecimento = ""
         self._ultimo_ocr_global_em = 0.0
         self._janela_alvo_perdida_logada = False
         self._conflitos_janela_evento_logados = set()
@@ -3722,6 +3725,130 @@ class ExecutorAutomacao:
         self.contexto_variaveis[chave] = value = "" if valor is None else str(valor)
         safe_print(f"Variavel de contexto atualizada: {chave}={value}", flush=True)
 
+    def registrar_ocr_reconhecimento(self, local, ordem_evento=None):
+        texto = ""
+        try:
+            recorte = self.capturar_recorte_local_para_ocr(local)
+            variantes = self.extrair_variantes_texto_ocr_imagem(recorte)
+            texto = next((str(item or "").strip() for item in variantes if str(item or "").strip()), "")
+        except Exception as erro:
+            safe_print(f"OCR do reconhecimento nao pode ser lido: {erro}", flush=True)
+
+        self._ultimo_texto_ocr_reconhecimento = texto
+        self.salvar_variavel_contexto("ultimo_ocr", texto)
+        self.salvar_variavel_contexto("ocr_tela", texto)
+        if ordem_evento not in (None, ""):
+            self.salvar_variavel_contexto(f"ocr_bloco_{ordem_evento}", texto)
+        if texto:
+            safe_print(f"OCR capturado do reconhecimento: {texto}", flush=True)
+        return texto
+
+    def normalizar_valor_comparacao(self, valor, modo="texto"):
+        texto = str(valor if valor is not None else "").strip()
+        modo = str(modo or "texto").strip().lower()
+        if modo == "numero":
+            somente_numero = re.sub(r"[^\d,.\-]", "", texto)
+            if "," in somente_numero and "." in somente_numero:
+                somente_numero = somente_numero.replace(".", "").replace(",", ".")
+            elif "," in somente_numero:
+                somente_numero = somente_numero.replace(",", ".")
+            try:
+                return round(float(somente_numero), 6)
+            except (TypeError, ValueError):
+                return None
+        if modo == "data":
+            return re.sub(r"\D", "", texto)
+        return re.sub(r"\s+", " ", self.normalizar_texto_ocr(texto)).strip()
+
+    def valores_equivalentes_comparacao(self, esperado, encontrado, modo="texto", tolerancia=0):
+        esperado_norm = self.normalizar_valor_comparacao(esperado, modo)
+        encontrado_norm = self.normalizar_valor_comparacao(encontrado, modo)
+        if str(modo or "").strip().lower() == "numero":
+            if esperado_norm is None or encontrado_norm is None:
+                return False
+            return abs(float(esperado_norm) - float(encontrado_norm)) <= max(0.0, float(tolerancia or 0))
+        return bool(str(esperado_norm)) and str(esperado_norm) == str(encontrado_norm)
+
+    def escrever_celula_planilha(self, arquivo, aba, linha, coluna, valor):
+        arquivo = self.normalizar_id_planilha(arquivo)
+        aba = str(aba or "").strip()
+        coluna = str(coluna or "").strip()
+        if not aba or not coluna:
+            return False
+
+        caminho_planilha, workbook_id = self.resolver_planilha(arquivo)
+        if not caminho_planilha.exists():
+            raise FileNotFoundError(f"Planilha nao encontrada: {caminho_planilha}")
+
+        workbook = load_workbook(caminho_planilha)
+        try:
+            if aba not in workbook.sheetnames:
+                raise ValueError(f"A aba '{aba}' nao foi encontrada na planilha.")
+            worksheet = workbook[aba]
+            if not hasattr(worksheet, "iter_rows"):
+                raise ValueError(f"A aba '{aba}' nao e uma planilha editavel.")
+            headers = [
+                str(cell.value or "").strip()
+                for cell in next(worksheet.iter_rows(min_row=1, max_row=1), [])
+            ]
+            try:
+                coluna_indice = headers.index(coluna) + 1
+            except ValueError:
+                coluna_indice = len(headers) + 1
+                worksheet.cell(row=1, column=coluna_indice).value = coluna
+            worksheet.cell(row=int(linha), column=coluna_indice).value = valor
+            workbook.save(caminho_planilha)
+        finally:
+            workbook.close()
+
+        safe_print(
+            f"Planilha atualizada: {Path(workbook_id).name} / {aba} / linha {linha} / {coluna} = {valor}",
+            flush=True,
+        )
+        return True
+
+    def comparar_planilha_com_ocr(self, evento, contexto_loop=None):
+        detalhes = evento.get("detalhes", {}) or {}
+        linha = self.obter_contexto_linha_loop(contexto_loop)
+        linha_atual = self.obter_linha_atual_contexto(contexto_loop)
+        if not linha or linha_atual is None:
+            raise ValueError("Este bloco precisa estar dentro de um loop de planilha.")
+
+        coluna_esperada = str(detalhes.get("coluna_esperada") or detalhes.get("coluna") or "").strip()
+        if not coluna_esperada:
+            raise ValueError("Configure a coluna da planilha que sera conferida.")
+
+        esperado = linha.get(coluna_esperada, "")
+        origem_tela = str(detalhes.get("origem_tela") or "ultimo_ocr").strip()
+        encontrado = self.contexto_variaveis.get(origem_tela, "")
+        if not str(encontrado).strip() and origem_tela != "ultimo_ocr":
+            encontrado = self.contexto_variaveis.get("ultimo_ocr", "")
+
+        modo = str(detalhes.get("modo_comparacao") or "texto").strip().lower()
+        tolerancia = float(detalhes.get("tolerancia") or 0)
+        conferiu = self.valores_equivalentes_comparacao(esperado, encontrado, modo, tolerancia)
+
+        arquivo = detalhes.get("arquivo") or linha.get("__arquivo__")
+        aba = detalhes.get("aba") or linha.get("__aba__")
+        coluna_status = str(detalhes.get("coluna_status") or "Status").strip()
+        coluna_observacao = str(detalhes.get("coluna_observacao") or "Observacao").strip()
+        valor_ok = str(detalhes.get("valor_ok") or "OK")
+        valor_divergente = str(detalhes.get("valor_divergente") or "Divergente")
+        status = valor_ok if conferiu else valor_divergente
+        observacao = "Valor conferido" if conferiu else f"Esperado: {esperado} | Encontrado na tela: {encontrado or '-'}"
+
+        if coluna_status:
+            self.escrever_celula_planilha(arquivo, aba, linha_atual, coluna_status, status)
+        if coluna_observacao:
+            self.escrever_celula_planilha(arquivo, aba, linha_atual, coluna_observacao, observacao)
+        self.planilha_cache = self.carregar_planilha()
+
+        safe_print(
+            f"Conferencia da linha {linha_atual}: esperado '{esperado}' x tela '{encontrado}' => {status}",
+            flush=True,
+        )
+        return conferiu
+
     def montar_contexto_substituicao(self, contexto_loop=None):
         contexto = {}
         for chave, valor in (self.contexto_variaveis or {}).items():
@@ -4451,6 +4578,11 @@ class ExecutorAutomacao:
                 return f"Evento #{ordem}: {coluna} {indice_item + 1}/{total} ({valor})"
             return f"Evento #{ordem}: sequencia da coluna {coluna}"
 
+        if tipo in TIPOS_COMPARACAO_PLANILHA:
+            detalhes = evento.get("detalhes", {})
+            coluna = detalhes.get("coluna_esperada") or detalhes.get("coluna") or "coluna"
+            return f"Evento #{ordem}: conferir {coluna} com OCR"
+
         if tipo in TIPOS_MOUSE:
             detalhes = evento.get("detalhes", {})
             cliques = max(1, int(detalhes.get("cliques", 1) or 1))
@@ -4612,7 +4744,7 @@ class ExecutorAutomacao:
         for evento in self.eventos:
             tipo = str(evento.get("tipo") or "").strip()
             detalhes = evento.get("detalhes") or {}
-            if tipo in {"sequencia_planilha", "escrever_planilha"}:
+            if tipo in {"sequencia_planilha", "escrever_planilha", "comparar_planilha_tela"}:
                 arquivos.add(self.normalizar_id_planilha(detalhes.get("arquivo")))
         cache = {}
         for arquivo in arquivos:
@@ -5214,6 +5346,10 @@ class ExecutorAutomacao:
         )
         if not local:
             return None
+        try:
+            self.registrar_ocr_reconhecimento(local, bloco_id)
+        except Exception:
+            pass
         duracao_marcacao = 0.95 if clicar else 1.35
         self.marcar_area_reconhecida(local, duracao=duracao_marcacao)
         if clicar:
@@ -5611,6 +5747,28 @@ class ExecutorAutomacao:
 
         if tipo in TIPOS_ESCRITA_PLANILHA:
             return self.resultado_sucesso_evento(evento) if self.escrever_valor_planilha_loop(evento, contexto_loop) else self.resultado_fluxo("parar")
+
+        if tipo in TIPOS_COMPARACAO_PLANILHA:
+            conferiu = self.comparar_planilha_com_ocr(evento, contexto_loop)
+            if conferiu:
+                return self.resultado_sucesso_evento(evento)
+            detalhes = evento.get("detalhes", {}) or {}
+            acao_divergente = str(detalhes.get("ao_divergir") or "continuar").strip().lower()
+            if acao_divergente in {"parar", "continuar", "ir_para_bloco", "ir_para_sequencia"}:
+                if acao_divergente == "ir_para_bloco":
+                    return self.resultado_fluxo(
+                        "ir_para_bloco",
+                        bloco=int(detalhes.get("bloco_divergir", 0) or 0),
+                        atraso=float(detalhes.get("atraso_antes_sequencia_divergir", 0) or 0),
+                    )
+                if acao_divergente == "ir_para_sequencia":
+                    return self.resultado_fluxo(
+                        "ir_para_sequencia",
+                        sequencia=str(detalhes.get("sequencia_divergir") or ""),
+                        atraso=float(detalhes.get("atraso_antes_sequencia_divergir", 0) or 0),
+                    )
+                return self.resultado_fluxo(acao_divergente)
+            return self.resultado_fluxo("continuar")
 
         if tipo in TIPOS_MOUSE:
             if self.cancelamento_solicitado():
