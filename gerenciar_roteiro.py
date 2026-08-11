@@ -684,6 +684,19 @@ def normalizar_id_planilha(workbook_file=None):
     return texto
 
 
+def normalizar_origem_ocr_comparacao(source=None):
+    texto = str(source or "ultimo_ocr").strip()
+    if not texto or texto in {"ultimo_ocr", "ocr_tela"}:
+        return texto or "ultimo_ocr"
+    compacto = texto.lower().replace(" ", "")
+    encontrado = re.search(r"(?:ocr_bloco_|bloco[:_-]?)(\d+)$", compacto)
+    if encontrado:
+        return f"ocr_bloco_{encontrado.group(1)}"
+    if compacto.isdigit():
+        return f"ocr_bloco_{compacto}"
+    return texto
+
+
 def resolver_planilha(workbook_file=None):
     workbook_id = normalizar_id_planilha(workbook_file)
     caminho = Path(workbook_id)
@@ -834,7 +847,7 @@ def eh_texto_simples(nome):
 
 def normalizar_acao_apos_item(texto):
     texto_limpo = (texto or "").strip().lower()
-    if not texto_limpo or texto_limpo == "nenhuma":
+    if not texto_limpo or texto_limpo in {"nenhuma", "somente_contexto", "contexto", "so_contexto"}:
         return []
     return [parte.strip() for parte in texto_limpo.replace(" ", "").split("+") if parte.strip()]
 
@@ -1229,6 +1242,8 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         coluna = (metadados or {}).get("coluna", "Coluna")
         quantidade = len((metadados or {}).get("valores", []))
         acao = (metadados or {}).get("acao_apos_item_texto") or "nenhuma"
+        if (metadados or {}).get("modo_loop") == "somente_contexto":
+            return f"[LOOP DADOS:{coluna} x{quantidade} | sem digitar]"
         return f"[PLANILHA:{coluna} x{quantidade} | apos:{acao}]"
 
     if tipo_evento in TIPOS_ESCRITA_PLANILHA:
@@ -2102,6 +2117,13 @@ def criar_bloco_clicar_imagem(
     offset_y=0,
     janela_alvo="",
     texto_ocr_esperado="",
+    leitura_relativa_ativa=False,
+    leitura_relativa_lado="livre",
+    leitura_relativa_largura=140,
+    leitura_relativa_altura=40,
+    leitura_relativa_offset_x=0,
+    leitura_relativa_offset_y=0,
+    leitura_relativa_salvar_em="",
     ao_nao_encontrar="parar",
     sequencia_nao_encontrar="",
     atraso_sequencia_nao_encontrar=0,
@@ -2130,6 +2152,15 @@ def criar_bloco_clicar_imagem(
         "offset_y": int(offset_y),
         "janela_alvo": str(janela_alvo or "").strip(),
         "texto_ocr_esperado": str(texto_ocr_esperado or "").strip(),
+        "leitura_relativa": {
+            "ativo": parse_bool_value(leitura_relativa_ativa),
+            "lado": str(leitura_relativa_lado or "livre").strip().lower() or "livre",
+            "largura": max(16, int(leitura_relativa_largura or 140)),
+            "altura": max(12, int(leitura_relativa_altura or 40)),
+            "offset_x": int(leitura_relativa_offset_x or 0),
+            "offset_y": int(leitura_relativa_offset_y or 0),
+            "salvar_em": str(leitura_relativa_salvar_em or "").strip(),
+        },
         "ao_nao_encontrar": str(ao_nao_encontrar or "parar"),
         "sequencia_nao_encontrar": str(sequencia_nao_encontrar or "").strip(),
         "atraso_antes_sequencia_nao_encontrar": normalizar_atraso_transicao(atraso_sequencia_nao_encontrar),
@@ -2205,14 +2236,56 @@ def criar_bloco_chrome_elemento_html(
     delay=0,
     sequencia="principal",
 ):
-    html_analisado = parse_html_elemento(html_original)
-    elemento_base = dict(html_analisado.get("elemento") or {})
+    html_original_limpo = str(html_original or "").strip()
     elemento_informado = elemento if isinstance(elemento, dict) else {}
+    alvo_informado = alvo if isinstance(alvo, dict) else {}
+    acao_informada = acao if isinstance(acao, dict) else {}
+
+    if html_original_limpo:
+        html_analisado = parse_html_elemento(html_original_limpo)
+    else:
+        # Bloco criado pelo painel rapido: o usuario captura/configura o elemento depois.
+        html_analisado = {
+            "html_original": "",
+            "elemento": {
+                "tag": str(elemento_informado.get("tag") or "elemento"),
+                "type": str(elemento_informado.get("type") or ""),
+                "id": str(elemento_informado.get("id") or ""),
+                "name": str(elemento_informado.get("name") or ""),
+                "placeholder": str(elemento_informado.get("placeholder") or ""),
+                "aria_label": str(elemento_informado.get("aria_label") or ""),
+                "role": str(elemento_informado.get("role") or ""),
+                "text": str(elemento_informado.get("text") or ""),
+                "classes": elemento_informado.get("classes") if isinstance(elemento_informado.get("classes"), list) else [],
+                "attributes": elemento_informado.get("attributes") if isinstance(elemento_informado.get("attributes"), dict) else {},
+            },
+            "tipo_provavel": str(elemento_informado.get("tipo_provavel") or "element"),
+            "seletores": [],
+            "alvo_recomendado": {
+                "metodo": str(alvo_informado.get("metodo") or "css"),
+                "valor": str(alvo_informado.get("valor") or ""),
+                "codigo_playwright": "",
+                "confianca": "baixa",
+                "seletor_css": str(alvo_informado.get("seletor_css") or ""),
+            },
+            "acao_sugerida": {
+                "tipo": str(acao_informada.get("tipo") or "clicar"),
+                "origem_valor": str(acao_informada.get("origem_valor") or "texto_fixo"),
+                "valor": str(acao_informada.get("valor") or ""),
+                "limpar_antes": bool(acao_informada.get("limpar_antes", True)),
+                "pressionar_depois": str(acao_informada.get("pressionar_depois") or ""),
+                "salvar_em": str(acao_informada.get("salvar_em") or ""),
+            },
+            "nome_sugerido": "Chrome/Web: capturar elemento",
+            "confianca": "baixa",
+        }
+
+    elemento_base = dict(html_analisado.get("elemento") or {})
     elemento_base.update({chave: valor for chave, valor in elemento_informado.items() if valor not in (None, "")})
 
-    seletores = gerar_seletores(elemento_base)
+    chrome_sem_alvo = not html_original_limpo and not str(alvo_informado.get("valor") or "").strip()
+    seletores = [] if chrome_sem_alvo else gerar_seletores(elemento_base)
     seletores_por_metodo = {str(item.get("metodo")): item for item in seletores}
-    alvo_informado = alvo if isinstance(alvo, dict) else {}
     metodo_alvo = str(alvo_informado.get("metodo") or (html_analisado.get("alvo_recomendado") or {}).get("metodo") or "css")
     alvo_recomendado = dict(seletores_por_metodo.get(metodo_alvo) or html_analisado.get("alvo_recomendado") or {})
     alvo_final = {**alvo_recomendado, **alvo_informado}
@@ -2225,7 +2298,6 @@ def criar_bloco_chrome_elemento_html(
         alvo_final["seletor_css"] = alvo_recomendado.get("seletor_css", "")
 
     acao_sugerida = dict(html_analisado.get("acao_sugerida") or {})
-    acao_informada = acao if isinstance(acao, dict) else {}
     acao_final = {**acao_sugerida, **acao_informada}
     acao_final["tipo"] = str(acao_final.get("tipo") or acao_sugerida.get("tipo") or "clicar")
     acao_final["origem_valor"] = str(acao_final.get("origem_valor") or "texto_fixo")
@@ -2236,7 +2308,7 @@ def criar_bloco_chrome_elemento_html(
 
     detalhes = {
         "nome": str(nome or html_analisado.get("nome_sugerido") or "Chrome: Elemento HTML").strip() or "Chrome: Elemento HTML",
-        "html_original": str(html_original or html_analisado.get("html_original") or "").strip(),
+        "html_original": str(html_original_limpo or html_analisado.get("html_original") or "").strip(),
         "elemento": elemento_base,
         "tipo_provavel": str(html_analisado.get("tipo_provavel") or classificar_tipo_elemento_html(elemento_base)),
         "seletores": seletores,
@@ -2401,12 +2473,14 @@ def criar_bloco_planilha(
     workbook_id = normalizar_id_planilha(workbook_file)
     valores = valores_da_planilha(sheet, column, workbook_id)
     acao_apos_item = normalizar_acao_apos_item(after_action)
+    modo_loop = "somente_contexto" if str(after_action or "").strip().lower() in {"somente_contexto", "contexto", "so_contexto"} else "digitar_coluna"
     detalhes = aplicar_fluxo_sucesso({
         "arquivo": workbook_id,
         "aba": sheet,
         "coluna": column,
         "valores": valores,
         "origem": "coluna_inteira",
+        "modo_loop": modo_loop,
         "linhas_selecionadas": [],
         "acao_apos_item": acao_apos_item,
         "acao_apos_item_texto": (after_action or "nenhuma").strip().lower() or "nenhuma",
@@ -2473,8 +2547,8 @@ def criar_bloco_comparar_planilha_tela(
     sequencia="principal",
     source="ultimo_ocr",
     comparison_mode="texto",
-    status_column="Status",
-    note_column="Observacao",
+    status_column="",
+    note_column="",
     ok_value="OK",
     fail_value="Divergente",
     ao_sucesso="continuar",
@@ -2491,10 +2565,10 @@ def criar_bloco_comparar_planilha_tela(
         "arquivo": workbook_id,
         "aba": str(sheet or "").strip(),
         "coluna_esperada": str(expected_column or "").strip(),
-        "origem_tela": str(source or "ultimo_ocr").strip() or "ultimo_ocr",
+        "origem_tela": normalizar_origem_ocr_comparacao(source),
         "modo_comparacao": str(comparison_mode or "texto").strip().lower() or "texto",
-        "coluna_status": str(status_column or "Status").strip() or "Status",
-        "coluna_observacao": str(note_column or "Observacao").strip(),
+        "coluna_status": str(status_column or "").strip(),
+        "coluna_observacao": str(note_column or "").strip(),
         "valor_ok": str(ok_value or "OK"),
         "valor_divergente": str(fail_value or "Divergente"),
         "ao_divergir": str(ao_divergir or "continuar").strip().lower() or "continuar",
@@ -2641,12 +2715,13 @@ def card_do_evento(evento):
             f"Nao encontrar: {(detalhes.get('se_nao_encontrar') or {}).get('acao', 'parar')}"
         )
     elif tipo == "sequencia_planilha":
-        titulo = "Loop da planilha"
+        somente_contexto = detalhes.get("modo_loop") == "somente_contexto"
+        titulo = "Loop de dados" if somente_contexto else "Loop da planilha"
         subtitulo = (
             f"{Path(detalhes.get('arquivo', ARQUIVO_PLANILHA.name)).name} • "
             f"{detalhes.get('aba', 'Sheet1')} -> {detalhes.get('coluna', 'Coluna')}"
         )
-        descricao = (
+        descricao = f"{len(detalhes.get('valores', []))} linhas | apenas carrega a linha atual" if somente_contexto else (
             f"{len(detalhes.get('valores', []))} itens | apos item: "
             f"{detalhes.get('acao_apos_item_texto', 'nenhuma')}"
         )
@@ -3164,6 +3239,13 @@ def comando_adicionar_imagem(args):
             args.offset_y,
             args.janela_alvo,
             args.texto_ocr_esperado,
+            args.leitura_relativa_ativa,
+            args.leitura_relativa_lado,
+            args.leitura_relativa_largura,
+            args.leitura_relativa_altura,
+            args.leitura_relativa_offset_x,
+            args.leitura_relativa_offset_y,
+            args.leitura_relativa_salvar_em,
             args.ao_nao_encontrar,
             args.sequencia_nao_encontrar,
             args.atraso_sequencia_nao_encontrar,
@@ -3439,6 +3521,13 @@ def comando_inserir_imagem(args):
             args.offset_y,
             args.janela_alvo,
             args.texto_ocr_esperado,
+            args.leitura_relativa_ativa,
+            args.leitura_relativa_lado,
+            args.leitura_relativa_largura,
+            args.leitura_relativa_altura,
+            args.leitura_relativa_offset_x,
+            args.leitura_relativa_offset_y,
+            args.leitura_relativa_salvar_em,
             args.ao_nao_encontrar,
             args.sequencia_nao_encontrar,
             args.atraso_sequencia_nao_encontrar,
@@ -3780,6 +3869,15 @@ def comando_atualizar_imagem(args):
     detalhes["offset_y"] = int(args.offset_y)
     detalhes["janela_alvo"] = str(args.janela_alvo or "").strip()
     detalhes["texto_ocr_esperado"] = str(args.texto_ocr_esperado or "").strip()
+    detalhes["leitura_relativa"] = {
+        "ativo": parse_bool_value(args.leitura_relativa_ativa),
+        "lado": str(args.leitura_relativa_lado or "livre").strip().lower() or "livre",
+        "largura": max(16, int(args.leitura_relativa_largura or 140)),
+        "altura": max(12, int(args.leitura_relativa_altura or 40)),
+        "offset_x": int(args.leitura_relativa_offset_x or 0),
+        "offset_y": int(args.leitura_relativa_offset_y or 0),
+        "salvar_em": str(args.leitura_relativa_salvar_em or "").strip(),
+    }
     detalhes["ao_nao_encontrar"] = str(args.ao_nao_encontrar or "parar")
     detalhes["sequencia_nao_encontrar"] = str(args.sequencia_nao_encontrar or "").strip()
     detalhes["atraso_antes_sequencia_nao_encontrar"] = normalizar_atraso_transicao(args.atraso_sequencia_nao_encontrar)
@@ -4101,6 +4199,15 @@ def build_parser():
         parser_destino.add_argument("--sequencia-sucesso", default="")
         parser_destino.add_argument("--atraso-sequencia-sucesso", type=float, default=0)
 
+    def adicionar_argumentos_leitura_relativa(parser_destino):
+        parser_destino.add_argument("--leitura-relativa-ativa", default="false")
+        parser_destino.add_argument("--leitura-relativa-lado", choices=["direita", "esquerda", "abaixo", "acima", "centro", "livre"], default="livre")
+        parser_destino.add_argument("--leitura-relativa-largura", type=int, default=140)
+        parser_destino.add_argument("--leitura-relativa-altura", type=int, default=40)
+        parser_destino.add_argument("--leitura-relativa-offset-x", type=int, default=0)
+        parser_destino.add_argument("--leitura-relativa-offset-y", type=int, default=0)
+        parser_destino.add_argument("--leitura-relativa-salvar-em", default="")
+
     def adicionar_argumentos_abrir_url(parser_destino):
         parser_destino.add_argument("--url", required=True)
         parser_destino.add_argument("--navegador", choices=["padrao", "chrome", "edge"], default="padrao")
@@ -4126,8 +4233,8 @@ def build_parser():
         parser_destino.add_argument("--expected-column", required=True)
         parser_destino.add_argument("--source", default="ultimo_ocr")
         parser_destino.add_argument("--comparison-mode", choices=["texto", "numero", "data"], default="texto")
-        parser_destino.add_argument("--status-column", default="Status")
-        parser_destino.add_argument("--note-column", default="Observacao")
+        parser_destino.add_argument("--status-column", default="")
+        parser_destino.add_argument("--note-column", default="")
         parser_destino.add_argument("--ok-value", default="OK")
         parser_destino.add_argument("--fail-value", default="Divergente")
         parser_destino.add_argument("--ao-divergir", choices=["continuar", "parar", "ir_para_bloco", "ir_para_sequencia"], default="continuar")
@@ -4224,6 +4331,7 @@ def build_parser():
     add_image.add_argument("--offset-y", type=int, default=0)
     add_image.add_argument("--janela-alvo", default="")
     add_image.add_argument("--texto-ocr-esperado", default="")
+    adicionar_argumentos_leitura_relativa(add_image)
     add_image.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
     add_image.add_argument("--sequencia-nao-encontrar", default="")
     add_image.add_argument("--atraso-sequencia-nao-encontrar", type=float, default=0)
@@ -4371,6 +4479,7 @@ def build_parser():
     insert_image.add_argument("--offset-y", type=int, default=0)
     insert_image.add_argument("--janela-alvo", default="")
     insert_image.add_argument("--texto-ocr-esperado", default="")
+    adicionar_argumentos_leitura_relativa(insert_image)
     insert_image.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
     insert_image.add_argument("--sequencia-nao-encontrar", default="")
     insert_image.add_argument("--atraso-sequencia-nao-encontrar", type=float, default=0)
@@ -4540,6 +4649,7 @@ def build_parser():
     update_image.add_argument("--offset-y", type=int, default=0)
     update_image.add_argument("--janela-alvo", default="")
     update_image.add_argument("--texto-ocr-esperado", default="")
+    adicionar_argumentos_leitura_relativa(update_image)
     update_image.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
     update_image.add_argument("--sequencia-nao-encontrar", default="")
     update_image.add_argument("--atraso-sequencia-nao-encontrar", type=float, default=0)

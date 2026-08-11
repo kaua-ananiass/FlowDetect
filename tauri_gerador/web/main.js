@@ -217,6 +217,7 @@ const state = {
   dragPlaceholderWidth: 0,
   dragPlaceholderHeight: 0,
   recognitionTreeTabs: {},
+  recognitionPreviewMarkersVisible: {},
   spreadsheetTreeTabs: {},
   downloadTreeTabs: {},
   recognitionTestStatus: {},
@@ -1861,6 +1862,7 @@ async function runImageRecognitionTest(values, options = {}) {
       areaBuscaAltura: 0,
       janelaAlvo: values.windowTitle?.trim() || null,
       textoOcrEsperado: values.expectedOcrText?.trim() || null,
+      ...relativeOcrInvokeArgs(values),
     });
     setBusy("Pronto");
     if (Number.isFinite(Number(options.recognitionOrder))) {
@@ -2803,6 +2805,11 @@ function getSpreadsheetLoopBadgeLabel(event) {
   return `${total} ${total === 1 ? "loop" : "loops"}`;
 }
 
+function isSpreadsheetContextOnly(details = {}) {
+  const mode = String(details.modo_loop || details.acao_apos_item_texto || "").trim().toLowerCase();
+  return ["somente_contexto", "contexto", "so_contexto"].includes(mode);
+}
+
 function isLoopMarkerType(type) {
   return type === "inicio_loop" || type === "fim_loop";
 }
@@ -3618,6 +3625,17 @@ function applyCommandMapDraftToEvent(event) {
     details.area_busca_altura = 0;
     details.janela_alvo = normalizeRecognitionWindowTitle(values.windowTitle || details.janela_alvo || "");
     details.texto_ocr_esperado = values.expectedOcrText ?? details.texto_ocr_esperado ?? "";
+    details.offset_x = Math.trunc(parseNumber(values.clickOffsetX, 0));
+    details.offset_y = Math.trunc(parseNumber(values.clickOffsetY, 0));
+    details.leitura_relativa = {
+      ativo: Boolean(values.relativeOcrEnabled),
+      lado: values.relativeOcrSide || "livre",
+      largura: Math.max(16, Math.trunc(parseNumber(values.relativeOcrWidth, 140))),
+      altura: Math.max(12, Math.trunc(parseNumber(values.relativeOcrHeight, 40))),
+      offset_x: Math.trunc(parseNumber(values.relativeOcrOffsetX, 0)),
+      offset_y: Math.trunc(parseNumber(values.relativeOcrOffsetY, 0)),
+      salvar_em: String(values.relativeOcrSaveAs || "").trim(),
+    };
     details.clicar = recognitionClicksFromMode(values.recognitionClickMode, 1) > 0;
     details.clicks = recognitionClicksFromMode(values.recognitionClickMode, 1);
     details.cliques = details.clicks;
@@ -3752,7 +3770,7 @@ function resolveRecognitionPreviewPath(container, fallbackPath = "") {
   );
 }
 
-function renderRecognitionPreviewCardState({ status = "empty", imagePath = "", src = "", message = "" } = {}) {
+function renderRecognitionPreviewCardState({ status = "empty", imagePath = "", src = "", message = "", overlay = "" } = {}) {
   const normalizedPath = normalizeRecognitionImagePath(imagePath);
   const fileName = recognitionPreviewFileName(normalizedPath);
   const title = normalizedPath ? fileName || normalizedPath : "Nenhuma referencia visual";
@@ -3783,12 +3801,15 @@ function renderRecognitionPreviewCardState({ status = "empty", imagePath = "", s
     `;
   } else if (status === "ready" && normalizedPath && src) {
     stageContent = `
-      <img
-        class="recognition-preview-image"
-        src="${escapeHtml(src)}"
-        alt="Preview da referencia ${escapeHtml(fileName || normalizedPath)}"
-        loading="lazy"
-      />
+      <div class="recognition-preview-image-map" data-recognition-preview-image-map="true">
+        <img
+          class="recognition-preview-image"
+          src="${escapeHtml(src)}"
+          alt="Preview da referencia ${escapeHtml(fileName || normalizedPath)}"
+          loading="lazy"
+        />
+        ${overlay || ""}
+      </div>
     `;
   }
 
@@ -3803,13 +3824,16 @@ function renderRecognitionPreviewCardState({ status = "empty", imagePath = "", s
   `;
 }
 
-function renderRecognitionPreviewPanel(imagePath = "") {
+function renderRecognitionPreviewPanel(imagePath = "", options = {}) {
   const normalizedPath = normalizeRecognitionImagePath(imagePath);
+  const overlay = options.overlay || "";
+  const markersVisible = options.markersVisible !== false;
   return `
-    <div class="recognition-preview-card" data-recognition-preview-card="true" data-recognition-preview-path="${escapeHtml(normalizedPath)}">
+    <div class="recognition-preview-card" data-recognition-preview-card="true" data-recognition-preview-path="${escapeHtml(normalizedPath)}" data-recognition-preview-overlay="${escapeHtml(overlay)}" data-recognition-preview-markers="${markersVisible ? "true" : "false"}">
       ${renderRecognitionPreviewCardState({
         status: normalizedPath ? "loading" : "empty",
         imagePath: normalizedPath,
+        overlay: markersVisible ? overlay : "",
       })}
     </div>
   `;
@@ -3820,12 +3844,16 @@ function setRecognitionPreviewCardState(previewCard, payload = {}) {
     return;
   }
   const imagePath = normalizeRecognitionImagePath(payload.imagePath || "");
+  const overlay = payload.overlay ?? previewCard.dataset.recognitionPreviewOverlay ?? "";
+  const markersVisible = previewCard.dataset.recognitionPreviewMarkers !== "false";
   previewCard.dataset.recognitionPreviewPath = imagePath;
+  previewCard.dataset.recognitionPreviewOverlay = overlay;
   previewCard.innerHTML = renderRecognitionPreviewCardState({
     status: payload.status || (imagePath ? "loading" : "empty"),
     imagePath,
     src: payload.src || "",
     message: payload.message || "",
+    overlay: markersVisible ? overlay : "",
   });
 }
 
@@ -5056,6 +5084,15 @@ function createInsertPanelState(targetOrder, position) {
     recognitionTab: "base",
     windowTitle: "",
     expectedOcrText: "",
+    relativeOcrEnabled: false,
+    relativeOcrSide: "livre",
+    relativeOcrWidth: 140,
+    relativeOcrHeight: 40,
+    relativeOcrOffsetX: 0,
+    relativeOcrOffsetY: 0,
+    relativeOcrSaveAs: "",
+    clickOffsetX: 0,
+    clickOffsetY: 0,
     recognitionClickMode: "single",
     failureAction: "parar",
     failureBlock: "",
@@ -5112,8 +5149,12 @@ function createInsertPanelState(targetOrder, position) {
     writeValue: "OK",
     compareExpectedColumn: columnsForSheetInWorkbook(workbookId, workbookSheetsFor(workbookId)[0]?.name ?? "")?.[0] ?? "",
     compareMode: "texto",
-    compareStatusColumn: "Status",
-    compareNoteColumn: "Observacao",
+    compareStatusColumn: "",
+    compareNoteColumn: "",
+    compareDivergeAction: "parar",
+    compareDivergeBlock: "",
+    compareDivergeSequence: "",
+    compareDivergeSequenceDelay: 0,
     afterAction: "nenhuma",
     intervalBetween: 0.5,
   };
@@ -6422,7 +6463,323 @@ function normalizeRecognitionDetailTab(tabName) {
   if (["action", "advanced", "behavior"].includes(normalized)) {
     return "behavior";
   }
+  if (["data", "dado", "ler_dado", "ler-dado"].includes(normalized)) {
+    return "visual";
+  }
   return "visual";
+}
+
+function recognitionRelativeOcrDetails(details = {}) {
+  const raw = details?.leitura_relativa && typeof details.leitura_relativa === "object"
+    ? details.leitura_relativa
+    : {};
+  return {
+    active: Boolean(raw.ativo),
+    side: String(raw.lado || "livre").trim().toLowerCase() || "livre",
+    width: Math.max(16, Math.trunc(parseNumber(raw.largura, 140))),
+    height: Math.max(12, Math.trunc(parseNumber(raw.altura, 40))),
+    offsetX: Math.trunc(parseNumber(raw.offset_x, 0)),
+    offsetY: Math.trunc(parseNumber(raw.offset_y, 0)),
+    saveAs: String(raw.salvar_em || "").trim(),
+  };
+}
+
+function recognitionClickTargetDetails(details = {}) {
+  return {
+    offsetX: Math.trunc(parseNumber(details?.offset_x, 0)),
+    offsetY: Math.trunc(parseNumber(details?.offset_y, 0)),
+  };
+}
+
+function relativeOcrInvokeArgs(values = {}) {
+  return {
+    leituraRelativaAtiva: Boolean(values.relativeOcrEnabled),
+    leituraRelativaLado: values.relativeOcrSide || "livre",
+    leituraRelativaLargura: Math.max(16, Math.trunc(parseNumber(values.relativeOcrWidth, 140))),
+    leituraRelativaAltura: Math.max(12, Math.trunc(parseNumber(values.relativeOcrHeight, 40))),
+    leituraRelativaOffsetX: Math.trunc(parseNumber(values.relativeOcrOffsetX, 0)),
+    leituraRelativaOffsetY: Math.trunc(parseNumber(values.relativeOcrOffsetY, 0)),
+    leituraRelativaSalvarEm: String(values.relativeOcrSaveAs || "").trim() || null,
+  };
+}
+
+function clickTargetChanged(values = {}, details = {}) {
+  const current = recognitionClickTargetDetails(details);
+  return (
+    Number(values.clickOffsetX || 0) !== Number(current.offsetX)
+    || Number(values.clickOffsetY || 0) !== Number(current.offsetY)
+  );
+}
+
+function relativeOcrChanged(values = {}, details = {}) {
+  const current = recognitionRelativeOcrDetails(details);
+  return (
+    Boolean(values.relativeOcrEnabled) !== current.active
+    || normalizeStringValue(values.relativeOcrSide || "livre") !== normalizeStringValue(current.side)
+    || Number(values.relativeOcrWidth || 140) !== Number(current.width)
+    || Number(values.relativeOcrHeight || 40) !== Number(current.height)
+    || Number(values.relativeOcrOffsetX || 0) !== Number(current.offsetX)
+    || Number(values.relativeOcrOffsetY || 0) !== Number(current.offsetY)
+    || normalizeStringValue(values.relativeOcrSaveAs) !== normalizeStringValue(current.saveAs)
+  );
+}
+
+function relativeOcrOverlayStyle(relativeOcr = {}) {
+  const width = Math.max(16, Math.trunc(parseNumber(relativeOcr.width, 140)));
+  const height = Math.max(12, Math.trunc(parseNumber(relativeOcr.height, 40)));
+  const visualWidth = Math.max(18, Math.min(86, Math.round(width / 5)));
+  const visualHeight = Math.max(12, Math.min(64, Math.round(height / 4)));
+  const side = String(relativeOcr.side || "direita").trim().toLowerCase();
+  let left = 50;
+  let top = 50;
+  if (side === "direita") {
+    left = 77;
+  } else if (side === "esquerda") {
+    left = 23;
+  } else if (side === "abaixo") {
+    top = 77;
+  } else if (side === "acima") {
+    top = 23;
+  } else {
+    left = Math.max(10, Math.min(90, 50 + (Math.trunc(parseNumber(relativeOcr.offsetX, 0)) / 3)));
+    top = Math.max(10, Math.min(90, 50 + (Math.trunc(parseNumber(relativeOcr.offsetY, 0)) / 3)));
+  }
+  return `--ocr-target-w:${visualWidth}%;--ocr-target-h:${visualHeight}%;--ocr-left:${left}%;--ocr-top:${top}%;`;
+}
+
+function clickTargetOverlayStyle(clickTarget = {}) {
+  const offsetX = Math.max(-120, Math.min(120, Math.trunc(parseNumber(clickTarget.offsetX, 0))));
+  const offsetY = Math.max(-90, Math.min(90, Math.trunc(parseNumber(clickTarget.offsetY, 0))));
+  const left = Math.max(12, Math.min(88, 50 + (offsetX / 3)));
+  const top = Math.max(12, Math.min(88, 50 + (offsetY / 3)));
+  return `--click-left:${left}%;--click-top:${top}%;`;
+}
+
+function renderRelativeOcrPreviewOverlay(relativeOcr = {}, clickTarget = {}) {
+  const side = ["direita", "esquerda", "abaixo", "acima", "centro", "livre"].includes(relativeOcr.side)
+    ? relativeOcr.side
+    : "livre";
+  return `
+    <div class="recognition-ocr-map-overlay" data-relative-ocr-map="true">
+      <div
+        class="recognition-click-target-point"
+        data-click-target-point="true"
+        data-recognition-drag-target="click"
+        style="${escapeHtml(clickTargetOverlayStyle(clickTarget))}"
+      >
+        <span>Clique</span>
+      </div>
+      <div
+        class="recognition-ocr-target-box is-${escapeHtml(side)}"
+        data-relative-ocr-target="true"
+        data-recognition-drag-target="ocr"
+        style="${escapeHtml(relativeOcrOverlayStyle(relativeOcr))}"
+      >
+        <span>Ler aqui</span>
+        <i class="recognition-ocr-resize-handle is-nw" data-recognition-drag-target="ocr-resize" data-recognition-resize-corner="nw" aria-hidden="true"></i>
+        <i class="recognition-ocr-resize-handle is-ne" data-recognition-drag-target="ocr-resize" data-recognition-resize-corner="ne" aria-hidden="true"></i>
+        <i class="recognition-ocr-resize-handle is-sw" data-recognition-drag-target="ocr-resize" data-recognition-resize-corner="sw" aria-hidden="true"></i>
+        <i class="recognition-ocr-resize-handle is-se" data-recognition-drag-target="ocr-resize" data-recognition-resize-corner="se" aria-hidden="true"></i>
+      </div>
+    </div>
+  `;
+}
+
+function updateRelativeOcrPreviewOverlay(container) {
+  if (!container) {
+    return;
+  }
+  const get = (field) => container.querySelector(`[data-tree-field="${field}"], [data-field="${field}"], [data-insert-field="${field}"]`);
+  const relativeOcr = {
+    side: get("relativeOcrSide")?.value || "livre",
+    width: parseNumber(get("relativeOcrWidth")?.value, 140),
+    height: parseNumber(get("relativeOcrHeight")?.value, 40),
+    offsetX: get("relativeOcrOffsetX")?.value || 0,
+    offsetY: get("relativeOcrOffsetY")?.value || 0,
+  };
+  const clickData = {
+    offsetX: get("clickOffsetX")?.value || 0,
+    offsetY: get("clickOffsetY")?.value || 0,
+  };
+  const overlayMarkup = renderRelativeOcrPreviewOverlay(relativeOcr, clickData);
+  container.querySelectorAll("[data-recognition-preview-card]").forEach((previewCard) => {
+    previewCard.dataset.recognitionPreviewOverlay = overlayMarkup;
+    if (previewCard.dataset.recognitionPreviewMarkers === "false") {
+      previewCard.querySelectorAll("[data-relative-ocr-map]").forEach((overlay) => overlay.remove());
+      return;
+    }
+    const stage = previewCard.querySelector("[data-recognition-preview-stage]");
+    const imageMap = stage?.querySelector("[data-recognition-preview-image-map]");
+    if (imageMap?.querySelector(".recognition-preview-image")) {
+      const currentOverlay = imageMap.querySelector("[data-relative-ocr-map]");
+      if (!currentOverlay) {
+        imageMap.insertAdjacentHTML("beforeend", overlayMarkup);
+      }
+    }
+  });
+  container.querySelectorAll("[data-relative-ocr-target]").forEach((target) => {
+    target.className = `recognition-ocr-target-box is-${relativeOcr.side}`;
+    target.setAttribute("style", relativeOcrOverlayStyle(relativeOcr));
+  });
+  container.querySelectorAll("[data-click-target-point]").forEach((clickTarget) => {
+    clickTarget.setAttribute("style", clickTargetOverlayStyle(clickData));
+  });
+}
+
+function setRecognitionVisualOffsetFromPointer(container, dragTarget, clientX, clientY) {
+  if (!container || !dragTarget) {
+    return;
+  }
+  const imageMap = dragTarget.closest("[data-recognition-preview-image-map]");
+  const stage = dragTarget.closest("[data-recognition-preview-stage]");
+  const rect = (imageMap || stage)?.getBoundingClientRect();
+  if (!rect || rect.width <= 0 || rect.height <= 0) {
+    return;
+  }
+  const percentX = Math.max(8, Math.min(92, ((clientX - rect.left) / rect.width) * 100));
+  const percentY = Math.max(8, Math.min(92, ((clientY - rect.top) / rect.height) * 100));
+  const targetKind = dragTarget.dataset.recognitionDragTarget;
+  const sideField = container.querySelector('[data-tree-field="relativeOcrSide"], [data-field="relativeOcrSide"], [data-insert-field="relativeOcrSide"]');
+  const enabledField = container.querySelector('[data-tree-field="relativeOcrEnabled"], [data-field="relativeOcrEnabled"], [data-insert-field="relativeOcrEnabled"]');
+  const widthField = container.querySelector('[data-tree-field="relativeOcrWidth"], [data-field="relativeOcrWidth"], [data-insert-field="relativeOcrWidth"]');
+  const heightField = container.querySelector('[data-tree-field="relativeOcrHeight"], [data-field="relativeOcrHeight"], [data-insert-field="relativeOcrHeight"]');
+  const ocrOffsetXField = container.querySelector('[data-tree-field="relativeOcrOffsetX"], [data-field="relativeOcrOffsetX"], [data-insert-field="relativeOcrOffsetX"]');
+  const ocrOffsetYField = container.querySelector('[data-tree-field="relativeOcrOffsetY"], [data-field="relativeOcrOffsetY"], [data-insert-field="relativeOcrOffsetY"]');
+
+  if (targetKind === "ocr-resize") {
+    const currentOffsetX = Math.trunc(parseNumber(ocrOffsetXField?.value, 0));
+    const currentOffsetY = Math.trunc(parseNumber(ocrOffsetYField?.value, 0));
+    const centerX = Math.max(10, Math.min(90, 50 + (currentOffsetX / 3)));
+    const centerY = Math.max(10, Math.min(90, 50 + (currentOffsetY / 3)));
+    const visualWidth = Math.max(18, Math.min(86, Math.abs(percentX - centerX) * 2));
+    const visualHeight = Math.max(12, Math.min(64, Math.abs(percentY - centerY) * 2));
+    const width = Math.max(90, Math.min(430, Math.trunc(visualWidth * 5)));
+    const height = Math.max(36, Math.min(256, Math.trunc(visualHeight * 4)));
+    if (widthField) {
+      widthField.value = String(width);
+    }
+    if (heightField) {
+      heightField.value = String(height);
+    }
+    if (sideField) {
+      sideField.value = "livre";
+    }
+    if (enabledField) {
+      enabledField.checked = true;
+    }
+    const box = dragTarget.closest("[data-relative-ocr-target]");
+    box?.setAttribute("style", relativeOcrOverlayStyle({
+      side: "livre",
+      width,
+      height,
+      offsetX: currentOffsetX,
+      offsetY: currentOffsetY,
+    }));
+    updateRelativeOcrPreviewOverlay(container);
+    if (container.classList.contains("command-tree-card") || container.classList.contains("flow-card")) {
+      syncCommandMapDraftFromCard(container);
+    }
+    if (container.classList.contains("insert-card-panel") && state.insertPanel) {
+      const values = insertValuesFromPanel();
+      Object.assign(state.insertPanel, {
+        relativeOcrEnabled: values.relativeOcrEnabled,
+        relativeOcrSide: values.relativeOcrSide,
+        relativeOcrWidth: values.relativeOcrWidth,
+        relativeOcrHeight: values.relativeOcrHeight,
+        relativeOcrOffsetX: values.relativeOcrOffsetX,
+        relativeOcrOffsetY: values.relativeOcrOffsetY,
+      });
+    }
+    return;
+  }
+
+  const offsetX = Math.trunc((percentX - 50) * 3);
+  const offsetY = Math.trunc((percentY - 50) * 3);
+  const fieldPrefix = targetKind === "ocr" ? "relativeOcrOffset" : "clickOffset";
+  const xField = container.querySelector(`[data-tree-field="${fieldPrefix}X"], [data-field="${fieldPrefix}X"], [data-insert-field="${fieldPrefix}X"]`);
+  const yField = container.querySelector(`[data-tree-field="${fieldPrefix}Y"], [data-field="${fieldPrefix}Y"], [data-insert-field="${fieldPrefix}Y"]`);
+  if (xField) {
+    xField.value = String(offsetX);
+  }
+  if (yField) {
+    yField.value = String(offsetY);
+  }
+  if (targetKind === "ocr") {
+    if (sideField) {
+      sideField.value = "livre";
+    }
+    if (enabledField) {
+      enabledField.checked = true;
+    }
+  }
+  if (targetKind === "ocr") {
+    dragTarget.className = "recognition-ocr-target-box is-livre is-dragging";
+    dragTarget.setAttribute("style", relativeOcrOverlayStyle({
+      side: "livre",
+      width: container.querySelector('[data-tree-field="relativeOcrWidth"], [data-field="relativeOcrWidth"], [data-insert-field="relativeOcrWidth"]')?.value || 140,
+      height: container.querySelector('[data-tree-field="relativeOcrHeight"], [data-field="relativeOcrHeight"], [data-insert-field="relativeOcrHeight"]')?.value || 40,
+      offsetX,
+      offsetY,
+    }));
+  } else {
+    dragTarget.setAttribute("style", clickTargetOverlayStyle({ offsetX, offsetY }));
+  }
+  updateRelativeOcrPreviewOverlay(container);
+  if (container.classList.contains("command-tree-card") || container.classList.contains("flow-card")) {
+    syncCommandMapDraftFromCard(container);
+  }
+  if (container.classList.contains("insert-card-panel") && state.insertPanel) {
+    const values = insertValuesFromPanel();
+    Object.assign(state.insertPanel, {
+      relativeOcrSide: values.relativeOcrSide,
+      relativeOcrEnabled: values.relativeOcrEnabled,
+      relativeOcrWidth: values.relativeOcrWidth,
+      relativeOcrHeight: values.relativeOcrHeight,
+      relativeOcrOffsetX: values.relativeOcrOffsetX,
+      relativeOcrOffsetY: values.relativeOcrOffsetY,
+      clickOffsetX: values.clickOffsetX,
+      clickOffsetY: values.clickOffsetY,
+    });
+  }
+}
+
+function startRecognitionVisualDrag(event) {
+  const dragTarget = event.target?.closest?.("[data-recognition-drag-target]");
+  if (!dragTarget || !commandMapList?.contains(dragTarget)) {
+    return;
+  }
+  const container = dragTarget.closest(".command-tree-card, .insert-card-panel, .flow-card");
+  if (!container) {
+    return;
+  }
+  event.preventDefault();
+  dragTarget.setPointerCapture?.(event.pointerId);
+  dragTarget.classList.add("is-dragging");
+  state.recognitionVisualDrag = {
+    pointerId: event.pointerId,
+    container,
+    dragTarget,
+  };
+  setRecognitionVisualOffsetFromPointer(container, dragTarget, event.clientX, event.clientY);
+}
+
+function moveRecognitionVisualDrag(event) {
+  const drag = state.recognitionVisualDrag;
+  if (!drag || drag.pointerId !== event.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  setRecognitionVisualOffsetFromPointer(drag.container, drag.dragTarget, event.clientX, event.clientY);
+}
+
+function stopRecognitionVisualDrag(event) {
+  const drag = state.recognitionVisualDrag;
+  if (!drag || drag.pointerId !== event.pointerId) {
+    return;
+  }
+  drag.dragTarget?.classList.remove("is-dragging");
+  drag.dragTarget?.releasePointerCapture?.(event.pointerId);
+  state.recognitionVisualDrag = null;
 }
 
 function normalizeSpreadsheetTreeTab(tabName) {
@@ -6503,6 +6860,7 @@ function applyDownloadTreeTabState(card, tabName) {
 
 function setRecognitionTreeTab(order, tabName) {
   const activeTab = normalizeRecognitionDetailTab(tabName);
+  state.recognitionVisualDrag = null;
   state.recognitionTreeTabs = {
     ...state.recognitionTreeTabs,
     [order]: activeTab,
@@ -6511,6 +6869,7 @@ function setRecognitionTreeTab(order, tabName) {
   commandMapList.querySelectorAll(`.command-tree-card[data-order="${order}"]`).forEach((card) => {
     applyRecognitionTreeTabState(card, activeTab);
     hydrateRecognitionPreviewCards(card);
+    requestAnimationFrame(() => updateRelativeOcrPreviewOverlay(card));
   });
   scheduleCommandConnectorLayout();
 }
@@ -6654,6 +7013,8 @@ function animateCollapsedInlineCardReturn(order, expandedRect = null) {
 
 function renderRecognitionTreeHiddenFields(details = {}, currentOrder = null) {
   const clickMode = recognitionClickModeFromDetails(details);
+  const relativeOcr = recognitionRelativeOcrDetails(details);
+  const clickTarget = recognitionClickTargetDetails(details);
   const successAction = String(details.ao_sucesso ?? "continuar");
   const successBlock = String(details.bloco_sucesso ?? "");
   const successSequence = String(details.sequencia_sucesso ?? "");
@@ -6668,6 +7029,15 @@ function renderRecognitionTreeHiddenFields(details = {}, currentOrder = null) {
     <input data-tree-field="confidence" type="hidden" value="${escapeHtml(details.confianca ?? 0.8)}" />
     <input data-tree-field="searchProfile" type="hidden" value="${escapeHtml(normalizeRecognitionProfile(details.perfil_busca, "balanced"))}" />
     <input data-tree-field="expectedOcrText" type="hidden" value="${escapeHtml(details.texto_ocr_esperado ?? "")}" />
+    <input data-tree-field="relativeOcrEnabled" type="checkbox" ${relativeOcr.active ? "checked" : ""} hidden />
+    <input data-tree-field="relativeOcrSide" type="hidden" value="${escapeHtml(relativeOcr.side)}" />
+    <input data-tree-field="relativeOcrWidth" type="hidden" value="${escapeHtml(relativeOcr.width)}" />
+    <input data-tree-field="relativeOcrHeight" type="hidden" value="${escapeHtml(relativeOcr.height)}" />
+    <input data-tree-field="relativeOcrOffsetX" type="hidden" value="${escapeHtml(relativeOcr.offsetX)}" />
+    <input data-tree-field="relativeOcrOffsetY" type="hidden" value="${escapeHtml(relativeOcr.offsetY)}" />
+    <input data-tree-field="relativeOcrSaveAs" type="hidden" value="${escapeHtml(relativeOcr.saveAs)}" />
+    <input data-tree-field="clickOffsetX" type="hidden" value="${escapeHtml(clickTarget.offsetX)}" />
+    <input data-tree-field="clickOffsetY" type="hidden" value="${escapeHtml(clickTarget.offsetY)}" />
     <input data-tree-field="windowTitle" type="hidden" value="" />
     <input data-tree-field="clickOnFind" type="hidden" value="${escapeHtml(clickMode)}" />
     <input data-tree-field="successAction" type="hidden" value="${escapeHtml(visibleSuccessAction)}" />
@@ -6694,6 +7064,7 @@ function renderRecognitionCompactTreeEditor(event) {
     identify: "So identificar",
   }[clickMode] || "1 clique";
   const expectedText = String(details.texto_ocr_esperado || "").trim();
+  const relativeOcr = recognitionRelativeOcrDetails(details);
   const successAction = String(details.ao_sucesso ?? "continuar");
   const failureAction = String(details.ao_nao_encontrar ?? "parar");
   const visibleSuccessAction = successAction === "ir_para_sequencia" ? "continuar" : successAction;
@@ -6727,12 +7098,62 @@ function renderRecognitionCompactTreeEditor(event) {
           <strong>${escapeHtml(expectedText)}</strong>
         </div>
       ` : ""}
+      ${relativeOcr.active ? `
+        <div class="recognition-card-compact-row">
+          <span>Le dado perto da imagem</span>
+          <strong>${escapeHtml(relativeOcr.saveAs || "valor_lido")}</strong>
+        </div>
+      ` : ""}
       <div class="recognition-card-compact-flow">
         <span><small>Se achar</small><strong>${escapeHtml(clickLabel)} e ${escapeHtml(nextLabel.toLowerCase())}</strong></span>
         <span><small>Se nao achar</small><strong>${escapeHtml(failureLabel)}</strong></span>
       </div>
       <button class="tree-open-button recognition-card-details-button" data-tree-action="open-card-details" type="button">Ver detalhes</button>
     </div>
+  `;
+}
+
+function renderDecisionFlowFields(
+  fieldAttr,
+  actionField,
+  blockField,
+  sequenceField,
+  delayField,
+  label,
+  action = "continuar",
+  block = "",
+  sequence = "",
+  delay = 0,
+  currentOrder = null,
+) {
+  const normalizedAction = String(action || "continuar");
+  return `
+    <label>
+      <span>${escapeHtml(label)}</span>
+      <select ${fieldAttr}="${escapeHtml(actionField)}">
+        <option value="continuar" ${normalizedAction === "continuar" ? "selected" : ""}>Continuar</option>
+        <option value="ir_para_bloco" ${normalizedAction === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
+        <option value="ir_para_sequencia" ${normalizedAction === "ir_para_sequencia" ? "selected" : ""}>Ir para pagina</option>
+        <option value="parar" ${normalizedAction === "parar" ? "selected" : ""}>Parar</option>
+      </select>
+    </label>
+    ${renderActionTargetFields(
+      fieldAttr,
+      actionField,
+      normalizedAction,
+      sequenceField,
+      sequence,
+      blockField,
+      block,
+      currentOrder,
+      {
+        sequenceLabel: "Abrir esta pagina",
+        blockLabel: "Abrir este bloco",
+        delayFieldName: delayField,
+        delayValue: delay,
+        delayLabel: "Esperar antes de ir (s)",
+      }
+    )}
   `;
 }
 
@@ -6904,24 +7325,31 @@ function renderCompactTreeEditorFields(event) {
   if (event.type === "comparar_planilha_tela") {
     return renderGenericCompactTreeEditor(event, [
       { label: "Esperado", value: details.coluna_esperada || details.column || "Coluna" },
-      { label: "Tela", value: "Ultimo OCR" },
-      { label: "Resultado", value: details.coluna_status || "Status" },
+      { label: "Tela", value: compareOcrSourceLabel(details.origem_tela || details.source || "ultimo_ocr") },
+      { label: "Se bater", value: formatFlowActionLabel(details.ao_sucesso || "continuar", details.bloco_sucesso, details.sequencia_sucesso) },
+      { label: "Se nao bater", value: formatFlowActionLabel(details.ao_divergir || "parar", details.bloco_divergir, details.sequencia_divergir) },
     ], `
       ${hiddenTreeField("workbook", resolveWorkbookId(details.arquivo || details.workbook || ""))}
       ${hiddenTreeField("sheet", details.aba || details.sheet || "")}
       ${hiddenTreeField("compareExpectedColumn", details.coluna_esperada || details.column || "")}
+      ${hiddenTreeField("compareOcrSource", normalizeCompareOcrSource(details.origem_tela || details.source || "ultimo_ocr"))}
       ${hiddenTreeField("compareMode", details.modo_comparacao || "texto")}
-      ${hiddenTreeField("compareStatusColumn", details.coluna_status || "Status")}
-      ${hiddenTreeField("compareNoteColumn", details.coluna_observacao || "Observacao")}
+      ${hiddenTreeField("compareStatusColumn", "")}
+      ${hiddenTreeField("compareNoteColumn", "")}
+      ${hiddenTreeField("compareDivergeAction", details.ao_divergir || "parar")}
+      ${hiddenTreeField("compareDivergeBlock", details.bloco_divergir || "")}
+      ${hiddenTreeField("compareDivergeSequence", details.sequencia_divergir || "")}
+      ${hiddenTreeField("compareDivergeSequenceDelay", details.atraso_antes_sequencia_divergir || 0)}
       ${renderSuccessHiddenTreeFields(details)}
     `);
   }
 
   if (event.type === "sequencia_planilha") {
+    const contextOnly = isSpreadsheetContextOnly(details);
     return renderGenericCompactTreeEditor(event, [
       { label: "Loop", value: getSpreadsheetLoopBadgeLabel(event) },
       { label: "Planilha", value: details.arquivo || details.workbook },
-      { label: "Coluna", value: details.coluna || details.column },
+      { label: contextOnly ? "Uso" : "Coluna", value: contextOnly ? "So carrega a linha" : (details.coluna || details.column) },
     ], `
       ${hiddenTreeField("workbook", resolveWorkbookId(details.arquivo || details.workbook || ""))}
       ${hiddenTreeField("sheet", details.aba || details.sheet || "")}
@@ -7005,11 +7433,14 @@ function renderRecognitionExpandedTreeEditor(event) {
   const details = event.details ?? {};
   const activeRecognitionTab = normalizeRecognitionDetailTab(state.recognitionTreeTabs?.[event.order] ?? "visual");
   const imageName = String(details.imagem || "").split(/[\\/]/).pop() || "Nenhuma imagem escolhida";
+  const relativeOcr = recognitionRelativeOcrDetails(details);
+  const clickTarget = recognitionClickTargetDetails(details);
   const clickMode = recognitionClickModeFromDetails(details);
   const successAction = String(details.ao_sucesso ?? "continuar");
   const failureAction = String(details.ao_nao_encontrar ?? "parar");
   const visibleSuccessAction = successAction === "ir_para_sequencia" ? "continuar" : successAction;
   const visibleFailureAction = failureAction === "ir_para_sequencia" ? "parar" : failureAction;
+  const showRecognitionMarkers = state.recognitionPreviewMarkersVisible?.[event.order] !== false;
   const choiceButton = (field, value, label, activeValue) => `
     <button
       class="recognition-choice-button ${String(activeValue) === value ? "is-active" : ""}"
@@ -7029,8 +7460,31 @@ function renderRecognitionExpandedTreeEditor(event) {
         <input data-tree-field="imagePath" type="hidden" value="${escapeHtml(details.imagem ?? "")}" />
         <input data-tree-field="windowTitle" type="hidden" value="" />
         <div class="recognition-preview-compact-wrap">
-          ${renderRecognitionPreviewPanel(details.imagem ?? "")}
+          ${renderRecognitionPreviewPanel(details.imagem ?? "", {
+            overlay: renderRelativeOcrPreviewOverlay(relativeOcr, clickTarget),
+            markersVisible: showRecognitionMarkers,
+          })}
         </div>
+        <input data-tree-field="clickOffsetX" type="hidden" value="${escapeHtml(clickTarget.offsetX)}" />
+        <input data-tree-field="clickOffsetY" type="hidden" value="${escapeHtml(clickTarget.offsetY)}" />
+        <input data-tree-field="relativeOcrEnabled" type="checkbox" ${relativeOcr.active ? "checked" : ""} hidden />
+        <input data-tree-field="relativeOcrSide" type="hidden" value="livre" />
+        <input data-tree-field="relativeOcrOffsetX" type="hidden" value="${escapeHtml(relativeOcr.offsetX)}" />
+        <input data-tree-field="relativeOcrOffsetY" type="hidden" value="${escapeHtml(relativeOcr.offsetY)}" />
+        <input data-tree-field="relativeOcrSaveAs" type="hidden" value="${escapeHtml(relativeOcr.saveAs)}" />
+        <input data-tree-field="relativeOcrWidth" type="hidden" value="${escapeHtml(relativeOcr.width)}" />
+        <input data-tree-field="relativeOcrHeight" type="hidden" value="${escapeHtml(relativeOcr.height)}" />
+        <label class="recognition-marker-switch">
+          <span class="recognition-marker-copy">
+            <strong>Guias visuais</strong>
+            <small><b>Mouse:</b> lugar onde ele vai clicar.</small>
+            <small><b>Ler aqui:</b> lugar onde o texto sera lido.</small>
+          </span>
+          <span class="recognition-mini-switch">
+            <input data-recognition-marker-toggle="true" type="checkbox" ${showRecognitionMarkers ? "checked" : ""} />
+            <i></i>
+          </span>
+        </label>
         <div class="recognition-simple-actions">
           <button class="tree-open-button" data-tree-action="capture-image" type="button">Tirar novo print</button>
           <button class="tree-open-button" data-tree-action="select-image" type="button">Trocar imagem</button>
@@ -7150,6 +7604,7 @@ function renderRecognitionExpandedTreeEditor(event) {
           </label>
         </div>
       </div>
+
     </div>
   `;
 }
@@ -8768,6 +9223,9 @@ async function stopSmartRecorder() {
     setBusy("Pronto");
     setMessage("Gravacao finalizada. Revise os blocos antes de enviar para o mapa.", "success");
   } catch (error) {
+    if (typeof options.onError === "function") {
+      options.onError(error);
+    }
     setBusy("Erro");
     setMessage(String(error), "error");
   }
@@ -8915,6 +9373,7 @@ async function sendSmartRecorderEventsToMap() {
           offsetY: 0,
           janelaAlvo: null,
           textoOcrEsperado: null,
+          ...relativeOcrInvokeArgs({}),
           aoNaoEncontrar: "parar",
           sequenciaNaoEncontrar: null,
           blocoNaoEncontrar: null,
@@ -9825,7 +10284,7 @@ function studioControlEventTitle(event = {}) {
     return "Reconhecimento visual";
   }
   if (event.type === "sequencia_planilha") {
-    return "Loop da planilha";
+    return isSpreadsheetContextOnly(event.details || event.detalhes || {}) ? "Loop de dados" : "Loop da planilha";
   }
   if (event.type === "escrever_planilha") {
     return "Escrever na planilha";
@@ -9863,7 +10322,9 @@ function studioControlEventSubtitle(event = {}) {
     return details.imagem || details.image || "Imagem de referencia";
   }
   if (event.type === "sequencia_planilha") {
-    return `${details.arquivo || "planilha"} -> ${details.coluna || "coluna"}`;
+    return isSpreadsheetContextOnly(details)
+      ? `${details.arquivo || "planilha"} -> linha atual`
+      : `${details.arquivo || "planilha"} -> ${details.coluna || "coluna"}`;
   }
   if (event.type === "escrever_planilha") {
     return `${details.aba || "aba"} -> ${details.coluna || "coluna"} = ${details.valor || ""}`;
@@ -11743,6 +12204,7 @@ function renderCompareSpreadsheetFields(fieldAttr, details = {}, currentOrder = 
     .map((column) => `<option value="${escapeHtml(column)}"></option>`)
     .join("");
   const mode = String(details.modo_comparacao || "texto");
+  const selectedSource = normalizeCompareOcrSource(details.origem_tela || details.source || details.origem_ocr || "ultimo_ocr");
 
   return `
     <div class="field-stack spreadsheet-write-editor">
@@ -11761,6 +12223,10 @@ function renderCompareSpreadsheetFields(fieldAttr, details = {}, currentOrder = 
           <datalist id="${escapeHtml(suggestionId)}">${columnSuggestions}</datalist>
         </label>
         <label>
+          <span>OCR usado</span>
+          <select ${fieldAttr}="compareOcrSource">${renderCompareOcrSourceOptions(selectedSource)}</select>
+        </label>
+        <label>
           <span>Comparar como</span>
           <select ${fieldAttr}="compareMode">
             <option value="texto" ${mode === "texto" ? "selected" : ""}>Texto</option>
@@ -11768,21 +12234,113 @@ function renderCompareSpreadsheetFields(fieldAttr, details = {}, currentOrder = 
             <option value="data" ${mode === "data" ? "selected" : ""}>Data/codigo</option>
           </select>
         </label>
-        <label>
-          <span>Coluna do status</span>
-          <input ${fieldAttr}="compareStatusColumn" type="text" value="${escapeHtml(details.coluna_status ?? "Status")}" placeholder="Status" />
-        </label>
-        <label>
-          <span>Coluna da observacao</span>
-          <input ${fieldAttr}="compareNoteColumn" type="text" value="${escapeHtml(details.coluna_observacao ?? "Observacao")}" placeholder="Observacao" />
-        </label>
       </div>
-      <p class="spreadsheet-write-hint">Compara a coluna da linha atual com o ultimo OCR lido pelo reconhecimento visual.</p>
+      <p class="spreadsheet-write-hint">Este bloco apenas confere o valor. Se bater ou nao bater, ele segue o caminho que voce escolher.</p>
       <div class="tree-inline-fields">
-        ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
+        ${renderDecisionFlowFields(
+          fieldAttr,
+          "successAction",
+          "successBlock",
+          "successSequence",
+          "successSequenceDelay",
+          "Se bater",
+          details.ao_sucesso ?? "continuar",
+          details.bloco_sucesso ?? "",
+          details.sequencia_sucesso ?? "",
+          details.atraso_antes_sequencia_sucesso ?? 0,
+          currentOrder,
+        )}
+        ${renderDecisionFlowFields(
+          fieldAttr,
+          "compareDivergeAction",
+          "compareDivergeBlock",
+          "compareDivergeSequence",
+          "compareDivergeSequenceDelay",
+          "Se nao bater",
+          details.ao_divergir ?? "parar",
+          details.bloco_divergir ?? "",
+          details.sequencia_divergir ?? "",
+          details.atraso_antes_sequencia_divergir ?? 0,
+          currentOrder,
+        )}
       </div>
     </div>
   `;
+}
+
+function formatFlowActionLabel(action = "continuar", block = "", sequence = "") {
+  const normalized = String(action || "continuar");
+  if (normalized === "ir_para_bloco") {
+    return block ? `Vai para bloco ${block}` : "Vai para bloco";
+  }
+  if (normalized === "ir_para_sequencia") {
+    return sequence ? `Vai para ${sequence}` : "Vai para pagina";
+  }
+  if (normalized === "parar") {
+    return "Para a automacao";
+  }
+  return "Continua";
+}
+
+function normalizeCompareOcrSource(source = "") {
+  const raw = String(source ?? "").trim();
+  if (!raw || raw === "ultimo_ocr" || raw === "ocr_tela") {
+    return raw || "ultimo_ocr";
+  }
+  const compact = raw.toLowerCase().replace(/\s+/g, "");
+  const match = compact.match(/(?:ocr_bloco_|bloco[:_-]?)(\d+)$/);
+  if (match) {
+    return `ocr_bloco_${match[1]}`;
+  }
+  if (/^\d+$/.test(compact)) {
+    return `ocr_bloco_${compact}`;
+  }
+  return raw;
+}
+
+function compareOcrSourceLabel(source = "") {
+  const normalized = normalizeCompareOcrSource(source);
+  if (normalized === "ultimo_ocr" || normalized === "ocr_tela") {
+    return "Ultimo OCR";
+  }
+  const match = normalized.match(/^ocr_bloco_(\d+)$/);
+  return match ? `Bloco ${match[1]}` : normalized;
+}
+
+function recognitionEventsForOcrSource() {
+  return (state.roadmap?.events ?? [])
+    .filter((event) => event?.type === "clicar_imagem")
+    .sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+}
+
+function recognitionOcrSourceName(event) {
+  const details = event?.details ?? {};
+  return details.nome
+    || details.rotulo
+    || details.imagem
+    || details.referencia
+    || event?.label
+    || event?.title
+    || "Reconhecimento visual";
+}
+
+function renderCompareOcrSourceOptions(selectedSource = "ultimo_ocr") {
+  const normalized = normalizeCompareOcrSource(selectedSource);
+  const options = [
+    `<option value="ultimo_ocr" ${normalized === "ultimo_ocr" || normalized === "ocr_tela" ? "selected" : ""}>Ultimo OCR encontrado</option>`,
+  ];
+  recognitionEventsForOcrSource().forEach((event) => {
+    const order = Number(event.order || 0);
+    if (!order) {
+      return;
+    }
+    const value = `ocr_bloco_${order}`;
+    const name = recognitionOcrSourceName(event);
+    options.push(
+      `<option value="${escapeHtml(value)}" ${value === normalized ? "selected" : ""}>Bloco ${order} - ${escapeHtml(name)}</option>`,
+    );
+  });
+  return options.join("");
 }
 
 function renderEditorFields(event) {
@@ -11891,8 +12449,19 @@ function renderEditorFields(event) {
   }
 
   if (event.type === "clicar_imagem") {
+    const relativeOcr = recognitionRelativeOcrDetails(details);
+    const clickTarget = recognitionClickTargetDetails(details);
     return `
       <div class="field-stack">
+        <input data-field="relativeOcrEnabled" type="checkbox" ${relativeOcr.active ? "checked" : ""} hidden />
+        <input data-field="relativeOcrSide" type="hidden" value="${escapeHtml(relativeOcr.side)}" />
+        <input data-field="relativeOcrWidth" type="hidden" value="${escapeHtml(relativeOcr.width)}" />
+        <input data-field="relativeOcrHeight" type="hidden" value="${escapeHtml(relativeOcr.height)}" />
+        <input data-field="relativeOcrOffsetX" type="hidden" value="${escapeHtml(relativeOcr.offsetX)}" />
+        <input data-field="relativeOcrOffsetY" type="hidden" value="${escapeHtml(relativeOcr.offsetY)}" />
+        <input data-field="relativeOcrSaveAs" type="hidden" value="${escapeHtml(relativeOcr.saveAs)}" />
+        <input data-field="clickOffsetX" type="hidden" value="${escapeHtml(clickTarget.offsetX)}" />
+        <input data-field="clickOffsetY" type="hidden" value="${escapeHtml(clickTarget.offsetY)}" />
         <label>
           <span>Referencia visual</span>
           <div class="capture-inline">
@@ -12079,6 +12648,7 @@ function renderEditorFields(event) {
     .join("");
   const availableColumns = columnsForSheetInWorkbook(workbookId, selectedSheet);
   const selectedColumn = availableColumns.includes(details.coluna) ? details.coluna : availableColumns[0] ?? "";
+  const contextOnly = isSpreadsheetContextOnly(details);
   const columnOptions = availableColumns
     .map(
       (column) =>
@@ -12338,20 +12908,29 @@ function renderTreeEditorFields(event) {
             <select data-tree-field="sheet">${sheetOptions}</select>
           </label>
           <label>
-            <span>Coluna</span>
+            <span>${contextOnly ? "Coluna de referencia" : "Coluna"}</span>
             <select data-tree-field="column">${columnOptions}</select>
           </label>
-          <label>
-            <span>Acao apos item</span>
-            <input data-tree-field="afterAction" type="text" value="${escapeHtml(details.acao_apos_item_texto ?? "nenhuma")}" />
-          </label>
-          <label>
-            <span>Intervalo entre itens</span>
-            <input data-tree-field="intervalBetween" type="number" min="0" step="0.1" value="${escapeHtml(details.intervalo_entre_itens ?? 0.5)}" />
-          </label>
-          <div class="spreadsheet-tree-inline-actions">
-            <button class="tree-open-button record-key-button" data-tree-action="record-after-action" type="button">Gravar tecla</button>
-          </div>
+          ${contextOnly ? `
+            <input data-tree-field="afterAction" type="hidden" value="somente_contexto" />
+            <label class="spreadsheet-tree-inline-field-full">
+              <span>Modo</span>
+              <input type="text" value="Carregar a linha atual sem digitar nada" readonly />
+            </label>
+            <input data-tree-field="intervalBetween" type="hidden" value="${escapeHtml(details.intervalo_entre_itens ?? 0.5)}" />
+          ` : `
+            <label>
+              <span>Acao apos item</span>
+              <input data-tree-field="afterAction" type="text" value="${escapeHtml(details.acao_apos_item_texto ?? "nenhuma")}" />
+            </label>
+            <label>
+              <span>Intervalo entre itens</span>
+              <input data-tree-field="intervalBetween" type="number" min="0" step="0.1" value="${escapeHtml(details.intervalo_entre_itens ?? 0.5)}" />
+            </label>
+            <div class="spreadsheet-tree-inline-actions">
+              <button class="tree-open-button record-key-button" data-tree-action="record-after-action" type="button">Gravar tecla</button>
+            </div>
+          `}
         </div>
       </div>
 
@@ -12656,6 +13235,12 @@ function renderInsertPanel(order) {
       description: "Para marcar um status ou texto na linha atual do loop.",
       hint: selectedColumn ? `Vai começar escrevendo na coluna ${selectedColumn}.` : "Importe uma planilha para configurar esse bloco.",
     },
+    spreadsheet_context: {
+      title: "Loop de dados",
+      label: "Dados",
+      description: "Para repetir o fluxo por linha sem digitar nenhum valor da planilha.",
+      hint: selectedColumn ? "A linha atual fica disponivel para conferencias e condicoes." : "Importe uma planilha para usar os dados no loop.",
+    },
     compare_spreadsheet: {
       title: "Conferir valor",
       label: "Conferencia",
@@ -12696,6 +13281,7 @@ function renderInsertPanel(order) {
         <button class="insert-type-button ${panel.type === "open_program" ? "is-active" : ""}" data-insert-type="open_program" type="button" ${panel.isSaving ? "disabled" : ""}>Abrir Programa</button>
         <button class="insert-type-button ${panel.type === "save_download" ? "is-active" : ""}" data-insert-type="save_download" type="button" ${panel.isSaving ? "disabled" : ""}>Salvar download</button>
         <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Planilha</button>
+        <button class="insert-type-button ${panel.type === "spreadsheet_context" ? "is-active" : ""}" data-insert-type="spreadsheet_context" type="button" ${panel.isSaving ? "disabled" : ""}>Loop de dados</button>
         <button class="insert-type-button ${panel.type === "write_spreadsheet" ? "is-active" : ""}" data-insert-type="write_spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Escrever celula</button>
         <button class="insert-type-button ${panel.type === "compare_spreadsheet" ? "is-active" : ""}" data-insert-type="compare_spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Conferir valor</button>
         <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start" type="button" ${panel.isSaving ? "disabled" : ""}>Inicio loop</button>
@@ -13049,6 +13635,7 @@ function renderInsertPanel(order) {
         <button class="insert-type-button ${panel.type === "open_program" ? "is-active" : ""}" data-insert-type="open_program">Abrir Programa</button>
         <button class="insert-type-button ${panel.type === "save_download" ? "is-active" : ""}" data-insert-type="save_download">Salvar download</button>
         <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet">Planilha</button>
+        <button class="insert-type-button ${panel.type === "spreadsheet_context" ? "is-active" : ""}" data-insert-type="spreadsheet_context">Loop de dados</button>
         <button class="insert-type-button ${panel.type === "write_spreadsheet" ? "is-active" : ""}" data-insert-type="write_spreadsheet">Escrever celula</button>
         <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start">Inicio loop</button>
         <button class="insert-type-button ${panel.type === "loop_end" ? "is-active" : ""}" data-insert-type="loop_end">Fim loop</button>
@@ -13833,6 +14420,15 @@ function formValuesFromCard(card) {
     searchAreaHeight: 0,
     windowTitle: normalizeRecognitionWindowTitle(get("windowTitle")?.value ?? ""),
     expectedOcrText: get("expectedOcrText")?.value ?? "",
+    relativeOcrEnabled: Boolean(get("relativeOcrEnabled")?.checked),
+    relativeOcrSide: get("relativeOcrSide")?.value ?? "livre",
+    relativeOcrWidth: Math.max(16, Math.trunc(parseNumber(get("relativeOcrWidth")?.value, 140))),
+    relativeOcrHeight: Math.max(12, Math.trunc(parseNumber(get("relativeOcrHeight")?.value, 40))),
+    relativeOcrOffsetX: Math.trunc(parseNumber(get("relativeOcrOffsetX")?.value, 0)),
+    relativeOcrOffsetY: Math.trunc(parseNumber(get("relativeOcrOffsetY")?.value, 0)),
+    relativeOcrSaveAs: get("relativeOcrSaveAs")?.value ?? "",
+    clickOffsetX: Math.trunc(parseNumber(get("clickOffsetX")?.value, 0)),
+    clickOffsetY: Math.trunc(parseNumber(get("clickOffsetY")?.value, 0)),
     recognitionClickMode: get("clickOnFind")?.value ?? "single",
     failureAction: get("failureAction")?.value ?? "parar",
     failureBlock: get("failureBlock")?.value ?? "",
@@ -13893,9 +14489,14 @@ function formValuesFromCard(card) {
     column: get("column")?.value ?? "",
     writeValue: get("writeValue")?.value ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
+    compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
-    compareStatusColumn: get("compareStatusColumn")?.value ?? "Status",
-    compareNoteColumn: get("compareNoteColumn")?.value ?? "Observacao",
+    compareStatusColumn: get("compareStatusColumn")?.value ?? "",
+    compareNoteColumn: get("compareNoteColumn")?.value ?? "",
+    compareDivergeAction: get("compareDivergeAction")?.value ?? "parar",
+    compareDivergeBlock: get("compareDivergeBlock")?.value ?? "",
+    compareDivergeSequence: get("compareDivergeSequence")?.value ?? "",
+    compareDivergeSequenceDelay: normalizeTransitionDelay(get("compareDivergeSequenceDelay")?.value),
     afterAction: get("afterAction")?.value ?? "nenhuma",
     intervalBetween: parseNumber(get("intervalBetween")?.value, 0.5),
   };
@@ -13929,6 +14530,15 @@ function treeValuesFromCard(card) {
     searchAreaHeight: 0,
     windowTitle: normalizeRecognitionWindowTitle(get("windowTitle")?.value ?? ""),
     expectedOcrText: get("expectedOcrText")?.value ?? "",
+    relativeOcrEnabled: Boolean(get("relativeOcrEnabled")?.checked),
+    relativeOcrSide: get("relativeOcrSide")?.value ?? "livre",
+    relativeOcrWidth: Math.max(16, Math.trunc(parseNumber(get("relativeOcrWidth")?.value, 140))),
+    relativeOcrHeight: Math.max(12, Math.trunc(parseNumber(get("relativeOcrHeight")?.value, 40))),
+    relativeOcrOffsetX: Math.trunc(parseNumber(get("relativeOcrOffsetX")?.value, 0)),
+    relativeOcrOffsetY: Math.trunc(parseNumber(get("relativeOcrOffsetY")?.value, 0)),
+    relativeOcrSaveAs: get("relativeOcrSaveAs")?.value ?? "",
+    clickOffsetX: Math.trunc(parseNumber(get("clickOffsetX")?.value, 0)),
+    clickOffsetY: Math.trunc(parseNumber(get("clickOffsetY")?.value, 0)),
     recognitionClickMode: get("clickOnFind")?.value ?? "single",
     failureAction: get("failureAction")?.value ?? "parar",
     failureBlock: get("failureBlock")?.value ?? "",
@@ -13989,9 +14599,14 @@ function treeValuesFromCard(card) {
     column: get("column")?.value ?? "",
     writeValue: get("writeValue")?.value ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
+    compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
-    compareStatusColumn: get("compareStatusColumn")?.value ?? "Status",
-    compareNoteColumn: get("compareNoteColumn")?.value ?? "Observacao",
+    compareStatusColumn: get("compareStatusColumn")?.value ?? "",
+    compareNoteColumn: get("compareNoteColumn")?.value ?? "",
+    compareDivergeAction: get("compareDivergeAction")?.value ?? "parar",
+    compareDivergeBlock: get("compareDivergeBlock")?.value ?? "",
+    compareDivergeSequence: get("compareDivergeSequence")?.value ?? "",
+    compareDivergeSequenceDelay: normalizeTransitionDelay(get("compareDivergeSequenceDelay")?.value),
     afterAction: get("afterAction")?.value ?? "nenhuma",
     intervalBetween: parseNumber(get("intervalBetween")?.value, 0.5),
   };
@@ -14282,6 +14897,8 @@ function commandCardHasUnsavedChanges(snapshot) {
       || normalizeRecognitionProfile(values.searchProfile, "balanced") !== normalizeRecognitionProfile(details.perfil_busca, "balanced")
       || normalizeRecognitionWindowTitle(values.windowTitle || "") !== normalizeRecognitionWindowTitle(details.janela_alvo ?? "")
       || normalizeStringValue(values.expectedOcrText) !== normalizeStringValue(details.texto_ocr_esperado ?? "")
+      || relativeOcrChanged(values, details)
+      || clickTargetChanged(values, details)
       || normalizeStringValue(values.recognitionClickMode) !== normalizeStringValue(recognitionClickModeFromDetails(details))
       || successFlowChanged(values, details)
       || normalizeStringValue(values.failureAction) !== normalizeStringValue(details.ao_nao_encontrar ?? "parar")
@@ -14405,9 +15022,15 @@ function commandCardHasUnsavedChanges(snapshot) {
       normalizeStringValue(values.workbook) !== normalizeStringValue(details.arquivo)
       || normalizeStringValue(values.sheet) !== normalizeStringValue(details.aba)
       || normalizeStringValue(values.compareExpectedColumn) !== normalizeStringValue(details.coluna_esperada)
+      || normalizeStringValue(normalizeCompareOcrSource(values.compareOcrSource)) !== normalizeStringValue(normalizeCompareOcrSource(details.origem_tela || "ultimo_ocr"))
       || normalizeStringValue(values.compareMode) !== normalizeStringValue(details.modo_comparacao ?? "texto")
-      || normalizeStringValue(values.compareStatusColumn) !== normalizeStringValue(details.coluna_status ?? "Status")
-      || normalizeStringValue(values.compareNoteColumn) !== normalizeStringValue(details.coluna_observacao ?? "Observacao")
+      || normalizeStringValue(values.compareDivergeAction) !== normalizeStringValue(details.ao_divergir ?? "parar")
+      || Number(optionalPositiveInt(values.compareDivergeBlock) || 0) !== Number(details.bloco_divergir ?? 0)
+      || normalizeStringValue(values.compareDivergeSequence) !== normalizeStringValue(details.sequencia_divergir ?? "")
+      || !approxEqual(
+        normalizeTransitionDelay(values.compareDivergeSequenceDelay),
+        normalizeTransitionDelay(details.atraso_antes_sequencia_divergir ?? 0),
+      )
       || successFlowChanged(values, details)
     );
   }
@@ -14487,10 +15110,11 @@ async function invokeCommandCardUpdate(snapshot) {
       areaBuscaAltura: 0,
       janelaAlvo: values.windowTitle?.trim() || null,
       textoOcrEsperado: values.expectedOcrText?.trim() || null,
+      ...relativeOcrInvokeArgs(values),
       clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
       clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
-      offsetX: 0,
-      offsetY: 0,
+      offsetX: values.clickOffsetX,
+      offsetY: values.clickOffsetY,
       aoNaoEncontrar: values.failureAction,
       sequenciaNaoEncontrar: values.failureAction === "ir_para_sequencia"
         ? values.failureSequence.trim() || null
@@ -14672,9 +15296,10 @@ async function invokeCommandCardUpdate(snapshot) {
       workbook: values.workbook || null,
       sheet: values.sheet,
       expectedColumn: values.compareExpectedColumn,
+      source: normalizeCompareOcrSource(values.compareOcrSource || "ultimo_ocr"),
       comparisonMode: values.compareMode || "texto",
-      statusColumn: values.compareStatusColumn || "Status",
-      noteColumn: values.compareNoteColumn || "Observacao",
+      statusColumn: "",
+      noteColumn: "",
       delay: values.delay,
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
@@ -14682,6 +15307,12 @@ async function invokeCommandCardUpdate(snapshot) {
         ? optionalSequenceValue(values.successSequence)
         : null,
       atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
+      aoDivergir: values.compareDivergeAction || "parar",
+      blocoDivergir: optionalPositiveInt(values.compareDivergeBlock),
+      sequenciaDivergir: values.compareDivergeAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.compareDivergeSequence)
+        : null,
+      atrasoSequenciaDivergir: transitionSequenceDelayArg(values.compareDivergeAction, values.compareDivergeSequenceDelay),
     });
   }
 
@@ -14854,6 +15485,15 @@ function insertValuesFromPanel(panelElement) {
     searchAreaHeight: 0,
     windowTitle: normalizeRecognitionWindowTitle(get("windowTitle")?.value ?? state.insertPanel?.windowTitle ?? ""),
     expectedOcrText: get("expectedOcrText")?.value ?? state.insertPanel?.expectedOcrText ?? "",
+    relativeOcrEnabled: Boolean(get("relativeOcrEnabled")?.checked ?? state.insertPanel?.relativeOcrEnabled),
+    relativeOcrSide: get("relativeOcrSide")?.value ?? state.insertPanel?.relativeOcrSide ?? "livre",
+    relativeOcrWidth: Math.max(16, Math.trunc(parseNumber(get("relativeOcrWidth")?.value, state.insertPanel?.relativeOcrWidth ?? 140))),
+    relativeOcrHeight: Math.max(12, Math.trunc(parseNumber(get("relativeOcrHeight")?.value, state.insertPanel?.relativeOcrHeight ?? 40))),
+    relativeOcrOffsetX: Math.trunc(parseNumber(get("relativeOcrOffsetX")?.value, state.insertPanel?.relativeOcrOffsetX ?? 0)),
+    relativeOcrOffsetY: Math.trunc(parseNumber(get("relativeOcrOffsetY")?.value, state.insertPanel?.relativeOcrOffsetY ?? 0)),
+    relativeOcrSaveAs: get("relativeOcrSaveAs")?.value ?? state.insertPanel?.relativeOcrSaveAs ?? "",
+    clickOffsetX: Math.trunc(parseNumber(get("clickOffsetX")?.value, state.insertPanel?.clickOffsetX ?? 0)),
+    clickOffsetY: Math.trunc(parseNumber(get("clickOffsetY")?.value, state.insertPanel?.clickOffsetY ?? 0)),
     recognitionClickMode: get("clickOnFind")?.value ?? state.insertPanel?.recognitionClickMode ?? "single",
     failureAction: get("failureAction")?.value ?? state.insertPanel?.failureAction ?? "parar",
     failureBlock: get("failureBlock")?.value ?? state.insertPanel?.failureBlock ?? "",
@@ -14908,9 +15548,14 @@ function insertValuesFromPanel(panelElement) {
     column: get("column")?.value ?? state.insertPanel?.column ?? "",
     writeValue: get("writeValue")?.value ?? state.insertPanel?.writeValue ?? "OK",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? state.insertPanel?.compareExpectedColumn ?? state.insertPanel?.column ?? "",
+    compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? state.insertPanel?.compareOcrSource ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? state.insertPanel?.compareMode ?? "texto",
-    compareStatusColumn: get("compareStatusColumn")?.value ?? state.insertPanel?.compareStatusColumn ?? "Status",
-    compareNoteColumn: get("compareNoteColumn")?.value ?? state.insertPanel?.compareNoteColumn ?? "Observacao",
+    compareStatusColumn: get("compareStatusColumn")?.value ?? state.insertPanel?.compareStatusColumn ?? "",
+    compareNoteColumn: get("compareNoteColumn")?.value ?? state.insertPanel?.compareNoteColumn ?? "",
+    compareDivergeAction: get("compareDivergeAction")?.value ?? state.insertPanel?.compareDivergeAction ?? "parar",
+    compareDivergeBlock: get("compareDivergeBlock")?.value ?? state.insertPanel?.compareDivergeBlock ?? "",
+    compareDivergeSequence: get("compareDivergeSequence")?.value ?? state.insertPanel?.compareDivergeSequence ?? "",
+    compareDivergeSequenceDelay: normalizeTransitionDelay(get("compareDivergeSequenceDelay")?.value ?? state.insertPanel?.compareDivergeSequenceDelay ?? 0),
     afterAction: get("afterAction")?.value ?? state.insertPanel?.afterAction ?? "nenhuma",
     intervalBetween: parseNumber(get("intervalBetween")?.value, state.insertPanel?.intervalBetween ?? 0.5),
   };
@@ -15160,10 +15805,11 @@ async function persistVisibleRecognitionDrafts() {
       areaBuscaAltura: 0,
       janelaAlvo: values.windowTitle?.trim() || null,
       textoOcrEsperado: values.expectedOcrText?.trim() || null,
+      ...relativeOcrInvokeArgs(values),
       clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
       clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
-      offsetX: 0,
-      offsetY: 0,
+      offsetX: values.clickOffsetX,
+      offsetY: values.clickOffsetY,
       aoNaoEncontrar: values.failureAction,
       sequenciaNaoEncontrar: values.failureAction === "ir_para_sequencia"
         ? values.failureSequence.trim() || null
@@ -15373,6 +16019,7 @@ document.getElementById("addImageButton").addEventListener("click", () => {
       areaBuscaAltura: 0,
       janelaAlvo: null,
       textoOcrEsperado: null,
+      ...relativeOcrInvokeArgs({}),
       clicar: recognitionClicksFromMode(imageClickModeInput.value, 1) > 0,
       clicks: recognitionClicksFromMode(imageClickModeInput.value, 1),
       offsetX: 0,
@@ -17123,7 +17770,7 @@ commandMapList.addEventListener("change", (event) => {
   }
 
   if (
-    target.matches('[data-tree-field="successAction"], [data-tree-field="failureAction"], [data-tree-field="chromeSuccessAction"], [data-tree-field="chromeFailureAction"], [data-insert-field="successAction"], [data-insert-field="failureAction"], [data-insert-field="chromeSuccessAction"], [data-insert-field="chromeFailureAction"], [data-field="successAction"], [data-field="failureAction"], [data-field="chromeSuccessAction"], [data-field="chromeFailureAction"]')
+    target.matches('[data-tree-field="successAction"], [data-tree-field="failureAction"], [data-tree-field="compareDivergeAction"], [data-tree-field="chromeSuccessAction"], [data-tree-field="chromeFailureAction"], [data-insert-field="successAction"], [data-insert-field="failureAction"], [data-insert-field="compareDivergeAction"], [data-insert-field="chromeSuccessAction"], [data-insert-field="chromeFailureAction"], [data-field="successAction"], [data-field="failureAction"], [data-field="compareDivergeAction"], [data-field="chromeSuccessAction"], [data-field="chromeFailureAction"]')
   ) {
     const container = target.closest(".command-tree-card, .insert-card-panel, .flow-card");
     applyActionVisibilityState(container);
@@ -17133,6 +17780,9 @@ commandMapList.addEventListener("change", (event) => {
       }
       if (target.matches('[data-insert-field="failureAction"]')) {
         state.insertPanel.failureAction = target.value;
+      }
+      if (target.matches('[data-insert-field="compareDivergeAction"]')) {
+        state.insertPanel.compareDivergeAction = target.value;
       }
       if (target.matches('[data-insert-field="chromeSuccessAction"]')) {
         state.insertPanel.chromeSuccessAction = target.value;
@@ -17170,6 +17820,20 @@ commandMapList.addEventListener("change", (event) => {
     return;
   }
 
+  if (target.matches('[data-tree-field^="relativeOcr"]')) {
+    const card = target.closest(".command-tree-card");
+    updateRelativeOcrPreviewOverlay(card);
+    syncCommandMapDraftFromCard(card);
+    return;
+  }
+
+  if (target.matches('[data-tree-field="clickOffsetX"], [data-tree-field="clickOffsetY"]')) {
+    const card = target.closest(".command-tree-card");
+    updateRelativeOcrPreviewOverlay(card);
+    syncCommandMapDraftFromCard(card);
+    return;
+  }
+
   if (target.matches('[data-insert-field="imagePath"]')) {
     const panel = target.closest(".insert-card-panel");
     if (state.insertPanel && panel) {
@@ -17182,6 +17846,35 @@ commandMapList.addEventListener("change", (event) => {
   if (target.matches('[data-insert-field="expectedOcrText"]')) {
     if (state.insertPanel) {
       state.insertPanel.expectedOcrText = target.value;
+    }
+    return;
+  }
+
+  if (target.matches('[data-insert-field^="relativeOcr"]')) {
+    const panel = target.closest(".insert-card-panel");
+    updateRelativeOcrPreviewOverlay(panel);
+    if (state.insertPanel) {
+      const values = insertValuesFromPanel();
+      Object.assign(state.insertPanel, {
+        relativeOcrEnabled: values.relativeOcrEnabled,
+        relativeOcrSide: values.relativeOcrSide,
+        relativeOcrWidth: values.relativeOcrWidth,
+        relativeOcrHeight: values.relativeOcrHeight,
+        relativeOcrOffsetX: values.relativeOcrOffsetX,
+        relativeOcrOffsetY: values.relativeOcrOffsetY,
+        relativeOcrSaveAs: values.relativeOcrSaveAs,
+      });
+    }
+    return;
+  }
+
+  if (target.matches('[data-insert-field="clickOffsetX"], [data-insert-field="clickOffsetY"]')) {
+    const panel = target.closest(".insert-card-panel");
+    updateRelativeOcrPreviewOverlay(panel);
+    if (state.insertPanel) {
+      const values = insertValuesFromPanel();
+      state.insertPanel.clickOffsetX = values.clickOffsetX;
+      state.insertPanel.clickOffsetY = values.clickOffsetY;
     }
     return;
   }
@@ -17268,6 +17961,11 @@ commandMapList.addEventListener("change", (event) => {
 });
 
 commandMapList.addEventListener("pointerdown", (event) => {
+  if (event.target.closest("[data-recognition-drag-target]")) {
+    startRecognitionVisualDrag(event);
+    return;
+  }
+
   const handle = event.target.closest("[data-drag-handle]");
   if (handle && event.button === 0) {
     event.preventDefault();
@@ -17297,6 +17995,10 @@ commandMapList.addEventListener("pointerdown", (event) => {
     return;
   }
 });
+
+window.addEventListener("pointermove", moveRecognitionVisualDrag);
+window.addEventListener("pointerup", stopRecognitionVisualDrag);
+window.addEventListener("pointercancel", stopRecognitionVisualDrag);
 
 commandMapList.addEventListener("focusin", (event) => {
   if (event.target.closest("[data-drag-handle]")) {
@@ -17378,6 +18080,26 @@ commandMapList.addEventListener("click", (event) => {
     const order = Number(card?.dataset.order);
     if (order) {
       setRecognitionTreeTab(order, recognitionTabButton.dataset.recognitionTabTarget || "base");
+    }
+    return;
+  }
+
+  const recognitionMarkerToggle = event.target.closest("[data-recognition-marker-toggle]");
+  if (recognitionMarkerToggle) {
+    const card = recognitionMarkerToggle.closest(".command-tree-card");
+    const order = Number(card?.dataset.order);
+    if (order) {
+      state.recognitionPreviewMarkersVisible = {
+        ...state.recognitionPreviewMarkersVisible,
+        [order]: Boolean(recognitionMarkerToggle.checked),
+      };
+      card.querySelectorAll("[data-recognition-preview-card]").forEach((previewCard) => {
+        previewCard.dataset.recognitionPreviewMarkers = recognitionMarkerToggle.checked ? "true" : "false";
+        if (!recognitionMarkerToggle.checked) {
+          previewCard.querySelectorAll("[data-relative-ocr-map]").forEach((overlay) => overlay.remove());
+        }
+      });
+      updateRelativeOcrPreviewOverlay(card);
     }
     return;
   }
@@ -17932,10 +18654,11 @@ commandMapList.addEventListener("click", (event) => {
               areaBuscaAltura: 0,
               janelaAlvo: values.windowTitle?.trim() || null,
               textoOcrEsperado: values.expectedOcrText?.trim() || null,
+              ...relativeOcrInvokeArgs(values),
               clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
               clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
-              offsetX: 0,
-              offsetY: 0,
+              offsetX: values.clickOffsetX,
+              offsetY: values.clickOffsetY,
               aoNaoEncontrar: values.failureAction,
               sequenciaNaoEncontrar: values.failureAction === "ir_para_sequencia"
                 ? values.failureSequence.trim() || null
@@ -17965,10 +18688,11 @@ commandMapList.addEventListener("click", (event) => {
               areaBuscaAltura: 0,
               janelaAlvo: values.windowTitle?.trim() || null,
               textoOcrEsperado: values.expectedOcrText?.trim() || null,
+              ...relativeOcrInvokeArgs(values),
               clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
               clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
-              offsetX: 0,
-              offsetY: 0,
+              offsetX: values.clickOffsetX,
+              offsetY: values.clickOffsetY,
               aoNaoEncontrar: values.failureAction,
               sequenciaNaoEncontrar: values.failureAction === "ir_para_sequencia"
                 ? values.failureSequence.trim() || null
@@ -18145,15 +18869,22 @@ commandMapList.addEventListener("click", (event) => {
               workbook: values.workbook || state.composerWorkbookId || null,
               sheet: values.sheet,
               expectedColumn,
+              source: normalizeCompareOcrSource(values.compareOcrSource || "ultimo_ocr"),
               comparisonMode: values.compareMode || "texto",
-              statusColumn: values.compareStatusColumn || "Status",
-              noteColumn: values.compareNoteColumn || "Observacao",
+              statusColumn: "",
+              noteColumn: "",
               delay: common.delay,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
               blocoSucesso: common.blocoSucesso,
               sequenciaSucesso: common.sequenciaSucesso,
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+              aoDivergir: values.compareDivergeAction || "parar",
+              blocoDivergir: optionalPositiveInt(values.compareDivergeBlock),
+              sequenciaDivergir: values.compareDivergeAction === "ir_para_sequencia"
+                ? optionalSequenceValue(values.compareDivergeSequence)
+                : null,
+              atrasoSequenciaDivergir: transitionSequenceDelayArg(values.compareDivergeAction, values.compareDivergeSequenceDelay),
             })
           : invoke("insert_compare_spreadsheet_block", {
               targetOrder: common.targetOrder,
@@ -18161,15 +18892,22 @@ commandMapList.addEventListener("click", (event) => {
               workbook: values.workbook || state.composerWorkbookId || null,
               sheet: values.sheet,
               expectedColumn,
+              source: normalizeCompareOcrSource(values.compareOcrSource || "ultimo_ocr"),
               comparisonMode: values.compareMode || "texto",
-              statusColumn: values.compareStatusColumn || "Status",
-              noteColumn: values.compareNoteColumn || "Observacao",
+              statusColumn: "",
+              noteColumn: "",
               delay: common.delay,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
               blocoSucesso: common.blocoSucesso,
               sequenciaSucesso: common.sequenciaSucesso,
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+              aoDivergir: values.compareDivergeAction || "parar",
+              blocoDivergir: optionalPositiveInt(values.compareDivergeBlock),
+              sequenciaDivergir: values.compareDivergeAction === "ir_para_sequencia"
+                ? optionalSequenceValue(values.compareDivergeSequence)
+                : null,
+              atrasoSequenciaDivergir: transitionSequenceDelayArg(values.compareDivergeAction, values.compareDivergeSequenceDelay),
             });
     } else if (values.type === "write_spreadsheet") {
       if (!values.sheet.trim() || !values.column.trim()) {
@@ -18205,6 +18943,7 @@ commandMapList.addEventListener("click", (event) => {
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     } else {
+      const spreadsheetAfterAction = values.type === "spreadsheet_context" ? "somente_contexto" : values.afterAction;
       promiseFactory = () =>
         isFirstBlock
           ? invoke("add_spreadsheet_block", {
@@ -18212,7 +18951,7 @@ commandMapList.addEventListener("click", (event) => {
               sheet: values.sheet,
               column: values.column,
               delay: common.delay,
-              afterAction: values.afterAction,
+              afterAction: spreadsheetAfterAction,
               intervalBetween: values.intervalBetween,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
@@ -18227,7 +18966,7 @@ commandMapList.addEventListener("click", (event) => {
               sheet: values.sheet,
               column: values.column,
               delay: common.delay,
-              afterAction: values.afterAction,
+              afterAction: spreadsheetAfterAction,
               intervalBetween: values.intervalBetween,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
