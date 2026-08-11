@@ -3241,6 +3241,37 @@ fn append_success_flow_args(
     }
 }
 
+fn append_compare_diverge_args(
+    args: &mut Vec<String>,
+    ao_divergir: Option<String>,
+    bloco_divergir: Option<i32>,
+    sequencia_divergir: Option<String>,
+    atraso_sequencia_divergir: Option<f64>,
+) {
+    if let Some(value) = ao_divergir {
+        if !value.trim().is_empty() {
+            args.push("--ao-divergir".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = bloco_divergir {
+        if value > 0 {
+            args.push("--bloco-divergir".into());
+            args.push(value.to_string());
+        }
+    }
+    if let Some(value) = sequencia_divergir {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-divergir".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_divergir {
+        args.push("--atraso-sequencia-divergir".into());
+        args.push(value.max(0.0).to_string());
+    }
+}
+
 #[tauri::command]
 fn capture_mouse_click(app: AppHandle) -> Result<Value, String> {
     let root = workspace_root(&app);
@@ -3622,6 +3653,13 @@ fn add_image_click_block(
     offset_y: i32,
     janela_alvo: Option<String>,
     texto_ocr_esperado: Option<String>,
+    leitura_relativa_ativa: Option<bool>,
+    leitura_relativa_lado: Option<String>,
+    leitura_relativa_largura: Option<i32>,
+    leitura_relativa_altura: Option<i32>,
+    leitura_relativa_offset_x: Option<i32>,
+    leitura_relativa_offset_y: Option<i32>,
+    leitura_relativa_salvar_em: Option<String>,
     ao_nao_encontrar: String,
     sequencia_nao_encontrar: Option<String>,
     bloco_nao_encontrar: Option<i32>,
@@ -3658,6 +3696,20 @@ fn add_image_click_block(
         janela_alvo.unwrap_or_default(),
         "--texto-ocr-esperado".into(),
         texto_ocr_esperado.unwrap_or_default(),
+        "--leitura-relativa-ativa".into(),
+        leitura_relativa_ativa.unwrap_or(false).to_string(),
+        "--leitura-relativa-lado".into(),
+        leitura_relativa_lado.unwrap_or_else(|| "direita".to_string()),
+        "--leitura-relativa-largura".into(),
+        leitura_relativa_largura.unwrap_or(140).max(16).to_string(),
+        "--leitura-relativa-altura".into(),
+        leitura_relativa_altura.unwrap_or(40).max(12).to_string(),
+        "--leitura-relativa-offset-x".into(),
+        leitura_relativa_offset_x.unwrap_or(0).to_string(),
+        "--leitura-relativa-offset-y".into(),
+        leitura_relativa_offset_y.unwrap_or(0).to_string(),
+        "--leitura-relativa-salvar-em".into(),
+        leitura_relativa_salvar_em.unwrap_or_default(),
         "--ao-nao-encontrar".into(),
         ao_nao_encontrar,
     ];
@@ -3782,6 +3834,7 @@ fn add_compare_spreadsheet_block(
     workbook: Option<String>,
     sheet: String,
     expected_column: String,
+    source: Option<String>,
     comparison_mode: Option<String>,
     status_column: Option<String>,
     note_column: Option<String>,
@@ -3791,6 +3844,10 @@ fn add_compare_spreadsheet_block(
     bloco_sucesso: Option<i32>,
     sequencia_sucesso: Option<String>,
     atraso_sequencia_sucesso: Option<f64>,
+    ao_divergir: Option<String>,
+    bloco_divergir: Option<i32>,
+    sequencia_divergir: Option<String>,
+    atraso_sequencia_divergir: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec!["add-compare-planilha".into()];
@@ -3806,13 +3863,13 @@ fn add_compare_spreadsheet_block(
         "--expected-column".into(),
         expected_column,
         "--source".into(),
-        "ultimo_ocr".into(),
+        source.unwrap_or_else(|| "ultimo_ocr".into()),
         "--comparison-mode".into(),
         comparison_mode.unwrap_or_else(|| "texto".into()),
         "--status-column".into(),
-        status_column.unwrap_or_else(|| "Status".into()),
+        status_column.unwrap_or_default(),
         "--note-column".into(),
-        note_column.unwrap_or_else(|| "Observacao".into()),
+        note_column.unwrap_or_default(),
         "--delay".into(),
         delay.to_string(),
     ]);
@@ -3821,6 +3878,7 @@ fn add_compare_spreadsheet_block(
         args.push(sequence_name);
     }
     append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_compare_diverge_args(&mut args, ao_divergir, bloco_divergir, sequencia_divergir, atraso_sequencia_divergir);
     run_helper_json(&root, &args)
 }
 
@@ -4290,6 +4348,13 @@ fn insert_image_click_block(
     offset_y: i32,
     janela_alvo: Option<String>,
     texto_ocr_esperado: Option<String>,
+    leitura_relativa_ativa: Option<bool>,
+    leitura_relativa_lado: Option<String>,
+    leitura_relativa_largura: Option<i32>,
+    leitura_relativa_altura: Option<i32>,
+    leitura_relativa_offset_x: Option<i32>,
+    leitura_relativa_offset_y: Option<i32>,
+    leitura_relativa_salvar_em: Option<String>,
     ao_nao_encontrar: String,
     sequencia_nao_encontrar: Option<String>,
     bloco_nao_encontrar: Option<i32>,
@@ -4330,6 +4395,20 @@ fn insert_image_click_block(
             janela_alvo.unwrap_or_default(),
             "--texto-ocr-esperado".into(),
             texto_ocr_esperado.unwrap_or_default(),
+            "--leitura-relativa-ativa".into(),
+            leitura_relativa_ativa.unwrap_or(false).to_string(),
+            "--leitura-relativa-lado".into(),
+            leitura_relativa_lado.unwrap_or_else(|| "direita".to_string()),
+            "--leitura-relativa-largura".into(),
+            leitura_relativa_largura.unwrap_or(140).max(16).to_string(),
+            "--leitura-relativa-altura".into(),
+            leitura_relativa_altura.unwrap_or(40).max(12).to_string(),
+            "--leitura-relativa-offset-x".into(),
+            leitura_relativa_offset_x.unwrap_or(0).to_string(),
+            "--leitura-relativa-offset-y".into(),
+            leitura_relativa_offset_y.unwrap_or(0).to_string(),
+            "--leitura-relativa-salvar-em".into(),
+            leitura_relativa_salvar_em.unwrap_or_default(),
             "--ao-nao-encontrar".into(),
             ao_nao_encontrar,
     ];
@@ -4478,6 +4557,7 @@ fn insert_compare_spreadsheet_block(
     workbook: Option<String>,
     sheet: String,
     expected_column: String,
+    source: Option<String>,
     comparison_mode: Option<String>,
     status_column: Option<String>,
     note_column: Option<String>,
@@ -4487,6 +4567,10 @@ fn insert_compare_spreadsheet_block(
     bloco_sucesso: Option<i32>,
     sequencia_sucesso: Option<String>,
     atraso_sequencia_sucesso: Option<f64>,
+    ao_divergir: Option<String>,
+    bloco_divergir: Option<i32>,
+    sequencia_divergir: Option<String>,
+    atraso_sequencia_divergir: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -4508,13 +4592,13 @@ fn insert_compare_spreadsheet_block(
         "--expected-column".into(),
         expected_column,
         "--source".into(),
-        "ultimo_ocr".into(),
+        source.unwrap_or_else(|| "ultimo_ocr".into()),
         "--comparison-mode".into(),
         comparison_mode.unwrap_or_else(|| "texto".into()),
         "--status-column".into(),
-        status_column.unwrap_or_else(|| "Status".into()),
+        status_column.unwrap_or_default(),
         "--note-column".into(),
-        note_column.unwrap_or_else(|| "Observacao".into()),
+        note_column.unwrap_or_default(),
         "--delay".into(),
         delay.to_string(),
     ]);
@@ -4525,6 +4609,7 @@ fn insert_compare_spreadsheet_block(
         }
     }
     append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_compare_diverge_args(&mut args, ao_divergir, bloco_divergir, sequencia_divergir, atraso_sequencia_divergir);
     run_helper_json(&root, &args)
 }
 
@@ -4855,6 +4940,13 @@ fn update_image_click_block(
     offset_y: i32,
     janela_alvo: Option<String>,
     texto_ocr_esperado: Option<String>,
+    leitura_relativa_ativa: Option<bool>,
+    leitura_relativa_lado: Option<String>,
+    leitura_relativa_largura: Option<i32>,
+    leitura_relativa_altura: Option<i32>,
+    leitura_relativa_offset_x: Option<i32>,
+    leitura_relativa_offset_y: Option<i32>,
+    leitura_relativa_salvar_em: Option<String>,
     ao_nao_encontrar: String,
     sequencia_nao_encontrar: Option<String>,
     bloco_nao_encontrar: Option<i32>,
@@ -4892,6 +4984,20 @@ fn update_image_click_block(
             janela_alvo.unwrap_or_default(),
             "--texto-ocr-esperado".into(),
             texto_ocr_esperado.unwrap_or_default(),
+            "--leitura-relativa-ativa".into(),
+            leitura_relativa_ativa.unwrap_or(false).to_string(),
+            "--leitura-relativa-lado".into(),
+            leitura_relativa_lado.unwrap_or_else(|| "direita".to_string()),
+            "--leitura-relativa-largura".into(),
+            leitura_relativa_largura.unwrap_or(140).max(16).to_string(),
+            "--leitura-relativa-altura".into(),
+            leitura_relativa_altura.unwrap_or(40).max(12).to_string(),
+            "--leitura-relativa-offset-x".into(),
+            leitura_relativa_offset_x.unwrap_or(0).to_string(),
+            "--leitura-relativa-offset-y".into(),
+            leitura_relativa_offset_y.unwrap_or(0).to_string(),
+            "--leitura-relativa-salvar-em".into(),
+            leitura_relativa_salvar_em.unwrap_or_default(),
             "--ao-nao-encontrar".into(),
             ao_nao_encontrar,
     ];
@@ -5013,6 +5119,7 @@ fn update_compare_spreadsheet_block(
     workbook: Option<String>,
     sheet: String,
     expected_column: String,
+    source: Option<String>,
     comparison_mode: Option<String>,
     status_column: Option<String>,
     note_column: Option<String>,
@@ -5021,6 +5128,10 @@ fn update_compare_spreadsheet_block(
     bloco_sucesso: Option<i32>,
     sequencia_sucesso: Option<String>,
     atraso_sequencia_sucesso: Option<f64>,
+    ao_divergir: Option<String>,
+    bloco_divergir: Option<i32>,
+    sequencia_divergir: Option<String>,
+    atraso_sequencia_divergir: Option<f64>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -5040,17 +5151,18 @@ fn update_compare_spreadsheet_block(
         "--expected-column".into(),
         expected_column,
         "--source".into(),
-        "ultimo_ocr".into(),
+        source.unwrap_or_else(|| "ultimo_ocr".into()),
         "--comparison-mode".into(),
         comparison_mode.unwrap_or_else(|| "texto".into()),
         "--status-column".into(),
-        status_column.unwrap_or_else(|| "Status".into()),
+        status_column.unwrap_or_default(),
         "--note-column".into(),
-        note_column.unwrap_or_else(|| "Observacao".into()),
+        note_column.unwrap_or_default(),
         "--delay".into(),
         delay.to_string(),
     ]);
     append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_compare_diverge_args(&mut args, ao_divergir, bloco_divergir, sequencia_divergir, atraso_sequencia_divergir);
     run_helper_json(&root, &args)
 }
 
@@ -5444,6 +5556,13 @@ fn test_image_recognition(
     perfil_busca: Option<String>,
     janela_alvo: Option<String>,
     texto_ocr_esperado: Option<String>,
+    leitura_relativa_ativa: Option<bool>,
+    leitura_relativa_lado: Option<String>,
+    leitura_relativa_largura: Option<i64>,
+    leitura_relativa_altura: Option<i64>,
+    leitura_relativa_offset_x: Option<i64>,
+    leitura_relativa_offset_y: Option<i64>,
+    leitura_relativa_salvar_em: Option<String>,
 ) -> Result<String, String> {
     let root = workspace_root(&app);
     let script_path = root.join("executar_automacao.py");
@@ -5483,6 +5602,22 @@ fn test_image_recognition(
     }
     if let Some(text) = texto_ocr_esperado.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
         command.arg("--texto-ocr-esperado").arg(text);
+    }
+    command
+        .arg("--leitura-relativa-ativa")
+        .arg(if leitura_relativa_ativa.unwrap_or(false) { "true" } else { "false" })
+        .arg("--leitura-relativa-lado")
+        .arg(leitura_relativa_lado.unwrap_or_else(|| "livre".to_string()))
+        .arg("--leitura-relativa-largura")
+        .arg(leitura_relativa_largura.unwrap_or(140).to_string())
+        .arg("--leitura-relativa-altura")
+        .arg(leitura_relativa_altura.unwrap_or(40).to_string())
+        .arg("--leitura-relativa-offset-x")
+        .arg(leitura_relativa_offset_x.unwrap_or(0).to_string())
+        .arg("--leitura-relativa-offset-y")
+        .arg(leitura_relativa_offset_y.unwrap_or(0).to_string());
+    if let Some(name) = leitura_relativa_salvar_em.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+        command.arg("--leitura-relativa-salvar-em").arg(name);
     }
     configure_no_window(&mut command);
 
