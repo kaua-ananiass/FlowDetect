@@ -5,4 +5,3 @@ opencv-python
 pillow
 pytesseract
 reportlab
-playwright

@@ -43,29 +43,23 @@ INSTRUCOES_PADRAO = [
     "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura.",
 ]
 TIPOS_SEQUENCIA_PLANILHA = {"sequencia_planilha"}
-TIPOS_ESCRITA_PLANILHA = {"escrever_planilha"}
-TIPOS_COMPARACAO_PLANILHA = {"comparar_planilha_tela"}
 TIPOS_MARCADORES_LOOP = {"inicio_loop", "fim_loop"}
 TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
 TIPOS_VERIFICACAO = {"verificar_estado_botao"}
 TIPOS_CHROME = {"chrome_elemento_html"}
 TIPOS_PREPARACAO_TELA = {"abrir_url", "abrir_programa"}
-TIPOS_DOWNLOAD = {"salvar_download"}
 TIPOS_SUPORTADOS_RUNTIME = {
     "texto_livre",
     "tecla",
     "atalho",
     *TIPOS_SEQUENCIA_PLANILHA,
-    *TIPOS_ESCRITA_PLANILHA,
-    *TIPOS_COMPARACAO_PLANILHA,
     *TIPOS_MARCADORES_LOOP,
     *TIPOS_MOUSE,
     *TIPOS_IMAGEM,
     *TIPOS_VERIFICACAO,
     *TIPOS_CHROME,
     *TIPOS_PREPARACAO_TELA,
-    *TIPOS_DOWNLOAD,
 }
 MODOS_EXECUCAO_SEQUENCIA = {"normal", "loop_planilha"}
 ARQUIVOS_RUNTIME_ATUALIZACAO = [
@@ -439,32 +433,19 @@ def localizar_item_biblioteca(biblioteca, automacao_id):
 def copiar_arquivo_se_existir(origem, destino):
     origem = Path(origem)
     destino = Path(destino)
-    if not origem.exists() or origem.name.startswith("~$"):
-        return False
+    if not origem.exists():
+        return
     destino.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        shutil.copy2(origem, destino)
-        return True
-    except OSError:
-        # Arquivos abertos pelo Excel/Windows podem ficar bloqueados. Nao deixe
-        # isso impedir a troca de automacao; o usuario pode fechar e recarregar.
-        return False
+    shutil.copy2(origem, destino)
 
 
 def sincronizar_diretorio(origem, destino):
     origem = Path(origem)
     destino = Path(destino)
-    if not origem.exists():
-        return
-    destino.mkdir(parents=True, exist_ok=True)
-    for caminho in origem.rglob("*"):
-        if caminho.is_dir() or caminho.name.startswith("~$"):
-            continue
-        try:
-            relativo = caminho.relative_to(origem)
-        except ValueError:
-            continue
-        copiar_arquivo_se_existir(caminho, destino / relativo)
+    if destino.exists():
+        shutil.rmtree(destino, ignore_errors=True)
+    if origem.exists():
+        shutil.copytree(origem, destino, dirs_exist_ok=True)
 
 
 def contar_blocos_payload(payload):
@@ -536,9 +517,11 @@ def carregar_automacao_na_raiz(automacao_id):
     pasta = diretorio_automacao(automacao_id)
     copiar_arquivo_se_existir(pasta / ARQUIVO_PLANILHA.name, ARQUIVO_PLANILHA)
     if (pasta / DIRETORIO_PLANILHAS.name).exists():
-        sincronizar_diretorio(pasta / DIRETORIO_PLANILHAS.name, DIRETORIO_PLANILHAS)
+        DIRETORIO_PLANILHAS.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(pasta / DIRETORIO_PLANILHAS.name, DIRETORIO_PLANILHAS, dirs_exist_ok=True)
     if (pasta / PASTA_IMAGENS.name).exists():
-        sincronizar_diretorio(pasta / PASTA_IMAGENS.name, PASTA_IMAGENS)
+        PASTA_IMAGENS.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(pasta / PASTA_IMAGENS.name, PASTA_IMAGENS, dirs_exist_ok=True)
     definir_automacao_ativa(automacao_id)
     salvar_payload(payload)
     return payload
@@ -684,19 +667,6 @@ def normalizar_id_planilha(workbook_file=None):
     return texto
 
 
-def normalizar_origem_ocr_comparacao(source=None):
-    texto = str(source or "ultimo_ocr").strip()
-    if not texto or texto in {"ultimo_ocr", "ocr_tela"}:
-        return texto or "ultimo_ocr"
-    compacto = texto.lower().replace(" ", "")
-    encontrado = re.search(r"(?:ocr_bloco_|bloco[:_-]?)(\d+)$", compacto)
-    if encontrado:
-        return f"ocr_bloco_{encontrado.group(1)}"
-    if compacto.isdigit():
-        return f"ocr_bloco_{compacto}"
-    return texto
-
-
 def resolver_planilha(workbook_file=None):
     workbook_id = normalizar_id_planilha(workbook_file)
     caminho = Path(workbook_id)
@@ -812,7 +782,7 @@ def listar_arquivos_planilha():
             }
         )
 
-    if ARQUIVO_PLANILHA.exists() and ARQUIVO_PLANILHA.name not in vistos:
+    if ARQUIVO_PLANILHA.name not in vistos:
         encontrados.insert(
             0,
             {
@@ -847,7 +817,7 @@ def eh_texto_simples(nome):
 
 def normalizar_acao_apos_item(texto):
     texto_limpo = (texto or "").strip().lower()
-    if not texto_limpo or texto_limpo in {"nenhuma", "somente_contexto", "contexto", "so_contexto"}:
+    if not texto_limpo or texto_limpo == "nenhuma":
         return []
     return [parte.strip() for parte in texto_limpo.replace(" ", "").split("+") if parte.strip()]
 
@@ -1025,9 +995,6 @@ def gerar_seletores(elemento):
     aria_labelledby = str(elemento.get("aria_labelledby", "")).strip()
     element_id = str(elemento.get("id", "")).strip()
     texto = str(elemento.get("text", "")).strip()
-    texto_proximo = str(elemento.get("texto_proximo", "") or elemento.get("nearby_text", "")).strip()
-    css_capturado = str(elemento.get("css_selector", "") or elemento.get("css", "")).strip()
-    xpath_capturado = str(elemento.get("xpath", "")).strip()
     tipo = str(elemento.get("type", "")).strip().lower()
 
     adicionar(
@@ -1078,14 +1045,6 @@ def gerar_seletores(elemento):
             "media",
             extra={"seletor_css": tag},
         )
-    if texto_proximo:
-        adicionar(
-            "nearby_text",
-            texto_proximo,
-            f"page.get_by_text({texto_proximo!r})",
-            "media",
-            "Texto perto do elemento capturado.",
-        )
     if role and texto:
         adicionar(
             "role",
@@ -1093,16 +1052,6 @@ def gerar_seletores(elemento):
             f"page.get_by_role({role!r}, name={texto!r})",
             "alta",
             extra={"role": role},
-        )
-
-    if css_capturado:
-        adicionar(
-            "css",
-            css_capturado,
-            f"page.locator({css_capturado!r})",
-            "media",
-            "CSS capturado direto da pagina.",
-            extra={"seletor_css": css_capturado},
         )
 
     atributos_css = []
@@ -1133,25 +1082,24 @@ def gerar_seletores(elemento):
         predicados_xpath.append(f"normalize-space(.)={xpath_literal(texto)}")
     if not predicados_xpath:
         predicados_xpath.append("1=1")
-    xpath = xpath_capturado or f"//{tag}[{' and '.join(predicados_xpath)}]"
+    xpath = f"//{tag}[{' and '.join(predicados_xpath)}]"
     adicionar(
         "xpath",
         xpath,
         f"page.locator({f'xpath={xpath}'!r})",
-        "baixa" if not xpath_capturado else "media",
-        "XPath deve ser ultimo recurso." if not xpath_capturado else "XPath capturado direto da pagina.",
+        "baixa",
+        "XPath deve ser ultimo recurso.",
     )
 
     prioridade = {
-        "id": 0,
+        "placeholder": 0,
         "name": 1,
-        "placeholder": 2,
-        "aria-label": 3,
-        "text": 4,
-        "nearby_text": 5,
+        "aria-label": 2,
+        "role": 3,
+        "labelledby": 4,
+        "id": 5,
         "css": 6,
-        "labelledby": 7,
-        "role": 8,
+        "text": 7,
         "xpath": 8,
     }
     confianca_score = {"alta": 0, "media": 1, "baixa": 2}
@@ -1242,21 +1190,7 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         coluna = (metadados or {}).get("coluna", "Coluna")
         quantidade = len((metadados or {}).get("valores", []))
         acao = (metadados or {}).get("acao_apos_item_texto") or "nenhuma"
-        if (metadados or {}).get("modo_loop") == "somente_contexto":
-            return f"[LOOP DADOS:{coluna} x{quantidade} | sem digitar]"
         return f"[PLANILHA:{coluna} x{quantidade} | apos:{acao}]"
-
-    if tipo_evento in TIPOS_ESCRITA_PLANILHA:
-        detalhes = metadados or {}
-        coluna = str(detalhes.get("coluna", "Coluna") or "Coluna")
-        valor = str(detalhes.get("valor", "") or "")
-        return f"[ESCREVER PLANILHA:{coluna}='{valor[:28]}' | linha atual]"
-
-    if tipo_evento in TIPOS_COMPARACAO_PLANILHA:
-        detalhes = metadados or {}
-        coluna = str(detalhes.get("coluna_esperada", "Coluna") or "Coluna")
-        status = str(detalhes.get("coluna_status", "Status") or "Status")
-        return f"[CONFERIR:{coluna} x OCR | resultado:{status}]"
 
     if tipo_evento in TIPOS_MOUSE:
         detalhes = metadados or {}
@@ -1280,7 +1214,6 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         sequencia_falha = str(detalhes.get("sequencia_nao_encontrar", "") or "").strip()
         bloco_falha = str(detalhes.get("bloco_nao_encontrar", "") or "").strip()
         janela_alvo = str(detalhes.get("janela_alvo", "") or "").strip()
-        texto_ocr = str(detalhes.get("texto_ocr_esperado", "") or "").strip()
         sufixo = "2 cliques" if cliques >= 2 else ("clicar" if clicar else "localizar")
         alvo = ""
         if acao == "ir_para_sequencia" and sequencia_falha:
@@ -1288,10 +1221,9 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         elif acao == "ir_para_bloco" and bloco_falha:
             alvo = f" -> bloco {bloco_falha}"
         janela = f" | janela:{janela_alvo}" if janela_alvo else ""
-        ocr = f" | OCR:{texto_ocr}" if texto_ocr else ""
         return (
             f"[IMAGEM:{imagem} | {sufixo} | timeout={timeout:g}s | conf={confianca:g} "
-            f"| perfil:{perfil_busca} | area:{modo_area_busca}{janela}{ocr} | falha:{acao}{alvo}]"
+            f"| perfil:{perfil_busca} | area:{modo_area_busca}{janela} | falha:{acao}{alvo}]"
         )
 
     if tipo_evento in TIPOS_CHROME:
@@ -1316,10 +1248,8 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         url = str(detalhes.get("url", "") or "").strip()
         navegador = str(detalhes.get("navegador", "padrao") or "padrao")
         modo = str(detalhes.get("modo_abertura", "nova_janela") or "nova_janela")
-        tela_cheia = bool(detalhes.get("tela_cheia", False))
         aguardar = float(detalhes.get("aguardar_segundos", 3) or 0)
-        sufixo_tela = " | tela cheia" if tela_cheia else ""
-        return f"[ABRIR URL:{url[:64]} | {navegador} | {modo}{sufixo_tela} | aguardar={aguardar:g}s]"
+        return f"[ABRIR URL:{url[:64]} | {navegador} | {modo} | aguardar={aguardar:g}s]"
 
     if tipo_evento == "abrir_programa":
         detalhes = metadados or {}
@@ -1329,14 +1259,6 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         sufixo = f" | params:{parametros[:32]}" if parametros else ""
         return f"[ABRIR PROGRAMA:{caminho}{sufixo} | aguardar={aguardar:g}s]"
 
-    if tipo_evento == "salvar_download":
-        detalhes = metadados or {}
-        extensao = str(detalhes.get("extensao", ".pdf") or ".pdf").strip() or ".pdf"
-        destino = str(detalhes.get("pasta_destino", "") or "").strip() or "Destino manual"
-        nome = str(detalhes.get("nome_arquivo", "") or "").strip() or "nome original"
-        timeout = float(detalhes.get("timeout", 60) or 60)
-        return f"[SALVAR DOWNLOAD:{extensao} -> {destino[:42]} | nome:{nome[:32]} | timeout={timeout:g}s]"
-
     if tipo_evento in TIPOS_VERIFICACAO:
         detalhes = metadados or {}
         ativo = Path(str(detalhes.get("imagem_ativo", ""))).name or "ativo"
@@ -1344,9 +1266,6 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         return f"[ESTADO:{ativo}/{desativado}]"
 
     repeticoes = max(1, int((metadados or {}).get("repeticoes", 1) or 1))
-
-    if tipo_evento in {"tecla", "atalho"} and not teclas:
-        return "[TECLA]"
 
     if len(teclas) == 1:
         nome = teclas[0]
@@ -1386,25 +1305,6 @@ def montar_comando_python(teclas, tipo_evento, texto_livre=None, metadados=None)
             f"intervalo_entre_itens={intervalo_entre_itens!r})"
         )
 
-    if tipo_evento in TIPOS_ESCRITA_PLANILHA:
-        detalhes = metadados or {}
-        return (
-            "escrever_planilha("
-            f"aba={str(detalhes.get('aba', ''))!r}, "
-            f"coluna={str(detalhes.get('coluna', ''))!r}, "
-            f"valor={str(detalhes.get('valor', ''))!r}, "
-            "linha='loop_atual')"
-        )
-
-    if tipo_evento in TIPOS_COMPARACAO_PLANILHA:
-        detalhes = metadados or {}
-        return (
-            "comparar_planilha_com_ocr("
-            f"coluna_esperada={str(detalhes.get('coluna_esperada', ''))!r}, "
-            f"origem_ocr={str(detalhes.get('origem_tela', 'ultimo_ocr'))!r}, "
-            f"status={str(detalhes.get('coluna_status', 'Status'))!r})"
-        )
-
     if tipo_evento in TIPOS_MOUSE:
         detalhes = metadados or {}
         x = int(detalhes.get("x", 0))
@@ -1431,7 +1331,6 @@ def montar_comando_python(teclas, tipo_evento, texto_livre=None, metadados=None)
             f"offset_x={int(detalhes.get('offset_x', 0) or 0)!r}, "
             f"offset_y={int(detalhes.get('offset_y', 0) or 0)!r}, "
             f"janela_alvo={str(detalhes.get('janela_alvo', ''))!r}, "
-            f"texto_ocr_esperado={str(detalhes.get('texto_ocr_esperado', ''))!r}, "
             f"ao_nao_encontrar={str(detalhes.get('ao_nao_encontrar', 'parar'))!r}, "
             f"sequencia_nao_encontrar={str(detalhes.get('sequencia_nao_encontrar', ''))!r}, "
             f"bloco_nao_encontrar={detalhes.get('bloco_nao_encontrar', '')!r}, "
@@ -1470,18 +1369,6 @@ def montar_comando_python(teclas, tipo_evento, texto_livre=None, metadados=None)
             ")"
         )
 
-    if tipo_evento == "salvar_download":
-        detalhes = metadados or {}
-        return (
-            "salvar_download("
-            f"pasta_origem={str(detalhes.get('pasta_origem', ''))!r}, "
-            f"extensao={str(detalhes.get('extensao', '.pdf') or '.pdf')!r}, "
-            f"pasta_destino={str(detalhes.get('pasta_destino', ''))!r}, "
-            f"nome_arquivo={str(detalhes.get('nome_arquivo', ''))!r}, "
-            f"timeout={float(detalhes.get('timeout', 60) or 60)!r}"
-            ")"
-        )
-
     if tipo_evento in TIPOS_VERIFICACAO:
         detalhes = metadados or {}
         return (
@@ -1508,63 +1395,11 @@ def montar_script_python(eventos):
     linhas = [
         "import pyautogui",
         "import time",
-        "import ctypes",
         "",
         f"INTERVALO_TEXTO = {INTERVALO_TEXTO}",
         "",
         "",
-        "def definir_texto_clipboard_windows(texto):",
-        '    if not hasattr(ctypes, "windll"):',
-        "        return False",
-        "    user32 = ctypes.windll.user32",
-        "    kernel32 = ctypes.windll.kernel32",
-        "    kernel32.GlobalAlloc.restype = ctypes.c_void_p",
-        "    kernel32.GlobalLock.restype = ctypes.c_void_p",
-        "    user32.SetClipboardData.restype = ctypes.c_void_p",
-        '    dados = (str(texto or "") + "\\0").encode("utf-16-le")',
-        "    memoria = None",
-        "    try:",
-        "        aberto = False",
-        "        for _ in range(6):",
-        "            if user32.OpenClipboard(None):",
-        "                aberto = True",
-        "                break",
-        "            time.sleep(0.01)",
-        "        if not aberto:",
-        "            return False",
-        "        user32.EmptyClipboard()",
-        "        memoria = kernel32.GlobalAlloc(0x0002, len(dados))",
-        "        if not memoria:",
-        "            return False",
-        "        destino = kernel32.GlobalLock(memoria)",
-        "        if not destino:",
-        "            return False",
-        "        ctypes.memmove(destino, dados, len(dados))",
-        "        kernel32.GlobalUnlock(memoria)",
-        "        if not user32.SetClipboardData(13, memoria):",
-        "            return False",
-        "        memoria = None",
-        "        return True",
-        "    except Exception:",
-        "        return False",
-        "    finally:",
-        "        try:",
-        "            user32.CloseClipboard()",
-        "        except Exception:",
-        "            pass",
-        "        if memoria:",
-        "            try:",
-        "                kernel32.GlobalFree(memoria)",
-        "            except Exception:",
-        "                pass",
-        "",
-        "",
         "def digitar_texto(texto):",
-        "    texto = str(texto)",
-        "    if texto and definir_texto_clipboard_windows(texto):",
-        '        pyautogui.hotkey("ctrl", "v")',
-        "        time.sleep(0.008)",
-        "        return",
         "    for caractere in texto:",
         '        if caractere == "\\r":',
         "            continue",
@@ -1829,13 +1664,9 @@ def carregar_planilha_meta():
                     workbook.close()
             except PermissionError:
                 workbook_meta["erro"] = "Planilha em uso no Excel."
-            except Exception as erro:
-                workbook_meta["erro"] = f"Nao foi possivel ler esta planilha. Feche o Excel e salve novamente. Detalhe: {erro}"
         workbooks.append(workbook_meta)
 
-    workbook_padrao = next((item for item in workbooks if item["id"] == ARQUIVO_PLANILHA.name), None)
-    if workbook_padrao is None:
-        workbook_padrao = next((item for item in workbooks if item.get("exists")), workbooks[0] if workbooks else None)
+    workbook_padrao = next((item for item in workbooks if item["id"] == ARQUIVO_PLANILHA.name), workbooks[0] if workbooks else None)
     return {
         "path": str(ARQUIVO_PLANILHA),
         "exists": bool(workbook_padrao["exists"]) if workbook_padrao else ARQUIVO_PLANILHA.exists(),
@@ -1862,22 +1693,13 @@ def carregar_planilha_preview(sheet_name=None, limit=200, workbook_file=None):
     if not caminho_planilha.exists():
         return preview
 
+    workbook = load_workbook(caminho_planilha, read_only=True, data_only=True)
     try:
-        workbook = load_workbook(caminho_planilha, read_only=True, data_only=True)
-    except PermissionError:
-        preview["erro"] = "Planilha em uso no Excel. Feche o arquivo e tente atualizar novamente."
-        return preview
-    except Exception as erro:
-        preview["erro"] = f"Nao foi possivel ler a planilha. Feche o Excel, salve novamente e atualize. Detalhe: {erro}"
-        return preview
-    try:
-        worksheets = list(workbook.worksheets)
-        worksheet_names = [sheet.title for sheet in worksheets]
-        if not worksheet_names:
+        if not workbook.sheetnames:
             return preview
 
-        selected_sheet = sheet_name if sheet_name in worksheet_names else worksheet_names[0]
-        if selected_sheet not in worksheet_names:
+        selected_sheet = sheet_name or workbook.sheetnames[0]
+        if selected_sheet not in workbook.sheetnames:
             raise ValueError(f"Aba nao encontrada: {selected_sheet}")
 
         sheet = workbook[selected_sheet]
@@ -2012,12 +1834,8 @@ def criar_bloco_texto(
     bloco_sucesso="",
     sequencia_sucesso="",
     atraso_sequencia_sucesso=0,
-    editavel_execucao=False,
-    rotulo_execucao="",
 ):
     detalhes = aplicar_fluxo_sucesso({}, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
-    detalhes["editavel_execucao"] = bool(editavel_execucao)
-    detalhes["rotulo_execucao"] = str(rotulo_execucao or "").strip()
     return {
         "ordem": 0,
         "sequencia": normalizar_nome_sequencia(sequencia),
@@ -2030,17 +1848,13 @@ def criar_bloco_texto(
     }
 
 
-def parse_keys_string(keys_string):
+def parse_keys_string(keys_string, permitir_vazio=False):
     partes = [parte.strip().lower() for parte in (keys_string or "").replace(" ", "").split("+") if parte.strip()]
     if not partes:
+        if permitir_vazio:
+            return []
         raise ValueError("Informe uma tecla ou atalho.")
     return partes
-
-
-def parse_bool_value(value):
-    if isinstance(value, bool):
-        return value
-    return str(value or "").strip().lower() in {"1", "true", "sim", "yes", "on"}
 
 
 def criar_bloco_teclas(
@@ -2053,19 +1867,20 @@ def criar_bloco_teclas(
     sequencia_sucesso="",
     atraso_sequencia_sucesso=0,
 ):
-    teclas = parse_keys_string(keys_string) if str(keys_string or "").strip() else []
+    teclas = parse_keys_string(keys_string, permitir_vazio=True)
     tipo = "atalho" if len(teclas) > 1 else "tecla"
     detalhes = aplicar_fluxo_sucesso({
         "repeticoes": max(1, int(repeticoes or 1)),
     }, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
+    texto = formatar_evento(teclas, tipo, metadados=detalhes) if teclas else "Configurar tecla"
     return {
         "ordem": 0,
         "sequencia": normalizar_nome_sequencia(sequencia),
         "tipo": tipo,
         "teclas": teclas,
-        "texto": formatar_evento(teclas, tipo, metadados=detalhes),
+        "texto": texto,
         "intervalo_antes": round(float(delay), 3),
-        "comando_python": montar_comando_python(teclas, tipo, metadados=detalhes),
+        "comando_python": montar_comando_python(teclas, tipo, metadados=detalhes) if teclas else "# Configure a tecla deste bloco antes de executar",
         "detalhes": detalhes,
     }
 
@@ -2153,7 +1968,7 @@ def criar_bloco_clicar_imagem(
         "janela_alvo": str(janela_alvo or "").strip(),
         "texto_ocr_esperado": str(texto_ocr_esperado or "").strip(),
         "leitura_relativa": {
-            "ativo": parse_bool_value(leitura_relativa_ativa),
+            "ativo": str(leitura_relativa_ativa).strip().lower() in {"1", "true", "sim", "yes"},
             "lado": str(leitura_relativa_lado or "livre").strip().lower() or "livre",
             "largura": max(16, int(leitura_relativa_largura or 140)),
             "altura": max(12, int(leitura_relativa_altura or 40)),
@@ -2236,56 +2051,14 @@ def criar_bloco_chrome_elemento_html(
     delay=0,
     sequencia="principal",
 ):
-    html_original_limpo = str(html_original or "").strip()
-    elemento_informado = elemento if isinstance(elemento, dict) else {}
-    alvo_informado = alvo if isinstance(alvo, dict) else {}
-    acao_informada = acao if isinstance(acao, dict) else {}
-
-    if html_original_limpo:
-        html_analisado = parse_html_elemento(html_original_limpo)
-    else:
-        # Bloco criado pelo painel rapido: o usuario captura/configura o elemento depois.
-        html_analisado = {
-            "html_original": "",
-            "elemento": {
-                "tag": str(elemento_informado.get("tag") or "elemento"),
-                "type": str(elemento_informado.get("type") or ""),
-                "id": str(elemento_informado.get("id") or ""),
-                "name": str(elemento_informado.get("name") or ""),
-                "placeholder": str(elemento_informado.get("placeholder") or ""),
-                "aria_label": str(elemento_informado.get("aria_label") or ""),
-                "role": str(elemento_informado.get("role") or ""),
-                "text": str(elemento_informado.get("text") or ""),
-                "classes": elemento_informado.get("classes") if isinstance(elemento_informado.get("classes"), list) else [],
-                "attributes": elemento_informado.get("attributes") if isinstance(elemento_informado.get("attributes"), dict) else {},
-            },
-            "tipo_provavel": str(elemento_informado.get("tipo_provavel") or "element"),
-            "seletores": [],
-            "alvo_recomendado": {
-                "metodo": str(alvo_informado.get("metodo") or "css"),
-                "valor": str(alvo_informado.get("valor") or ""),
-                "codigo_playwright": "",
-                "confianca": "baixa",
-                "seletor_css": str(alvo_informado.get("seletor_css") or ""),
-            },
-            "acao_sugerida": {
-                "tipo": str(acao_informada.get("tipo") or "clicar"),
-                "origem_valor": str(acao_informada.get("origem_valor") or "texto_fixo"),
-                "valor": str(acao_informada.get("valor") or ""),
-                "limpar_antes": bool(acao_informada.get("limpar_antes", True)),
-                "pressionar_depois": str(acao_informada.get("pressionar_depois") or ""),
-                "salvar_em": str(acao_informada.get("salvar_em") or ""),
-            },
-            "nome_sugerido": "Chrome/Web: capturar elemento",
-            "confianca": "baixa",
-        }
-
+    html_analisado = parse_html_elemento(html_original)
     elemento_base = dict(html_analisado.get("elemento") or {})
+    elemento_informado = elemento if isinstance(elemento, dict) else {}
     elemento_base.update({chave: valor for chave, valor in elemento_informado.items() if valor not in (None, "")})
 
-    chrome_sem_alvo = not html_original_limpo and not str(alvo_informado.get("valor") or "").strip()
-    seletores = [] if chrome_sem_alvo else gerar_seletores(elemento_base)
+    seletores = gerar_seletores(elemento_base)
     seletores_por_metodo = {str(item.get("metodo")): item for item in seletores}
+    alvo_informado = alvo if isinstance(alvo, dict) else {}
     metodo_alvo = str(alvo_informado.get("metodo") or (html_analisado.get("alvo_recomendado") or {}).get("metodo") or "css")
     alvo_recomendado = dict(seletores_por_metodo.get(metodo_alvo) or html_analisado.get("alvo_recomendado") or {})
     alvo_final = {**alvo_recomendado, **alvo_informado}
@@ -2298,6 +2071,7 @@ def criar_bloco_chrome_elemento_html(
         alvo_final["seletor_css"] = alvo_recomendado.get("seletor_css", "")
 
     acao_sugerida = dict(html_analisado.get("acao_sugerida") or {})
+    acao_informada = acao if isinstance(acao, dict) else {}
     acao_final = {**acao_sugerida, **acao_informada}
     acao_final["tipo"] = str(acao_final.get("tipo") or acao_sugerida.get("tipo") or "clicar")
     acao_final["origem_valor"] = str(acao_final.get("origem_valor") or "texto_fixo")
@@ -2308,7 +2082,7 @@ def criar_bloco_chrome_elemento_html(
 
     detalhes = {
         "nome": str(nome or html_analisado.get("nome_sugerido") or "Chrome: Elemento HTML").strip() or "Chrome: Elemento HTML",
-        "html_original": str(html_original_limpo or html_analisado.get("html_original") or "").strip(),
+        "html_original": str(html_original or html_analisado.get("html_original") or "").strip(),
         "elemento": elemento_base,
         "tipo_provavel": str(html_analisado.get("tipo_provavel") or classificar_tipo_elemento_html(elemento_base)),
         "seletores": seletores,
@@ -2358,7 +2132,6 @@ def criar_bloco_abrir_url(
     url,
     navegador="padrao",
     modo_abertura="nova_janela",
-    tela_cheia=False,
     aguardar_segundos=3,
     delay=0,
     sequencia="principal",
@@ -2368,11 +2141,12 @@ def criar_bloco_abrir_url(
     atraso_sequencia_sucesso=0,
 ):
     url_normalizada = str(url or "").strip()
+    if not url_normalizada:
+        raise ValueError("Informe a URL que sera aberta.")
     detalhes = aplicar_fluxo_sucesso({
         "url": url_normalizada,
         "navegador": normalizar_navegador_url(navegador),
         "modo_abertura": normalizar_modo_abertura_url(modo_abertura),
-        "tela_cheia": bool(tela_cheia),
         "aguardar_segundos": max(0.0, float(aguardar_segundos or 0)),
     }, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
     return {
@@ -2399,6 +2173,8 @@ def criar_bloco_abrir_programa(
     atraso_sequencia_sucesso=0,
 ):
     caminho_normalizado = str(caminho or "").strip()
+    if not caminho_normalizado:
+        raise ValueError("Informe o caminho do programa que sera aberto.")
     detalhes = aplicar_fluxo_sucesso({
         "caminho": caminho_normalizado,
         "parametros": str(parametros or "").strip(),
@@ -2412,47 +2188,6 @@ def criar_bloco_abrir_programa(
         "texto": formatar_evento(["abrir_programa"], "abrir_programa", metadados=detalhes),
         "intervalo_antes": round(float(delay), 3),
         "comando_python": montar_comando_python(["abrir_programa"], "abrir_programa", metadados=detalhes),
-        "detalhes": detalhes,
-    }
-
-
-def normalizar_extensao_download(extensao):
-    valor = str(extensao or ".pdf").strip().lower()
-    if not valor or valor == "*":
-        return "*"
-    return valor if valor.startswith(".") else f".{valor}"
-
-
-def criar_bloco_salvar_download(
-    pasta_origem="",
-    extensao=".pdf",
-    pasta_destino="",
-    nome_arquivo="{empresa}_{competencia}_FGTS.pdf",
-    timeout=60,
-    delay=0,
-    sequencia="principal",
-    ao_sucesso="continuar",
-    bloco_sucesso="",
-    sequencia_sucesso="",
-    atraso_sequencia_sucesso=0,
-):
-    pasta_destino_normalizada = str(pasta_destino or "").strip()
-    detalhes = aplicar_fluxo_sucesso({
-        "pasta_origem": str(pasta_origem or "").strip(),
-        "extensao": normalizar_extensao_download(extensao),
-        "pasta_destino": pasta_destino_normalizada,
-        "nome_arquivo": str(nome_arquivo or "").strip(),
-        "timeout": max(1.0, float(timeout or 60)),
-        "ultimo_arquivo_variavel": "ultimo_download",
-    }, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
-    return {
-        "ordem": 0,
-        "sequencia": normalizar_nome_sequencia(sequencia),
-        "tipo": "salvar_download",
-        "teclas": ["salvar_download"],
-        "texto": formatar_evento(["salvar_download"], "salvar_download", metadados=detalhes),
-        "intervalo_antes": round(float(delay), 3),
-        "comando_python": montar_comando_python(["salvar_download"], "salvar_download", metadados=detalhes),
         "detalhes": detalhes,
     }
 
@@ -2473,14 +2208,12 @@ def criar_bloco_planilha(
     workbook_id = normalizar_id_planilha(workbook_file)
     valores = valores_da_planilha(sheet, column, workbook_id)
     acao_apos_item = normalizar_acao_apos_item(after_action)
-    modo_loop = "somente_contexto" if str(after_action or "").strip().lower() in {"somente_contexto", "contexto", "so_contexto"} else "digitar_coluna"
     detalhes = aplicar_fluxo_sucesso({
         "arquivo": workbook_id,
         "aba": sheet,
         "coluna": column,
         "valores": valores,
         "origem": "coluna_inteira",
-        "modo_loop": modo_loop,
         "linhas_selecionadas": [],
         "acao_apos_item": acao_apos_item,
         "acao_apos_item_texto": (after_action or "nenhuma").strip().lower() or "nenhuma",
@@ -2502,115 +2235,8 @@ def criar_bloco_planilha(
     }
 
 
-def criar_bloco_escrever_planilha(
-    sheet,
-    column,
-    value,
-    delay,
-    workbook_file=None,
-    sequencia="principal",
-    ao_sucesso="continuar",
-    bloco_sucesso="",
-    sequencia_sucesso="",
-    atraso_sequencia_sucesso=0,
-):
-    workbook_id = normalizar_id_planilha(workbook_file)
-    detalhes = aplicar_fluxo_sucesso({
-        "arquivo": workbook_id,
-        "aba": str(sheet or "").strip(),
-        "coluna": str(column or "").strip(),
-        "valor": str(value or ""),
-        "modo_linha": "loop_atual",
-        "criar_coluna": True,
-    }, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
-    return {
-        "ordem": 0,
-        "sequencia": normalizar_nome_sequencia(sequencia),
-        "tipo": "escrever_planilha",
-        "teclas": [f"escrever_planilha:{column}"],
-        "texto": formatar_evento([f"escrever_planilha:{column}"], "escrever_planilha", metadados=detalhes),
-        "intervalo_antes": round(float(delay), 3),
-        "comando_python": montar_comando_python(
-            [f"escrever_planilha:{column}"],
-            "escrever_planilha",
-            metadados=detalhes,
-        ),
-        "detalhes": detalhes,
-    }
-
-
-def criar_bloco_comparar_planilha_tela(
-    sheet,
-    expected_column,
-    delay,
-    workbook_file=None,
-    sequencia="principal",
-    source="ultimo_ocr",
-    comparison_mode="texto",
-    status_column="",
-    note_column="",
-    ok_value="OK",
-    fail_value="Divergente",
-    ao_sucesso="continuar",
-    bloco_sucesso="",
-    sequencia_sucesso="",
-    atraso_sequencia_sucesso=0,
-    ao_divergir="continuar",
-    bloco_divergir="",
-    sequencia_divergir="",
-    atraso_sequencia_divergir=0,
-):
-    workbook_id = normalizar_id_planilha(workbook_file)
-    detalhes = aplicar_fluxo_sucesso({
-        "arquivo": workbook_id,
-        "aba": str(sheet or "").strip(),
-        "coluna_esperada": str(expected_column or "").strip(),
-        "origem_tela": normalizar_origem_ocr_comparacao(source),
-        "modo_comparacao": str(comparison_mode or "texto").strip().lower() or "texto",
-        "coluna_status": str(status_column or "").strip(),
-        "coluna_observacao": str(note_column or "").strip(),
-        "valor_ok": str(ok_value or "OK"),
-        "valor_divergente": str(fail_value or "Divergente"),
-        "ao_divergir": str(ao_divergir or "continuar").strip().lower() or "continuar",
-        "bloco_divergir": bloco_divergir or "",
-        "sequencia_divergir": normalizar_nome_sequencia(sequencia_divergir) if str(sequencia_divergir or "").strip() else "",
-        "atraso_antes_sequencia_divergir": round(float(atraso_sequencia_divergir or 0), 3),
-    }, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
-    return {
-        "ordem": 0,
-        "sequencia": normalizar_nome_sequencia(sequencia),
-        "tipo": "comparar_planilha_tela",
-        "teclas": [f"comparar_planilha:{expected_column}"],
-        "texto": formatar_evento([f"comparar_planilha:{expected_column}"], "comparar_planilha_tela", metadados=detalhes),
-        "intervalo_antes": round(float(delay), 3),
-        "comando_python": montar_comando_python(
-            [f"comparar_planilha:{expected_column}"],
-            "comparar_planilha_tela",
-            metadados=detalhes,
-        ),
-        "detalhes": detalhes,
-    }
-
-
-def criar_bloco_marcador_loop(
-    tipo,
-    delay=0,
-    sequencia="principal",
-    ao_sucesso="continuar",
-    bloco_sucesso="",
-    sequencia_sucesso="",
-    atraso_sequencia_sucesso=0,
-):
+def criar_bloco_marcador_loop(tipo, delay=0, sequencia="principal"):
     tipo_normalizado = "inicio_loop" if str(tipo or "").strip().lower() == "inicio_loop" else "fim_loop"
-    detalhes = {}
-    if tipo_normalizado == "fim_loop":
-        detalhes = aplicar_fluxo_sucesso(
-            {},
-            ao_sucesso,
-            bloco_sucesso,
-            sequencia_sucesso,
-            atraso_sequencia_sucesso,
-        )
     return {
         "ordem": 0,
         "sequencia": normalizar_nome_sequencia(sequencia),
@@ -2619,7 +2245,7 @@ def criar_bloco_marcador_loop(
         "texto": formatar_evento([tipo_normalizado], tipo_normalizado),
         "intervalo_antes": round(float(delay), 3),
         "comando_python": montar_comando_python([tipo_normalizado], tipo_normalizado),
-        "detalhes": detalhes,
+        "detalhes": {},
     }
 
 
@@ -2643,12 +2269,12 @@ def card_do_evento(evento):
         descricao = f"{len(evento.get('texto', ''))} caracteres"
     elif tipo == "atalho":
         titulo = "Atalho"
-        subtitulo = " + ".join(tecla_para_exibicao(tecla) for tecla in evento.get("teclas", [])) or "Configurar atalho"
+        subtitulo = " + ".join(tecla_para_exibicao(tecla) for tecla in evento.get("teclas", []))
         repeticoes = max(1, int(detalhes.get("repeticoes", 1) or 1))
         descricao = "Combinacao de teclas" if repeticoes == 1 else f"Repetir {repeticoes} vezes"
     elif tipo == "tecla":
         titulo = "Tecla"
-        subtitulo = " + ".join(tecla_para_exibicao(tecla) for tecla in evento.get("teclas", [])) or "Configurar tecla"
+        subtitulo = " + ".join(tecla_para_exibicao(tecla) for tecla in evento.get("teclas", []))
         repeticoes = max(1, int(detalhes.get("repeticoes", 1) or 1))
         descricao = "Acao unica" if repeticoes == 1 else f"Repetir {repeticoes} vezes"
     elif tipo == "mouse_click":
@@ -2696,13 +2322,6 @@ def card_do_evento(evento):
             f"Parametros: {resumir_texto(parametros, 48)} | "
             f"Aguarda {float(detalhes.get('aguardar_segundos', 2) or 0):g}s"
         )
-    elif tipo == "salvar_download":
-        titulo = "Salvar download"
-        destino = str(detalhes.get("pasta_destino", "") or "").strip()
-        extensao = str(detalhes.get("extensao", ".pdf") or ".pdf")
-        nome = str(detalhes.get("nome_arquivo", "") or "").strip() or "nome original"
-        subtitulo = f"{extensao} -> {Path(destino).name or destino or 'Destino'}"
-        descricao = f"Nome: {resumir_texto(nome, 44)} | Timeout {float(detalhes.get('timeout', 60) or 60):g}s"
     elif tipo == "verificar_estado_botao":
         titulo = detalhes.get("nome", "Verificar estado do botao")
         subtitulo = (
@@ -2715,32 +2334,14 @@ def card_do_evento(evento):
             f"Nao encontrar: {(detalhes.get('se_nao_encontrar') or {}).get('acao', 'parar')}"
         )
     elif tipo == "sequencia_planilha":
-        somente_contexto = detalhes.get("modo_loop") == "somente_contexto"
-        titulo = "Loop de dados" if somente_contexto else "Loop da planilha"
+        titulo = "Loop da planilha"
         subtitulo = (
             f"{Path(detalhes.get('arquivo', ARQUIVO_PLANILHA.name)).name} • "
             f"{detalhes.get('aba', 'Sheet1')} -> {detalhes.get('coluna', 'Coluna')}"
         )
-        descricao = f"{len(detalhes.get('valores', []))} linhas | apenas carrega a linha atual" if somente_contexto else (
+        descricao = (
             f"{len(detalhes.get('valores', []))} itens | apos item: "
             f"{detalhes.get('acao_apos_item_texto', 'nenhuma')}"
-        )
-    elif tipo == "escrever_planilha":
-        titulo = "Escrever na planilha"
-        subtitulo = (
-            f"{Path(detalhes.get('arquivo', ARQUIVO_PLANILHA.name)).name} - "
-            f"{detalhes.get('aba', 'Sheet1')} -> {detalhes.get('coluna', 'Coluna')}"
-        )
-        descricao = f"Linha atual do loop recebe: {detalhes.get('valor', '')}"
-    elif tipo == "comparar_planilha_tela":
-        titulo = "Conferir valor"
-        subtitulo = (
-            f"{Path(detalhes.get('arquivo', ARQUIVO_PLANILHA.name)).name} - "
-            f"{detalhes.get('aba', 'Sheet1')} -> {detalhes.get('coluna_esperada', 'Coluna')}"
-        )
-        descricao = (
-            f"Compara com OCR da tela | Resultado em "
-            f"{detalhes.get('coluna_status', 'Status')}"
         )
     elif tipo == "inicio_loop":
         titulo = "Inicio do loop"
@@ -3191,19 +2792,7 @@ def comando_preview_planilha(args):
 
 def comando_adicionar_texto(args):
     payload = carregar_e_normalizar()
-    payload["eventos"].append(
-        criar_bloco_texto(
-            args.text,
-            args.delay,
-            args.sequencia,
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-            parse_bool_value(getattr(args, "editavel_execucao", False)),
-            getattr(args, "rotulo_execucao", "") or "",
-        )
-    )
+    payload["eventos"].append(criar_bloco_texto(args.text, args.delay, args.sequencia, args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso))
     return salvar_e_retornar(payload)
 
 
@@ -3317,7 +2906,6 @@ def comando_adicionar_abrir_url(args):
             args.url,
             args.navegador,
             args.modo_abertura,
-            args.tela_cheia,
             args.aguardar_segundos,
             args.delay,
             args.sequencia,
@@ -3337,26 +2925,6 @@ def comando_adicionar_abrir_programa(args):
             args.caminho,
             args.parametros,
             args.aguardar_segundos,
-            args.delay,
-            args.sequencia,
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-        )
-    )
-    return salvar_e_retornar(payload)
-
-
-def comando_adicionar_salvar_download(args):
-    payload = carregar_e_normalizar()
-    payload["eventos"].append(
-        criar_bloco_salvar_download(
-            args.pasta_origem,
-            args.extensao,
-            args.pasta_destino,
-            args.nome_arquivo,
-            args.timeout,
             args.delay,
             args.sequencia,
             args.ao_sucesso,
@@ -3388,53 +2956,6 @@ def comando_adicionar_planilha(args):
     return salvar_e_retornar(payload)
 
 
-def comando_adicionar_escrita_planilha(args):
-    payload = carregar_e_normalizar()
-    payload["eventos"].append(
-        criar_bloco_escrever_planilha(
-            args.sheet,
-            args.column,
-            args.value,
-            args.delay,
-            args.workbook,
-            args.sequencia,
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-        )
-    )
-    return salvar_e_retornar(payload)
-
-
-def comando_adicionar_comparacao_planilha(args):
-    payload = carregar_e_normalizar()
-    payload["eventos"].append(
-        criar_bloco_comparar_planilha_tela(
-            args.sheet,
-            args.expected_column,
-            args.delay,
-            args.workbook,
-            args.sequencia,
-            args.source,
-            args.comparison_mode,
-            args.status_column,
-            args.note_column,
-            args.ok_value,
-            args.fail_value,
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-            args.ao_divergir,
-            args.bloco_divergir,
-            args.sequencia_divergir,
-            args.atraso_sequencia_divergir,
-        )
-    )
-    return salvar_e_retornar(payload)
-
-
 def comando_adicionar_inicio_loop(args):
     payload = carregar_e_normalizar()
     payload["eventos"].append(criar_bloco_marcador_loop("inicio_loop", args.delay, args.sequencia))
@@ -3443,17 +2964,7 @@ def comando_adicionar_inicio_loop(args):
 
 def comando_adicionar_fim_loop(args):
     payload = carregar_e_normalizar()
-    payload["eventos"].append(
-        criar_bloco_marcador_loop(
-            "fim_loop",
-            args.delay,
-            args.sequencia,
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-        )
-    )
+    payload["eventos"].append(criar_bloco_marcador_loop("fim_loop", args.delay, args.sequencia))
     return salvar_e_retornar(payload)
 
 
@@ -3461,17 +2972,7 @@ def comando_inserir_texto(args):
     payload = carregar_e_normalizar()
     inserir_evento(
         payload,
-        criar_bloco_texto(
-            args.text,
-            args.delay,
-            args.sequencia,
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-            parse_bool_value(getattr(args, "editavel_execucao", False)),
-            getattr(args, "rotulo_execucao", "") or "",
-        ),
+        criar_bloco_texto(args.text, args.delay, args.sequencia, args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso),
         args.target_order,
         args.position,
     )
@@ -3608,7 +3109,6 @@ def comando_inserir_abrir_url(args):
             args.url,
             args.navegador,
             args.modo_abertura,
-            args.tela_cheia,
             args.aguardar_segundos,
             args.delay,
             args.sequencia,
@@ -3631,29 +3131,6 @@ def comando_inserir_abrir_programa(args):
             args.caminho,
             args.parametros,
             args.aguardar_segundos,
-            args.delay,
-            args.sequencia,
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-        ),
-        args.target_order,
-        args.position,
-    )
-    return salvar_e_retornar(payload)
-
-
-def comando_inserir_salvar_download(args):
-    payload = carregar_e_normalizar()
-    inserir_evento(
-        payload,
-        criar_bloco_salvar_download(
-            args.pasta_origem,
-            args.extensao,
-            args.pasta_destino,
-            args.nome_arquivo,
-            args.timeout,
             args.delay,
             args.sequencia,
             args.ao_sucesso,
@@ -3690,59 +3167,6 @@ def comando_inserir_planilha(args):
     return salvar_e_retornar(payload)
 
 
-def comando_inserir_escrita_planilha(args):
-    payload = carregar_e_normalizar()
-    inserir_evento(
-        payload,
-        criar_bloco_escrever_planilha(
-            args.sheet,
-            args.column,
-            args.value,
-            args.delay,
-            args.workbook,
-            args.sequencia,
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-        ),
-        args.target_order,
-        args.position,
-    )
-    return salvar_e_retornar(payload)
-
-
-def comando_inserir_comparacao_planilha(args):
-    payload = carregar_e_normalizar()
-    inserir_evento(
-        payload,
-        criar_bloco_comparar_planilha_tela(
-            args.sheet,
-            args.expected_column,
-            args.delay,
-            args.workbook,
-            args.sequencia,
-            args.source,
-            args.comparison_mode,
-            args.status_column,
-            args.note_column,
-            args.ok_value,
-            args.fail_value,
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-            args.ao_divergir,
-            args.bloco_divergir,
-            args.sequencia_divergir,
-            args.atraso_sequencia_divergir,
-        ),
-        args.target_order,
-        args.position,
-    )
-    return salvar_e_retornar(payload)
-
-
 def comando_inserir_inicio_loop(args):
     payload = carregar_e_normalizar()
     inserir_evento(
@@ -3758,38 +3182,10 @@ def comando_inserir_fim_loop(args):
     payload = carregar_e_normalizar()
     inserir_evento(
         payload,
-        criar_bloco_marcador_loop(
-            "fim_loop",
-            args.delay,
-            args.sequencia,
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-        ),
+        criar_bloco_marcador_loop("fim_loop", args.delay, args.sequencia),
         args.target_order,
         args.position,
     )
-    return salvar_e_retornar(payload)
-
-
-def comando_atualizar_marcador_loop(args):
-    payload = carregar_e_normalizar()
-    _, evento = localizar_evento(payload, args.order)
-    if evento.get("tipo") not in {"inicio_loop", "fim_loop"}:
-        raise ValueError("O bloco selecionado nao eh marcador de loop.")
-    if args.delay is not None:
-        evento["intervalo_antes"] = round(float(args.delay), 3)
-    if args.sequencia:
-        evento["sequencia"] = normalizar_nome_sequencia(args.sequencia)
-    if evento.get("tipo") == "fim_loop":
-        evento["detalhes"] = aplicar_fluxo_sucesso(
-            evento.get("detalhes"),
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-        )
     return salvar_e_retornar(payload)
 
 
@@ -3800,8 +3196,6 @@ def comando_atualizar_texto(args):
         raise ValueError("O bloco selecionado nao eh do tipo texto livre.")
     evento["texto"] = args.text
     detalhes = aplicar_fluxo_sucesso(evento.get("detalhes"), args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso)
-    detalhes["editavel_execucao"] = parse_bool_value(getattr(args, "editavel_execucao", detalhes.get("editavel_execucao", False)))
-    detalhes["rotulo_execucao"] = str(getattr(args, "rotulo_execucao", detalhes.get("rotulo_execucao", "")) or "").strip()
     evento["detalhes"] = detalhes
     if args.sequencia is not None:
         evento["sequencia"] = normalizar_nome_sequencia(args.sequencia)
@@ -3870,7 +3264,7 @@ def comando_atualizar_imagem(args):
     detalhes["janela_alvo"] = str(args.janela_alvo or "").strip()
     detalhes["texto_ocr_esperado"] = str(args.texto_ocr_esperado or "").strip()
     detalhes["leitura_relativa"] = {
-        "ativo": parse_bool_value(args.leitura_relativa_ativa),
+        "ativo": str(args.leitura_relativa_ativa).strip().lower() in {"1", "true", "sim", "yes"},
         "lado": str(args.leitura_relativa_lado or "livre").strip().lower() or "livre",
         "largura": max(16, int(args.leitura_relativa_largura or 140)),
         "altura": max(12, int(args.leitura_relativa_altura or 40)),
@@ -3954,7 +3348,6 @@ def comando_atualizar_abrir_url(args):
         args.url,
         args.navegador,
         args.modo_abertura,
-        args.tela_cheia,
         args.aguardar_segundos,
         args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
         args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
@@ -3987,29 +3380,6 @@ def comando_atualizar_abrir_programa(args):
     return salvar_e_retornar(payload)
 
 
-def comando_atualizar_salvar_download(args):
-    payload = carregar_e_normalizar()
-    _, evento = localizar_evento(payload, args.order)
-    if evento.get("tipo") != "salvar_download":
-        raise ValueError("O bloco selecionado nao eh do tipo Salvar download.")
-    detalhes_atuais = evento.get("detalhes") or {}
-    bloco = criar_bloco_salvar_download(
-        args.pasta_origem if args.pasta_origem is not None else detalhes_atuais.get("pasta_origem", ""),
-        args.extensao if args.extensao is not None else detalhes_atuais.get("extensao", ".pdf"),
-        args.pasta_destino if args.pasta_destino is not None else detalhes_atuais.get("pasta_destino", ""),
-        args.nome_arquivo if args.nome_arquivo is not None else detalhes_atuais.get("nome_arquivo", ""),
-        args.timeout if args.timeout is not None else detalhes_atuais.get("timeout", 60),
-        args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
-        args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
-        args.ao_sucesso,
-        args.bloco_sucesso,
-        args.sequencia_sucesso,
-        args.atraso_sequencia_sucesso,
-    )
-    evento.update(bloco)
-    return salvar_e_retornar(payload)
-
-
 def comando_atualizar_planilha(args):
     payload = carregar_e_normalizar()
     _, evento = localizar_evento(payload, args.order)
@@ -4027,59 +3397,6 @@ def comando_atualizar_planilha(args):
         args.bloco_sucesso,
         args.sequencia_sucesso,
         args.atraso_sequencia_sucesso,
-    )
-    evento.update(bloco)
-    return salvar_e_retornar(payload)
-
-
-def comando_atualizar_escrita_planilha(args):
-    payload = carregar_e_normalizar()
-    _, evento = localizar_evento(payload, args.order)
-    if evento.get("tipo") != "escrever_planilha":
-        raise ValueError("O bloco selecionado nao eh do tipo escrever na planilha.")
-    detalhes_atuais = evento.get("detalhes") or {}
-    bloco = criar_bloco_escrever_planilha(
-        args.sheet,
-        args.column,
-        args.value,
-        args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
-        args.workbook or detalhes_atuais.get("arquivo"),
-        args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
-        args.ao_sucesso,
-        args.bloco_sucesso,
-        args.sequencia_sucesso,
-        args.atraso_sequencia_sucesso,
-    )
-    evento.update(bloco)
-    return salvar_e_retornar(payload)
-
-
-def comando_atualizar_comparacao_planilha(args):
-    payload = carregar_e_normalizar()
-    _, evento = localizar_evento(payload, args.order)
-    if evento.get("tipo") != "comparar_planilha_tela":
-        raise ValueError("O bloco selecionado nao eh do tipo conferir valor.")
-    detalhes_atuais = evento.get("detalhes") or {}
-    bloco = criar_bloco_comparar_planilha_tela(
-        args.sheet,
-        args.expected_column,
-        args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
-        args.workbook or detalhes_atuais.get("arquivo"),
-        args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
-        args.source,
-        args.comparison_mode,
-        args.status_column,
-        args.note_column,
-        args.ok_value,
-        args.fail_value,
-        args.ao_sucesso,
-        args.bloco_sucesso,
-        args.sequencia_sucesso,
-        args.atraso_sequencia_sucesso,
-        args.ao_divergir,
-        args.bloco_divergir,
-        args.sequencia_divergir,
-        args.atraso_sequencia_divergir,
     )
     evento.update(bloco)
     return salvar_e_retornar(payload)
@@ -4161,8 +3478,6 @@ def comando_reordenar(args):
         return salvar_e_retornar(payload)
 
     target_index = max(1, int(args.target_index))
-    if indice_atual < target_index - 1:
-        target_index -= 1
     target_index = min(target_index, len(eventos) + 1)
     eventos.insert(target_index - 1, evento_removido)
     payload["eventos"] = eventos
@@ -4200,6 +3515,7 @@ def build_parser():
         parser_destino.add_argument("--atraso-sequencia-sucesso", type=float, default=0)
 
     def adicionar_argumentos_leitura_relativa(parser_destino):
+        parser_destino.add_argument("--texto-ocr-esperado", default="")
         parser_destino.add_argument("--leitura-relativa-ativa", default="false")
         parser_destino.add_argument("--leitura-relativa-lado", choices=["direita", "esquerda", "abaixo", "acima", "centro", "livre"], default="livre")
         parser_destino.add_argument("--leitura-relativa-largura", type=int, default=140)
@@ -4212,35 +3528,12 @@ def build_parser():
         parser_destino.add_argument("--url", required=True)
         parser_destino.add_argument("--navegador", choices=["padrao", "chrome", "edge"], default="padrao")
         parser_destino.add_argument("--modo-abertura", choices=["nova_janela", "nova_aba"], default="nova_janela")
-        parser_destino.add_argument("--tela-cheia", action="store_true")
         parser_destino.add_argument("--aguardar-segundos", type=float, default=3)
 
     def adicionar_argumentos_abrir_programa(parser_destino):
         parser_destino.add_argument("--caminho", required=True)
         parser_destino.add_argument("--parametros", default="")
         parser_destino.add_argument("--aguardar-segundos", type=float, default=2)
-
-    def adicionar_argumentos_salvar_download(parser_destino):
-        parser_destino.add_argument("--pasta-origem", default="")
-        parser_destino.add_argument("--extensao", default=".pdf")
-        parser_destino.add_argument("--pasta-destino", required=True)
-        parser_destino.add_argument("--nome-arquivo", default="{empresa}_{competencia}_FGTS.pdf")
-        parser_destino.add_argument("--timeout", type=float, default=60)
-
-    def adicionar_argumentos_comparar_planilha(parser_destino):
-        parser_destino.add_argument("--workbook")
-        parser_destino.add_argument("--sheet", required=True)
-        parser_destino.add_argument("--expected-column", required=True)
-        parser_destino.add_argument("--source", default="ultimo_ocr")
-        parser_destino.add_argument("--comparison-mode", choices=["texto", "numero", "data"], default="texto")
-        parser_destino.add_argument("--status-column", default="")
-        parser_destino.add_argument("--note-column", default="")
-        parser_destino.add_argument("--ok-value", default="OK")
-        parser_destino.add_argument("--fail-value", default="Divergente")
-        parser_destino.add_argument("--ao-divergir", choices=["continuar", "parar", "ir_para_bloco", "ir_para_sequencia"], default="continuar")
-        parser_destino.add_argument("--bloco-divergir", default="")
-        parser_destino.add_argument("--sequencia-divergir", default="")
-        parser_destino.add_argument("--atraso-sequencia-divergir", type=float, default=0)
 
     subparsers.add_parser("list")
     subparsers.add_parser("automation-library-list")
@@ -4295,8 +3588,6 @@ def build_parser():
     add_text.add_argument("--text", required=True)
     add_text.add_argument("--delay", type=float, default=0)
     add_text.add_argument("--sequencia", default="principal")
-    add_text.add_argument("--editavel-execucao", default="false")
-    add_text.add_argument("--rotulo-execucao", default="")
     adicionar_argumentos_fluxo_sucesso(add_text)
 
     add_key = subparsers.add_parser("add-key")
@@ -4330,7 +3621,6 @@ def build_parser():
     add_image.add_argument("--offset-x", type=int, default=0)
     add_image.add_argument("--offset-y", type=int, default=0)
     add_image.add_argument("--janela-alvo", default="")
-    add_image.add_argument("--texto-ocr-esperado", default="")
     adicionar_argumentos_leitura_relativa(add_image)
     add_image.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
     add_image.add_argument("--sequencia-nao-encontrar", default="")
@@ -4391,12 +3681,6 @@ def build_parser():
     add_open_program.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(add_open_program)
 
-    add_save_download = subparsers.add_parser("add-save-download")
-    adicionar_argumentos_salvar_download(add_save_download)
-    add_save_download.add_argument("--delay", type=float, default=0)
-    add_save_download.add_argument("--sequencia", default="principal")
-    adicionar_argumentos_fluxo_sucesso(add_save_download)
-
     add_sheet = subparsers.add_parser("add-planilha")
     add_sheet.add_argument("--workbook")
     add_sheet.add_argument("--sheet", required=True)
@@ -4407,21 +3691,6 @@ def build_parser():
     add_sheet.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(add_sheet)
 
-    add_write_sheet = subparsers.add_parser("add-write-planilha")
-    add_write_sheet.add_argument("--workbook")
-    add_write_sheet.add_argument("--sheet", required=True)
-    add_write_sheet.add_argument("--column", required=True)
-    add_write_sheet.add_argument("--value", default="")
-    add_write_sheet.add_argument("--delay", type=float, default=0)
-    add_write_sheet.add_argument("--sequencia", default="principal")
-    adicionar_argumentos_fluxo_sucesso(add_write_sheet)
-
-    add_compare_sheet = subparsers.add_parser("add-compare-planilha")
-    adicionar_argumentos_comparar_planilha(add_compare_sheet)
-    add_compare_sheet.add_argument("--delay", type=float, default=0)
-    add_compare_sheet.add_argument("--sequencia", default="principal")
-    adicionar_argumentos_fluxo_sucesso(add_compare_sheet)
-
     add_loop_start = subparsers.add_parser("add-loop-start")
     add_loop_start.add_argument("--delay", type=float, default=0)
     add_loop_start.add_argument("--sequencia", default="principal")
@@ -4429,7 +3698,6 @@ def build_parser():
     add_loop_end = subparsers.add_parser("add-loop-end")
     add_loop_end.add_argument("--delay", type=float, default=0)
     add_loop_end.add_argument("--sequencia", default="principal")
-    adicionar_argumentos_fluxo_sucesso(add_loop_end)
 
     insert_text = subparsers.add_parser("insert-text")
     insert_text.add_argument("--target-order", type=int, required=True)
@@ -4437,8 +3705,6 @@ def build_parser():
     insert_text.add_argument("--text", required=True)
     insert_text.add_argument("--delay", type=float, default=0)
     insert_text.add_argument("--sequencia", default="principal")
-    insert_text.add_argument("--editavel-execucao", default="false")
-    insert_text.add_argument("--rotulo-execucao", default="")
     adicionar_argumentos_fluxo_sucesso(insert_text)
 
     insert_key = subparsers.add_parser("insert-key")
@@ -4478,7 +3744,6 @@ def build_parser():
     insert_image.add_argument("--offset-x", type=int, default=0)
     insert_image.add_argument("--offset-y", type=int, default=0)
     insert_image.add_argument("--janela-alvo", default="")
-    insert_image.add_argument("--texto-ocr-esperado", default="")
     adicionar_argumentos_leitura_relativa(insert_image)
     insert_image.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
     insert_image.add_argument("--sequencia-nao-encontrar", default="")
@@ -4547,14 +3812,6 @@ def build_parser():
     insert_open_program.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(insert_open_program)
 
-    insert_save_download = subparsers.add_parser("insert-save-download")
-    insert_save_download.add_argument("--target-order", type=int, required=True)
-    insert_save_download.add_argument("--position", choices=["before", "after"], required=True)
-    adicionar_argumentos_salvar_download(insert_save_download)
-    insert_save_download.add_argument("--delay", type=float, default=0)
-    insert_save_download.add_argument("--sequencia", default="principal")
-    adicionar_argumentos_fluxo_sucesso(insert_save_download)
-
     insert_sheet = subparsers.add_parser("insert-planilha")
     insert_sheet.add_argument("--workbook")
     insert_sheet.add_argument("--target-order", type=int, required=True)
@@ -4567,31 +3824,6 @@ def build_parser():
     insert_sheet.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(insert_sheet)
 
-    insert_write_sheet = subparsers.add_parser("insert-write-planilha")
-    insert_write_sheet.add_argument("--workbook")
-    insert_write_sheet.add_argument("--target-order", type=int, required=True)
-    insert_write_sheet.add_argument("--position", choices=["before", "after"], required=True)
-    insert_write_sheet.add_argument("--sheet", required=True)
-    insert_write_sheet.add_argument("--column", required=True)
-    insert_write_sheet.add_argument("--value", default="")
-    insert_write_sheet.add_argument("--delay", type=float, default=0)
-    insert_write_sheet.add_argument("--sequencia", default="principal")
-    adicionar_argumentos_fluxo_sucesso(insert_write_sheet)
-
-    insert_compare_sheet = subparsers.add_parser("insert-compare-planilha")
-    insert_compare_sheet.add_argument("--target-order", type=int, required=True)
-    insert_compare_sheet.add_argument("--position", choices=["before", "after"], required=True)
-    adicionar_argumentos_comparar_planilha(insert_compare_sheet)
-    insert_compare_sheet.add_argument("--delay", type=float, default=0)
-    insert_compare_sheet.add_argument("--sequencia", default="principal")
-    adicionar_argumentos_fluxo_sucesso(insert_compare_sheet)
-
-    update_loop_marker = subparsers.add_parser("update-loop-marker")
-    update_loop_marker.add_argument("--order", type=int, required=True)
-    update_loop_marker.add_argument("--delay", type=float)
-    update_loop_marker.add_argument("--sequencia")
-    adicionar_argumentos_fluxo_sucesso(update_loop_marker)
-
     insert_loop_start = subparsers.add_parser("insert-loop-start")
     insert_loop_start.add_argument("--target-order", type=int, required=True)
     insert_loop_start.add_argument("--position", choices=["before", "after"], required=True)
@@ -4603,15 +3835,12 @@ def build_parser():
     insert_loop_end.add_argument("--position", choices=["before", "after"], required=True)
     insert_loop_end.add_argument("--delay", type=float, default=0)
     insert_loop_end.add_argument("--sequencia", default="principal")
-    adicionar_argumentos_fluxo_sucesso(insert_loop_end)
 
     update_text = subparsers.add_parser("update-text")
     update_text.add_argument("--order", type=int, required=True)
     update_text.add_argument("--text", required=True)
     update_text.add_argument("--delay", type=float)
     update_text.add_argument("--sequencia")
-    update_text.add_argument("--editavel-execucao", default="false")
-    update_text.add_argument("--rotulo-execucao", default="")
     adicionar_argumentos_fluxo_sucesso(update_text)
 
     update_key = subparsers.add_parser("update-key")
@@ -4648,7 +3877,6 @@ def build_parser():
     update_image.add_argument("--offset-x", type=int, default=0)
     update_image.add_argument("--offset-y", type=int, default=0)
     update_image.add_argument("--janela-alvo", default="")
-    update_image.add_argument("--texto-ocr-esperado", default="")
     adicionar_argumentos_leitura_relativa(update_image)
     update_image.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
     update_image.add_argument("--sequencia-nao-encontrar", default="")
@@ -4713,13 +3941,6 @@ def build_parser():
     update_open_program.add_argument("--sequencia")
     adicionar_argumentos_fluxo_sucesso(update_open_program)
 
-    update_save_download = subparsers.add_parser("update-save-download")
-    update_save_download.add_argument("--order", type=int, required=True)
-    adicionar_argumentos_salvar_download(update_save_download)
-    update_save_download.add_argument("--delay", type=float)
-    update_save_download.add_argument("--sequencia")
-    adicionar_argumentos_fluxo_sucesso(update_save_download)
-
     update_sheet = subparsers.add_parser("update-planilha")
     update_sheet.add_argument("--workbook")
     update_sheet.add_argument("--order", type=int, required=True)
@@ -4730,23 +3951,6 @@ def build_parser():
     update_sheet.add_argument("--delay", type=float)
     update_sheet.add_argument("--sequencia")
     adicionar_argumentos_fluxo_sucesso(update_sheet)
-
-    update_write_sheet = subparsers.add_parser("update-write-planilha")
-    update_write_sheet.add_argument("--workbook")
-    update_write_sheet.add_argument("--order", type=int, required=True)
-    update_write_sheet.add_argument("--sheet", required=True)
-    update_write_sheet.add_argument("--column", required=True)
-    update_write_sheet.add_argument("--value", default="")
-    update_write_sheet.add_argument("--delay", type=float)
-    update_write_sheet.add_argument("--sequencia")
-    adicionar_argumentos_fluxo_sucesso(update_write_sheet)
-
-    update_compare_sheet = subparsers.add_parser("update-compare-planilha")
-    update_compare_sheet.add_argument("--order", type=int, required=True)
-    adicionar_argumentos_comparar_planilha(update_compare_sheet)
-    update_compare_sheet.add_argument("--delay", type=float)
-    update_compare_sheet.add_argument("--sequencia")
-    adicionar_argumentos_fluxo_sucesso(update_compare_sheet)
 
     update_delay = subparsers.add_parser("update-delay")
     update_delay.add_argument("--order", type=int, required=True)
@@ -4804,10 +4008,7 @@ COMANDOS = {
     "add-chrome-html": comando_adicionar_chrome_html,
     "add-open-url": comando_adicionar_abrir_url,
     "add-open-program": comando_adicionar_abrir_programa,
-    "add-save-download": comando_adicionar_salvar_download,
     "add-planilha": comando_adicionar_planilha,
-    "add-write-planilha": comando_adicionar_escrita_planilha,
-    "add-compare-planilha": comando_adicionar_comparacao_planilha,
     "add-loop-start": comando_adicionar_inicio_loop,
     "add-loop-end": comando_adicionar_fim_loop,
     "insert-text": comando_inserir_texto,
@@ -4818,10 +4019,7 @@ COMANDOS = {
     "insert-chrome-html": comando_inserir_chrome_html,
     "insert-open-url": comando_inserir_abrir_url,
     "insert-open-program": comando_inserir_abrir_programa,
-    "insert-save-download": comando_inserir_salvar_download,
     "insert-planilha": comando_inserir_planilha,
-    "insert-write-planilha": comando_inserir_escrita_planilha,
-    "insert-compare-planilha": comando_inserir_comparacao_planilha,
     "insert-loop-start": comando_inserir_inicio_loop,
     "insert-loop-end": comando_inserir_fim_loop,
     "update-text": comando_atualizar_texto,
@@ -4832,11 +4030,7 @@ COMANDOS = {
     "update-chrome-html": comando_atualizar_chrome_html,
     "update-open-url": comando_atualizar_abrir_url,
     "update-open-program": comando_atualizar_abrir_programa,
-    "update-save-download": comando_atualizar_salvar_download,
     "update-planilha": comando_atualizar_planilha,
-    "update-write-planilha": comando_atualizar_escrita_planilha,
-    "update-compare-planilha": comando_atualizar_comparacao_planilha,
-    "update-loop-marker": comando_atualizar_marcador_loop,
     "update-delay": comando_atualizar_atraso,
     "update-delay-all": comando_atualizar_atraso_global,
     "update-sequence-settings": comando_atualizar_configuracao_sequencia,

@@ -20,6 +20,7 @@ ARQUIVO_SCRIPT = Path("comandos_teclado.py")
 ARQUIVO_PLANILHA = Path("db.xlsx")
 ARQUIVO_EXECUTOR_SEPARADO = Path("executar_automacao.py")
 ARQUIVO_BAT_EXECUTOR = Path("executar_automacao.bat")
+ARQUIVO_INTERFACE_EXECUTOR = Path("interface_automacao.py")
 ARQUIVO_DADOS_PLANILHA = Path("gerenciar_dados_planilha.py")
 PASTA_BUILD = Path("build_automacao")
 PASTA_AUTOMACAO_EXPORTADA = Path("Automacao_Iss")
@@ -616,16 +617,13 @@ class GravadorTeclado:
             "@echo off\n"
             "setlocal\n"
             "cd /d \"%~dp0\"\n\n"
-            "set \"PYTHON_CMD=python\"\n"
-            "where py >nul 2>&1\n"
-            "if not errorlevel 1 set \"PYTHON_CMD=py -3\"\n\n"
-            "if not exist \"executar_automacao.py\" (\n"
-            "    echo Arquivo executar_automacao.py nao encontrado nesta pasta.\n"
+            "if not exist \"Automacao.exe\" (\n"
+            "    echo Arquivo Automacao.exe nao encontrado nesta pasta.\n"
             "    pause\n"
             "    endlocal\n"
             "    exit /b 1\n"
             ")\n\n"
-            "call %PYTHON_CMD% executar_automacao.py --modo normal\n"
+            "start \"\" \"%~dp0Automacao.exe\"\n"
             "endlocal\n"
         )
 
@@ -634,7 +632,9 @@ class GravadorTeclado:
             "EXECUTOR SEPARADO DA AUTOMACAO\n"
             "==============================\n\n"
             "Arquivos desta pasta:\n"
-            "- executar_automacao.bat: inicia a automacao pelo executor atual.\n"
+            "- executar_automacao.bat: abre a interface da automacao.\n"
+            "- Automacao.exe: painel visual em Tauri com HTML/CSS, quando disponivel.\n"
+            "- interface_automacao.py: fallback visual em Python com progresso e empresa atual.\n"
             "- executar_automacao.py: executor separado do roteiro gravado.\n"
             "- gerenciar_dados_planilha.py: utilitario para listar e editar os itens do loop na planilha.\n"
             "- mapeamento_teclado.json: roteiro completo salvo pela interface.\n"
@@ -642,8 +642,9 @@ class GravadorTeclado:
             "Como usar:\n"
             "1. Edite a planilha db.xlsx se precisar atualizar os dados.\n"
             "2. Clique duas vezes em executar_automacao.bat.\n"
-            "3. Para editar visualmente, abra a automacao no FlowDetect Studio.\n"
-            "4. Para rodar em outro computador, importe o ZIP no FlowDetect Agent.\n"
+            "3. Escolha entre execucao normal ou em loop e ajuste o atraso inicial.\n"
+            "4. Acompanhe a barra de porcentagem e a empresa atual durante a execucao.\n"
+            "5. Clique em Iniciar ou Parar quando precisar.\n"
         )
 
     def montar_arquivo_guia_exportacao(self):
@@ -651,9 +652,10 @@ class GravadorTeclado:
             "AUTOMACAO EXPORTADA SEPARADA DO MAIN\n"
             "====================================\n\n"
             "Esta pasta contem apenas os arquivos necessarios para rodar a automacao gerada.\n"
-            "A edicao visual continua no FlowDetect Studio.\n\n"
+            "O programa principal do projeto continua separado no main.py.\n\n"
             "Arquivos principais desta pasta:\n"
-            "- iniciar.bat: inicia a automacao pelo executor atual.\n"
+            "- iniciar.bat: abre a interface principal da automacao.\n"
+            "- Automacao.exe: interface visual da automacao.\n"
             "- executar_automacao.py: executor do roteiro.\n"
             "- gerenciar_dados_planilha.py: edita dados do loop e textos livres.\n"
             "- mapeamento_teclado.json: roteiro atual salvo.\n"
@@ -667,7 +669,7 @@ class GravadorTeclado:
             "- O Python precisa estar instalado no Windows para a parte de execucao funcionar.\n"
         )
 
-    def exportar_arquivos_automacao(self, pasta_destino, arquivos_para_copiar):
+    def exportar_arquivos_automacao(self, pasta_destino, arquivos_para_copiar, executaveis_tauri):
         pasta_destino.mkdir(exist_ok=True)
 
         copiados = []
@@ -678,6 +680,13 @@ class GravadorTeclado:
                 copiados.append(arquivo.name)
             else:
                 faltando.append(arquivo.name)
+
+        for executavel in executaveis_tauri:
+            if executavel.exists():
+                destino = pasta_destino / "Automacao.exe"
+                shutil.copy2(executavel, destino)
+                copiados.append(destino.name)
+                break
 
         return copiados, faltando
 
@@ -703,17 +712,24 @@ class GravadorTeclado:
             self.arquivo_planilha,
             ARQUIVO_EXECUTOR_SEPARADO,
             ARQUIVO_BAT_EXECUTOR,
+            ARQUIVO_INTERFACE_EXECUTOR,
             ARQUIVO_DADOS_PLANILHA,
             Path("requirements.txt"),
+        ]
+        executaveis_tauri = [
+            Path("tauri_ui/src-tauri/target/release/Automacao.exe"),
+            Path("tauri_ui/src-tauri/target/release/automacao_tauri_ui.exe"),
         ]
 
         copiados_build, faltando_build = self.exportar_arquivos_automacao(
             pasta_build,
             arquivos_para_copiar,
+            executaveis_tauri,
         )
         copiados_exportacao, faltando_exportacao = self.exportar_arquivos_automacao(
             pasta_exportacao,
             arquivos_para_copiar,
+            executaveis_tauri,
         )
 
         (pasta_build / "COMO_EXECUTAR_BUILD.txt").write_text(
@@ -730,7 +746,7 @@ class GravadorTeclado:
         )
 
         mensagem = (
-            "Automacao exportada para o executor atual do FlowDetect.\n\n"
+            "Automacao exportada separada do main.py.\n\n"
             f"Pasta tecnica de build:\n{pasta_build.resolve()}\n\n"
             f"Pasta final separada da automacao:\n{pasta_exportacao.resolve()}\n\n"
             f"Arquivos copiados para a exportacao: {', '.join(copiados_exportacao) if copiados_exportacao else 'nenhum'}"

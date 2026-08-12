@@ -29,15 +29,13 @@ def popen_silencioso(argumentos, **kwargs):
     return subprocess.Popen(argumentos, **kwargs)
 
 try:
-    from PIL import Image, ImageDraw, ImageEnhance, ImageGrab, ImageOps
+    from PIL import Image, ImageDraw, ImageGrab
 
     PIL_DISPONIVEL = True
 except Exception:
     Image = None
     ImageDraw = None
-    ImageEnhance = None
     ImageGrab = None
-    ImageOps = None
     PIL_DISPONIVEL = False
 
 try:
@@ -143,7 +141,6 @@ TIPOS_IMAGEM = {"clicar_imagem"}
 TIPOS_VERIFICACAO = {"verificar_estado_botao"}
 TIPOS_CHROME = {"chrome_elemento_html"}
 TIPOS_PREPARACAO_TELA = {"abrir_url", "abrir_programa"}
-TIPOS_DOWNLOAD = {"salvar_download"}
 TIPOS_SUPORTADOS_EXECUTOR = {
     "texto_livre",
     "tecla",
@@ -157,7 +154,6 @@ TIPOS_SUPORTADOS_EXECUTOR = {
     *TIPOS_VERIFICACAO,
     *TIPOS_CHROME,
     *TIPOS_PREPARACAO_TELA,
-    *TIPOS_DOWNLOAD,
 }
 MAPA_PYAUTOGUI = {
     "space": "space",
@@ -195,55 +191,6 @@ def safe_print(*args, **kwargs):
         pass
 
 
-def definir_texto_clipboard_windows(texto):
-    if not hasattr(ctypes, "windll"):
-        return False
-    user32 = ctypes.windll.user32
-    kernel32 = ctypes.windll.kernel32
-    kernel32.GlobalAlloc.restype = ctypes.c_void_p
-    kernel32.GlobalLock.restype = ctypes.c_void_p
-    user32.SetClipboardData.restype = ctypes.c_void_p
-    texto_clipboard = str(texto or "")
-    dados = (texto_clipboard + "\0").encode("utf-16-le")
-    global_moveable = 0x0002
-    cf_unicode_text = 13
-    memoria = None
-    try:
-        aberto = False
-        for _ in range(6):
-            if user32.OpenClipboard(None):
-                aberto = True
-                break
-            time.sleep(0.01)
-        if not aberto:
-            return False
-        user32.EmptyClipboard()
-        memoria = kernel32.GlobalAlloc(global_moveable, len(dados))
-        if not memoria:
-            return False
-        destino = kernel32.GlobalLock(memoria)
-        if not destino:
-            return False
-        ctypes.memmove(destino, dados, len(dados))
-        kernel32.GlobalUnlock(memoria)
-        if not user32.SetClipboardData(cf_unicode_text, memoria):
-            return False
-        memoria = None
-        return True
-    except Exception:
-        return False
-    finally:
-        try:
-            user32.CloseClipboard()
-        except Exception:
-            pass
-        if memoria:
-            try:
-                kernel32.GlobalFree(memoria)
-            except Exception:
-                pass
-
-
 class ExecutorAutomacao:
     def __init__(
         self,
@@ -252,7 +199,7 @@ class ExecutorAutomacao:
         arquivo_cancelamento=None,
         janela_alvo=None,
         target_context=None,
-        text_overrides=None,
+        modo_teste_reconhecimento=False,
     ):
         self.arquivo_mapeamento = Path(arquivo_mapeamento)
         self.arquivo_planilha = Path(arquivo_planilha)
@@ -270,19 +217,16 @@ class ExecutorAutomacao:
         self._ultimo_diagnostico_reconhecimento = None
         self._cache_template_imagem = {}
         self._historico_reconhecimento = {}
-        self._templates_precarregados = False
         self._ultimo_clique_visual_em = 0.0
         self._ultima_posicao_clique_visual = None
         self._ultima_origem_captura_logada = ""
         self._ultima_captura_visual_info = None
         self._ultima_busca_template_info = None
         self._ultima_busca_ocr_info = None
-        self._ultimo_texto_ocr_reconhecimento = ""
         self._ultimo_ocr_global_em = 0.0
         self._janela_alvo_perdida_logada = False
         self._conflitos_janela_evento_logados = set()
         self.contexto_variaveis = {}
-        self.text_overrides = self.normalizar_text_overrides(text_overrides)
         self.contexto_execucao_alvo = self.normalizar_contexto_execucao(target_context)
         self._playwright_runtime = None
         self._chrome_browser = None
@@ -292,34 +236,20 @@ class ExecutorAutomacao:
         self._chrome_launched_by_executor = False
         self._relatorio_loop = None
         self.cancelar = threading.Event()
-        self.payload = self.carregar_payload_mapeamento()
-        self.eventos = self.payload.get("eventos", [])
-        self.sequencias = self.agrupar_eventos_por_sequencia()
-        self.sequencia_inicial = self.resolver_sequencia_inicial(self.payload)
-        self.configuracoes_sequencia = self.carregar_configuracoes_sequencia(self.payload)
-        self.precarregar_templates_reconhecimento()
-        self.planilha_cache = self.carregar_planilha()
-
-    def normalizar_text_overrides(self, raw):
-        if not raw:
-            return {}
-        try:
-            dados = json.loads(raw) if isinstance(raw, str) else raw
-        except Exception:
-            return {}
-        if isinstance(dados, dict):
-            return {str(chave): str(valor) for chave, valor in dados.items()}
-        if isinstance(dados, list):
-            normalizado = {}
-            for item in dados:
-                if not isinstance(item, dict):
-                    continue
-                ordem = item.get("order", item.get("ordem"))
-                if ordem is None:
-                    continue
-                normalizado[str(ordem)] = str(item.get("value", item.get("valor", "")))
-            return normalizado
-        return {}
+        if modo_teste_reconhecimento:
+            self.payload = {"eventos": [], "sequencias": {}}
+            self.eventos = []
+            self.sequencias = {}
+            self.sequencia_inicial = "principal"
+            self.configuracoes_sequencia = {}
+            self.planilha_cache = {"linhas": [], "cabecalho": [], "colunas": [], "config": {}}
+        else:
+            self.payload = self.carregar_payload_mapeamento()
+            self.eventos = self.payload.get("eventos", [])
+            self.sequencias = self.agrupar_eventos_por_sequencia()
+            self.sequencia_inicial = self.resolver_sequencia_inicial(self.payload)
+            self.configuracoes_sequencia = self.carregar_configuracoes_sequencia(self.payload)
+            self.planilha_cache = self.carregar_planilha()
 
     def normalizar_nome_sequencia(self, nome):
         texto = str(nome or "").strip()
@@ -1068,20 +998,12 @@ class ExecutorAutomacao:
     def registrar_reconhecimento_bem_sucedido(self, imagem_id, local, janela_alvo=None, bloco_id=None, janela_info=None):
         esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
         chave = self.chave_historico_reconhecimento(imagem_id, janela_alvo=janela_alvo, bloco_id=bloco_id)
-        anterior = self._historico_reconhecimento.get(chave) or {}
-        acertos = int(anterior.get("hits", 0) or 0) + 1
-        info_template = self._ultima_busca_template_info or {}
-        info_ocr = self._ultima_busca_ocr_info or {}
         dados = {
             "left": esquerda,
             "top": topo,
             "width": largura,
             "height": altura,
             "updated_at": time.time(),
-            "hits": acertos,
-            "last_score": float(info_template.get("score", info_ocr.get("score", 0.0)) or 0.0),
-            "last_capture_ms": float(info_template.get("capture_ms", info_ocr.get("capture_ms", 0.0)) or 0.0),
-            "last_recognition_ms": float(info_template.get("recognition_ms", info_ocr.get("ocr_ms", 0.0)) or 0.0),
         }
         janela_base = janela_info or (
             self.obter_janela_alvo_execucao_atual(obrigatoria=False)
@@ -1096,10 +1018,6 @@ class ExecutorAutomacao:
             dados["left_rel"] = int(esquerda - int(janela_base.get("left", 0) or 0))
             dados["top_rel"] = int(topo - int(janela_base.get("top", 0) or 0))
         self._historico_reconhecimento[chave] = dados
-
-    def obter_dados_historico_reconhecimento(self, imagem_id, janela_alvo=None, bloco_id=None):
-        chave = self.chave_historico_reconhecimento(imagem_id, janela_alvo=janela_alvo, bloco_id=bloco_id)
-        return self._historico_reconhecimento.get(chave) or {}
 
     def obter_regiao_historica_reconhecimento(self, imagem_id, janela_alvo=None, bloco_id=None, janela_info=None):
         chave = self.chave_historico_reconhecimento(imagem_id, janela_alvo=janela_alvo, bloco_id=bloco_id)
@@ -1119,22 +1037,8 @@ class ExecutorAutomacao:
             topo = int(dados.get("top", 0))
         largura = max(24, int(dados.get("width", 0) or 24))
         altura = max(24, int(dados.get("height", 0) or 24))
-        acertos = int(dados.get("hits", 1) or 1)
-        if acertos >= 8:
-            margem_x = max(36, int(largura * 1.20))
-            margem_y = max(28, int(altura * 1.20))
-        elif acertos >= 5:
-            margem_x = max(44, int(largura * 1.50))
-            margem_y = max(34, int(altura * 1.50))
-        elif acertos >= 3:
-            margem_x = max(56, int(largura * 2.00))
-            margem_y = max(42, int(altura * 2.00))
-        elif acertos >= 2:
-            margem_x = max(70, int(largura * 2.40))
-            margem_y = max(54, int(altura * 2.40))
-        else:
-            margem_x = max(40, int(largura * 1.8))
-            margem_y = max(28, int(altura * 1.8))
+        margem_x = max(40, int(largura * 1.8))
+        margem_y = max(28, int(altura * 1.8))
         limite = None
         if janela_base:
             limite = (
@@ -1150,12 +1054,73 @@ class ExecutorAutomacao:
             altura + margem_y * 2,
         ), limite=limite)
 
-    def marcar_area_reconhecida(self, local, duracao=1.1, bloqueante=False, estilo="visual", texto="Reconhecido"):
+    def marcar_area_reconhecida(
+        self,
+        local,
+        duracao=1.1,
+        bloqueante=False,
+        tema="visual",
+        etiqueta=None,
+        margem=16,
+    ):
         if not TK_DISPONIVEL:
             return
 
         esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
-        margem = 16
+        self.marcar_regiao_absoluta(
+            esquerda,
+            topo,
+            largura,
+            altura,
+            duracao=duracao,
+            bloqueante=bloqueante,
+            tema=tema,
+            etiqueta=etiqueta,
+            margem=margem,
+        )
+
+    def marcar_regiao_absoluta(
+        self,
+        esquerda,
+        topo,
+        largura,
+        altura,
+        duracao=1.1,
+        bloqueante=False,
+        tema="visual",
+        etiqueta=None,
+        margem=16,
+    ):
+        if not TK_DISPONIVEL:
+            return
+
+        esquerda = int(esquerda)
+        topo = int(topo)
+        largura = max(1, int(largura))
+        altura = max(1, int(altura))
+        tema_config = {
+            "visual": {
+                "cor_borda": "#2ecc71",
+                "cor_flash": "#9bffbf",
+                "cor_texto": "#f5fff8",
+                "cor_fundo_etiqueta": "#1c9f5b",
+                "etiqueta": "Reconhecido",
+            },
+            "ocr": {
+                "cor_borda": "#12B5CB",
+                "cor_flash": "#5EEAD4",
+                "cor_texto": "#E6F7FF",
+                "cor_fundo_etiqueta": "#087C92",
+                "etiqueta": "OCR confirmado",
+            },
+            "ocr_falha": {
+                "cor_borda": "#38BDF8",
+                "cor_flash": "#93C5FD",
+                "cor_texto": "#E6F7FF",
+                "cor_fundo_etiqueta": "#1D4ED8",
+                "etiqueta": "OCR lido aqui",
+            },
+        }.get(str(tema or "visual"), {})
         area_esquerda = int(esquerda - margem)
         area_topo = int(topo - margem)
         area_largura = int(largura + (margem * 2))
@@ -1163,22 +1128,15 @@ class ExecutorAutomacao:
 
         def exibir():
             try:
-                if str(estilo or "").strip().lower() == "ocr":
-                    cor_borda = "#0f8f4f"
-                    cor_flash = "#21c66d"
-                    cor_texto = "#f5fff8"
-                    cor_fundo_etiqueta = "#0b6f3f"
-                    etiqueta_texto = str(texto or "OCR OK")
-                else:
-                    cor_borda = "#2ecc71"
-                    cor_flash = "#9bffbf"
-                    cor_texto = "#f5fff8"
-                    cor_fundo_etiqueta = "#1c9f5b"
-                    etiqueta_texto = str(texto or "Reconhecido")
+                cor_borda = tema_config.get("cor_borda", "#2ecc71")
+                cor_flash = tema_config.get("cor_flash", "#9bffbf")
+                cor_texto = tema_config.get("cor_texto", "#f5fff8")
+                cor_fundo_etiqueta = tema_config.get("cor_fundo_etiqueta", "#1c9f5b")
+                texto_marcador = str(etiqueta or tema_config.get("etiqueta") or "Reconhecido")
                 fundo_transparente = "#ff00ff"
                 raio = 16
                 espessura = 3
-                largura_minima_etiqueta = 82
+                largura_minima_etiqueta = max(82, min(150, 22 + len(texto_marcador) * 7))
                 altura_etiqueta = 20
                 padding_overlay = 8
                 raiz = tk.Tk()
@@ -1315,7 +1273,7 @@ class ExecutorAutomacao:
                 etiqueta_x2 = etiqueta_x1 + largura_etiqueta
                 etiqueta_y2 = etiqueta_y1 + altura_etiqueta
 
-                etiqueta = canvas_overlay.create_polygon(
+                etiqueta_canvas = canvas_overlay.create_polygon(
                     pontos_retangulo_arredondado(etiqueta_x1, etiqueta_y1, etiqueta_x2, etiqueta_y2, 10),
                     smooth=True,
                     splinesteps=24,
@@ -1325,7 +1283,7 @@ class ExecutorAutomacao:
                 texto_etiqueta = canvas_overlay.create_text(
                     int((etiqueta_x1 + etiqueta_x2) / 2),
                     int((etiqueta_y1 + etiqueta_y2) / 2),
-                    text=etiqueta_texto[:18],
+                    text=texto_marcador,
                     fill=cor_texto,
                     font=("Segoe UI", 8, "bold"),
                 )
@@ -1346,7 +1304,7 @@ class ExecutorAutomacao:
                     try:
                         overlay.attributes("-alpha", alpha)
                         canvas_overlay.itemconfigure(retangulo_principal, outline=cor_atual, width=largura_borda)
-                        canvas_overlay.itemconfigure(etiqueta, fill=cor_atual)
+                        canvas_overlay.itemconfigure(etiqueta_canvas, fill=cor_atual)
                         canvas_overlay.itemconfigure(texto_etiqueta, fill=cor_texto)
                         overlay.update_idletasks()
                         overlay.update()
@@ -1382,21 +1340,171 @@ class ExecutorAutomacao:
 
         threading.Thread(target=exibir, daemon=True).start()
 
+    def marcar_regiao_ocr(self, regiao, confirmado=True, duracao=0.9):
+        if not regiao:
+            return
+        try:
+            esquerda, topo, largura, altura = [int(valor) for valor in regiao]
+        except Exception:
+            return
+        self.marcar_regiao_absoluta(
+            esquerda,
+            topo,
+            largura,
+            altura,
+            duracao=duracao,
+            bloqueante=True,
+            tema="ocr" if confirmado else "ocr_falha",
+            etiqueta="OCR confirmado" if confirmado else "OCR lido aqui",
+            margem=4,
+        )
+
+    def escalar_offset_referencia(self, local, offset_x=0, offset_y=0, dimensoes_referencia=None):
+        if not dimensoes_referencia:
+            return int(offset_x or 0), int(offset_y or 0)
+        try:
+            ref_largura, ref_altura = dimensoes_referencia
+            _esquerda, _topo, largura, altura = self.bounds_reconhecimento(local)
+            if int(ref_largura or 0) <= 0 or int(ref_altura or 0) <= 0:
+                return int(offset_x or 0), int(offset_y or 0)
+            escala_x = float(largura or ref_largura) / float(ref_largura)
+            escala_y = float(altura or ref_altura) / float(ref_altura)
+            return (
+                int(round(float(offset_x or 0) * escala_x)),
+                int(round(float(offset_y or 0) * escala_y)),
+            )
+        except Exception:
+            return int(offset_x or 0), int(offset_y or 0)
+
     def centro_area_reconhecida(self, local, offset_x=0, offset_y=0):
         esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
         centro_x = esquerda + int(largura / 2)
         centro_y = topo + int(altura / 2)
         return int(centro_x + int(offset_x or 0)), int(centro_y + int(offset_y or 0))
 
-    def confirmar_localizacao_imagem(
-        self,
-        caminho_imagem,
-        local,
-        confianca=0.8,
-        perfil_busca="balanced",
-        texto_ocr_esperado="",
-        cache_acertos=0,
-    ):
+    def construir_regiao_ocr_relativa(self, local, leitura_relativa=None, dimensoes_referencia=None):
+        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
+        escala_x = 1.0
+        escala_y = 1.0
+        if dimensoes_referencia:
+            try:
+                ref_largura, ref_altura = dimensoes_referencia
+                if int(ref_largura or 0) > 0 and int(ref_altura or 0) > 0:
+                    escala_x = float(largura or ref_largura) / float(ref_largura)
+                    escala_y = float(altura or ref_altura) / float(ref_altura)
+            except Exception:
+                escala_x = 1.0
+                escala_y = 1.0
+        largura_ocr = max(16, int(leitura.get("largura", leitura.get("width", 140)) or 140))
+        altura_ocr = max(12, int(leitura.get("altura", leitura.get("height", 40)) or 40))
+        offset_x = int(leitura.get("offset_x", leitura.get("offsetX", 0)) or 0)
+        offset_y = int(leitura.get("offset_y", leitura.get("offsetY", 0)) or 0)
+        largura_ocr = max(8, int(round(largura_ocr * escala_x)))
+        altura_ocr = max(8, int(round(altura_ocr * escala_y)))
+        offset_x = int(round(offset_x * escala_x))
+        offset_y = int(round(offset_y * escala_y))
+        centro_x = esquerda + int(largura / 2) + offset_x
+        centro_y = topo + int(altura / 2) + offset_y
+        limite_reconhecido = (int(esquerda), int(topo), int(largura), int(altura))
+        return self.limitar_regiao((
+            int(centro_x - largura_ocr / 2),
+            int(centro_y - altura_ocr / 2),
+            largura_ocr,
+            altura_ocr,
+        ), limite=limite_reconhecido)
+
+    def confirmar_ocr_relativo(self, local, texto_esperado="", leitura_relativa=None, ordem_bloco=None, dimensoes_referencia=None):
+        esperado = str(texto_esperado or "").strip()
+        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        salvar_em = str(leitura.get("salvar_em", "") or "").strip()
+        if not esperado and not salvar_em:
+            return True
+        if not OCR_DISPONIVEL:
+            safe_print("OCR nao confirmou: recurso OCR indisponivel.", flush=True)
+            return not esperado
+        regiao = self.construir_regiao_ocr_relativa(local, leitura, dimensoes_referencia=dimensoes_referencia)
+        safe_print(f"OCR lendo area: {self.formatar_regiao_log(regiao)}", flush=True)
+
+        def ler_texto_regiao(regiao_ocr):
+            try:
+                captura, _base_left, _base_top = self.capturar_tela_pil(region=regiao_ocr)
+            except Exception as erro:
+                safe_print(f"OCR nao confirmou: falha ao capturar area de leitura ({erro}).", flush=True)
+                return ""
+            textos = self.extrair_variantes_texto_ocr_imagem(captura)
+            if not textos:
+                textos = [
+                    self.extrair_texto_ocr_imagem_pil(captura, config="--psm 6"),
+                    self.extrair_texto_ocr_imagem_pil(captura, config="--psm 7"),
+                ]
+            return " ".join(texto for texto in textos if texto).strip()
+
+        def texto_confirma(capturado_atual):
+            if not esperado:
+                return True
+            comparacao_atual = self.comparar_texto_reconhecimento_preciso(esperado, capturado_atual)
+            return (
+                comparacao_atual.get("reference") == comparacao_atual.get("captured")
+                or (
+                    comparacao_atual.get("has_digits")
+                    and float(comparacao_atual.get("digit_ratio", 0.0) or 0.0) >= 0.999
+                )
+                or float(comparacao_atual.get("ratio", 0.0) or 0.0) >= 0.96
+            )
+
+        capturado = ler_texto_regiao(regiao)
+        confirmado = texto_confirma(capturado)
+
+        if not confirmado:
+            limite_reconhecido = self.bounds_reconhecimento(local)
+            try:
+                esquerda, topo, largura, altura = [int(valor) for valor in regiao]
+                margem_x = max(8, int(largura * 0.18))
+                margem_y = max(5, int(altura * 0.30))
+                regiao_ampliada = self.limitar_regiao(
+                    (
+                        esquerda - margem_x,
+                        topo - margem_y,
+                        largura + margem_x * 2,
+                        altura + margem_y * 2,
+                    ),
+                    limite=limite_reconhecido,
+                )
+            except Exception:
+                regiao_ampliada = None
+            if regiao_ampliada and regiao_ampliada != regiao:
+                safe_print(f"OCR tentando area ampliada: {self.formatar_regiao_log(regiao_ampliada)}", flush=True)
+                capturado_ampliado = ler_texto_regiao(regiao_ampliada)
+                if texto_confirma(capturado_ampliado):
+                    regiao = regiao_ampliada
+                    capturado = capturado_ampliado
+                    confirmado = True
+                elif not capturado and capturado_ampliado:
+                    regiao = regiao_ampliada
+                    capturado = capturado_ampliado
+
+        if capturado:
+            self.salvar_variavel_contexto("ultimo_ocr", capturado)
+            if ordem_bloco:
+                self.salvar_variavel_contexto(f"ocr_bloco_{ordem_bloco}", capturado)
+                self.salvar_variavel_contexto(f"bloco_{ordem_bloco}_ocr", capturado)
+            if salvar_em:
+                self.salvar_variavel_contexto(salvar_em, capturado)
+        if not esperado:
+            return True
+        safe_print(
+            f"OCR {'confirmou' if confirmado else 'nao confirmou'}: esperado='{esperado}' | capturado='{capturado}'",
+            flush=True,
+        )
+        self.marcar_regiao_ocr(
+            regiao,
+            confirmado=confirmado,
+            duracao=0.9 if confirmado else 1.15,
+        )
+        return confirmado
+
+    def confirmar_localizacao_imagem(self, caminho_imagem, local, confianca=0.8, perfil_busca="balanced"):
         perfil_busca = str(perfil_busca or "balanced").strip().lower()
         if perfil_busca not in {"fast", "balanced", "precise"}:
             perfil_busca = "balanced"
@@ -1405,12 +1513,6 @@ class ExecutorAutomacao:
         if perfil_busca == "fast" and isinstance(local, dict):
             score_local = float(local.get("score", 0.0) or 0.0)
             if score_local >= max(0.9, float(confianca or 0.8) - 0.04):
-                return local
-            if int(cache_acertos or 0) >= 5 and score_local >= max(0.84, float(confianca or 0.8) - 0.08):
-                return local
-        elif perfil_busca == "balanced" and isinstance(local, dict):
-            score_local = float(local.get("score", 0.0) or 0.0)
-            if int(cache_acertos or 0) >= 8 and score_local >= max(0.82, float(confianca or 0.8) - 0.12):
                 return local
 
         esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
@@ -1584,11 +1686,8 @@ class ExecutorAutomacao:
         try:
             base = imagem.convert("L")
             ampliada = self.ampliar_imagem_para_ocr(base, fator=3)
-            contraste = ImageEnhance.Contrast(ampliada).enhance(2.2) if ImageEnhance else ampliada
-            invertida = ImageOps.invert(contraste) if ImageOps else contraste
             limiar_claro = ampliada.point(lambda valor: 255 if valor >= 150 else 0)
             limiar_escuro = ampliada.point(lambda valor: 255 if valor >= 118 else 0)
-            limiar_invertido = invertida.point(lambda valor: 255 if valor >= 118 else 0)
         except Exception:
             return []
 
@@ -1598,7 +1697,7 @@ class ExecutorAutomacao:
             "--psm 7 -c tessedit_char_whitelist=0123456789/.-:",
             "--psm 8 -c tessedit_char_whitelist=0123456789/.-:",
         ]
-        variantes = [ampliada, contraste, invertida, limiar_claro, limiar_escuro, limiar_invertido]
+        variantes = [ampliada, limiar_claro, limiar_escuro]
         textos = []
 
         for variante in variantes:
@@ -1653,7 +1752,7 @@ class ExecutorAutomacao:
         except Exception:
             return None
 
-    def carregar_template_imagem(self, caminho_imagem, incluir_ocr=True):
+    def carregar_template_imagem(self, caminho_imagem):
         if not OPENCV_DISPONIVEL or np is None:
             return None
 
@@ -1664,29 +1763,23 @@ class ExecutorAutomacao:
             mtime = None
 
         cache = self._cache_template_imagem.get(caminho)
-        if cache and cache.get("mtime") == mtime and (not incluir_ocr or cache.get("ocr_loaded")):
+        if cache and cache.get("mtime") == mtime:
             return cache
 
         try:
-            if cache and cache.get("mtime") == mtime:
-                referencia_bgr = cache.get("bgr")
-                referencia_gray = cache.get("gray")
-                referencia_edges = cache.get("edges")
-                referencia_binary = cache.get("binary")
-            else:
-                referencia_bgr = cv2.imread(caminho, cv2.IMREAD_COLOR)
-                if referencia_bgr is None:
-                    return None
-                referencia_gray = cv2.cvtColor(referencia_bgr, cv2.COLOR_BGR2GRAY)
-                referencia_edges = cv2.Canny(referencia_gray, 60, 160)
-                referencia_binary = cv2.threshold(
-                    referencia_gray,
-                    0,
-                    255,
-                    cv2.THRESH_BINARY + cv2.THRESH_OTSU,
-                )[1]
+            referencia_bgr = cv2.imread(caminho, cv2.IMREAD_COLOR)
+            if referencia_bgr is None:
+                return None
+            referencia_gray = cv2.cvtColor(referencia_bgr, cv2.COLOR_BGR2GRAY)
+            referencia_edges = cv2.Canny(referencia_gray, 60, 160)
+            referencia_binary = cv2.threshold(
+                referencia_gray,
+                0,
+                255,
+                cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+            )[1]
             ocr_variants = []
-            if incluir_ocr and OCR_DISPONIVEL and PIL_DISPONIVEL:
+            if OCR_DISPONIVEL and PIL_DISPONIVEL:
                 try:
                     imagem_rgb = Image.fromarray(cv2.cvtColor(referencia_bgr, cv2.COLOR_BGR2RGB))
                     ocr_variants = self.extrair_variantes_texto_ocr_imagem(imagem_rgb)
@@ -1700,7 +1793,6 @@ class ExecutorAutomacao:
                 "binary": referencia_binary,
                 "ocr_text": ocr_variants[0] if ocr_variants else "",
                 "ocr_variants": ocr_variants,
-                "ocr_loaded": bool(incluir_ocr),
                 "width": int(referencia_gray.shape[1]),
                 "height": int(referencia_gray.shape[0]),
             }
@@ -1708,25 +1800,6 @@ class ExecutorAutomacao:
             return cache
         except Exception:
             return None
-
-    def precarregar_templates_reconhecimento(self):
-        if self._templates_precarregados:
-            return
-        self._templates_precarregados = True
-        if not OPENCV_DISPONIVEL:
-            return
-        carregados = 0
-        for evento in self.eventos:
-            if str((evento or {}).get("tipo") or "").strip() not in TIPOS_IMAGEM:
-                continue
-            detalhes = (evento or {}).get("detalhes") or {}
-            caminho_imagem, imagem_id = self.resolver_imagem(detalhes.get("imagem"))
-            if not imagem_id or not caminho_imagem.exists():
-                continue
-            if self.carregar_template_imagem(caminho_imagem, incluir_ocr=False):
-                carregados += 1
-        if carregados:
-            safe_print(f"Templates de reconhecimento pre-carregados: {carregados}", flush=True)
 
     def avaliar_patch_template(self, patch_bgr, patch_gray, template):
         if not OPENCV_DISPONIVEL or np is None or not template:
@@ -1945,412 +2018,14 @@ class ExecutorAutomacao:
         base_top = int(topo_virtual + rel_top_clamped)
         return finalizar_captura(cortada, base_left, base_top)
 
-    def validar_texto_ocr_obrigatorio(self, texto_esperado, imagem):
-        esperado = self.normalizar_texto_ocr(texto_esperado)
-        if not esperado:
-            return True
-        if not OCR_DISPONIVEL or Image is None:
-            safe_print("OCR obrigatorio rejeitado: motor OCR indisponivel.", flush=True)
-            return False
-
-        textos = self.extrair_variantes_texto_ocr_imagem(imagem)
-        if self.texto_ocr_exige_exatidao_visual(esperado):
-            digitos_esperados = re.sub(r"\D", "", esperado)
-            textos_completos = [self.normalizar_texto_ocr(texto) for texto in textos if str(texto or "").strip()]
-            digitos_lidos = [re.sub(r"\D", "", texto) for texto in textos_completos]
-            if any(digitos_esperados and digitos_esperados in digitos for digitos in digitos_lidos):
-                safe_print(
-                    "OCR obrigatorio confirmou os digitos exatos "
-                    f"(esperado='{esperado}' | leituras='{'; '.join(textos_completos)[:120]}').",
-                    flush=True,
-                )
-                return True
-            safe_print(
-                "OCR obrigatorio rejeitou data/codigo diferente "
-                f"(esperado='{esperado}' | leituras='{'; '.join(textos_completos)[:120]}').",
-                flush=True,
-            )
-            return False
-
-        texto_total = self.normalizar_texto_ocr(" ".join(textos))
-        digitos_esperado_total = re.sub(r"\D", "", esperado)
-        digitos_total = re.sub(r"\D", "", texto_total)
-        if texto_total and (esperado in texto_total or (len(digitos_esperado_total) >= 4 and digitos_esperado_total in digitos_total)):
-            safe_print(
-                "OCR obrigatorio confirmado "
-                f"(esperado='{esperado}' | capturado='{texto_total[:80]}').",
-                flush=True,
-            )
-            return True
-        comparacoes = [
-            self.comparar_texto_reconhecimento_preciso(esperado, texto)
-            for texto in textos
-            if str(texto or "").strip()
-        ]
-        melhor = max(
-            comparacoes,
-            key=lambda item: (
-                float(item.get("digit_ratio", 0.0) or 0.0),
-                float(item.get("ratio", 0.0) or 0.0),
-            ),
-            default={
-                "ratio": 0.0,
-                "digit_ratio": 0.0,
-                "reference": esperado,
-                "captured": "",
-                "has_digits": len(re.sub(r"\D", "", esperado)) >= 2,
-            },
-        )
-
-        capturado = str(melhor.get("captured", "") or "").strip()
-        ratio_texto = float(melhor.get("ratio", 0.0) or 0.0)
-        digitos_esperado = re.sub(r"\D", "", esperado)
-        digitos_capturados = re.sub(r"\D", "", capturado)
-        tem_digitos_importantes = len(digitos_esperado) >= 4
-        texto_exato = bool(capturado) and capturado == esperado
-        texto_contido = bool(capturado) and esperado in capturado
-        digitos_exatos = tem_digitos_importantes and digitos_capturados == digitos_esperado
-        digitos_contidos = tem_digitos_importantes and digitos_esperado in digitos_capturados
-
-        if tem_digitos_importantes:
-            aprovado = texto_exato or texto_contido or digitos_exatos or digitos_contidos
-        else:
-            aprovado = texto_exato or texto_contido or ratio_texto >= 0.94
-
-        if aprovado:
-            safe_print(
-                "OCR obrigatorio confirmado "
-                f"(esperado='{esperado}' | capturado='{capturado}' | texto={ratio_texto:.2f}).",
-                flush=True,
-            )
-            return True
-
-        safe_print(
-            "OCR obrigatorio rejeitou a correspondencia "
-            f"(esperado='{esperado}' | capturado='{capturado}' | texto={ratio_texto:.2f}).",
-            flush=True,
-        )
-        return False
-
-    def texto_ocr_exige_exatidao_visual(self, texto):
-        normalizado = self.normalizar_texto_ocr(texto)
-        digitos = re.sub(r"\D", "", normalizado)
-        if len(digitos) >= 6 and len(digitos) >= max(4, len(normalizado.replace(" ", "")) - 1):
-            return True
-        return bool(re.fullmatch(r"\d{1,2}\s+\d{4}", normalizado) or re.fullmatch(r"\d{1,2}\s+\d{1,2}\s+\d{4}", normalizado))
-
-    def capturar_recorte_local_para_ocr(self, local):
-        esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
-        margem_x = max(10, min(36, int(largura * 0.55)))
-        margem_y = max(6, min(18, int(altura * 0.45)))
-        regiao = self.limitar_regiao(
-            (
-                int(esquerda - margem_x),
-                int(topo - margem_y),
-                int(largura + margem_x * 2),
-                int(altura + margem_y * 2),
-            )
-        )
-        if regiao is None:
-            regiao = (int(esquerda), int(topo), int(largura), int(altura))
-        captura, _base_left, _base_top = self.capturar_tela_pil(region=regiao)
-        return captura
-
-    def construir_regiao_ocr_proxima_visual(self, local, janela_info=None):
-        esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
-        margem_x = max(28, min(90, int(largura * 1.6)))
-        margem_y = max(14, min(46, int(altura * 1.4)))
-        limite = None
-        if janela_info:
-            limite = (
-                int(janela_info.get("left", 0) or 0),
-                int(janela_info.get("top", 0) or 0),
-                int(janela_info.get("width", 0) or 0),
-                int(janela_info.get("height", 0) or 0),
-            )
-        return self.limitar_regiao(
-            (
-                int(esquerda - margem_x),
-                int(topo - margem_y),
-                int(largura + margem_x * 2),
-                int(altura + margem_y * 2),
-            ),
-            limite=limite,
-        )
-
-    def confirmar_ocr_obrigatorio_apos_visual(self, local_visual, texto_ocr_esperado, janela_info=None, leitura_relativa=None):
-        texto_esperado = str(texto_ocr_esperado or "").strip()
-        if not texto_esperado:
-            return True
-
-        self.marcar_area_reconhecida(local_visual, duracao=0.55, bloqueante=True, estilo="visual", texto="Visual OK")
-        regiao_leitura = self.construir_regiao_ocr_relativa(local_visual, leitura_relativa)
-        if regiao_leitura is not None:
-            safe_print(
-                f"Visual confirmado. Procurando texto OCR obrigatorio na area Ler aqui: {texto_esperado}",
-                flush=True,
-            )
-            try:
-                captura_ocr, _base_left, _base_top = self.capturar_tela_pil(region=regiao_leitura)
-                if self.validar_texto_ocr_obrigatorio(texto_esperado, captura_ocr):
-                    self.marcar_area_reconhecida(regiao_leitura, duracao=0.8, bloqueante=True, estilo="ocr", texto="OCR OK")
-                    return True
-            except Exception as erro:
-                safe_print(f"OCR obrigatorio falhou ao ler a area Ler aqui: {erro}", flush=True)
-            local_ocr_relativo = self.procurar_texto_por_ocr(texto_esperado, region=regiao_leitura)
-            if local_ocr_relativo:
-                self.marcar_area_reconhecida(local_ocr_relativo, duracao=0.8, bloqueante=True, estilo="ocr", texto="OCR OK")
-                return True
-            safe_print(
-                f"OCR obrigatorio nao encontrou '{texto_esperado}' na area Ler aqui. Tentando area proxima do visual.",
-                flush=True,
-            )
-
-        regiao_ocr = self.construir_regiao_ocr_proxima_visual(local_visual, janela_info=janela_info)
-        if regiao_ocr is None:
-            safe_print("OCR obrigatorio rejeitado: nao foi possivel montar a regiao proxima do visual.", flush=True)
-            return False
-
-        safe_print(
-            f"Visual confirmado. Procurando texto OCR obrigatorio perto do bloco: {texto_esperado}",
-            flush=True,
-        )
-        exige_exatidao = self.texto_ocr_exige_exatidao_visual(texto_esperado)
-        if not exige_exatidao:
-            try:
-                captura_ocr, _base_left, _base_top = self.capturar_tela_pil(region=regiao_ocr)
-                if self.validar_texto_ocr_obrigatorio(texto_esperado, captura_ocr):
-                    self.marcar_area_reconhecida(local_visual, duracao=0.8, bloqueante=True, estilo="ocr", texto="OCR OK")
-                    return True
-            except Exception as erro:
-                safe_print(f"OCR obrigatorio falhou ao ler recorte proximo do visual: {erro}", flush=True)
-
-        local_ocr = self.procurar_texto_por_ocr(texto_esperado, region=regiao_ocr)
-        if local_ocr:
-            if exige_exatidao:
-                local_template_exato = self.procurar_template_texto_exato_perto(
-                    getattr(self, "_referencia_ocr_visual_atual", None),
-                    local_ocr,
-                    janela_info=janela_info,
-                )
-                if local_template_exato:
-                    self.marcar_area_reconhecida(local_template_exato, duracao=0.8, bloqueante=True, estilo="ocr", texto="OCR OK")
-                    return True
-                safe_print(
-                    "OCR localizou uma data/codigo parecida, mas o recorte exato da referencia nao bateu.",
-                    flush=True,
-                )
-                return False
-            self.marcar_area_reconhecida(local_ocr, duracao=0.8, bloqueante=True, estilo="ocr", texto="OCR OK")
-            return True
-
-        if exige_exatidao:
-            local_template_exato = self.procurar_template_texto_exato_perto(
-                getattr(self, "_referencia_ocr_visual_atual", None),
-                local_visual,
-                janela_info=janela_info,
-            )
-            if local_template_exato:
-                self.marcar_area_reconhecida(local_template_exato, duracao=0.8, bloqueante=True, estilo="ocr", texto="OCR OK")
-                return True
-            safe_print(
-                f"OCR obrigatorio nao confirmou exatamente a data/codigo '{texto_esperado}'. "
-                "Fallback visual amplo foi bloqueado para evitar falso positivo.",
-                flush=True,
-            )
-            return False
-
-        safe_print(
-            f"OCR nao leu '{texto_esperado}'. Tentando confirmar pelo recorte visual da referencia.",
-            flush=True,
-        )
-        local_template_texto = self.procurar_imagem_por_template(
-            getattr(self, "_referencia_ocr_visual_atual", None),
-            confianca=0.995,
-            region=regiao_ocr,
-            perfil_busca="precise",
-        ) if getattr(self, "_referencia_ocr_visual_atual", None) else None
-        validacao_visual_texto = self.validar_recorte_visual_texto_obrigatorio(
-            getattr(self, "_referencia_ocr_visual_atual", None),
-            local_template_texto,
-        )
-        if local_template_texto and validacao_visual_texto.get("ok"):
-            safe_print(
-                "Texto obrigatorio confirmado pelo recorte visual "
-                f"(cor={validacao_visual_texto.get('color', 0.0):.2f}, tons={validacao_visual_texto.get('gray', 0.0):.2f}, "
-                f"bin={validacao_visual_texto.get('binary', 0.0):.2f}, corr={validacao_visual_texto.get('corr', 0.0):.2f}, "
-                f"texto={validacao_visual_texto.get('text_iou', 0.0):.2f}, dif={validacao_visual_texto.get('text_xor', 1.0):.2f}).",
-                flush=True,
-            )
-            self.marcar_area_reconhecida(local_template_texto, duracao=0.8, bloqueante=True, estilo="ocr", texto="OCR OK")
-            return True
-
-        if local_template_texto:
-            safe_print(
-                "Recorte visual rejeitado por nao ser identico ao texto obrigatorio "
-                f"(cor={validacao_visual_texto.get('color', 0.0):.2f}, tons={validacao_visual_texto.get('gray', 0.0):.2f}, "
-                f"bin={validacao_visual_texto.get('binary', 0.0):.2f}, corr={validacao_visual_texto.get('corr', 0.0):.2f}, "
-                f"texto={validacao_visual_texto.get('text_iou', 0.0):.2f}, dif={validacao_visual_texto.get('text_xor', 1.0):.2f}).",
-                flush=True,
-            )
-
-        safe_print(f"OCR obrigatorio nao encontrou '{texto_esperado}' perto do visual confirmado.", flush=True)
-        return False
-
-    def procurar_template_texto_exato_perto(self, caminho_imagem, local_base, janela_info=None):
-        if not caminho_imagem or not local_base:
-            return None
-        esquerda, topo, largura, altura = self.bounds_reconhecimento(local_base)
-        margem_x = max(22, min(70, int(largura * 1.2)))
-        margem_y = max(10, min(32, int(altura * 1.0)))
-        limite = None
-        if janela_info:
-            limite = (
-                int(janela_info.get("left", 0) or 0),
-                int(janela_info.get("top", 0) or 0),
-                int(janela_info.get("width", 0) or 0),
-                int(janela_info.get("height", 0) or 0),
-            )
-        regiao = self.limitar_regiao(
-            (
-                int(esquerda - margem_x),
-                int(topo - margem_y),
-                int(largura + margem_x * 2),
-                int(altura + margem_y * 2),
-            ),
-            limite=limite,
-        )
-        if regiao is None:
-            return None
-        local_template = self.procurar_imagem_por_template(
-            caminho_imagem,
-            confianca=0.995,
-            region=regiao,
-            perfil_busca="precise",
-        )
-        validacao = self.validar_recorte_visual_texto_obrigatorio(caminho_imagem, local_template, modo="estrito")
-        if local_template and validacao.get("ok"):
-            safe_print(
-                "Data/codigo confirmado por recorte exato perto do OCR "
-                f"(cor={validacao.get('color', 0.0):.2f}, tons={validacao.get('gray', 0.0):.2f}, "
-                f"bin={validacao.get('binary', 0.0):.2f}, corr={validacao.get('corr', 0.0):.2f}, "
-                f"texto={validacao.get('text_iou', 0.0):.2f}, dif={validacao.get('text_xor', 1.0):.2f}).",
-                flush=True,
-            )
-            return local_template
-        return None
-
-    def validar_recorte_visual_texto_obrigatorio(self, caminho_imagem, local, modo="estrito"):
-        if not caminho_imagem or not local or not OPENCV_DISPONIVEL or not PIL_DISPONIVEL or np is None:
-            return {"ok": False}
-        template = self.carregar_template_imagem(caminho_imagem)
-        if not template:
-            return {"ok": False}
-        try:
-            esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
-            captura, _base_left, _base_top = self.capturar_tela_pil(region=(esquerda, topo, largura, altura))
-            captura_bgr = cv2.cvtColor(np.array(captura), cv2.COLOR_RGB2BGR)
-            captura_gray = cv2.cvtColor(captura_bgr, cv2.COLOR_BGR2GRAY)
-            metricas = self.avaliar_patch_template(captura_bgr, captura_gray, template) or {}
-            referencia_gray = template["gray"]
-            if captura_gray.shape[:2] != referencia_gray.shape[:2]:
-                captura_gray = cv2.resize(
-                    captura_gray,
-                    (referencia_gray.shape[1], referencia_gray.shape[0]),
-                    interpolation=cv2.INTER_LINEAR,
-                )
-            mascara_patch = self.mascara_texto_por_contraste(captura_gray)
-            mascara_ref = self.mascara_texto_por_contraste(referencia_gray)
-            uniao = np.logical_or(mascara_patch, mascara_ref)
-            intersecao = np.logical_and(mascara_patch, mascara_ref)
-            total_uniao = max(1, int(np.count_nonzero(uniao)))
-            texto_iou = float(np.count_nonzero(intersecao)) / float(total_uniao)
-            texto_xor = float(np.count_nonzero(np.logical_xor(mascara_patch, mascara_ref))) / float(total_uniao)
-        except Exception:
-            return {"ok": False}
-
-        cor = float(metricas.get("color", 0.0) or 0.0)
-        tons = float(metricas.get("gray", 0.0) or 0.0)
-        binaria = float(metricas.get("binary", 0.0) or 0.0)
-        tinta = float(metricas.get("ink_iou", 0.0) or 0.0)
-        corr = float(metricas.get("corr", 0.0) or 0.0)
-        hist = float(metricas.get("hist", 0.0) or 0.0)
-        composto = float(metricas.get("composite", 0.0) or 0.0)
-        if str(modo or "").strip().lower() == "moderado":
-            ok = (
-                cor >= 0.975
-                and tons >= 0.975
-                and binaria >= 0.955
-                and corr >= 0.92
-                and hist >= 0.94
-                and composto >= 0.935
-                and tinta >= 0.62
-                and texto_iou >= 0.92
-                and texto_xor <= 0.08
-            )
-        else:
-            ok = (
-                cor >= 0.992
-                and tons >= 0.992
-                and binaria >= 0.988
-                and corr >= 0.982
-                and hist >= 0.985
-                and composto >= 0.982
-                and tinta >= 0.88
-                and texto_iou >= 0.965
-                and texto_xor <= 0.035
-            )
-        return {
-            "ok": ok,
-            "color": cor,
-            "gray": tons,
-            "binary": binaria,
-            "ink_iou": tinta,
-            "corr": corr,
-            "hist": hist,
-            "composite": composto,
-            "text_iou": texto_iou,
-            "text_xor": texto_xor,
-        }
-
-    def mascara_texto_por_contraste(self, gray):
-        if gray is None or np is None:
-            return np.zeros((1, 1), dtype=bool)
-        try:
-            base = gray.astype("int16")
-            mediana = int(np.median(base))
-            distancia = np.abs(base - mediana).astype("uint8")
-            _, mascara = cv2.threshold(distancia, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            mascara_bool = mascara > 0
-            if int(np.count_nonzero(mascara_bool)) < 4:
-                mascara_bool = distancia >= 18
-            return mascara_bool
-        except Exception:
-            return np.zeros(gray.shape[:2], dtype=bool)
-
-    def validar_correspondencia_visual(
-        self,
-        caminho_imagem,
-        local,
-        confianca=0.8,
-        perfil_busca="balanced",
-        texto_ocr_esperado="",
-    ):
+    def validar_correspondencia_visual(self, caminho_imagem, local, confianca=0.8, perfil_busca="balanced"):
         if not OPENCV_DISPONIVEL or not PIL_DISPONIVEL or np is None:
-            if str(texto_ocr_esperado or "").strip() and PIL_DISPONIVEL:
-                try:
-                    captura = self.capturar_recorte_local_para_ocr(local)
-                    return self.validar_texto_ocr_obrigatorio(texto_ocr_esperado, captura)
-                except Exception as erro:
-                    safe_print(f"OCR obrigatorio falhou sem OpenCV: {erro}", flush=True)
-                    return False
-            return not str(texto_ocr_esperado or "").strip()
+            return True
 
         perfil_busca = str(perfil_busca or "balanced").strip().lower()
         if perfil_busca not in {"fast", "balanced", "precise"}:
             perfil_busca = "balanced"
-        carregar_ocr_template = perfil_busca == "precise" or bool(str(texto_ocr_esperado or "").strip())
-        template = self.carregar_template_imagem(caminho_imagem, incluir_ocr=carregar_ocr_template)
+        template = self.carregar_template_imagem(caminho_imagem)
         if not template:
             return True
 
@@ -2624,16 +2299,6 @@ class ExecutorAutomacao:
                 flush=True,
             )
             return False
-        if str(texto_ocr_esperado or "").strip():
-            try:
-                if not self.validar_texto_ocr_obrigatorio(
-                    texto_ocr_esperado,
-                    self.capturar_recorte_local_para_ocr(local),
-                ):
-                    return False
-            except Exception as erro:
-                safe_print(f"OCR obrigatorio falhou ao validar a imagem encontrada: {erro}", flush=True)
-                return False
         return True
 
     def procurar_texto_por_ocr(self, texto_referencia, region=None):
@@ -2657,56 +2322,30 @@ class ExecutorAutomacao:
         except OSError as erro:
             raise RuntimeError(f"PyAutoGUI nao conseguiu capturar a tela para OCR: {erro}") from erro
 
-        variantes_ocr = [(captura, 1.0)]
         try:
-            cinza = captura.convert("L")
-            ampliada = self.ampliar_imagem_para_ocr(cinza, fator=3)
-            contraste = ImageEnhance.Contrast(ampliada).enhance(2.4) if ImageEnhance else ampliada
-            invertida = ImageOps.invert(contraste) if ImageOps else contraste
-            limiar_escuro = contraste.point(lambda valor: 255 if valor >= 120 else 0)
-            limiar_invertido = invertida.point(lambda valor: 255 if valor >= 120 else 0)
-            variantes_ocr.extend([
-                (ampliada, 3.0),
-                (contraste, 3.0),
-                (invertida, 3.0),
-                (limiar_escuro, 3.0),
-                (limiar_invertido, 3.0),
-            ])
+            dados = pytesseract.image_to_data(
+                captura,
+                output_type=pytesseract.Output.DICT,
+                config="--psm 6",
+            )
         except Exception:
-            pass
+            return None
 
         palavras = []
-        configs_dados = [
-            "--psm 6",
-            "--psm 11",
-            "--psm 6 -c tessedit_char_whitelist=0123456789/.-:",
-            "--psm 11 -c tessedit_char_whitelist=0123456789/.-:",
-        ]
-        for imagem_ocr, escala_ocr in variantes_ocr:
-            for config_ocr in configs_dados:
-                try:
-                    dados = pytesseract.image_to_data(
-                        imagem_ocr,
-                        output_type=pytesseract.Output.DICT,
-                        config=config_ocr,
-                    )
-                except Exception:
-                    continue
-
-                total_itens = len(dados.get("text", []))
-                for indice in range(total_itens):
-                    texto = self.normalizar_texto_ocr(dados["text"][indice])
-                    if not texto:
-                        continue
-                    palavras.append(
-                        {
-                            "texto": texto,
-                            "left": int(int(dados["left"][indice]) / escala_ocr),
-                            "top": int(int(dados["top"][indice]) / escala_ocr),
-                            "width": max(1, int(int(dados["width"][indice]) / escala_ocr)),
-                            "height": max(1, int(int(dados["height"][indice]) / escala_ocr)),
-                        }
-                    )
+        total_itens = len(dados.get("text", []))
+        for indice in range(total_itens):
+            texto = self.normalizar_texto_ocr(dados["text"][indice])
+            if not texto:
+                continue
+            palavras.append(
+                {
+                    "texto": texto,
+                    "left": int(dados["left"][indice]),
+                    "top": int(dados["top"][indice]),
+                    "width": int(dados["width"][indice]),
+                    "height": int(dados["height"][indice]),
+                }
+            )
 
         if not palavras:
             self._ultima_busca_ocr_info = {
@@ -2729,12 +2368,6 @@ class ExecutorAutomacao:
                 trecho = palavras[inicio : inicio + tamanho]
                 candidato = " ".join(item["texto"] for item in trecho)
                 pontuacao = difflib.SequenceMatcher(None, texto_alvo, candidato).ratio()
-                digitos_alvo = re.sub(r"\D", "", texto_alvo)
-                digitos_candidato = re.sub(r"\D", "", candidato)
-                if len(digitos_alvo) >= 4 and digitos_alvo in digitos_candidato:
-                    pontuacao = max(pontuacao, 0.99)
-                elif len(digitos_alvo) >= 4:
-                    pontuacao = 0.0
                 if pontuacao <= melhor_pontuacao:
                     continue
 
@@ -2761,8 +2394,6 @@ class ExecutorAutomacao:
                 melhor_pontuacao = pontuacao
 
         limite = 0.68 if len(alvo_palavras) > 1 else 0.8
-        if len(re.sub(r"\D", "", texto_alvo)) >= 4:
-            limite = 0.9
         self._ultima_busca_ocr_info = {
             "capture_ms": float((self._ultima_captura_visual_info or {}).get("capture_ms", 0.0) or 0.0),
             "ocr_ms": (time.perf_counter() - inicio_ocr) * 1000.0,
@@ -2795,10 +2426,7 @@ class ExecutorAutomacao:
         try:
             tela_bgr = cv2.cvtColor(np.array(captura), cv2.COLOR_RGB2BGR)
             tela_gray = cv2.cvtColor(tela_bgr, cv2.COLOR_BGR2GRAY)
-            template = self.carregar_template_imagem(
-                caminho_imagem,
-                incluir_ocr=bool(perfil_busca == "precise" or modo_estrito),
-            )
+            template = self.carregar_template_imagem(caminho_imagem)
             if not template:
                 return None
             referencia_gray = template["gray"]
@@ -3693,51 +3321,6 @@ class ExecutorAutomacao:
             return int(linha_principal)
         return None
 
-    def escrever_valor_planilha_loop(self, evento, contexto_loop=None):
-        detalhes = evento.get("detalhes", {}) or {}
-        linha_atual = self.obter_linha_atual_contexto(contexto_loop)
-        if linha_atual is None:
-            raise ValueError("Este bloco precisa de uma linha atual do loop para escrever na planilha.")
-
-        arquivo = self.normalizar_id_planilha(detalhes.get("arquivo"))
-        aba = str(detalhes.get("aba") or "").strip()
-        coluna = str(detalhes.get("coluna") or "").strip()
-        valor = str(detalhes.get("valor") or "")
-        if not aba or not coluna:
-            raise ValueError("Configure a aba e a coluna do bloco Escrever na planilha.")
-
-        caminho_planilha, workbook_id = self.resolver_planilha(arquivo)
-        if not caminho_planilha.exists():
-            raise FileNotFoundError(f"Planilha nao encontrada: {caminho_planilha}")
-
-        workbook = load_workbook(caminho_planilha)
-        try:
-            if aba not in workbook.sheetnames:
-                raise ValueError(f"A aba '{aba}' nao foi encontrada na planilha.")
-            worksheet = workbook[aba]
-            if not hasattr(worksheet, "iter_rows"):
-                raise ValueError(f"A aba '{aba}' nao e uma planilha editavel.")
-            headers = [
-                str(cell.value or "").strip()
-                for cell in next(worksheet.iter_rows(min_row=1, max_row=1), [])
-            ]
-            try:
-                coluna_indice = headers.index(coluna) + 1
-            except ValueError:
-                coluna_indice = len(headers) + 1
-                worksheet.cell(row=1, column=coluna_indice).value = coluna
-            worksheet.cell(row=int(linha_atual), column=coluna_indice).value = valor
-            workbook.save(caminho_planilha)
-        finally:
-            workbook.close()
-
-        self.planilha_cache = self.carregar_planilha()
-        safe_print(
-            f"Planilha atualizada: {Path(workbook_id).name} / {aba} / linha {linha_atual} / {coluna} = {valor}",
-            flush=True,
-        )
-        return True
-
     def salvar_variavel_contexto(self, nome, valor):
         chave = str(nome or "").strip()
         if chave.startswith("{{") and chave.endswith("}}"):
@@ -3746,191 +3329,6 @@ class ExecutorAutomacao:
             return
         self.contexto_variaveis[chave] = value = "" if valor is None else str(valor)
         safe_print(f"Variavel de contexto atualizada: {chave}={value}", flush=True)
-
-    def registrar_ocr_reconhecimento(self, local, ordem_evento=None):
-        texto = ""
-        try:
-            recorte = self.capturar_recorte_local_para_ocr(local)
-            variantes = self.extrair_variantes_texto_ocr_imagem(recorte)
-            texto = next((str(item or "").strip() for item in variantes if str(item or "").strip()), "")
-        except Exception as erro:
-            safe_print(f"OCR do reconhecimento nao pode ser lido: {erro}", flush=True)
-
-        self._ultimo_texto_ocr_reconhecimento = texto
-        self.salvar_variavel_contexto("ultimo_ocr", texto)
-        self.salvar_variavel_contexto("ocr_tela", texto)
-        if ordem_evento not in (None, ""):
-            self.salvar_variavel_contexto(f"ocr_bloco_{ordem_evento}", texto)
-        if texto:
-            safe_print(f"OCR capturado do reconhecimento: {texto}", flush=True)
-        return texto
-
-    def construir_regiao_ocr_relativa(self, local, leitura_relativa):
-        if not isinstance(leitura_relativa, dict):
-            return None
-        esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
-        lado = str(leitura_relativa.get("lado") or "livre").strip().lower()
-        margem = int(float(leitura_relativa.get("margem") or 8))
-        recorte_largura = max(16, int(float(leitura_relativa.get("largura") or 140)))
-        recorte_altura = max(12, int(float(leitura_relativa.get("altura") or max(altura, 32))))
-        offset_x = int(float(leitura_relativa.get("offset_x") or 0))
-        offset_y = int(float(leitura_relativa.get("offset_y") or 0))
-
-        if lado == "esquerda":
-            x = esquerda - margem - recorte_largura + offset_x
-            y = topo + offset_y
-        elif lado == "abaixo":
-            x = esquerda + offset_x
-            y = topo + altura + margem + offset_y
-        elif lado == "acima":
-            x = esquerda + offset_x
-            y = topo - margem - recorte_altura + offset_y
-        elif lado == "centro":
-            x = esquerda + offset_x
-            y = topo + offset_y
-        elif lado == "livre":
-            x = esquerda + (largura / 2) + offset_x - (recorte_largura / 2)
-            y = topo + (altura / 2) + offset_y - (recorte_altura / 2)
-        else:
-            x = esquerda + largura + margem + offset_x
-            y = topo + offset_y
-        return self.limitar_regiao((x, y, recorte_largura, recorte_altura))
-
-    def ler_ocr_relativo_reconhecimento(self, local, leitura_relativa, ordem_evento=None):
-        if not isinstance(leitura_relativa, dict) or not leitura_relativa.get("ativo"):
-            return ""
-        salvar_em = str(leitura_relativa.get("salvar_em") or "").strip()
-        if not salvar_em:
-            return ""
-        regiao = self.construir_regiao_ocr_relativa(local, leitura_relativa)
-        if not regiao:
-            return ""
-
-        captura, _, _ = self.capturar_tela_pil(region=regiao)
-        variantes = self.extrair_variantes_texto_ocr_imagem(captura)
-        texto = next((str(item or "").strip() for item in variantes if str(item or "").strip()), "")
-        self.salvar_variavel_contexto(salvar_em, texto)
-        self.salvar_variavel_contexto(f"ocr_relativo_{salvar_em}", texto)
-        if ordem_evento not in (None, ""):
-            self.salvar_variavel_contexto(f"ocr_bloco_{ordem_evento}_{salvar_em}", texto)
-        safe_print(
-            f"OCR relativo salvo: {salvar_em}={texto or '-'} / area={self.formatar_regiao_log(regiao)}",
-            flush=True,
-        )
-        return texto
-
-    def normalizar_origem_ocr_comparacao(self, origem):
-        bruto = str(origem or "ultimo_ocr").strip()
-        if not bruto or bruto in {"ultimo_ocr", "ocr_tela"}:
-            return bruto or "ultimo_ocr"
-        compacto = bruto.lower().replace(" ", "")
-        encontrado = re.search(r"(?:ocr_bloco_|bloco[:_-]?)(\d+)$", compacto)
-        if encontrado:
-            return f"ocr_bloco_{encontrado.group(1)}"
-        if compacto.isdigit():
-            return f"ocr_bloco_{compacto}"
-        return bruto
-
-    def normalizar_valor_comparacao(self, valor, modo="texto"):
-        texto = str(valor if valor is not None else "").strip()
-        modo = str(modo or "texto").strip().lower()
-        if modo == "numero":
-            somente_numero = re.sub(r"[^\d,.\-]", "", texto)
-            if "," in somente_numero and "." in somente_numero:
-                somente_numero = somente_numero.replace(".", "").replace(",", ".")
-            elif "," in somente_numero:
-                somente_numero = somente_numero.replace(",", ".")
-            try:
-                return round(float(somente_numero), 6)
-            except (TypeError, ValueError):
-                return None
-        if modo == "data":
-            return re.sub(r"\D", "", texto)
-        return re.sub(r"\s+", " ", self.normalizar_texto_ocr(texto)).strip()
-
-    def valores_equivalentes_comparacao(self, esperado, encontrado, modo="texto", tolerancia=0):
-        esperado_norm = self.normalizar_valor_comparacao(esperado, modo)
-        encontrado_norm = self.normalizar_valor_comparacao(encontrado, modo)
-        if str(modo or "").strip().lower() == "numero":
-            if esperado_norm is None or encontrado_norm is None:
-                return False
-            return abs(float(esperado_norm) - float(encontrado_norm)) <= max(0.0, float(tolerancia or 0))
-        return bool(str(esperado_norm)) and str(esperado_norm) == str(encontrado_norm)
-
-    def escrever_celula_planilha(self, arquivo, aba, linha, coluna, valor):
-        arquivo = self.normalizar_id_planilha(arquivo)
-        aba = str(aba or "").strip()
-        coluna = str(coluna or "").strip()
-        if not aba or not coluna:
-            return False
-
-        caminho_planilha, workbook_id = self.resolver_planilha(arquivo)
-        if not caminho_planilha.exists():
-            raise FileNotFoundError(f"Planilha nao encontrada: {caminho_planilha}")
-
-        workbook = load_workbook(caminho_planilha)
-        try:
-            if aba not in workbook.sheetnames:
-                raise ValueError(f"A aba '{aba}' nao foi encontrada na planilha.")
-            worksheet = workbook[aba]
-            if not hasattr(worksheet, "iter_rows"):
-                raise ValueError(f"A aba '{aba}' nao e uma planilha editavel.")
-            headers = [
-                str(cell.value or "").strip()
-                for cell in next(worksheet.iter_rows(min_row=1, max_row=1), [])
-            ]
-            try:
-                coluna_indice = headers.index(coluna) + 1
-            except ValueError:
-                coluna_indice = len(headers) + 1
-                worksheet.cell(row=1, column=coluna_indice).value = coluna
-            worksheet.cell(row=int(linha), column=coluna_indice).value = valor
-            workbook.save(caminho_planilha)
-        finally:
-            workbook.close()
-
-        safe_print(
-            f"Planilha atualizada: {Path(workbook_id).name} / {aba} / linha {linha} / {coluna} = {valor}",
-            flush=True,
-        )
-        return True
-
-    def comparar_planilha_com_ocr(self, evento, contexto_loop=None):
-        detalhes = evento.get("detalhes", {}) or {}
-        linha = self.obter_contexto_linha_loop(contexto_loop)
-        linha_atual = self.obter_linha_atual_contexto(contexto_loop)
-        if not linha or linha_atual is None:
-            raise ValueError("Este bloco precisa estar dentro de um loop de planilha.")
-
-        coluna_esperada = str(detalhes.get("coluna_esperada") or detalhes.get("coluna") or "").strip()
-        if not coluna_esperada:
-            raise ValueError("Configure a coluna da planilha que sera conferida.")
-
-        esperado = linha.get(coluna_esperada, "")
-        origem_tela = self.normalizar_origem_ocr_comparacao(
-            detalhes.get("origem_tela") or detalhes.get("origem_ocr") or "ultimo_ocr"
-        )
-        encontrado = self.contexto_variaveis.get(origem_tela, "")
-        if not str(encontrado).strip() and origem_tela != "ultimo_ocr":
-            safe_print(
-                f"OCR da origem {origem_tela} vazio; usando ultimo OCR como fallback.",
-                flush=True,
-            )
-            encontrado = self.contexto_variaveis.get("ultimo_ocr", "")
-
-        modo = str(detalhes.get("modo_comparacao") or "texto").strip().lower()
-        tolerancia = float(detalhes.get("tolerancia") or 0)
-        conferiu = self.valores_equivalentes_comparacao(esperado, encontrado, modo, tolerancia)
-
-        valor_ok = str(detalhes.get("valor_ok") or "OK")
-        valor_divergente = str(detalhes.get("valor_divergente") or "Divergente")
-        status = valor_ok if conferiu else valor_divergente
-
-        safe_print(
-            f"Conferencia da linha {linha_atual}: esperado '{esperado}' x tela '{encontrado}' => {status}",
-            flush=True,
-        )
-        return conferiu
 
     def montar_contexto_substituicao(self, contexto_loop=None):
         contexto = {}
@@ -4005,50 +3403,6 @@ class ExecutorAutomacao:
 
         return re.sub(r"\{\{\s*([^{}]+?)\s*\}\}", substituir, bruto)
 
-    def slug_variavel_arquivo(self, texto):
-        base = unicodedata.normalize("NFKD", str(texto or ""))
-        base = "".join(ch for ch in base if not unicodedata.combining(ch))
-        base = re.sub(r"[^a-zA-Z0-9]+", "_", base).strip("_").lower()
-        return base
-
-    def montar_contexto_download(self, contexto_loop=None):
-        contexto = self.montar_contexto_substituicao(contexto_loop)
-        expandido = dict(contexto)
-        for chave, valor in list(contexto.items()):
-            slug = self.slug_variavel_arquivo(chave)
-            if slug:
-                expandido.setdefault(slug, valor)
-        linha = contexto.get("linha")
-        if isinstance(linha, dict):
-            for chave, valor in linha.items():
-                if str(chave).startswith("__"):
-                    continue
-                slug = self.slug_variavel_arquivo(chave)
-                if slug:
-                    expandido.setdefault(slug, valor)
-        expandido.setdefault("linha", contexto.get("linha_atual", ""))
-        expandido.setdefault("linha_atual", contexto.get("linha_atual", ""))
-        return expandido
-
-    def substituir_variaveis_nome_arquivo(self, texto, contexto_loop=None):
-        contexto = self.montar_contexto_download(contexto_loop)
-        bruto = self.substituir_variaveis_texto(texto, contexto_loop)
-
-        def substituir(match):
-            token = str(match.group(1) or "").strip()
-            valor = contexto.get(token)
-            if valor is None:
-                valor = contexto.get(self.slug_variavel_arquivo(token), "")
-            return "" if valor is None else str(valor)
-
-        return re.sub(r"(?<!\{)\{\s*([^{}]+?)\s*\}(?!\})", substituir, bruto)
-
-    def limpar_nome_arquivo(self, nome, fallback="download"):
-        texto = str(nome or "").strip() or fallback
-        texto = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", texto)
-        texto = re.sub(r"\s+", " ", texto).strip().strip(".")
-        return texto or fallback
-
     def resumir_html(self, html, limite=140):
         texto = re.sub(r"\s+", " ", str(html or "")).strip()
         if len(texto) <= limite:
@@ -4069,52 +3423,14 @@ class ExecutorAutomacao:
             self._playwright_runtime = sync_playwright().start()
         return self._playwright_runtime
 
-    def url_referencia_chrome(self, detalhes):
-        detalhes = detalhes or {}
-        elemento = detalhes.get("elemento") or {}
-        return str(
-            elemento.get("url_origem")
-            or elemento.get("url")
-            or detalhes.get("url_origem")
-            or ""
-        ).strip()
-
-    def pagina_chrome_compativel(self, pagina, url_referencia):
-        if not url_referencia:
-            return False
-        try:
-            url_atual = str(getattr(pagina, "url", "") or "")
-        except Exception:
-            return False
-        if not url_atual or url_atual.startswith("about:"):
-            return False
-        referencia_base = re.sub(r"([?#].*)$", "", url_referencia).rstrip("/")
-        atual_base = re.sub(r"([?#].*)$", "", url_atual).rstrip("/")
-        if referencia_base and atual_base and (referencia_base in atual_base or atual_base in referencia_base):
-            return True
-        try:
-            host_ref = re.sub(r"^https?://", "", url_referencia, flags=re.I).split("/")[0]
-            host_atual = re.sub(r"^https?://", "", url_atual, flags=re.I).split("/")[0]
-            return bool(host_ref and host_ref == host_atual)
-        except Exception:
-            return False
-
-    def selecionar_pagina_chrome(self, browser, url_referencia=""):
+    def selecionar_pagina_chrome(self, browser):
         contextos = list(getattr(browser, "contexts", []) or [])
         if contextos:
             for contexto in contextos:
                 paginas = list(getattr(contexto, "pages", []) or [])
-                if url_referencia:
-                    for pagina in reversed(paginas):
-                        try:
-                            if not pagina.is_closed() and self.pagina_chrome_compativel(pagina, url_referencia):
-                                return contexto, pagina
-                        except Exception:
-                            continue
                 for pagina in reversed(paginas):
                     try:
-                        url_atual = str(getattr(pagina, "url", "") or "")
-                        if not pagina.is_closed() and not url_atual.startswith("about:"):
+                        if not pagina.is_closed():
                             return contexto, pagina
                     except Exception:
                         continue
@@ -4126,7 +3442,7 @@ class ExecutorAutomacao:
         contexto = browser.new_context(no_viewport=True, accept_downloads=True)
         return contexto, contexto.new_page()
 
-    def garantir_sessao_chrome(self, detalhes=None):
+    def garantir_sessao_chrome(self):
         if self._chrome_page is not None:
             try:
                 if not self._chrome_page.is_closed():
@@ -4141,7 +3457,7 @@ class ExecutorAutomacao:
         for cdp_url in ("http://127.0.0.1:9222", "http://localhost:9222"):
             try:
                 browser = chromium.connect_over_cdp(cdp_url)
-                contexto, pagina = self.selecionar_pagina_chrome(browser, self.url_referencia_chrome(detalhes))
+                contexto, pagina = self.selecionar_pagina_chrome(browser)
                 self._chrome_browser = browser
                 self._chrome_context = contexto
                 self._chrome_page = pagina
@@ -4152,101 +3468,49 @@ class ExecutorAutomacao:
             except Exception as erro:
                 ultimo_erro = erro
 
+        candidatos_launch = [
+            {
+                "channel": "chrome",
+                "headless": False,
+                "args": ["--start-maximized"],
+            },
+            {
+                "headless": False,
+                "args": ["--start-maximized"],
+            },
+        ]
+        for parametros in candidatos_launch:
+            try:
+                browser = chromium.launch(**parametros)
+                contexto = browser.new_context(no_viewport=True, accept_downloads=True)
+                pagina = contexto.new_page()
+                self._chrome_browser = browser
+                self._chrome_context = contexto
+                self._chrome_page = pagina
+                self._chrome_source = "launch:chrome" if parametros.get("channel") == "chrome" else "launch:chromium"
+                self._chrome_launched_by_executor = True
+                safe_print(
+                    "Sessao Chrome iniciada em modo controlado. "
+                    "Se voce queria usar uma aba ja aberta, abra o Chrome com --remote-debugging-port=9222.",
+                    flush=True,
+                )
+                return pagina
+            except Exception as erro:
+                ultimo_erro = erro
+
         raise RuntimeError(
-            "Nao foi possivel conectar ao Chrome aberto para automacao Web. "
-            "Feche o Chrome e deixe o bloco Abrir URL abrir novamente em Chrome/Edge, "
-            "ou abra o Chrome com --remote-debugging-port=9222. "
+            "Nao foi possivel conectar ou iniciar uma sessao Playwright/Chrome. "
             f"Ultimo erro: {ultimo_erro}"
         )
 
-    def obter_pagina_chrome(self, detalhes=None):
-        pagina = self.garantir_sessao_chrome(detalhes)
+    def obter_pagina_chrome(self):
+        pagina = self.garantir_sessao_chrome()
         if self._chrome_context is None and self._chrome_browser is not None:
             try:
-                self._chrome_context, self._chrome_page = self.selecionar_pagina_chrome(
-                    self._chrome_browser,
-                    self.url_referencia_chrome(detalhes),
-                )
+                self._chrome_context, self._chrome_page = self.selecionar_pagina_chrome(self._chrome_browser)
                 pagina = self._chrome_page
             except Exception:
                 pass
-        return pagina
-
-    def clicar_elemento_chrome_com_mouse_real(self, page, locator, timeout=10000):
-        locator.wait_for(state="visible", timeout=timeout)
-        locator.scroll_into_view_if_needed(timeout=timeout)
-        caixa = locator.bounding_box(timeout=timeout)
-        if not caixa:
-            raise RuntimeError("Elemento encontrado, mas nao foi possivel calcular a posicao para clique real.")
-
-        ponto = page.evaluate(
-            """() => ({
-                screenX: window.screenX || 0,
-                screenY: window.screenY || 0,
-                outerHeight: window.outerHeight || 0,
-                innerHeight: window.innerHeight || 0,
-                outerWidth: window.outerWidth || 0,
-                innerWidth: window.innerWidth || 0
-            })"""
-        )
-        barra_superior = max(0, int((ponto.get("outerHeight") or 0) - (ponto.get("innerHeight") or 0)))
-        borda_lateral = max(0, int(((ponto.get("outerWidth") or 0) - (ponto.get("innerWidth") or 0)) / 2))
-        x = int((ponto.get("screenX") or 0) + borda_lateral + caixa["x"] + (caixa["width"] / 2))
-        y = int((ponto.get("screenY") or 0) + barra_superior + caixa["y"] + (caixa["height"] / 2))
-        try:
-            page.bring_to_front()
-        except Exception:
-            pass
-        time.sleep(0.12)
-        pyautogui.click(x=x, y=y)
-        safe_print(f"Chrome/Web clique real em X={x} Y={y}", flush=True)
-        return True
-
-    def abrir_url_em_sessao_chrome_controlada(self, url, navegador="chrome", nova_janela=True, tela_cheia=False):
-        runtime = self.garantir_playwright()
-        chromium = runtime.chromium
-        channel = "msedge" if str(navegador or "").lower() == "edge" else "chrome"
-        args = []
-        if tela_cheia:
-            args.extend(["--start-fullscreen", "--start-maximized"])
-        if nova_janela:
-            args.append("--new-window")
-
-        if self._chrome_page is not None:
-            try:
-                if not self._chrome_page.is_closed():
-                    self._chrome_page.goto(url, wait_until="domcontentloaded")
-                    try:
-                        self._chrome_page.bring_to_front()
-                    except Exception:
-                        pass
-                    return self._chrome_page
-            except Exception:
-                self._chrome_page = None
-
-        perfil = APP_ROOT / "dados_execucao" / "chrome_web_profile"
-        perfil.mkdir(parents=True, exist_ok=True)
-        contexto = chromium.launch_persistent_context(
-            str(perfil),
-            channel=channel,
-            headless=False,
-            no_viewport=True,
-            accept_downloads=True,
-            args=args,
-        )
-        paginas = [pagina for pagina in contexto.pages if not pagina.is_closed()]
-        pagina = paginas[-1] if paginas else contexto.new_page()
-        pagina.goto(url, wait_until="domcontentloaded")
-        try:
-            pagina.bring_to_front()
-        except Exception:
-            pass
-        self._chrome_browser = getattr(contexto, "browser", None)
-        self._chrome_context = contexto
-        self._chrome_page = pagina
-        self._chrome_source = f"controlled:{channel}"
-        self._chrome_launched_by_executor = True
-        safe_print(f"Sessao {channel} controlada aberta para Chrome/Web.", flush=True)
         return pagina
 
     def criar_locator_playwright(self, page, alvo):
@@ -4271,8 +3535,6 @@ class ExecutorAutomacao:
             return page.locator(seletor)
         if metodo == "text":
             return page.get_by_text(valor, exact=True)
-        if metodo == "nearby_text":
-            return page.get_by_text(valor, exact=False)
         if metodo == "role":
             if not role:
                 raise ValueError("O metodo Role exige que o bloco tenha um role salvo.")
@@ -4281,7 +3543,7 @@ class ExecutorAutomacao:
             xpath = valor if valor.startswith("xpath=") else f"xpath={valor}"
             return page.locator(xpath)
         if metodo == "id":
-            seletor = f'[id="{valor.replace("\\", "\\\\").replace("\"", "\\\"")}"]'
+            seletor = seletor_css or f'[id="{valor.replace("\\", "\\\\").replace("\"", "\\\"")}"]'
             return page.locator(seletor)
         if metodo == "css":
             return page.locator(valor or seletor_css)
@@ -4289,54 +3551,6 @@ class ExecutorAutomacao:
         if seletor_css:
             return page.locator(seletor_css)
         return page.locator(valor)
-
-    def alvos_chrome_por_prioridade(self, detalhes):
-        detalhes = detalhes or {}
-        elemento = dict(detalhes.get("elemento") or {})
-        alvo_principal = dict(detalhes.get("alvo") or {})
-        seletores = [item for item in (detalhes.get("seletores") or []) if isinstance(item, dict)]
-        por_metodo = {str(item.get("metodo") or "").strip().lower(): item for item in seletores}
-        vistos = set()
-
-        def adicionar(metodo, valor="", seletor_css="", role=""):
-            metodo = str(metodo or "").strip().lower()
-            valor = str(valor or "").strip()
-            seletor_css = str(seletor_css or "").strip()
-            role = str(role or "").strip()
-            chave = (metodo, valor, seletor_css, role)
-            if not metodo or (not valor and not seletor_css) or chave in vistos:
-                return
-            vistos.add(chave)
-            alvos.append({"metodo": metodo, "valor": valor, "seletor_css": seletor_css, "role": role})
-
-        alvos = []
-        adicionar("id", elemento.get("id") or por_metodo.get("id", {}).get("valor"), por_metodo.get("id", {}).get("seletor_css"))
-        adicionar("name", elemento.get("name") or por_metodo.get("name", {}).get("valor"), por_metodo.get("name", {}).get("seletor_css"))
-        adicionar("placeholder", elemento.get("placeholder") or por_metodo.get("placeholder", {}).get("valor"), por_metodo.get("placeholder", {}).get("seletor_css"))
-        adicionar("aria-label", elemento.get("aria_label") or por_metodo.get("aria-label", {}).get("valor"), por_metodo.get("aria-label", {}).get("seletor_css"))
-        adicionar("text", elemento.get("texto_visivel") or elemento.get("text") or por_metodo.get("text", {}).get("valor"))
-        adicionar("nearby_text", elemento.get("texto_proximo") or por_metodo.get("nearby_text", {}).get("valor"))
-        adicionar("css", elemento.get("css_selector") or alvo_principal.get("seletor_css") or por_metodo.get("css", {}).get("valor"))
-        adicionar("xpath", elemento.get("xpath") or por_metodo.get("xpath", {}).get("valor"))
-        if alvo_principal:
-            adicionar(
-                alvo_principal.get("metodo") or "css",
-                alvo_principal.get("valor"),
-                alvo_principal.get("seletor_css"),
-                alvo_principal.get("role"),
-            )
-        return alvos
-
-    def encontrar_locator_chrome(self, page, detalhes, timeout):
-        ultimo_erro = None
-        for alvo in self.alvos_chrome_por_prioridade(detalhes):
-            try:
-                locator = self.criar_locator_playwright(page, alvo).first
-                locator.wait_for(state="attached", timeout=max(300, min(1200, int(timeout))))
-                return locator, alvo
-            except Exception as erro:
-                ultimo_erro = erro
-        raise RuntimeError(f"Nao encontrei o elemento Chrome/Web por nenhuma estrategia. Ultimo erro: {ultimo_erro}")
 
     def salvar_captura_erro_chrome(self, nome_bloco, page=None):
         PASTA_DIAGNOSTICOS_CHROME.mkdir(parents=True, exist_ok=True)
@@ -4468,16 +3682,12 @@ class ExecutorAutomacao:
             )
 
             try:
-                page = self.obter_pagina_chrome(detalhes)
+                page = self.obter_pagina_chrome()
                 try:
                     page.bring_to_front()
                 except Exception:
                     pass
-                locator, alvo_usado = self.encontrar_locator_chrome(page, detalhes, timeout)
-                safe_print(
-                    f"[Chrome: {nome_bloco}] Estrategia usada: {alvo_usado.get('metodo')} | {alvo_usado.get('valor') or alvo_usado.get('seletor_css')}",
-                    flush=True,
-                )
+                locator = self.criar_locator_playwright(page, alvo).first
 
                 valor_acao = self.substituir_variaveis_texto(acao.get("valor", ""), contexto_loop)
                 tecla_depois = str(acao.get("pressionar_depois", "") or "").strip()
@@ -4499,16 +3709,6 @@ class ExecutorAutomacao:
                 elif tipo_acao == "clicar":
                     locator.wait_for(state="visible", timeout=timeout)
                     locator.click(timeout=timeout)
-
-                elif tipo_acao == "clicar_real":
-                    self.clicar_elemento_chrome_com_mouse_real(page, locator, timeout=timeout)
-
-                elif tipo_acao == "marcar_checkbox":
-                    locator.wait_for(state="visible", timeout=timeout)
-                    try:
-                        locator.check(timeout=timeout)
-                    except Exception:
-                        locator.click(timeout=timeout)
 
                 elif tipo_acao == "esperar":
                     locator.wait_for(state="visible", timeout=timeout)
@@ -4661,10 +3861,13 @@ class ExecutorAutomacao:
                 return f"Evento #{ordem}: {coluna} {indice_item + 1}/{total} ({valor})"
             return f"Evento #{ordem}: sequencia da coluna {coluna}"
 
+        if tipo in TIPOS_ESCRITA_PLANILHA:
+            detalhes = evento.get("detalhes", {})
+            return f"Evento #{ordem}: escrever em {detalhes.get('coluna', 'coluna')}"
+
         if tipo in TIPOS_COMPARACAO_PLANILHA:
             detalhes = evento.get("detalhes", {})
-            coluna = detalhes.get("coluna_esperada") or detalhes.get("coluna") or "coluna"
-            return f"Evento #{ordem}: conferir {coluna} com OCR"
+            return f"Evento #{ordem}: conferir {detalhes.get('coluna_esperada', 'valor')} com OCR"
 
         if tipo in TIPOS_MOUSE:
             detalhes = evento.get("detalhes", {})
@@ -4695,11 +3898,6 @@ class ExecutorAutomacao:
                 f"[{self.limpar_saida_status(alvo.get('metodo', 'css'))} -> "
                 f"{self.limpar_saida_status(acao.get('tipo', 'clicar'))}]"
             )
-
-        if tipo == "salvar_download":
-            detalhes = evento.get("detalhes", {})
-            extensao = str(detalhes.get("extensao", ".pdf") or ".pdf")
-            return f"Evento #{ordem}: salvar download {extensao}"
 
         return f"Evento #{ordem}: {self.limpar_saida_status(evento.get('texto', 'acao'))}"
 
@@ -4812,6 +4010,102 @@ class ExecutorAutomacao:
                     return nome_sequencia, indice
         raise ValueError(f"Bloco nao encontrado: {ordem_destino}")
 
+    def obter_valor_coluna_linha_atual(self, arquivo, aba, coluna, contexto_loop=None):
+        linha_atual = self.obter_linha_atual_contexto(contexto_loop)
+        registros = self.obter_registros_planilha(arquivo, aba)
+        if linha_atual is not None:
+            for registro in registros:
+                if int(registro.get("__linha__", 0) or 0) == int(linha_atual):
+                    return registro.get(coluna)
+        indice = int((contexto_loop or {}).get("indice", 0) or 0) if contexto_loop else 0
+        if 0 <= indice < len(registros):
+            return registros[indice].get(coluna)
+        return None
+
+    def escrever_celula_planilha(self, arquivo, aba, coluna, linha, valor):
+        caminho_planilha, _workbook_id = self.resolver_planilha(arquivo)
+        if not caminho_planilha.exists():
+            raise FileNotFoundError(f"Planilha nao encontrada: {caminho_planilha}")
+        workbook = load_workbook(caminho_planilha)
+        try:
+            if aba not in workbook.sheetnames:
+                raise ValueError(f"Aba nao encontrada na planilha: {aba}")
+            worksheet = workbook[aba]
+            cabecalhos = [
+                str(celula.value).strip() if celula.value is not None else ""
+                for celula in worksheet[1]
+            ]
+            if coluna not in cabecalhos:
+                cabecalhos.append(coluna)
+                worksheet.cell(row=1, column=len(cabecalhos), value=coluna)
+            indice_coluna = cabecalhos.index(coluna) + 1
+            worksheet.cell(row=int(linha), column=indice_coluna, value=valor)
+            workbook.save(caminho_planilha)
+        finally:
+            workbook.close()
+
+    def resolver_texto_ocr_comparacao(self, source="ultimo_ocr"):
+        origem = str(source or "ultimo_ocr").strip().lower()
+        if origem.startswith("ocr_bloco_"):
+            valor = self.contexto_variaveis.get(origem, "")
+            if valor:
+                return valor
+            numero = origem.replace("ocr_bloco_", "", 1)
+            return self.contexto_variaveis.get(f"bloco_{numero}_ocr", "")
+        if origem.isdigit():
+            return self.contexto_variaveis.get(f"ocr_bloco_{origem}", "") or self.contexto_variaveis.get(f"bloco_{origem}_ocr", "")
+        return self.contexto_variaveis.get("ultimo_ocr", "") or self.contexto_variaveis.get("ocr_tela", "")
+
+    def normalizar_valor_comparacao(self, valor, modo="texto"):
+        texto = str(valor if valor is not None else "").strip()
+        modo = str(modo or "texto").strip().lower()
+        if modo == "numero":
+            texto = texto.replace(".", "").replace(",", ".")
+            match = re.search(r"-?\d+(?:\.\d+)?", texto)
+            return str(float(match.group(0))) if match else ""
+        if modo == "data":
+            return re.sub(r"\D", "", texto)
+        return self.normalizar_texto_ocr(texto)
+
+    def executar_bloco_escrever_planilha(self, evento, contexto_loop=None):
+        detalhes = evento.get("detalhes") or {}
+        arquivo = self.normalizar_id_planilha(detalhes.get("arquivo"))
+        aba = str(detalhes.get("aba", "") or "").strip()
+        coluna = str(detalhes.get("coluna", "") or "").strip()
+        valor = self.substituir_variaveis_texto(str(detalhes.get("valor", "") or ""), contexto_loop)
+        linha = self.obter_linha_atual_contexto(contexto_loop)
+        if not aba or not coluna:
+            raise RuntimeError("Bloco Escrever celula sem aba ou coluna configurada.")
+        if linha is None:
+            raise RuntimeError("Bloco Escrever celula precisa estar dentro de um loop de planilha.")
+        self.escrever_celula_planilha(arquivo, aba, coluna, linha, valor)
+        safe_print(f"Planilha atualizada: {Path(arquivo).name} | {aba}!{coluna}{linha} = {valor}", flush=True)
+        return self.resultado_sucesso_evento(evento)
+
+    def executar_bloco_comparar_planilha(self, evento, contexto_loop=None):
+        detalhes = evento.get("detalhes") or {}
+        arquivo = self.normalizar_id_planilha(detalhes.get("arquivo"))
+        aba = str(detalhes.get("aba", "") or "").strip()
+        coluna = str(detalhes.get("coluna_esperada", detalhes.get("coluna", "")) or "").strip()
+        modo = str(detalhes.get("modo_comparacao", "texto") or "texto")
+        esperado = self.obter_valor_coluna_linha_atual(arquivo, aba, coluna, contexto_loop)
+        capturado = self.resolver_texto_ocr_comparacao(detalhes.get("origem_tela", "ultimo_ocr"))
+        esperado_norm = self.normalizar_valor_comparacao(esperado, modo)
+        capturado_norm = self.normalizar_valor_comparacao(capturado, modo)
+        bateu = bool(esperado_norm) and esperado_norm == capturado_norm
+        safe_print(
+            f"Conferir valor: esperado='{esperado}' | OCR='{capturado}' | resultado={'OK' if bateu else 'DIVERGENTE'}",
+            flush=True,
+        )
+        if bateu:
+            return self.resultado_sucesso_evento(evento)
+        return self.resultado_fluxo(
+            detalhes.get("ao_divergir", "parar"),
+            sequencia=detalhes.get("sequencia_divergir", ""),
+            bloco=detalhes.get("bloco_divergir", ""),
+            atraso=detalhes.get("atraso_antes_sequencia_divergir", 0),
+        )
+
     def cancelamento_solicitado(self):
         if self.cancelar.is_set():
             return True
@@ -4837,8 +4131,8 @@ class ExecutorAutomacao:
 
             workbook = load_workbook(caminho_planilha, read_only=True, data_only=True)
             cache_workbook = {}
-            for worksheet in workbook.worksheets:
-                nome_aba = worksheet.title
+            for nome_aba in workbook.sheetnames:
+                worksheet = workbook[nome_aba]
                 linhas = list(worksheet.iter_rows(values_only=True))
                 if not linhas:
                     cache_workbook[nome_aba] = {"colunas": [], "linhas": []}
@@ -4879,17 +4173,10 @@ class ExecutorAutomacao:
     def eh_texto_simples(self, nome):
         return len(nome) == 1 and nome not in {"\r", "\n", "\t"}
 
-    def escrever_texto(self, texto, preparar_foco=True):
-        if preparar_foco and not self.preparar_foco_para_digitacao():
+    def escrever_texto(self, texto):
+        if not self.preparar_foco_para_digitacao():
             return False
-        texto_final = str(texto)
-        if texto_final and definir_texto_clipboard_windows(texto_final):
-            pyautogui.hotkey("ctrl", "v")
-            time.sleep(0.008)
-            safe_print(f"Texto colado em modo rapido ({len(texto_final)} caractere(s)).", flush=True)
-            return not self.cancelamento_solicitado()
-
-        for caractere in texto_final:
+        for caractere in str(texto):
             if self.cancelamento_solicitado():
                 return False
             if caractere == "\r":
@@ -4913,8 +4200,6 @@ class ExecutorAutomacao:
         bloco_id=None,
         modo_area_busca="target_window",
         area_personalizada=None,
-        texto_ocr_esperado="",
-        leitura_relativa=None,
     ):
         caminho_imagem, imagem_id = self.resolver_imagem(imagem)
         if not imagem_id:
@@ -4922,7 +4207,6 @@ class ExecutorAutomacao:
         if not caminho_imagem.exists():
             raise FileNotFoundError(f"Imagem nao encontrada no caminho informado: {caminho_imagem}")
 
-        self._referencia_ocr_visual_atual = caminho_imagem
         janela_alvo_explicita = str(janela_alvo or "").strip()
         usando_alvo_execucao = self.alvo_execucao_ativo() and not bool(janela_alvo_explicita)
         janela_alvo_resolvida = str(
@@ -4987,7 +4271,6 @@ class ExecutorAutomacao:
         ultima_falha = None
         ultima_tentativa_ocr = 0.0
         ultima_ativacao_janela = 0.0
-        cache_adaptativo_logado = False
         self._ultima_regiao_reconhecimento = None
         self._ultimo_template_debug = None
         self._ultimo_diagnostico_reconhecimento = None
@@ -5060,14 +4343,6 @@ class ExecutorAutomacao:
                 bloco_id=bloco_id,
                 janela_info=janela_info_cache,
             )
-            dados_historico = self.obter_dados_historico_reconhecimento(
-                imagem_id,
-                janela_alvo=janela_alvo,
-                bloco_id=bloco_id,
-            )
-            acertos_historico = int(dados_historico.get("hits", 0) or 0)
-            janela_cache_quente = min(0.18, max(0.06, timeout_total * 0.03))
-            usar_somente_cache_neste_inicio = False
             regiao_personalizada = self.construir_regiao_personalizada(
                 area_personalizada,
                 janela_info=janela_info_cache,
@@ -5075,19 +4350,11 @@ class ExecutorAutomacao:
             regioes_busca = []
             if regiao_historica:
                 adicionar_regiao_busca(regioes_busca, regiao_historica, "cache", fallback=False)
-                if not cache_adaptativo_logado:
-                    safe_print(
-                        "Cache adaptativo ativo: tentando primeiro perto da ultima posicao, "
-                        "mas mantendo fallback amplo na mesma tentativa "
-                        f"(acertos={acertos_historico}, janela={janela_cache_quente:.2f}s).",
-                        flush=True,
-                    )
-                    cache_adaptativo_logado = True
 
-            if not usar_somente_cache_neste_inicio and modo_area_busca == "custom_area" and regiao_personalizada:
+            if modo_area_busca == "custom_area" and regiao_personalizada:
                 adicionar_regiao_busca(regioes_busca, regiao_personalizada, "custom_area", fallback=bool(regiao_historica))
 
-            if not usar_somente_cache_neste_inicio and (usando_alvo_execucao or janela_alvo or self.janela_alvo):
+            if usando_alvo_execucao or janela_alvo or self.janela_alvo:
                 for margem in margens_busca:
                     if janela_info_cache:
                         margem = max(0, int(margem or 0))
@@ -5105,7 +4372,7 @@ class ExecutorAutomacao:
                         "target_window",
                         fallback=(modo_area_busca != "target_window") or bool(regiao_historica),
                     )
-            elif not usar_somente_cache_neste_inicio and modo_area_busca == "custom_area" and regiao_personalizada:
+            elif modo_area_busca == "custom_area" and regiao_personalizada:
                 adicionar_regiao_busca(regioes_busca, regiao_personalizada, "custom_area", fallback=bool(regiao_historica))
 
             self._ultima_regiao_reconhecimento = regioes_busca[-1]["region"] if regioes_busca else None
@@ -5147,17 +4414,8 @@ class ExecutorAutomacao:
                         local_template_preferencial,
                         confianca,
                         perfil_busca=perfil_busca_tentativa,
-                        cache_acertos=acertos_historico if etapa_busca == "cache" else 0,
                     )
                     if local_confirmado:
-                        if not self.confirmar_ocr_obrigatorio_apos_visual(
-                            local_confirmado,
-                            texto_ocr_esperado,
-                            janela_info=janela_info_cache,
-                            leitura_relativa=leitura_relativa,
-                        ):
-                            safe_print("Visual encontrado, mas OCR obrigatorio nao confirmou. Continuando a busca.", flush=True)
-                            continue
                         self.registrar_reconhecimento_bem_sucedido(
                             imagem_id,
                             local_confirmado,
@@ -5176,27 +4434,6 @@ class ExecutorAutomacao:
                         )
                         return local_confirmado
                     safe_print("Correspondencia visual descartada apos confirmacao.", flush=True)
-
-                texto_ocr_obrigatorio = str(texto_ocr_esperado or "").strip()
-                if texto_ocr_obrigatorio and OCR_DISPONIVEL and regiao is not None:
-                    local_ocr_obrigatorio = self.procurar_texto_por_ocr(texto_ocr_obrigatorio, region=regiao)
-                    if local_ocr_obrigatorio:
-                        self.registrar_reconhecimento_bem_sucedido(
-                            imagem_id,
-                            local_ocr_obrigatorio,
-                            janela_alvo=janela_alvo,
-                            bloco_id=bloco_id,
-                            janela_info=janela_info_cache,
-                        )
-                        info_ocr = self._ultima_busca_ocr_info or {}
-                        safe_print(
-                            "Texto OCR obrigatorio encontrado na area do bloco "
-                            f"(texto='{texto_ocr_obrigatorio}', captura={float(info_ocr.get('capture_ms', 0.0) or 0.0):.0f}ms, "
-                            f"ocr={float(info_ocr.get('ocr_ms', 0.0) or 0.0):.0f}ms, "
-                            f"area={self.formatar_regiao_log(regiao)}, confianca={float(info_ocr.get('score', 0.0) or 0.0):.2f}).",
-                            flush=True,
-                        )
-                        return local_ocr_obrigatorio
 
                 if modo_estrito:
                     grayscale_modes = (False,)
@@ -5260,17 +4497,8 @@ class ExecutorAutomacao:
                                     local,
                                     confianca_atual,
                                     perfil_busca=perfil_busca,
-                                    cache_acertos=acertos_historico if etapa_busca == "cache" else 0,
                                 )
                                 if local_confirmado:
-                                    if not self.confirmar_ocr_obrigatorio_apos_visual(
-                                        local_confirmado,
-                                        texto_ocr_esperado,
-                                        janela_info=janela_info_cache,
-                                        leitura_relativa=leitura_relativa,
-                                    ):
-                                        safe_print("Visual encontrado, mas OCR obrigatorio nao confirmou. Continuando a busca.", flush=True)
-                                        continue
                                     self.registrar_reconhecimento_bem_sucedido(
                                         imagem_id,
                                         local_confirmado,
@@ -5310,17 +4538,8 @@ class ExecutorAutomacao:
                                     local_template,
                                     confianca_atual,
                                     perfil_busca=perfil_iteracao,
-                                    cache_acertos=acertos_historico if etapa_busca == "cache" else 0,
                                 )
                                 if local_confirmado:
-                                    if not self.confirmar_ocr_obrigatorio_apos_visual(
-                                        local_confirmado,
-                                        texto_ocr_esperado,
-                                        janela_info=janela_info_cache,
-                                        leitura_relativa=leitura_relativa,
-                                    ):
-                                        safe_print("Visual encontrado, mas OCR obrigatorio nao confirmou. Continuando a busca.", flush=True)
-                                        continue
                                     self.registrar_reconhecimento_bem_sucedido(
                                         imagem_id,
                                         local_confirmado,
@@ -5421,6 +4640,8 @@ class ExecutorAutomacao:
         texto_ocr_esperado="",
         leitura_relativa=None,
     ):
+        caminho_imagem, _imagem_id = self.resolver_imagem(imagem)
+        dimensoes_referencia = self.obter_dimensoes_imagem(caminho_imagem) if caminho_imagem.exists() else None
         local = self.esperar_imagem(
             imagem=imagem,
             timeout=timeout,
@@ -5430,32 +4651,51 @@ class ExecutorAutomacao:
             bloco_id=bloco_id,
             modo_area_busca=modo_area_busca,
             area_personalizada=area_personalizada,
-            texto_ocr_esperado=texto_ocr_esperado,
-            leitura_relativa=leitura_relativa,
         )
         if not local:
             return None
-        try:
-            self.registrar_ocr_reconhecimento(local, bloco_id)
-        except Exception:
-            pass
-        try:
-            self.ler_ocr_relativo_reconhecimento(local, leitura_relativa, bloco_id)
-        except Exception as erro:
-            safe_print(f"OCR relativo do reconhecimento nao pode ser lido: {erro}", flush=True)
+        ordem_bloco = None
+        if str(bloco_id or "").startswith("bloco:"):
+            ordem_bloco = str(bloco_id).split(":", 1)[1].strip()
         duracao_marcacao = 0.95 if clicar else 1.35
-        self.marcar_area_reconhecida(local, duracao=duracao_marcacao)
+        self.marcar_area_reconhecida(local, duracao=0.55, bloqueante=True)
+        if not self.confirmar_ocr_relativo(
+            local,
+            texto_esperado=texto_ocr_esperado,
+            leitura_relativa=leitura_relativa,
+            ordem_bloco=ordem_bloco,
+            dimensoes_referencia=dimensoes_referencia,
+        ):
+            safe_print(
+                "Imagem encontrada, mas o OCR obrigatorio nao confirmou. "
+                "O bloco nao vai clicar nem avancar nesta tentativa.",
+                flush=True,
+            )
+            return None
+        offset_click_x, offset_click_y = self.escalar_offset_referencia(
+            local,
+            offset_x=offset_x,
+            offset_y=offset_y,
+            dimensoes_referencia=dimensoes_referencia,
+        )
+        if int(offset_x or 0) or int(offset_y or 0):
+            safe_print(
+                "Ponto do clique ajustado pela referencia: "
+                f"offset {int(offset_x or 0)}/{int(offset_y or 0)} -> "
+                f"{offset_click_x}/{offset_click_y}",
+                flush=True,
+            )
         if clicar:
-            time.sleep(duracao_marcacao + 0.12)
+            time.sleep(0.12)
             return self.clicar_area_reconhecida(
                 local,
-                offset_x=offset_x,
-                offset_y=offset_y,
+                offset_x=offset_click_x,
+                offset_y=offset_click_y,
                 button="left",
                 clicks=max(1, int(clicks or 1)),
                 janela_alvo=janela_alvo,
             )
-        destino_x, destino_y = self.centro_area_reconhecida(local, offset_x=offset_x, offset_y=offset_y)
+        destino_x, destino_y = self.centro_area_reconhecida(local, offset_x=offset_click_x, offset_y=offset_click_y)
         return {"x": destino_x, "y": destino_y}
 
     def testar_reconhecimento(
@@ -5499,8 +4739,6 @@ class ExecutorAutomacao:
             bloco_id=bloco_id,
             modo_area_busca=modo_area_busca,
             area_personalizada=area_personalizada,
-            texto_ocr_esperado=texto_ocr_esperado,
-            leitura_relativa=leitura_relativa,
         )
         if not local:
             safe_print("Teste de reconhecimento: nenhuma correspondencia encontrada.", flush=True)
@@ -5511,7 +4749,18 @@ class ExecutorAutomacao:
             f"Teste de reconhecimento localizou a referencia em x={esquerda}, y={topo}, largura={largura}, altura={altura}.",
             flush=True,
         )
-        self.marcar_area_reconhecida(local, duracao=2.4, bloqueante=True)
+        caminho_imagem, _imagem_id = self.resolver_imagem(imagem)
+        dimensoes_referencia = self.obter_dimensoes_imagem(caminho_imagem) if caminho_imagem.exists() else None
+        self.marcar_area_reconhecida(local, duracao=0.75, bloqueante=True)
+        if not self.confirmar_ocr_relativo(
+            local,
+            texto_esperado=texto_ocr_esperado,
+            leitura_relativa=leitura_relativa,
+            ordem_bloco=None,
+            dimensoes_referencia=dimensoes_referencia,
+        ):
+            safe_print("Teste de reconhecimento: imagem encontrada, mas o OCR nao confirmou o texto esperado.", flush=True)
+            return False
         if clicar:
             self.clicar_area_reconhecida(local, button="left")
 
@@ -5603,48 +4852,22 @@ class ExecutorAutomacao:
         url = self.normalizar_url_para_abertura(detalhes.get("url"))
         navegador = str(detalhes.get("navegador", "padrao") or "padrao").strip().lower()
         modo_abertura = str(detalhes.get("modo_abertura", "nova_janela") or "nova_janela").strip().lower()
-        tela_cheia = bool(detalhes.get("tela_cheia", False))
         aguardar = max(0.0, float(detalhes.get("aguardar_segundos", 3) or 0))
         nova_janela = modo_abertura != "nova_aba"
         safe_print(
-            f"Abrindo URL: {url} | navegador={navegador} | modo={modo_abertura} | tela_cheia={tela_cheia}",
+            f"Abrindo URL: {url} | navegador={navegador} | modo={modo_abertura}",
             flush=True,
         )
-        if navegador in {"chrome", "edge"}:
-            self.abrir_url_em_sessao_chrome_controlada(
-                url,
-                navegador=navegador,
-                nova_janela=nova_janela,
-                tela_cheia=tela_cheia,
-            )
-            safe_print(
-                "Chrome/Web aberto em sessao controlada pelo FlowDetect para os proximos blocos HTML.",
-                flush=True,
-            )
+        executavel = self.localizar_executavel_navegador(navegador)
+        if executavel:
+            argumentos = [executavel]
+            if nova_janela:
+                argumentos.append("--new-window")
+            argumentos.append(url)
+            popen_silencioso(argumentos)
         else:
-            executavel = self.localizar_executavel_navegador(navegador)
-            if not executavel:
-                webbrowser.open(url, new=1 if nova_janela else 2)
-            else:
-                argumentos = [executavel]
-                if nova_janela:
-                    argumentos.append("--new-window")
-                if tela_cheia:
-                    argumentos.extend(["--start-fullscreen", "--start-maximized"])
-                argumentos.append(url)
-                popen_silencioso(argumentos)
-        tempo_fullscreen = 0.0
-        if tela_cheia:
-            tempo_fullscreen = min(1.2, aguardar) if aguardar > 0 else 1.2
-            if tempo_fullscreen > 0 and not self.esperar(tempo_fullscreen):
-                return self.resultado_fluxo("parar")
-            try:
-                pyautogui.press("f11")
-                safe_print("Tela cheia solicitada com F11.", flush=True)
-            except Exception as exc:
-                safe_print(f"Nao foi possivel acionar F11 para tela cheia: {exc}", flush=True)
-        tempo_restante = max(0.0, aguardar - tempo_fullscreen)
-        if tempo_restante > 0 and not self.esperar(tempo_restante):
+            webbrowser.open(url, new=1 if nova_janela else 2)
+        if aguardar > 0 and not self.esperar(aguardar):
             return self.resultado_fluxo("parar")
         return self.resultado_sucesso_evento(evento)
 
@@ -5673,110 +4896,6 @@ class ExecutorAutomacao:
             return self.resultado_fluxo("parar")
         return self.resultado_sucesso_evento(evento)
 
-    def resolver_pasta_download_origem(self, pasta_origem):
-        origem = str(pasta_origem or "").strip().strip('"')
-        if origem:
-            return Path(origem).expanduser()
-        return Path.home() / "Downloads"
-
-    def normalizar_extensao_download(self, extensao):
-        valor = str(extensao or ".pdf").strip().lower()
-        if not valor or valor == "*":
-            return "*"
-        return valor if valor.startswith(".") else f".{valor}"
-
-    def arquivo_download_pronto(self, caminho):
-        try:
-            if not caminho.exists() or not caminho.is_file():
-                return False
-            tamanho = caminho.stat().st_size
-            time.sleep(0.18)
-            if not caminho.exists() or caminho.stat().st_size != tamanho:
-                return False
-            with caminho.open("rb"):
-                return True
-        except Exception:
-            return False
-
-    def encontrar_download_finalizado(self, pasta_origem, extensao, inicio_em):
-        if not pasta_origem.exists():
-            raise FileNotFoundError(f"Pasta monitorada nao encontrada: {pasta_origem}")
-        extensao_normalizada = self.normalizar_extensao_download(extensao)
-        temporarios = {".crdownload", ".tmp", ".part"}
-        candidatos = []
-        for item in pasta_origem.iterdir():
-            if not item.is_file():
-                continue
-            sufixo = item.suffix.lower()
-            if sufixo in temporarios:
-                continue
-            if extensao_normalizada != "*" and sufixo != extensao_normalizada:
-                continue
-            try:
-                if item.stat().st_mtime < inicio_em:
-                    continue
-            except OSError:
-                continue
-            if Path(str(item) + ".crdownload").exists():
-                continue
-            candidatos.append(item)
-        candidatos.sort(key=lambda caminho: caminho.stat().st_mtime, reverse=True)
-        for candidato in candidatos:
-            if self.arquivo_download_pronto(candidato):
-                return candidato
-        return None
-
-    def destino_unico_download(self, pasta_destino, nome_arquivo):
-        pasta_destino.mkdir(parents=True, exist_ok=True)
-        destino = pasta_destino / nome_arquivo
-        if not destino.exists():
-            return destino
-        stem = destino.stem
-        suffix = destino.suffix
-        for indice in range(2, 1000):
-            candidato = pasta_destino / f"{stem}_{indice}{suffix}"
-            if not candidato.exists():
-                return candidato
-        raise RuntimeError(f"Nao foi possivel criar nome unico para: {destino}")
-
-    def executar_bloco_salvar_download(self, evento, contexto_loop=None):
-        detalhes = evento.get("detalhes") or {}
-        pasta_origem = self.resolver_pasta_download_origem(detalhes.get("pasta_origem", ""))
-        pasta_destino_texto = str(detalhes.get("pasta_destino", "") or "").strip()
-        if not pasta_destino_texto:
-            raise RuntimeError("Bloco Salvar download sem pasta de destino configurada.")
-        pasta_destino = Path(pasta_destino_texto).expanduser()
-        extensao = self.normalizar_extensao_download(detalhes.get("extensao", ".pdf"))
-        timeout = max(1.0, float(detalhes.get("timeout", 60) or 60))
-        inicio_em = time.time() - 2.0
-        nome_modelo = str(detalhes.get("nome_arquivo", "") or "").strip()
-        safe_print(
-            f"Aguardando download em {pasta_origem} | tipo={extensao} | timeout={timeout:g}s",
-            flush=True,
-        )
-        fim = time.time() + timeout
-        arquivo = None
-        while time.time() < fim:
-            if self.cancelamento_solicitado():
-                return self.resultado_fluxo("parar")
-            arquivo = self.encontrar_download_finalizado(pasta_origem, extensao, inicio_em)
-            if arquivo:
-                break
-            time.sleep(0.35)
-        if not arquivo:
-            safe_print(f"Nenhum download {extensao} finalizado em {timeout:g}s.", flush=True)
-            return self.resultado_fluxo("parar")
-
-        nome_final = self.substituir_variaveis_nome_arquivo(nome_modelo, contexto_loop) if nome_modelo else arquivo.name
-        nome_final = self.limpar_nome_arquivo(nome_final, fallback=arquivo.stem)
-        if extensao != "*" and not Path(nome_final).suffix:
-            nome_final = f"{nome_final}{extensao}"
-        destino = self.destino_unico_download(pasta_destino, nome_final)
-        shutil.move(str(arquivo), str(destino))
-        self.salvar_variavel_contexto("ultimo_download", str(destino))
-        safe_print(f"Download salvo: {destino}", flush=True)
-        return self.resultado_sucesso_evento(evento)
-
     def executar_evento(self, evento, contexto_loop=None):
         tipo = evento.get("tipo")
 
@@ -5789,30 +4908,13 @@ class ExecutorAutomacao:
         if tipo == "abrir_programa":
             return self.executar_bloco_abrir_programa(evento)
 
-        if tipo == "salvar_download":
-            return self.executar_bloco_salvar_download(evento, contexto_loop)
-
         if tipo == "texto_livre":
             self.preparar_janela_para_acao()
-            ordem = str(evento.get("ordem", ""))
-            texto = self.text_overrides.get(ordem, evento.get("texto", ""))
-            if ordem in self.text_overrides:
-                safe_print(f"Texto editavel aplicado no bloco {ordem}.", flush=True)
-            return self.resultado_sucesso_evento(evento) if self.escrever_texto(texto) else self.resultado_fluxo("parar")
+            return self.resultado_sucesso_evento(evento) if self.escrever_texto(evento.get("texto", "")) else self.resultado_fluxo("parar")
 
         if tipo in TIPOS_SEQUENCIA_PLANILHA:
             detalhes = evento.get("detalhes", {})
-            somente_contexto = str(detalhes.get("modo_loop") or detalhes.get("acao_apos_item_texto") or "").strip().lower() in {
-                "somente_contexto",
-                "contexto",
-                "so_contexto",
-            }
-            if somente_contexto:
-                safe_print("Loop de dados: linha atual carregada sem digitar valor.", flush=True)
-                return self.resultado_sucesso_evento(evento)
             self.preparar_janela_para_acao()
-            if not self.preparar_foco_para_digitacao():
-                return self.resultado_fluxo("parar")
             acao_apos_item = detalhes.get("acao_apos_item")
             if acao_apos_item is None and detalhes.get("pressionar_enter"):
                 acao_apos_item = ["enter"]
@@ -5824,7 +4926,7 @@ class ExecutorAutomacao:
                     contexto_loop.get("indice", 0),
                 )
                 if valor_loop is not None:
-                    if not self.escrever_texto(str(valor_loop), preparar_foco=False):
+                    if not self.escrever_texto(str(valor_loop)):
                         return self.resultado_fluxo("parar")
                     if acao_apos_item and not self.executar_acao(acao_apos_item):
                         return self.resultado_fluxo("parar")
@@ -5838,7 +4940,7 @@ class ExecutorAutomacao:
             for indice, valor in enumerate(valores):
                 if self.cancelamento_solicitado():
                     return self.resultado_fluxo("parar")
-                if not self.escrever_texto(valor, preparar_foco=False):
+                if not self.escrever_texto(valor):
                     return self.resultado_fluxo("parar")
                 if indice < len(valores) - 1 and acao_apos_item:
                     if not self.executar_acao(acao_apos_item):
@@ -5849,29 +4951,10 @@ class ExecutorAutomacao:
             return self.resultado_sucesso_evento(evento)
 
         if tipo in TIPOS_ESCRITA_PLANILHA:
-            return self.resultado_sucesso_evento(evento) if self.escrever_valor_planilha_loop(evento, contexto_loop) else self.resultado_fluxo("parar")
+            return self.executar_bloco_escrever_planilha(evento, contexto_loop=contexto_loop)
 
         if tipo in TIPOS_COMPARACAO_PLANILHA:
-            conferiu = self.comparar_planilha_com_ocr(evento, contexto_loop)
-            if conferiu:
-                return self.resultado_sucesso_evento(evento)
-            detalhes = evento.get("detalhes", {}) or {}
-            acao_divergente = str(detalhes.get("ao_divergir") or "continuar").strip().lower()
-            if acao_divergente in {"parar", "continuar", "ir_para_bloco", "ir_para_sequencia"}:
-                if acao_divergente == "ir_para_bloco":
-                    return self.resultado_fluxo(
-                        "ir_para_bloco",
-                        bloco=int(detalhes.get("bloco_divergir", 0) or 0),
-                        atraso=float(detalhes.get("atraso_antes_sequencia_divergir", 0) or 0),
-                    )
-                if acao_divergente == "ir_para_sequencia":
-                    return self.resultado_fluxo(
-                        "ir_para_sequencia",
-                        sequencia=str(detalhes.get("sequencia_divergir") or ""),
-                        atraso=float(detalhes.get("atraso_antes_sequencia_divergir", 0) or 0),
-                    )
-                return self.resultado_fluxo(acao_divergente)
-            return self.resultado_fluxo("continuar")
+            return self.executar_bloco_comparar_planilha(evento, contexto_loop=contexto_loop)
 
         if tipo in TIPOS_MOUSE:
             if self.cancelamento_solicitado():
@@ -5940,7 +5023,7 @@ class ExecutorAutomacao:
                         modo_area_busca=detalhes.get("modo_area_busca", "target_window"),
                         area_personalizada=area_personalizada,
                         texto_ocr_esperado=detalhes.get("texto_ocr_esperado", ""),
-                        leitura_relativa=detalhes.get("leitura_relativa"),
+                        leitura_relativa=detalhes.get("leitura_relativa") or {},
                     )
                     ultima_falha_reconhecimento = None
                 except Exception as erro:
@@ -6006,6 +5089,14 @@ class ExecutorAutomacao:
                     return self.resultado_fluxo("ir_para_bloco", bloco=bloco_destino, atraso=atraso_bloco_destino)
                 return self.resultado_fluxo("continuar")
 
+            if ao_nao_encontrar == "tentar_novamente":
+                mensagem = (
+                    f"Bloco {ordem_evento}: reconhecimento/OCR nao confirmou {nome_imagem} "
+                    f"apos {tentativas} tentativa(s). Parando para evitar repetir o mesmo bloco sem fim."
+                )
+                safe_print(mensagem, flush=True)
+                raise RuntimeError(mensagem)
+
             complemento = ""
             if self._ultimo_diagnostico_reconhecimento:
                 complemento = f" | diagnostico: {self._ultimo_diagnostico_reconhecimento}"
@@ -6052,12 +5143,7 @@ class ExecutorAutomacao:
         tecla = teclas[0]
         repeticoes = max(1, int((evento.get("detalhes") or {}).get("repeticoes", 1) or 1))
         if self.eh_texto_simples(tecla):
-            texto_repetido = tecla * repeticoes
-            if len(texto_repetido) >= 2 and definir_texto_clipboard_windows(texto_repetido):
-                pyautogui.hotkey("ctrl", "v")
-                time.sleep(0.02)
-            else:
-                pyautogui.write(texto_repetido, interval=0)
+            pyautogui.write(tecla * repeticoes, interval=INTERVALO_TEXTO)
             return self.resultado_sucesso_evento(evento)
 
         for _ in range(repeticoes):
@@ -6601,20 +5687,6 @@ class ExecutorAutomacao:
             return {"tipo": "bloco", "bloco": int(resultado_saida.get("bloco"))}
         return {}
 
-    def resultado_finalizacao_loop_por_marcador(self, sequencia_loop, fim_ordem=None):
-        sequencia_loop = self.normalizar_nome_sequencia(sequencia_loop)
-        eventos = list(self.sequencias.get(sequencia_loop, []))
-        candidatos = [
-            evento for evento in eventos
-            if str(evento.get("tipo") or "") == "fim_loop"
-            and (fim_ordem is None or int(evento.get("ordem", 0) or 0) == int(fim_ordem))
-        ]
-        if not candidatos:
-            return None
-        marcador = candidatos[-1]
-        resultado = self.resultado_sucesso_evento(marcador, prefixo_log="Finalizacao do loop:")
-        return resultado if resultado.get("acao") != "continuar" else None
-
     def executar_finalizacao_pos_loop(self, destino):
         if not destino:
             return True
@@ -6823,7 +5895,6 @@ class ExecutorAutomacao:
                 )
 
             configuracao_saida = self.obter_configuracao_sequencia(sequencia_saida_loop)
-            resultado_saida_loop = resultado_saida_loop or self.resultado_finalizacao_loop_por_marcador(sequencia_saida_loop)
             destino_pos_loop = self.resolver_destino_pos_loop(
                 sequencia_saida_loop,
                 configuracao_saida.get("sequencia_apos_loop", ""),
@@ -7008,10 +6079,6 @@ class ExecutorAutomacao:
                     duracao_segundos=duracao_iteracao,
                 )
 
-            resultado_saida_loop = resultado_saida_loop or self.resultado_finalizacao_loop_por_marcador(
-                sequencia_loop,
-                fim_ordem,
-            )
             if resultado_saida_loop:
                 destino_pos_loop = self.resolver_destino_pos_loop(
                     sequencia_loop,
@@ -7072,11 +6139,15 @@ def criar_parser():
     parser.add_argument("--cancelamento-arquivo", default=str(ARQUIVO_CANCELAMENTO))
     parser.add_argument("--janela-alvo", default="")
     parser.add_argument("--target-context", default="")
-    parser.add_argument("--text-overrides", default="")
     parser.add_argument("--imagem-teste", default="")
     parser.add_argument("--timeout-imagem", type=float, default=10.0)
     parser.add_argument("--confianca-imagem", type=float, default=0.8)
     parser.add_argument("--perfil-busca-imagem", default="balanced")
+    parser.add_argument("--modo-area-busca-imagem", default="target_window")
+    parser.add_argument("--area-busca-x-imagem", type=int, default=0)
+    parser.add_argument("--area-busca-y-imagem", type=int, default=0)
+    parser.add_argument("--area-busca-largura-imagem", type=int, default=0)
+    parser.add_argument("--area-busca-altura-imagem", type=int, default=0)
     parser.add_argument("--texto-ocr-esperado", default="")
     parser.add_argument("--leitura-relativa-ativa", default="false")
     parser.add_argument("--leitura-relativa-lado", default="livre")
@@ -7085,11 +6156,6 @@ def criar_parser():
     parser.add_argument("--leitura-relativa-offset-x", type=int, default=0)
     parser.add_argument("--leitura-relativa-offset-y", type=int, default=0)
     parser.add_argument("--leitura-relativa-salvar-em", default="")
-    parser.add_argument("--modo-area-busca-imagem", default="target_window")
-    parser.add_argument("--area-busca-x-imagem", type=int, default=0)
-    parser.add_argument("--area-busca-y-imagem", type=int, default=0)
-    parser.add_argument("--area-busca-largura-imagem", type=int, default=0)
-    parser.add_argument("--area-busca-altura-imagem", type=int, default=0)
     return parser
 
 
@@ -7109,7 +6175,7 @@ def main():
         arquivo_cancelamento=args.cancelamento_arquivo,
         janela_alvo=args.janela_alvo,
         target_context=args.target_context,
-        text_overrides=args.text_overrides,
+        modo_teste_reconhecimento=args.modo == "reconhecimento",
     )
 
     atraso = max(0, round(float(args.atraso), 2))
@@ -7141,6 +6207,15 @@ def main():
     try:
         try:
             if args.modo == "reconhecimento":
+                leitura_relativa_teste = {
+                    "ativo": str(args.leitura_relativa_ativa or "").strip().lower() in {"1", "true", "sim", "yes"},
+                    "lado": args.leitura_relativa_lado,
+                    "largura": args.leitura_relativa_largura,
+                    "altura": args.leitura_relativa_altura,
+                    "offset_x": args.leitura_relativa_offset_x,
+                    "offset_y": args.leitura_relativa_offset_y,
+                    "salvar_em": args.leitura_relativa_salvar_em,
+                }
                 sucesso = executor.testar_reconhecimento(
                     imagem=args.imagem_teste,
                     timeout=args.timeout_imagem,
@@ -7155,16 +6230,8 @@ def main():
                         "width": args.area_busca_largura_imagem,
                         "height": args.area_busca_altura_imagem,
                     },
-                    texto_ocr_esperado=getattr(args, "texto_ocr_esperado", ""),
-                    leitura_relativa={
-                        "ativo": True,
-                        "lado": getattr(args, "leitura_relativa_lado", "livre"),
-                        "largura": getattr(args, "leitura_relativa_largura", 140),
-                        "altura": getattr(args, "leitura_relativa_altura", 40),
-                        "offset_x": getattr(args, "leitura_relativa_offset_x", 0),
-                        "offset_y": getattr(args, "leitura_relativa_offset_y", 0),
-                        "salvar_em": getattr(args, "leitura_relativa_salvar_em", ""),
-                    },
+                    texto_ocr_esperado=args.texto_ocr_esperado,
+                    leitura_relativa=leitura_relativa_teste,
                 )
             elif args.modo == "loop":
                 sucesso = executor.executar_loop(loop_start=args.loop_start)

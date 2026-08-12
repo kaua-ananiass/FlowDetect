@@ -6524,11 +6524,35 @@ function relativeOcrChanged(values = {}, details = {}) {
   );
 }
 
-function relativeOcrOverlayStyle(relativeOcr = {}) {
+function recognitionPreviewImageMetrics(element) {
+  const imageMap = element?.closest?.("[data-recognition-preview-image-map]") || element;
+  const image = imageMap?.querySelector?.(".recognition-preview-image");
+  const rect = image?.getBoundingClientRect?.();
+  const naturalWidth = Number(image?.naturalWidth || 0);
+  const naturalHeight = Number(image?.naturalHeight || 0);
+  if (!rect || rect.width <= 0 || rect.height <= 0 || naturalWidth <= 0 || naturalHeight <= 0) {
+    return null;
+  }
+  return { image, rect, naturalWidth, naturalHeight };
+}
+
+function offsetToPreviewPercent(offset, naturalSize, fallbackDivisor = 3) {
+  const numericOffset = Math.trunc(parseNumber(offset, 0));
+  if (Number(naturalSize) > 0) {
+    return Math.max(4, Math.min(96, 50 + ((numericOffset / naturalSize) * 100)));
+  }
+  return Math.max(10, Math.min(90, 50 + (numericOffset / fallbackDivisor)));
+}
+
+function relativeOcrOverlayStyle(relativeOcr = {}, metrics = null) {
   const width = Math.max(16, Math.trunc(parseNumber(relativeOcr.width, 140)));
   const height = Math.max(12, Math.trunc(parseNumber(relativeOcr.height, 40)));
-  const visualWidth = Math.max(18, Math.min(86, Math.round(width / 5)));
-  const visualHeight = Math.max(12, Math.min(64, Math.round(height / 4)));
+  const visualWidth = metrics
+    ? Math.max(8, Math.min(92, (width / metrics.naturalWidth) * 100))
+    : Math.max(18, Math.min(86, Math.round(width / 5)));
+  const visualHeight = metrics
+    ? Math.max(8, Math.min(80, (height / metrics.naturalHeight) * 100))
+    : Math.max(12, Math.min(64, Math.round(height / 4)));
   const side = String(relativeOcr.side || "direita").trim().toLowerCase();
   let left = 50;
   let top = 50;
@@ -6541,17 +6565,15 @@ function relativeOcrOverlayStyle(relativeOcr = {}) {
   } else if (side === "acima") {
     top = 23;
   } else {
-    left = Math.max(10, Math.min(90, 50 + (Math.trunc(parseNumber(relativeOcr.offsetX, 0)) / 3)));
-    top = Math.max(10, Math.min(90, 50 + (Math.trunc(parseNumber(relativeOcr.offsetY, 0)) / 3)));
+    left = offsetToPreviewPercent(relativeOcr.offsetX, metrics?.naturalWidth, 3);
+    top = offsetToPreviewPercent(relativeOcr.offsetY, metrics?.naturalHeight, 3);
   }
   return `--ocr-target-w:${visualWidth}%;--ocr-target-h:${visualHeight}%;--ocr-left:${left}%;--ocr-top:${top}%;`;
 }
 
-function clickTargetOverlayStyle(clickTarget = {}) {
-  const offsetX = Math.max(-120, Math.min(120, Math.trunc(parseNumber(clickTarget.offsetX, 0))));
-  const offsetY = Math.max(-90, Math.min(90, Math.trunc(parseNumber(clickTarget.offsetY, 0))));
-  const left = Math.max(12, Math.min(88, 50 + (offsetX / 3)));
-  const top = Math.max(12, Math.min(88, 50 + (offsetY / 3)));
+function clickTargetOverlayStyle(clickTarget = {}, metrics = null) {
+  const left = offsetToPreviewPercent(clickTarget.offsetX, metrics?.naturalWidth, 3);
+  const top = offsetToPreviewPercent(clickTarget.offsetY, metrics?.naturalHeight, 3);
   return `--click-left:${left}%;--click-top:${top}%;`;
 }
 
@@ -6618,11 +6640,13 @@ function updateRelativeOcrPreviewOverlay(container) {
     }
   });
   container.querySelectorAll("[data-relative-ocr-target]").forEach((target) => {
+    const metrics = recognitionPreviewImageMetrics(target);
     target.className = `recognition-ocr-target-box is-${relativeOcr.side}`;
-    target.setAttribute("style", relativeOcrOverlayStyle(relativeOcr));
+    target.setAttribute("style", relativeOcrOverlayStyle(relativeOcr, metrics));
   });
   container.querySelectorAll("[data-click-target-point]").forEach((clickTarget) => {
-    clickTarget.setAttribute("style", clickTargetOverlayStyle(clickData));
+    const metrics = recognitionPreviewImageMetrics(clickTarget);
+    clickTarget.setAttribute("style", clickTargetOverlayStyle(clickData, metrics));
   });
 }
 
@@ -6631,8 +6655,8 @@ function setRecognitionVisualOffsetFromPointer(container, dragTarget, clientX, c
     return;
   }
   const imageMap = dragTarget.closest("[data-recognition-preview-image-map]");
-  const stage = dragTarget.closest("[data-recognition-preview-stage]");
-  const rect = (imageMap || stage)?.getBoundingClientRect();
+  const metrics = recognitionPreviewImageMetrics(imageMap);
+  const rect = metrics?.rect || imageMap?.getBoundingClientRect?.();
   if (!rect || rect.width <= 0 || rect.height <= 0) {
     return;
   }
@@ -6649,12 +6673,16 @@ function setRecognitionVisualOffsetFromPointer(container, dragTarget, clientX, c
   if (targetKind === "ocr-resize") {
     const currentOffsetX = Math.trunc(parseNumber(ocrOffsetXField?.value, 0));
     const currentOffsetY = Math.trunc(parseNumber(ocrOffsetYField?.value, 0));
-    const centerX = Math.max(10, Math.min(90, 50 + (currentOffsetX / 3)));
-    const centerY = Math.max(10, Math.min(90, 50 + (currentOffsetY / 3)));
+    const centerX = offsetToPreviewPercent(currentOffsetX, metrics?.naturalWidth, 3);
+    const centerY = offsetToPreviewPercent(currentOffsetY, metrics?.naturalHeight, 3);
     const visualWidth = Math.max(18, Math.min(86, Math.abs(percentX - centerX) * 2));
     const visualHeight = Math.max(12, Math.min(64, Math.abs(percentY - centerY) * 2));
-    const width = Math.max(90, Math.min(430, Math.trunc(visualWidth * 5)));
-    const height = Math.max(36, Math.min(256, Math.trunc(visualHeight * 4)));
+    const width = metrics
+      ? Math.max(16, Math.min(metrics.naturalWidth, Math.trunc((visualWidth / 100) * metrics.naturalWidth)))
+      : Math.max(90, Math.min(430, Math.trunc(visualWidth * 5)));
+    const height = metrics
+      ? Math.max(12, Math.min(metrics.naturalHeight, Math.trunc((visualHeight / 100) * metrics.naturalHeight)))
+      : Math.max(36, Math.min(256, Math.trunc(visualHeight * 4)));
     if (widthField) {
       widthField.value = String(width);
     }
@@ -6674,7 +6702,7 @@ function setRecognitionVisualOffsetFromPointer(container, dragTarget, clientX, c
       height,
       offsetX: currentOffsetX,
       offsetY: currentOffsetY,
-    }));
+    }, metrics));
     updateRelativeOcrPreviewOverlay(container);
     if (container.classList.contains("command-tree-card") || container.classList.contains("flow-card")) {
       syncCommandMapDraftFromCard(container);
@@ -6693,8 +6721,12 @@ function setRecognitionVisualOffsetFromPointer(container, dragTarget, clientX, c
     return;
   }
 
-  const offsetX = Math.trunc((percentX - 50) * 3);
-  const offsetY = Math.trunc((percentY - 50) * 3);
+  const offsetX = metrics
+    ? Math.trunc(((percentX - 50) / 100) * metrics.naturalWidth)
+    : Math.trunc((percentX - 50) * 3);
+  const offsetY = metrics
+    ? Math.trunc(((percentY - 50) / 100) * metrics.naturalHeight)
+    : Math.trunc((percentY - 50) * 3);
   const fieldPrefix = targetKind === "ocr" ? "relativeOcrOffset" : "clickOffset";
   const xField = container.querySelector(`[data-tree-field="${fieldPrefix}X"], [data-field="${fieldPrefix}X"], [data-insert-field="${fieldPrefix}X"]`);
   const yField = container.querySelector(`[data-tree-field="${fieldPrefix}Y"], [data-field="${fieldPrefix}Y"], [data-insert-field="${fieldPrefix}Y"]`);
@@ -6720,9 +6752,9 @@ function setRecognitionVisualOffsetFromPointer(container, dragTarget, clientX, c
       height: container.querySelector('[data-tree-field="relativeOcrHeight"], [data-field="relativeOcrHeight"], [data-insert-field="relativeOcrHeight"]')?.value || 40,
       offsetX,
       offsetY,
-    }));
+    }, metrics));
   } else {
-    dragTarget.setAttribute("style", clickTargetOverlayStyle({ offsetX, offsetY }));
+    dragTarget.setAttribute("style", clickTargetOverlayStyle({ offsetX, offsetY }, metrics));
   }
   updateRelativeOcrPreviewOverlay(container);
   if (container.classList.contains("command-tree-card") || container.classList.contains("flow-card")) {
@@ -6750,6 +6782,9 @@ function startRecognitionVisualDrag(event) {
   }
   const container = dragTarget.closest(".command-tree-card, .insert-card-panel, .flow-card");
   if (!container) {
+    return;
+  }
+  if (container.classList.contains("command-tree-card") && !container.classList.contains("is-inline-expanded")) {
     return;
   }
   event.preventDefault();
@@ -12868,6 +12903,7 @@ function renderTreeEditorFields(event) {
     .join("");
   const availableColumns = columnsForSheetInWorkbook(workbookId, selectedSheet);
   const selectedColumn = availableColumns.includes(details.coluna) ? details.coluna : availableColumns[0] ?? "";
+  const contextOnly = isSpreadsheetContextOnly(details);
   const columnOptions = availableColumns
     .map(
       (column) =>
@@ -18005,6 +18041,14 @@ commandMapList.addEventListener("focusin", (event) => {
     return;
   }
 
+  if (event.target.closest("button, input, textarea, select, label, a")) {
+    return;
+  }
+
+  if (event.target.closest("button, input, textarea, select, label, a")) {
+    return;
+  }
+
   const segment = event.target.closest(".command-flow-segment");
   if (segment) {
     const order = Number(segment.dataset.order);
@@ -18013,6 +18057,22 @@ commandMapList.addEventListener("focusin", (event) => {
     }
   }
 });
+
+commandMapList.addEventListener("click", (event) => {
+  const detailsButton = event.target.closest('button[data-tree-action="open-card-details"]');
+  if (!detailsButton) {
+    return;
+  }
+  const card = detailsButton.closest(".command-tree-card");
+  const order = Number(card?.dataset.order);
+  if (!order || Number(state.expandedTreeCardOrder) === order) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  setCommandMapFocus(order, "auto", { skipConnectorLayout: true, suppressScroll: true });
+  openExpandedTreeCard(order, detailsButton);
+}, true);
 
 window.addEventListener("pointermove", (event) => {
   if (state.pendingDrag?.pointerId === event.pointerId && !state.draggingOrder) {
@@ -18138,7 +18198,6 @@ commandMapList.addEventListener("click", (event) => {
   const card = button.closest(".command-tree-card");
   const order = Number(card.dataset.order);
   const type = card.dataset.type;
-  const values = treeValuesFromCard(card);
   const action = button.dataset.treeAction;
 
   if (action === "close-card-details") {
@@ -18175,6 +18234,8 @@ commandMapList.addEventListener("click", (event) => {
     beginKeyCapture({ scope: "update-tree", order, field: "afterAction" });
     return;
   }
+
+  const values = treeValuesFromCard(card);
 
   if (action === "select-image") {
     setCommandMapFocus(order);
@@ -18303,6 +18364,14 @@ commandMapList.addEventListener("click", (event) => {
     , () => order);
   }
 });
+
+commandMapList.addEventListener("load", (event) => {
+  if (!event.target?.classList?.contains("recognition-preview-image")) {
+    return;
+  }
+  const container = event.target.closest(".command-tree-card, .insert-card-panel, .flow-card");
+  updateRelativeOcrPreviewOverlay(container);
+}, true);
 
 commandMapList.addEventListener("click", (event) => {
   const emptyTypeButton = event.target.closest("button[data-empty-insert-type]");

@@ -5570,6 +5570,17 @@ fn test_image_recognition(
         return Err(format!("Arquivo nao encontrado: {}", script_path.display()));
     }
 
+    let _ = std::fs::remove_file(root.join("ultimo_log_launcher.txt"));
+    append_launcher_log(
+        &root,
+        format!(
+            "Teste isolado de reconhecimento iniciado | imagem={} | timeout={} | confianca={} | ocr={}",
+            imagem,
+            timeout.max(0.1),
+            confianca,
+            texto_ocr_esperado.as_deref().unwrap_or("").trim()
+        ),
+    );
     let _ = std::fs::remove_file(root.join(".parar_automacao.flag"));
 
     let (python_program, python_args) = python_command(&root)?;
@@ -5638,6 +5649,20 @@ fn test_image_recognition(
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stdout.is_empty() {
+        append_launcher_log(&root, format!("RECONHECIMENTO STDOUT: {stdout}"));
+    }
+    if !stderr.is_empty() {
+        append_launcher_log(&root, format!("RECONHECIMENTO STDERR: {stderr}"));
+    }
+    append_launcher_log(
+        &root,
+        format!(
+            "Teste isolado de reconhecimento finalizado | sucesso={} | code={}",
+            output.status.success(),
+            output.status.code().unwrap_or(-1)
+        ),
+    );
     if output.status.success() {
         return Ok(if stdout.is_empty() {
             "Reconhecimento concluido com sucesso.".into()

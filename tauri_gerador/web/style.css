@@ -9255,6 +9255,41 @@ label span {
   white-space: nowrap;
 }
 
+.command-tree-card:not(.is-inline-expanded) .recognition-ocr-target-box,
+.command-tree-card:not(.is-inline-expanded) .recognition-click-target-point {
+  pointer-events: none;
+  cursor: default;
+}
+
+.command-tree-card:not(.is-inline-expanded) .recognition-ocr-resize-handle {
+  display: none;
+}
+
+.command-tree-card:not(.is-inline-expanded) .recognition-ocr-target-box {
+  border-style: solid;
+  border-color: rgba(94, 234, 212, 0.62);
+  background: rgba(18, 181, 203, 0.12);
+  box-shadow: 0 0 10px rgba(18, 181, 203, 0.18);
+}
+
+.command-tree-card:not(.is-inline-expanded) .recognition-ocr-target-box span,
+.command-tree-card:not(.is-inline-expanded) .recognition-click-target-point span {
+  opacity: 0.72;
+  font-size: 0.38rem;
+}
+
+.command-tree-card:not(.is-inline-expanded) .recognition-click-target-point {
+  width: 34px;
+  height: 34px;
+}
+
+.command-tree-card:not(.is-inline-expanded) .recognition-click-target-point::before {
+  inset: 7px;
+  border-width: 1.5px;
+  background: rgba(34, 197, 94, 0.12);
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.22);
+}
+
 .recognition-ocr-target-box.is-centro {
   border-color: rgba(34, 197, 94, 0.92);
   background:
