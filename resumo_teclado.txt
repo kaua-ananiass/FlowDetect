@@ -1,2 +1,1 @@
-[PLANILHA:cod x71 | apos:enter][TAB][ENTER]
-[TAB x2]
+[IMAGEM:imagem_capturada_0077 | 2 cliques | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][PLANILHA:CÓD x34 | apos:enter][ENTER]

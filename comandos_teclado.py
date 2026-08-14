@@ -1,62 +1,10 @@
 import pyautogui
 import time
-import ctypes
 
 INTERVALO_TEXTO = 0.01
 
 
-def definir_texto_clipboard_windows(texto):
-    if not hasattr(ctypes, "windll"):
-        return False
-    user32 = ctypes.windll.user32
-    kernel32 = ctypes.windll.kernel32
-    kernel32.GlobalAlloc.restype = ctypes.c_void_p
-    kernel32.GlobalLock.restype = ctypes.c_void_p
-    user32.SetClipboardData.restype = ctypes.c_void_p
-    dados = (str(texto or "") + "\0").encode("utf-16-le")
-    memoria = None
-    try:
-        aberto = False
-        for _ in range(6):
-            if user32.OpenClipboard(None):
-                aberto = True
-                break
-            time.sleep(0.01)
-        if not aberto:
-            return False
-        user32.EmptyClipboard()
-        memoria = kernel32.GlobalAlloc(0x0002, len(dados))
-        if not memoria:
-            return False
-        destino = kernel32.GlobalLock(memoria)
-        if not destino:
-            return False
-        ctypes.memmove(destino, dados, len(dados))
-        kernel32.GlobalUnlock(memoria)
-        if not user32.SetClipboardData(13, memoria):
-            return False
-        memoria = None
-        return True
-    except Exception:
-        return False
-    finally:
-        try:
-            user32.CloseClipboard()
-        except Exception:
-            pass
-        if memoria:
-            try:
-                kernel32.GlobalFree(memoria)
-            except Exception:
-                pass
-
-
 def digitar_texto(texto):
-    texto = str(texto)
-    if texto and definir_texto_clipboard_windows(texto):
-        pyautogui.hotkey("ctrl", "v")
-        time.sleep(0.008)
-        return
     for caractere in texto:
         if caractere == "\r":
             continue
@@ -208,13 +156,11 @@ def verificar_estado_botao(
 
 def executar():
     time.sleep(0.3)
-    executar_sequencia([330, 44, 289, 199, 285, 228, 327, 214, 227, 72, 219, 353, 42, 306, 301, 81, 11, 104, 226, 84, 94, 89, 70, 276, 233, 278, 298, 238, 37, 212, 217, 259, 46, 51, 275, 261, 356, 232, 106, 329, 88, 355, 352, 337, 349, 253, 309, 220, 348, 354, 255, 326, 273, 292, 350, 282, 269, 300, 27, 325, 35, 230, 67, 321, 183, 344, 31, 30, 86, 215, 34], acao_apos_item=['enter'], intervalo_entre_itens=0.5)
+    clicar_por_imagem(imagem='imagens/imagem_capturada_0077', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=2, offset_x=16, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
     time.sleep(0.3)
-    executar_teclas(['tab'], repeticoes=1)
+    executar_sequencia([330, 44, 228, 72, 42, 125, 301, 81, 11, 84, 94, 276, 278, 298, 238, 37, 165, 51, 275, 261, 340, 337, 253, 153, 220, 273, 282, 27, 35, 230, 67, 183, 215, 34], acao_apos_item=['enter'], intervalo_entre_itens=0.5)
     time.sleep(0.3)
     executar_teclas(['enter'], repeticoes=1)
-    time.sleep(0.2)
-    executar_teclas(['tab'], repeticoes=2)
 
 
 if __name__ == "__main__":

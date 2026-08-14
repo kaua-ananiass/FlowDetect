@@ -1,5 +1,5 @@
 {
-  "criado_em": "2026-08-10T10:59:49",
+  "criado_em": "2026-08-12T15:12:44",
   "instrucoes": [
     "Teclas simples e atalhos sao gravados individualmente.",
     "F8 abre uma caixa de texto grande e salva o bloco como um unico comando.",
@@ -8,92 +8,102 @@
     "A aba Planilha pode adicionar uma sequencia inteira ou so linhas selecionadas ao roteiro.",
     "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura."
   ],
-  "resumo_digitado": "[PLANILHA:cod x71 | apos:enter][TAB][ENTER]\n[TAB x2]",
+  "resumo_digitado": "[IMAGEM:imagem_capturada_0077 | 2 cliques | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][PLANILHA:CÓD x34 | apos:enter][ENTER]\n",
   "eventos": [
     {
       "ordem": 1,
       "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:imagem_capturada_0077 | 2 cliques | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/imagem_capturada_0077', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=2, offset_x=16, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/imagem_capturada_0077",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 2,
+        "offset_x": 16,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "Empresa:",
+        "leitura_relativa": {
+          "ativo": true,
+          "lado": "livre",
+          "largura": 53,
+          "altura": 18,
+          "offset_x": -35,
+          "offset_y": 1,
+          "salvar_em": ""
+        },
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 2,
+      "sequencia": "principal",
       "tipo": "sequencia_planilha",
       "teclas": [
-        "planilha:cod"
+        "planilha:CÓD"
       ],
-      "texto": "[PLANILHA:cod x71 | apos:enter]",
+      "texto": "[PLANILHA:CÓD x34 | apos:enter]",
       "intervalo_antes": 0.3,
-      "comando_python": "executar_sequencia([330, 44, 289, 199, 285, 228, 327, 214, 227, 72, 219, 353, 42, 306, 301, 81, 11, 104, 226, 84, 94, 89, 70, 276, 233, 278, 298, 238, 37, 212, 217, 259, 46, 51, 275, 261, 356, 232, 106, 329, 88, 355, 352, 337, 349, 253, 309, 220, 348, 354, 255, 326, 273, 292, 350, 282, 269, 300, 27, 325, 35, 230, 67, 321, 183, 344, 31, 30, 86, 215, 34], acao_apos_item=['enter'], intervalo_entre_itens=0.5)",
+      "comando_python": "executar_sequencia([330, 44, 228, 72, 42, 125, 301, 81, 11, 84, 94, 276, 278, 298, 238, 37, 165, 51, 275, 261, 340, 337, 253, 153, 220, 273, 282, 27, 35, 230, 67, 183, 215, 34], acao_apos_item=['enter'], intervalo_entre_itens=0.5)",
       "detalhes": {
-        "arquivo": "planilhas/empresas-uou.xlsx",
+        "arquivo": "planilhas/Empresas-v1.xlsx",
         "aba": "Sheet1",
-        "coluna": "cod",
+        "coluna": "CÓD",
         "valores": [
           330,
           44,
-          289,
-          199,
-          285,
           228,
-          327,
-          214,
-          227,
           72,
-          219,
-          353,
           42,
-          306,
+          125,
           301,
           81,
           11,
-          104,
-          226,
           84,
           94,
-          89,
-          70,
           276,
-          233,
           278,
           298,
           238,
           37,
-          212,
-          217,
-          259,
-          46,
+          165,
           51,
           275,
           261,
-          356,
-          232,
-          106,
-          329,
-          88,
-          355,
-          352,
+          340,
           337,
-          349,
           253,
-          309,
+          153,
           220,
-          348,
-          354,
-          255,
-          326,
           273,
-          292,
-          350,
           282,
-          269,
-          300,
           27,
-          325,
           35,
           230,
           67,
-          321,
           183,
-          344,
-          31,
-          30,
-          86,
           215,
           34
         ],
@@ -104,24 +114,6 @@
         ],
         "acao_apos_item_texto": "enter",
         "intervalo_entre_itens": 0.5,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
-    },
-    {
-      "ordem": 2,
-      "sequencia": "principal",
-      "tipo": "tecla",
-      "teclas": [
-        "tab"
-      ],
-      "texto": "[TAB]",
-      "intervalo_antes": 0.3,
-      "comando_python": "executar_teclas(['tab'], repeticoes=1)",
-      "detalhes": {
-        "repeticoes": 1,
         "ao_sucesso": "continuar",
         "bloco_sucesso": "",
         "sequencia_sucesso": "",
@@ -145,26 +137,13 @@
         "sequencia_sucesso": "",
         "atraso_antes_sequencia_sucesso": 0.0
       }
-    },
-    {
-      "ordem": 4,
-      "sequencia": "principal",
-      "tipo": "tecla",
-      "teclas": [
-        "tab"
-      ],
-      "texto": "[TAB x2]",
-      "intervalo_antes": 0.2,
-      "comando_python": "executar_teclas(['tab'], repeticoes=2)",
-      "detalhes": {
-        "repeticoes": 2,
-        "ao_sucesso": "continuar",
-        "bloco_sucesso": "",
-        "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0
-      }
     }
   ],
   "sequencia_inicial": "principal",
-  "configuracoes_sequencia": {}
+  "configuracoes_sequencia": {
+    "principal": {
+      "modo_execucao": "loop_planilha",
+      "sequencia_apos_loop": ""
+    }
+  }
 }
