@@ -8,7 +8,7 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{Arc, Mutex, OnceLock},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -72,6 +72,15 @@ struct RuntimeState {
     pid: Arc<Mutex<Option<u32>>>,
 }
 
+struct RecognitionWorker {
+    root: PathBuf,
+    python_program: String,
+    python_args: Vec<String>,
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
 static REMOTE_AGENT_SNAPSHOT: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
 static REMOTE_AGENT_LAST_CONTACT_MS: OnceLock<Arc<Mutex<u128>>> = OnceLock::new();
 static PYTHON_COMMAND_CACHE: OnceLock<(String, Vec<String>)> = OnceLock::new();
@@ -82,6 +91,7 @@ static WEBRTC_SIGNAL_STATE: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
 
 static TARGET_OVERLAY_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 static SMART_RECORDER_CHILD: Mutex<Option<Child>> = Mutex::new(None);
+static RECOGNITION_WORKER: Mutex<Option<RecognitionWorker>> = Mutex::new(None);
 
 #[derive(Serialize)]
 struct AutomationConfig {
@@ -5547,6 +5557,119 @@ fn launch_legacy_capture(app: AppHandle) -> Result<String, String> {
     Ok("Captura avancada aberta em uma nova janela.".into())
 }
 
+fn recognition_worker_matches(
+    worker: &RecognitionWorker,
+    root: &PathBuf,
+    python_program: &str,
+    python_args: &[String],
+) -> bool {
+    worker.root == *root
+        && worker.python_program == python_program
+        && worker.python_args == python_args
+        && worker.child.id() > 0
+}
+
+fn start_recognition_worker(root: &PathBuf) -> Result<RecognitionWorker, String> {
+    let script_path = root.join("reconhecimento_worker.py");
+    if !script_path.exists() {
+        return Err(format!("Worker de reconhecimento nao encontrado: {}", script_path.display()));
+    }
+
+    let (python_program_path, python_args) = python_command(root)?;
+    let python_program = python_program_path.clone();
+    let mut command = Command::new(&python_program_path);
+    command
+        .current_dir(root)
+        .args(&python_args)
+        .arg(&script_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    configure_no_window(&mut command);
+
+    let mut child = command
+        .spawn()
+        .map_err(|err| format!("Falha ao iniciar worker de reconhecimento: {err}"))?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "Worker de reconhecimento iniciou sem stdin.".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Worker de reconhecimento iniciou sem stdout.".to_string())?;
+
+    Ok(RecognitionWorker {
+        root: root.to_path_buf(),
+        python_program,
+        python_args,
+        child,
+        stdin,
+        stdout: BufReader::new(stdout),
+    })
+}
+
+fn test_image_recognition_worker(root: &PathBuf, payload: Value) -> Result<(bool, String, String), String> {
+    let (python_program_path, python_args) = python_command(root)?;
+    let python_program = python_program_path.clone();
+    let mut guard = RECOGNITION_WORKER
+        .lock()
+        .map_err(|_| "Worker de reconhecimento bloqueado.".to_string())?;
+
+    let precisa_reiniciar = match guard.as_mut() {
+        Some(worker) => {
+            let saiu = matches!(worker.child.try_wait(), Ok(Some(_)) | Err(_));
+            saiu || !recognition_worker_matches(worker, root, &python_program, &python_args)
+        }
+        None => true,
+    };
+    if precisa_reiniciar {
+        *guard = Some(start_recognition_worker(root)?);
+    }
+
+    let worker = guard
+        .as_mut()
+        .ok_or_else(|| "Worker de reconhecimento indisponivel.".to_string())?;
+    let request = serde_json::to_string(&payload)
+        .map_err(|err| format!("Falha ao serializar teste de reconhecimento: {err}"))?;
+    worker
+        .stdin
+        .write_all(request.as_bytes())
+        .and_then(|_| worker.stdin.write_all(b"\n"))
+        .and_then(|_| worker.stdin.flush())
+        .map_err(|err| format!("Falha ao enviar teste para o worker: {err}"))?;
+
+    let mut linha = String::new();
+    worker
+        .stdout
+        .read_line(&mut linha)
+        .map_err(|err| format!("Falha ao ler resposta do worker: {err}"))?;
+    if linha.trim().is_empty() {
+        *guard = None;
+        return Err("Worker de reconhecimento nao respondeu.".into());
+    }
+
+    let resposta: Value = serde_json::from_str(linha.trim())
+        .map_err(|err| format!("Resposta invalida do worker de reconhecimento: {err}"))?;
+    if resposta.get("restart").and_then(Value::as_bool).unwrap_or(false) {
+        if let Some(mut worker_antigo) = guard.take() {
+            let _ = worker_antigo.child.kill();
+        }
+        return Err(
+            resposta
+                .get("stderr")
+                .and_then(Value::as_str)
+                .unwrap_or("Worker de reconhecimento reiniciado.")
+                .to_string(),
+        );
+    }
+    Ok((
+        resposta.get("success").and_then(Value::as_bool).unwrap_or(false),
+        resposta.get("stdout").and_then(Value::as_str).unwrap_or("").to_string(),
+        resposta.get("stderr").and_then(Value::as_str).unwrap_or("").to_string(),
+    ))
+}
+
 #[tauri::command]
 fn test_image_recognition(
     app: AppHandle,
@@ -5582,6 +5705,78 @@ fn test_image_recognition(
         ),
     );
     let _ = std::fs::remove_file(root.join(".parar_automacao.flag"));
+
+    let perfil_busca_resolvido = perfil_busca.clone().unwrap_or_else(|| "balanced".to_string());
+    let leitura_relativa_payload = serde_json::json!({
+        "ativa": leitura_relativa_ativa.unwrap_or(false),
+        "lado": leitura_relativa_lado.clone().unwrap_or_else(|| "livre".to_string()),
+        "largura": leitura_relativa_largura.unwrap_or(140),
+        "altura": leitura_relativa_altura.unwrap_or(40),
+        "offset_x": leitura_relativa_offset_x.unwrap_or(0),
+        "offset_y": leitura_relativa_offset_y.unwrap_or(0),
+        "salvar_em": leitura_relativa_salvar_em.clone().unwrap_or_default(),
+    });
+    let worker_payload = serde_json::json!({
+        "imagem": imagem.clone(),
+        "timeout": timeout.max(0.1),
+        "confianca": confianca,
+        "perfil_busca": perfil_busca_resolvido,
+        "janela_alvo": janela_alvo.clone().unwrap_or_default(),
+        "texto_ocr_esperado": texto_ocr_esperado.clone().unwrap_or_default(),
+        "leitura_relativa": leitura_relativa_payload,
+        "modo_area_busca": "target_window",
+        "area_personalizada": {},
+        "bloco_id": "",
+    });
+
+    let main_window = app.get_webview_window("main");
+    if let Some(window) = main_window.as_ref() {
+        let _ = window.minimize();
+    }
+
+    match test_image_recognition_worker(&root, worker_payload) {
+        Ok((success, stdout, stderr)) => {
+            if let Some(window) = main_window.as_ref() {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            if !stdout.trim().is_empty() {
+                append_launcher_log(&root, format!("RECONHECIMENTO WORKER STDOUT: {}", stdout.trim()));
+            }
+            if !stderr.trim().is_empty() {
+                append_launcher_log(&root, format!("RECONHECIMENTO WORKER STDERR: {}", stderr.trim()));
+            }
+            append_launcher_log(
+                &root,
+                format!(
+                    "Teste isolado de reconhecimento finalizado via worker | sucesso={}",
+                    success
+                ),
+            );
+            if success {
+                return Ok(if stdout.trim().is_empty() {
+                    "Reconhecimento concluido com sucesso.".into()
+                } else {
+                    stdout
+                });
+            }
+            let message = if !stderr.trim().is_empty() { stderr } else { stdout };
+            return Err(if message.trim().is_empty() {
+                "Falha ao testar o reconhecimento.".into()
+            } else {
+                message
+            });
+        }
+        Err(err) => {
+            if let Some(window) = main_window.as_ref() {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            append_launcher_log(&root, format!("Worker de reconhecimento indisponivel. Usando modo antigo: {err}"));
+        }
+    }
 
     let (python_program, python_args) = python_command(&root)?;
     let mut command = Command::new(&python_program);

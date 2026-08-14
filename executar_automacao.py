@@ -2,6 +2,7 @@ import argparse
 import ctypes
 import difflib
 import json
+import os
 import re
 import shlex
 import shutil
@@ -1414,7 +1415,7 @@ class ExecutorAutomacao:
             altura_ocr,
         ), limite=limite_reconhecido)
 
-    def confirmar_ocr_relativo(self, local, texto_esperado="", leitura_relativa=None, ordem_bloco=None, dimensoes_referencia=None):
+    def confirmar_ocr_relativo(self, local, texto_esperado="", leitura_relativa=None, ordem_bloco=None, dimensoes_referencia=None, marcar_ocr=True):
         esperado = str(texto_esperado or "").strip()
         leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
         salvar_em = str(leitura.get("salvar_em", "") or "").strip()
@@ -1460,8 +1461,15 @@ class ExecutorAutomacao:
             limite_reconhecido = self.bounds_reconhecimento(local)
             try:
                 esquerda, topo, largura, altura = [int(valor) for valor in regiao]
-                margem_x = max(8, int(largura * 0.18))
-                margem_y = max(5, int(altura * 0.30))
+                local_esquerda, local_topo, local_largura, local_altura = limite_reconhecido
+                margem_x = max(14, int(largura * 0.28))
+                margem_y = max(8, int(altura * 0.45))
+                limite_ocr = self.limitar_regiao((
+                    local_esquerda - 16,
+                    local_topo - 10,
+                    local_largura + 32,
+                    local_altura + 20,
+                ))
                 regiao_ampliada = self.limitar_regiao(
                     (
                         esquerda - margem_x,
@@ -1469,7 +1477,7 @@ class ExecutorAutomacao:
                         largura + margem_x * 2,
                         altura + margem_y * 2,
                     ),
-                    limite=limite_reconhecido,
+                    limite=limite_ocr or limite_reconhecido,
                 )
             except Exception:
                 regiao_ampliada = None
@@ -1497,11 +1505,12 @@ class ExecutorAutomacao:
             f"OCR {'confirmou' if confirmado else 'nao confirmou'}: esperado='{esperado}' | capturado='{capturado}'",
             flush=True,
         )
-        self.marcar_regiao_ocr(
-            regiao,
-            confirmado=confirmado,
-            duracao=0.9 if confirmado else 1.15,
-        )
+        if marcar_ocr:
+            self.marcar_regiao_ocr(
+                regiao,
+                confirmado=confirmado,
+                duracao=0.9 if confirmado else 1.15,
+            )
         return confirmado
 
     def confirmar_localizacao_imagem(self, caminho_imagem, local, confianca=0.8, perfil_busca="balanced"):
@@ -1685,19 +1694,36 @@ class ExecutorAutomacao:
 
         try:
             base = imagem.convert("L")
-            ampliada = self.ampliar_imagem_para_ocr(base, fator=3)
-            limiar_claro = ampliada.point(lambda valor: 255 if valor >= 150 else 0)
-            limiar_escuro = ampliada.point(lambda valor: 255 if valor >= 118 else 0)
+            fator = 5 if max(int(base.width or 0), int(base.height or 0)) < 220 else 3
+            ampliada = self.ampliar_imagem_para_ocr(base, fator=fator)
+            invertida = ampliada.point(lambda valor: 255 - valor)
+            media = 128
+            try:
+                histograma = ampliada.histogram()
+                total = max(1, sum(histograma))
+                media = int(sum(indice * valor for indice, valor in enumerate(histograma)) / total)
+            except Exception:
+                media = 128
+            limiar_base = 132 if media < 120 else 150
+            limiar_claro = ampliada.point(lambda valor: 255 if valor >= limiar_base else 0)
+            limiar_escuro = ampliada.point(lambda valor: 0 if valor >= limiar_base else 255)
+            limiar_invertido = invertida.point(lambda valor: 255 if valor >= 118 else 0)
         except Exception:
             return []
 
         configs = [
+            "--psm 6",
             "--psm 7",
             "--psm 8",
+            "--psm 13",
+            "--psm 6 -c preserve_interword_spaces=1",
+            "--psm 7 -c preserve_interword_spaces=1",
+            "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/.-:_ ",
+            "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/.-:_ ",
             "--psm 7 -c tessedit_char_whitelist=0123456789/.-:",
             "--psm 8 -c tessedit_char_whitelist=0123456789/.-:",
         ]
-        variantes = [ampliada, limiar_claro, limiar_escuro]
+        variantes = [ampliada, invertida, limiar_claro, limiar_escuro, limiar_invertido]
         textos = []
 
         for variante in variantes:
@@ -2500,7 +2526,7 @@ class ExecutorAutomacao:
             and (largura_tela_original * altura_tela_original) >= 240000
         )
         if permite_busca_reduzida:
-            proporcao_reduzida = 0.72 if perfil_busca == "fast" else 0.82
+            proporcao_reduzida = 0.62 if perfil_busca == "fast" else 0.82
             try:
                 largura_reduzida = max(80, int(round(largura_tela_original * proporcao_reduzida)))
                 altura_reduzida = max(80, int(round(altura_tela_original * proporcao_reduzida)))
@@ -2522,7 +2548,7 @@ class ExecutorAutomacao:
                 "ratio": 1.0,
                 "gray": tela_gray,
                 "scales": (1.0,),
-                "methods": metodos,
+                "methods": metodos[:1] if perfil_busca == "fast" else metodos,
             }
         )
         if escalas_fallback:
@@ -2610,11 +2636,14 @@ class ExecutorAutomacao:
                         total_valores = int(resultado_norm.size or 0)
                         if total_valores <= 0:
                             continue
-                        top_k = 2 if modo_estrito else (3 if perfil_busca == "fast" else (6 if perfil_busca == "precise" else 4))
-                        if template_muito_pequeno:
-                            top_k += 4
-                        elif template_pequeno:
-                            top_k += 2
+                        if perfil_busca == "fast":
+                            top_k = 3 if template_muito_pequeno else (2 if template_pequeno else 1)
+                        else:
+                            top_k = 2 if modo_estrito else (6 if perfil_busca == "precise" else 4)
+                            if template_muito_pequeno:
+                                top_k += 4
+                            elif template_pequeno:
+                                top_k += 2
                         if nome_plano == "reduced":
                             top_k = min(top_k, 3)
                         top_k = min(top_k, total_valores)
@@ -2700,6 +2729,36 @@ class ExecutorAutomacao:
                             "search_stage": nome_plano,
                             "search_ratio": float(proporcao_plano),
                         }
+                        if perfil_busca == "fast" and nome_plano == "reduced":
+                            if (
+                                float(candidato.get("rank_score", 0.0)) >= max(0.76, float(confianca) - 0.05)
+                                and float(candidato.get("quality_score", 0.0)) >= 0.78
+                                and float((metricas or {}).get("corr", 0.0) or 0.0) >= 0.60
+                                and float((metricas or {}).get("gray", 0.0) or 0.0) >= 0.88
+                            ):
+                                duracao_analise_ms = (time.perf_counter() - inicio_analise) * 1000.0
+                                self._ultimo_template_debug = candidato
+                                self._ultima_busca_template_info = {
+                                    "capture_ms": float(info_captura.get("capture_ms", 0.0) or 0.0),
+                                    "recognition_ms": duracao_analise_ms,
+                                    "region": list(region) if region else (info_captura.get("region") or None),
+                                    "score": float(candidato.get("rank_score", 0.0) or 0.0),
+                                    "raw_score": float(candidato.get("score", 0.0) or 0.0),
+                                    "quality_score": float(candidato.get("quality_score", 0.0) or 0.0),
+                                    "search_stage": "reduced",
+                                    "used_multiscale": False,
+                                    "used_reduced": True,
+                                    "used_fallback": False,
+                                }
+                                safe_print(
+                                    "Imagem encontrada por template rapido "
+                                    f"(score={float(candidato.get('score', 0.0)):.2f}, rank={float(candidato.get('rank_score', 0.0)):.2f}, "
+                                    f"qualidade={float(candidato.get('quality_score', 0.0)):.2f}, "
+                                    f"captura={float(info_captura.get('capture_ms', 0.0) or 0.0):.0f}ms, "
+                                    f"analise={duracao_analise_ms:.0f}ms, area={self.formatar_regiao_log(region)}, etapa=reduced)",
+                                    flush=True,
+                                )
+                                return candidato
                         candidatos.append(candidato)
 
         if candidatos:
@@ -2816,12 +2875,26 @@ class ExecutorAutomacao:
                             and float(metricas_candidato.get("ink_iou", 0.0)) >= 0.14
                         )
                 else:
+                    if perfil_busca == "fast" and str(candidato.get("search_stage") or "") == "reduced":
+                        if (
+                            float(candidato.get("quality_score", 0.0)) < 0.78
+                            or float(metricas_candidato.get("corr", 0.0)) < 0.60
+                            or float(metricas_candidato.get("gray", 0.0)) < 0.88
+                        ):
+                            continue
                     aceite_por_score_bruto_candidato = (
                         float(candidato.get("score", 0.0)) >= max(0.84, float(confianca))
                         and float(candidato.get("quality_score", 0.0)) >= 0.72
                         and float(metricas_candidato.get("corr", 0.0)) >= 0.58
                         and float(metricas_candidato.get("gray", 0.0)) >= 0.88
                     )
+                    if perfil_busca == "fast" and str(candidato.get("search_stage") or "") == "reduced":
+                        aceite_por_score_bruto_candidato = aceite_por_score_bruto_candidato or (
+                            float(candidato.get("score", 0.0)) >= max(0.72, float(confianca) - 0.10)
+                            and float(candidato.get("quality_score", 0.0)) >= 0.70
+                            and float(metricas_candidato.get("corr", 0.0)) >= 0.52
+                            and float(metricas_candidato.get("gray", 0.0)) >= 0.86
+                        )
                     if template_pequeno:
                         aceite_por_score_bruto_candidato = aceite_por_score_bruto_candidato or (
                             float(candidato.get("score", 0.0)) >= max(0.74, float(confianca) - 0.08)
@@ -4403,6 +4476,31 @@ class ExecutorAutomacao:
                     region=regiao,
                     perfil_busca=perfil_busca_tentativa,
                 )
+                if local_template_preferencial and perfil_busca == "fast" and etapa_busca == "cache":
+                    info_template = self._ultima_busca_template_info or {}
+                    score_cache = float(info_template.get("score", local_template_preferencial.get("rank_score", 0.0)) or 0.0)
+                    qualidade_cache = float(info_template.get("quality_score", local_template_preferencial.get("quality_score", 0.0)) or 0.0)
+                    score_bruto_cache = float(info_template.get("raw_score", local_template_preferencial.get("score", 0.0)) or 0.0)
+                    if (
+                        score_cache >= max(0.86, float(confianca) - 0.02)
+                        and qualidade_cache >= 0.74
+                        and score_bruto_cache >= max(0.82, float(confianca) - 0.04)
+                    ):
+                        self.registrar_reconhecimento_bem_sucedido(
+                            imagem_id,
+                            local_template_preferencial,
+                            janela_alvo=janela_alvo,
+                            bloco_id=bloco_id,
+                            janela_info=janela_info_cache,
+                        )
+                        safe_print(
+                            "Imagem encontrada pelo cache rapido "
+                            f"(captura={float(info_template.get('capture_ms', 0.0) or 0.0):.0f}ms, "
+                            f"reconhecimento={float(info_template.get('recognition_ms', 0.0) or 0.0):.0f}ms, "
+                            f"area={self.formatar_regiao_log(regiao)}, confianca={score_cache:.2f}).",
+                            flush=True,
+                        )
+                        return local_template_preferencial
                 if local_template_preferencial and self.validar_correspondencia_visual(
                     caminho_imagem,
                     local_template_preferencial,
@@ -4711,6 +4809,9 @@ class ExecutorAutomacao:
         area_personalizada=None,
         texto_ocr_esperado="",
         leitura_relativa=None,
+        mostrar_marcador=True,
+        marcador_bloqueante=True,
+        duracao_marcador=0.24,
     ):
         titulo_janela = str(janela_alvo or self.janela_alvo or "").strip()
         if titulo_janela:
@@ -4718,7 +4819,7 @@ class ExecutorAutomacao:
         # No teste isolado, nao forcamos foco da janela alvo.
         # Isso evita fechar popups, menus ou estados transitivos
         # que a sequencia real deixa abertos antes do reconhecimento.
-        time.sleep(0.28)
+        time.sleep(0.06)
 
         janela_teste = self.localizar_janela_alvo(titulo_janela) if titulo_janela else None
         regiao_teste = None
@@ -4726,9 +4827,10 @@ class ExecutorAutomacao:
             regiao_teste = self.construir_regiao_personalizada(area_personalizada, janela_info=janela_teste)
         if regiao_teste is None and titulo_janela:
             regiao_teste = self.obter_regiao_busca(titulo_janela)
-        captura_bruta = self.salvar_captura_bruta_reconhecimento(region=regiao_teste, titulo_janela=titulo_janela)
-        if captura_bruta:
-            safe_print(f"Captura bruta do teste salva em: {captura_bruta}", flush=True)
+        if os.environ.get("FLOWDETECT_DEBUG_RECONHECIMENTO", "").strip() == "1":
+            captura_bruta = self.salvar_captura_bruta_reconhecimento(region=regiao_teste, titulo_janela=titulo_janela)
+            if captura_bruta:
+                safe_print(f"Captura bruta do teste salva em: {captura_bruta}", flush=True)
 
         local = self.esperar_imagem(
             imagem=imagem,
@@ -4751,13 +4853,19 @@ class ExecutorAutomacao:
         )
         caminho_imagem, _imagem_id = self.resolver_imagem(imagem)
         dimensoes_referencia = self.obter_dimensoes_imagem(caminho_imagem) if caminho_imagem.exists() else None
-        self.marcar_area_reconhecida(local, duracao=0.75, bloqueante=True)
+        if mostrar_marcador:
+            self.marcar_area_reconhecida(
+                local,
+                duracao=max(0.12, float(duracao_marcador or 0.24)),
+                bloqueante=bool(marcador_bloqueante),
+            )
         if not self.confirmar_ocr_relativo(
             local,
             texto_esperado=texto_ocr_esperado,
             leitura_relativa=leitura_relativa,
             ordem_bloco=None,
             dimensoes_referencia=dimensoes_referencia,
+            marcar_ocr=mostrar_marcador,
         ):
             safe_print("Teste de reconhecimento: imagem encontrada, mas o OCR nao confirmou o texto esperado.", flush=True)
             return False
