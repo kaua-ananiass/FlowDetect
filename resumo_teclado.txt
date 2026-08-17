@@ -1,1 +1,1 @@
-[IMAGEM:imagem_capturada_0077 | 2 cliques | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][PLANILHA:CÓD x34 | apos:enter][ENTER]
+[IMAGEM:imagem_capturada_006o8798 | 2 cliques | timeout=10s | conf=0.8 | perfil:fast | area:target_window | falha:parar][PLANILHA:CÓD x34 | apos:enter][TAB x8][BACKSPACE][IMAGEM:dsadssa | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]

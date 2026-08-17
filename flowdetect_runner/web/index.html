@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FlowDetect Runner</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="runner-shell">
+      <section class="runner-card runner-hero">
+        <div>
+          <p class="runner-kicker">FlowDetect Runner</p>
+          <h1 id="automationName">Nenhuma automacao carregada</h1>
+          <p id="automationDescription" class="runner-muted">
+            Importe um ZIP gerado pelo Studio para executar esta tarefa neste computador.
+          </p>
+        </div>
+        <div class="runner-actions">
+          <button id="importZipButton" class="runner-button runner-button-secondary" type="button">Importar ZIP</button>
+          <button id="refreshButton" class="runner-button runner-button-ghost" type="button">Atualizar</button>
+        </div>
+      </section>
+
+      <section class="runner-warning">
+        <strong>Importante</strong>
+        <span>Enquanto a automacao estiver rodando, nao use mouse nem teclado. O FlowDetect pode clicar ou digitar na janela selecionada.</span>
+      </section>
+
+      <section class="runner-grid">
+        <article class="runner-card runner-target-card">
+          <div class="runner-section-title">
+            <div>
+              <p class="runner-kicker">Janela alvo</p>
+              <h2 id="targetTitle">Tela inteira</h2>
+            </div>
+            <span id="targetChip" class="runner-chip">Opcional</span>
+          </div>
+          <p id="targetDescription" class="runner-muted">
+            Escolha a janela onde a automacao vai trabalhar. A borda azul mostra o alvo selecionado.
+          </p>
+          <div class="runner-target-actions">
+            <button id="refreshWindowsButton" class="runner-button runner-button-secondary" type="button">Selecionar janela</button>
+            <button id="clearTargetButton" class="runner-button runner-button-ghost" type="button">Usar tela inteira</button>
+          </div>
+          <div id="windowList" class="runner-window-list" hidden></div>
+        </article>
+
+        <article class="runner-card runner-progress-card">
+          <div class="runner-section-title">
+            <div>
+              <p class="runner-kicker">Execucao</p>
+              <h2 id="statusTitle">Pronto</h2>
+            </div>
+            <strong id="progressPercent" class="runner-percent">0%</strong>
+          </div>
+          <div class="runner-progress-track">
+            <div id="progressFill" class="runner-progress-fill"></div>
+          </div>
+          <div class="runner-status-grid">
+            <div>
+              <span>Empresa atual</span>
+              <strong id="companyText">-</strong>
+            </div>
+            <div>
+              <span>Linha</span>
+              <strong id="lineText">-</strong>
+            </div>
+            <div>
+              <span>Bloco atual</span>
+              <strong id="blockText">Aguardando</strong>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="runner-card runner-run-panel">
+        <label class="runner-field">
+          <span>Atraso inicial</span>
+          <input id="delayInput" type="number" min="0" step="0.5" value="3" />
+        </label>
+        <label class="runner-field">
+          <span>Linha inicial</span>
+          <input id="loopStartInput" type="number" min="1" step="1" value="1" />
+        </label>
+        <button id="runButton" class="runner-button runner-button-primary" type="button">Executar automacao</button>
+        <button id="stopButton" class="runner-button runner-button-danger" type="button" disabled>Parar</button>
+      </section>
+
+      <section class="runner-card runner-log-card">
+        <div class="runner-section-title">
+          <div>
+            <p class="runner-kicker">Status</p>
+            <h2>Historico rapido</h2>
+          </div>
+        </div>
+        <div id="logList" class="runner-log-list"></div>
+      </section>
+    </main>
+
+    <script src="./main.js"></script>
+  </body>
+</html>

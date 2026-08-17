@@ -225,6 +225,7 @@ class ExecutorAutomacao:
         self._ultima_busca_template_info = None
         self._ultima_busca_ocr_info = None
         self._ultimo_ocr_global_em = 0.0
+        self._cache_ocr_curto = {}
         self._janela_alvo_perdida_logada = False
         self._conflitos_janela_evento_logados = set()
         self.contexto_variaveis = {}
@@ -1415,7 +1416,232 @@ class ExecutorAutomacao:
             altura_ocr,
         ), limite=limite_reconhecido)
 
-    def confirmar_ocr_relativo(self, local, texto_esperado="", leitura_relativa=None, ordem_bloco=None, dimensoes_referencia=None, marcar_ocr=True):
+    def construir_regiao_ocr_referencia(self, leitura_relativa=None, dimensoes_referencia=None):
+        if not dimensoes_referencia:
+            return None
+        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        try:
+            ref_largura, ref_altura = [int(valor) for valor in dimensoes_referencia]
+        except Exception:
+            return None
+        if ref_largura <= 0 or ref_altura <= 0:
+            return None
+        largura_ocr = max(16, int(leitura.get("largura", leitura.get("width", 140)) or 140))
+        altura_ocr = max(12, int(leitura.get("altura", leitura.get("height", 40)) or 40))
+        offset_x = int(leitura.get("offset_x", leitura.get("offsetX", 0)) or 0)
+        offset_y = int(leitura.get("offset_y", leitura.get("offsetY", 0)) or 0)
+        centro_x = int(ref_largura / 2) + offset_x
+        centro_y = int(ref_altura / 2) + offset_y
+        return self.limitar_regiao(
+            (
+                int(centro_x - largura_ocr / 2),
+                int(centro_y - altura_ocr / 2),
+                largura_ocr,
+                altura_ocr,
+            ),
+            limite=(0, 0, ref_largura, ref_altura),
+        )
+
+    def confirmar_ocr_visual_pela_referencia(self, captura_ocr, caminho_referencia=None, leitura_relativa=None, dimensoes_referencia=None):
+        if not OPENCV_DISPONIVEL or np is None or Image is None or captura_ocr is None or not caminho_referencia:
+            return False
+        try:
+            caminho = Path(caminho_referencia)
+            if not caminho.exists():
+                return False
+            regiao_ref = self.construir_regiao_ocr_referencia(leitura_relativa, dimensoes_referencia=dimensoes_referencia)
+            if not regiao_ref:
+                return False
+            with Image.open(caminho) as imagem_ref:
+                x_ref, y_ref, w_ref, h_ref = [int(valor) for valor in regiao_ref]
+                recorte_ref = imagem_ref.convert("RGB").crop((x_ref, y_ref, x_ref + w_ref, y_ref + h_ref))
+            tela = cv2.cvtColor(np.array(captura_ocr.convert("RGB")), cv2.COLOR_RGB2GRAY)
+            ref = cv2.cvtColor(np.array(recorte_ref), cv2.COLOR_RGB2GRAY)
+            if tela.size <= 0 or ref.size <= 0:
+                return False
+            if tela.shape[:2] != ref.shape[:2]:
+                tela = cv2.resize(tela, (ref.shape[1], ref.shape[0]), interpolation=cv2.INTER_AREA)
+            diff = cv2.absdiff(tela, ref)
+            similaridade_tons = 1.0 - (float(diff.mean()) / 255.0)
+            correlacao = float(cv2.matchTemplate(tela, ref, cv2.TM_CCOEFF_NORMED)[0][0]) if min(ref.shape[:2]) >= 3 else 0.0
+            ref_bin = cv2.threshold(ref, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            tela_bin = cv2.threshold(tela, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            bin_diff = cv2.absdiff(tela_bin, ref_bin)
+            similaridade_binaria = 1.0 - (float(bin_diff.mean()) / 255.0)
+            confirmado = (
+                similaridade_tons >= 0.88
+                and similaridade_binaria >= 0.88
+                and correlacao >= 0.62
+            )
+            safe_print(
+                "OCR visual pela referencia "
+                f"{'confirmou' if confirmado else 'nao confirmou'} "
+                f"(tons={similaridade_tons:.2f}, bin={similaridade_binaria:.2f}, corr={correlacao:.2f}).",
+                flush=True,
+            )
+            return confirmado
+        except Exception as erro:
+            safe_print(f"OCR visual pela referencia falhou: {erro}", flush=True)
+            return False
+
+    def localizar_referencia_por_ancora_ocr(
+        self,
+        caminho_referencia,
+        texto_ocr_esperado="",
+        region=None,
+        leitura_relativa=None,
+        dimensoes_referencia=None,
+    ):
+        esperado = str(texto_ocr_esperado or "").strip()
+        if not esperado or not OCR_DISPONIVEL or not dimensoes_referencia:
+            return None
+        regiao_ref_ocr = self.construir_regiao_ocr_referencia(
+            leitura_relativa,
+            dimensoes_referencia=dimensoes_referencia,
+        )
+        if not regiao_ref_ocr:
+            return None
+        try:
+            ref_largura, ref_altura = [int(valor) for valor in dimensoes_referencia]
+            ref_x, ref_y, ref_w, ref_h = [int(valor) for valor in regiao_ref_ocr]
+        except Exception:
+            return None
+        if ref_largura <= 0 or ref_altura <= 0 or ref_w <= 0 or ref_h <= 0:
+            return None
+
+        regiao_busca = region
+        if regiao_busca is None:
+            try:
+                tela_largura, tela_altura = pyautogui.size()
+                regiao_busca = (0, 0, int(tela_largura), int(tela_altura))
+            except Exception:
+                return None
+
+        local_ocr = self.procurar_texto_por_ocr(esperado, region=regiao_busca)
+        if not local_ocr:
+            return None
+
+        try:
+            largura_lida = max(1, int(local_ocr.get("width", 0) or 0))
+            altura_lida = max(1, int(local_ocr.get("height", 0) or 0))
+            escala_x = largura_lida / max(1, ref_w)
+            escala_y = altura_lida / max(1, ref_h)
+            if not 0.65 <= escala_x <= 1.55:
+                escala_x = 1.0
+            if not 0.65 <= escala_y <= 1.55:
+                escala_y = 1.0
+            centro_ref_x = ref_x + (ref_w / 2.0)
+            centro_ref_y = ref_y + (ref_h / 2.0)
+            centro_ocr_x = float(local_ocr.get("left", 0) or 0) + (largura_lida / 2.0)
+            centro_ocr_y = float(local_ocr.get("top", 0) or 0) + (altura_lida / 2.0)
+            largura_estimativa = max(8, int(round(ref_largura * escala_x)))
+            altura_estimativa = max(8, int(round(ref_altura * escala_y)))
+            esquerda = int(round(centro_ocr_x - (centro_ref_x * escala_x)))
+            topo = int(round(centro_ocr_y - (centro_ref_y * escala_y)))
+            limite = self.limitar_regiao((esquerda, topo, largura_estimativa, altura_estimativa))
+            if limite:
+                esquerda, topo, largura_estimativa, altura_estimativa = limite
+            local = {
+                "x": int(esquerda + largura_estimativa / 2),
+                "y": int(topo + altura_estimativa / 2),
+                "left": int(esquerda),
+                "top": int(topo),
+                "width": int(largura_estimativa),
+                "height": int(altura_estimativa),
+                "score": float(local_ocr.get("score", 0.0) or 0.0),
+                "search_stage": "ocr_anchor",
+                "ocr_anchor_confirmed": True,
+                "ocr_text": str(local_ocr.get("texto", "") or esperado),
+                "ocr_bounds": {
+                    "left": int(local_ocr.get("left", 0) or 0),
+                    "top": int(local_ocr.get("top", 0) or 0),
+                    "width": largura_lida,
+                    "height": altura_lida,
+                },
+            }
+            safe_print(
+                "Imagem localizada por ancora OCR "
+                f"(texto='{esperado}', capturado='{local.get('ocr_text', '')}', "
+                f"area={self.formatar_regiao_log(regiao_busca)}, score={local['score']:.2f}).",
+                flush=True,
+            )
+            return local
+        except Exception as erro:
+            safe_print(f"Falha ao reconstruir referencia pela ancora OCR: {erro}", flush=True)
+            return None
+
+    def localizar_referencia_por_recorte_ocr_visual(
+        self,
+        caminho_referencia,
+        region=None,
+        leitura_relativa=None,
+        dimensoes_referencia=None,
+        confianca=0.78,
+    ):
+        if not OPENCV_DISPONIVEL or np is None or Image is None or not caminho_referencia or not dimensoes_referencia:
+            return None
+        regiao_ref_ocr = self.construir_regiao_ocr_referencia(
+            leitura_relativa,
+            dimensoes_referencia=dimensoes_referencia,
+        )
+        if not regiao_ref_ocr:
+            return None
+        try:
+            ref_largura, ref_altura = [int(valor) for valor in dimensoes_referencia]
+            ref_x, ref_y, ref_w, ref_h = [int(valor) for valor in regiao_ref_ocr]
+            if ref_w <= 4 or ref_h <= 4:
+                return None
+            with Image.open(caminho_referencia) as imagem_ref:
+                recorte_ref = imagem_ref.convert("RGB").crop((ref_x, ref_y, ref_x + ref_w, ref_y + ref_h))
+            captura, base_left, base_top = self.capturar_tela_pil(region=region)
+            tela_gray = cv2.cvtColor(np.array(captura.convert("RGB")), cv2.COLOR_RGB2GRAY)
+            ref_gray = cv2.cvtColor(np.array(recorte_ref), cv2.COLOR_RGB2GRAY)
+            if tela_gray.shape[0] < ref_gray.shape[0] or tela_gray.shape[1] < ref_gray.shape[1]:
+                return None
+            resultado = cv2.matchTemplate(tela_gray, ref_gray, cv2.TM_CCOEFF_NORMED)
+            _min_val, max_val, _min_loc, max_loc = cv2.minMaxLoc(resultado)
+            score = float(max_val or 0.0)
+            if score < float(confianca or 0.78):
+                return None
+
+            ocr_left = int(base_left + max_loc[0])
+            ocr_top = int(base_top + max_loc[1])
+            centro_ocr_x = ocr_left + (ref_w / 2.0)
+            centro_ocr_y = ocr_top + (ref_h / 2.0)
+            centro_ref_x = ref_x + (ref_w / 2.0)
+            centro_ref_y = ref_y + (ref_h / 2.0)
+            esquerda = int(round(centro_ocr_x - centro_ref_x))
+            topo = int(round(centro_ocr_y - centro_ref_y))
+            limite = self.limitar_regiao((esquerda, topo, ref_largura, ref_altura))
+            if limite:
+                esquerda, topo, ref_largura, ref_altura = limite
+            safe_print(
+                "Referencia localizada pelo recorte visual do Ler aqui "
+                f"(score={score:.2f}, area={self.formatar_regiao_log(region)}).",
+                flush=True,
+            )
+            return {
+                "x": int(esquerda + ref_largura / 2),
+                "y": int(topo + ref_altura / 2),
+                "left": int(esquerda),
+                "top": int(topo),
+                "width": int(ref_largura),
+                "height": int(ref_altura),
+                "score": score,
+                "search_stage": "ocr_visual_anchor",
+                "ocr_visual_anchor": True,
+                "ocr_bounds": {
+                    "left": int(ocr_left),
+                    "top": int(ocr_top),
+                    "width": int(ref_w),
+                    "height": int(ref_h),
+                },
+            }
+        except Exception as erro:
+            safe_print(f"Falha ao localizar recorte visual do Ler aqui: {erro}", flush=True)
+            return None
+
+    def confirmar_ocr_relativo(self, local, texto_esperado="", leitura_relativa=None, ordem_bloco=None, dimensoes_referencia=None, marcar_ocr=True, caminho_referencia=None):
         esperado = str(texto_esperado or "").strip()
         leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
         salvar_em = str(leitura.get("salvar_em", "") or "").strip()
@@ -1432,14 +1658,14 @@ class ExecutorAutomacao:
                 captura, _base_left, _base_top = self.capturar_tela_pil(region=regiao_ocr)
             except Exception as erro:
                 safe_print(f"OCR nao confirmou: falha ao capturar area de leitura ({erro}).", flush=True)
-                return ""
-            textos = self.extrair_variantes_texto_ocr_imagem(captura)
+                return "", None
+            textos = self.extrair_textos_ocr_rapido(captura, texto_esperado=esperado)
             if not textos:
                 textos = [
                     self.extrair_texto_ocr_imagem_pil(captura, config="--psm 6"),
                     self.extrair_texto_ocr_imagem_pil(captura, config="--psm 7"),
                 ]
-            return " ".join(texto for texto in textos if texto).strip()
+            return " ".join(texto for texto in textos if texto).strip(), captura
 
         def texto_confirma(capturado_atual):
             if not esperado:
@@ -1454,7 +1680,7 @@ class ExecutorAutomacao:
                 or float(comparacao_atual.get("ratio", 0.0) or 0.0) >= 0.96
             )
 
-        capturado = ler_texto_regiao(regiao)
+        capturado, captura_ocr = ler_texto_regiao(regiao)
         confirmado = texto_confirma(capturado)
 
         if not confirmado:
@@ -1483,14 +1709,27 @@ class ExecutorAutomacao:
                 regiao_ampliada = None
             if regiao_ampliada and regiao_ampliada != regiao:
                 safe_print(f"OCR tentando area ampliada: {self.formatar_regiao_log(regiao_ampliada)}", flush=True)
-                capturado_ampliado = ler_texto_regiao(regiao_ampliada)
+                capturado_ampliado, captura_ampliada = ler_texto_regiao(regiao_ampliada)
                 if texto_confirma(capturado_ampliado):
                     regiao = regiao_ampliada
                     capturado = capturado_ampliado
+                    captura_ocr = captura_ampliada
                     confirmado = True
                 elif not capturado and capturado_ampliado:
                     regiao = regiao_ampliada
                     capturado = capturado_ampliado
+                    captura_ocr = captura_ampliada
+
+        if not confirmado and caminho_referencia:
+            confirmado_visual = self.confirmar_ocr_visual_pela_referencia(
+                captura_ocr,
+                caminho_referencia=caminho_referencia,
+                leitura_relativa=leitura_relativa,
+                dimensoes_referencia=dimensoes_referencia,
+            )
+            if confirmado_visual:
+                capturado = capturado or esperado
+                confirmado = True
 
         if capturado:
             self.salvar_variavel_contexto("ultimo_ocr", capturado)
@@ -1687,6 +1926,60 @@ class ExecutorAutomacao:
             return imagem.resize((largura, altura), metodo)
         except Exception:
             return imagem
+
+    def extrair_textos_ocr_rapido(self, imagem, texto_esperado=""):
+        if not OCR_DISPONIVEL or imagem is None or Image is None:
+            return []
+
+        esperado = self.normalizar_texto_ocr(texto_esperado)
+        possui_digitos = bool(re.search(r"\d", esperado))
+        try:
+            base = imagem.convert("L")
+            maior_lado = max(int(base.width or 0), int(base.height or 0))
+            fator = 4 if maior_lado < 130 else (3 if maior_lado < 260 else 2)
+            ampliada = self.ampliar_imagem_para_ocr(base, fator=fator)
+            variantes = [ampliada]
+            try:
+                histograma = ampliada.histogram()
+                total = max(1, sum(histograma))
+                media = int(sum(indice * valor for indice, valor in enumerate(histograma)) / total)
+            except Exception:
+                media = 128
+            limiar = 128 if media < 120 else 150
+            variantes.append(ampliada.point(lambda valor: 255 if valor >= limiar else 0))
+            if media < 105:
+                variantes.append(ampliada.point(lambda valor: 255 - valor))
+        except Exception:
+            return []
+
+        whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/.-:_ "
+        if possui_digitos and not re.search(r"[a-zA-Z]", esperado):
+            whitelist = "0123456789/.-:"
+        configs = [
+            f"--psm 7 -c tessedit_char_whitelist={whitelist}",
+            f"--psm 6 -c tessedit_char_whitelist={whitelist}",
+        ]
+        if len(esperado.split()) <= 1:
+            configs.insert(0, f"--psm 8 -c tessedit_char_whitelist={whitelist}")
+
+        textos = []
+        for variante in variantes:
+            for config in configs:
+                texto = self.extrair_texto_ocr_imagem_pil(variante, config=config)
+                if texto and texto not in textos:
+                    textos.append(texto)
+                if esperado and texto:
+                    comparacao = self.comparar_texto_reconhecimento_preciso(esperado, texto)
+                    if (
+                        comparacao.get("reference") == comparacao.get("captured")
+                        or (
+                            comparacao.get("has_digits")
+                            and float(comparacao.get("digit_ratio", 0.0) or 0.0) >= 0.999
+                        )
+                        or float(comparacao.get("ratio", 0.0) or 0.0) >= 0.96
+                    ):
+                        return textos
+        return textos
 
     def extrair_variantes_texto_ocr_imagem(self, imagem):
         if not OCR_DISPONIVEL or imagem is None or Image is None:
@@ -2342,6 +2635,13 @@ class ExecutorAutomacao:
             return None
 
         inicio_ocr = time.perf_counter()
+        regiao_chave = tuple(int(valor) for valor in region) if region else None
+        chave_cache = (texto_alvo, regiao_chave)
+        cache = self._cache_ocr_curto.get(chave_cache) if isinstance(self._cache_ocr_curto, dict) else None
+        if cache and time.perf_counter() - float(cache.get("em", 0.0) or 0.0) <= 0.65:
+            self._ultima_busca_ocr_info = dict(cache.get("info") or {})
+            resultado_cache = cache.get("resultado")
+            return dict(resultado_cache) if isinstance(resultado_cache, dict) else None
 
         try:
             captura, base_left, base_top = self.capturar_tela_pil(region=region)
@@ -2349,10 +2649,16 @@ class ExecutorAutomacao:
             raise RuntimeError(f"PyAutoGUI nao conseguiu capturar a tela para OCR: {erro}") from erro
 
         try:
+            area_ocr = max(1, int(captura.width or 0) * int(captura.height or 0))
+            whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/.-:_ "
+            config_ocr = (
+                f"--psm {'11' if area_ocr > 420000 else '6'} "
+                f"-c tessedit_char_whitelist={whitelist}"
+            )
             dados = pytesseract.image_to_data(
                 captura,
                 output_type=pytesseract.Output.DICT,
-                config="--psm 6",
+                config=config_ocr,
             )
         except Exception:
             return None
@@ -2380,6 +2686,11 @@ class ExecutorAutomacao:
                 "region": list(region) if region else None,
                 "score": 0.0,
                 "used_fallback": False,
+            }
+            self._cache_ocr_curto[chave_cache] = {
+                "em": time.perf_counter(),
+                "resultado": None,
+                "info": dict(self._ultima_busca_ocr_info),
             }
             return None
 
@@ -2429,7 +2740,17 @@ class ExecutorAutomacao:
         }
         if melhor and melhor_pontuacao >= limite:
             safe_print(f"Texto da referencia encontrado por OCR (score={melhor_pontuacao:.2f})", flush=True)
+            self._cache_ocr_curto[chave_cache] = {
+                "em": time.perf_counter(),
+                "resultado": dict(melhor),
+                "info": dict(self._ultima_busca_ocr_info),
+            }
             return melhor
+        self._cache_ocr_curto[chave_cache] = {
+            "em": time.perf_counter(),
+            "resultado": None,
+            "info": dict(self._ultima_busca_ocr_info),
+        }
         return None
 
     def procurar_imagem_por_template(self, caminho_imagem, confianca=0.8, region=None, perfil_busca="balanced"):
@@ -4273,6 +4594,8 @@ class ExecutorAutomacao:
         bloco_id=None,
         modo_area_busca="target_window",
         area_personalizada=None,
+        texto_ocr_esperado="",
+        leitura_relativa=None,
     ):
         caminho_imagem, imagem_id = self.resolver_imagem(imagem)
         if not imagem_id:
@@ -4349,6 +4672,7 @@ class ExecutorAutomacao:
         self._ultimo_diagnostico_reconhecimento = None
         texto_referencia = self.extrair_texto_referencia(caminho_imagem) if permitir_ocr_geral else ""
         dimensoes_referencia = self.obter_dimensoes_imagem(caminho_imagem)
+        texto_ocr_ancora = str(texto_ocr_esperado or "").strip()
 
         def adicionar_regiao_busca(destino, regiao, etapa, fallback=False):
             regiao_normalizada = self.limitar_regiao(regiao) if regiao is not None else None
@@ -4657,6 +4981,59 @@ class ExecutorAutomacao:
                                     return local_confirmado
                                 safe_print("Correspondencia por template descartada apos confirmacao.", flush=True)
 
+            intervalo_ocr_ancora = 0.9 if perfil_busca == "fast" else 1.25
+            permitir_ocr_ancora = (
+                texto_ocr_ancora
+                and OCR_DISPONIVEL
+                and dimensoes_referencia
+                and not modo_estrito
+                and time.perf_counter() - ultima_tentativa_ocr >= intervalo_ocr_ancora
+                and time.perf_counter() - self._ultimo_ocr_global_em >= intervalo_ocr_ancora
+            )
+            if permitir_ocr_ancora:
+                ultima_tentativa_ocr = time.perf_counter()
+                self._ultimo_ocr_global_em = ultima_tentativa_ocr
+                regioes_ocr = regioes_busca or [{"region": None, "stage": "screen", "fallback": False}]
+                for entrada_ocr in regioes_ocr:
+                    regiao_ocr = entrada_ocr.get("region")
+                    local_ancora_visual = self.localizar_referencia_por_recorte_ocr_visual(
+                        caminho_imagem,
+                        region=regiao_ocr,
+                        leitura_relativa=leitura_relativa,
+                        dimensoes_referencia=dimensoes_referencia,
+                        confianca=0.76 if perfil_busca == "fast" else 0.80,
+                    )
+                    if local_ancora_visual:
+                        self.registrar_reconhecimento_bem_sucedido(
+                            imagem_id,
+                            local_ancora_visual,
+                            janela_alvo=janela_alvo,
+                            bloco_id=bloco_id,
+                            janela_info=janela_info_cache,
+                        )
+                        return local_ancora_visual
+                    safe_print(
+                        f"Tentando localizar pela ancora OCR: {texto_ocr_ancora} "
+                        f"(area={self.formatar_regiao_log(regiao_ocr)}).",
+                        flush=True,
+                    )
+                    local_ancora = self.localizar_referencia_por_ancora_ocr(
+                        caminho_imagem,
+                        texto_ocr_esperado=texto_ocr_ancora,
+                        region=regiao_ocr,
+                        leitura_relativa=leitura_relativa,
+                        dimensoes_referencia=dimensoes_referencia,
+                    )
+                    if local_ancora:
+                        self.registrar_reconhecimento_bem_sucedido(
+                            imagem_id,
+                            local_ancora,
+                            janela_alvo=janela_alvo,
+                            bloco_id=bloco_id,
+                            janela_info=janela_info_cache,
+                        )
+                        return local_ancora
+
             intervalo_ocr = max(1.8, min(3.2, timeout_total * 0.45))
             permitir_ocr = (
                 permitir_ocr_geral
@@ -4749,6 +5126,8 @@ class ExecutorAutomacao:
             bloco_id=bloco_id,
             modo_area_busca=modo_area_busca,
             area_personalizada=area_personalizada,
+            texto_ocr_esperado=texto_ocr_esperado,
+            leitura_relativa=leitura_relativa,
         )
         if not local:
             return None
@@ -4757,12 +5136,47 @@ class ExecutorAutomacao:
             ordem_bloco = str(bloco_id).split(":", 1)[1].strip()
         duracao_marcacao = 0.95 if clicar else 1.35
         self.marcar_area_reconhecida(local, duracao=0.55, bloqueante=True)
-        if not self.confirmar_ocr_relativo(
+        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        salvar_em = str(leitura.get("salvar_em", "") or "").strip()
+        ocr_ja_confirmado = (
+            isinstance(local, dict)
+            and (
+                local.get("ocr_anchor_confirmed")
+                or (local.get("ocr_visual_anchor") and texto_ocr_esperado and not salvar_em)
+            )
+        )
+        if texto_ocr_esperado and ocr_ja_confirmado:
+            capturado_ocr = str(local.get("ocr_text") or texto_ocr_esperado).strip()
+            if capturado_ocr:
+                self.salvar_variavel_contexto("ultimo_ocr", capturado_ocr)
+                if ordem_bloco:
+                    self.salvar_variavel_contexto(f"ocr_bloco_{ordem_bloco}", capturado_ocr)
+                    self.salvar_variavel_contexto(f"bloco_{ordem_bloco}_ocr", capturado_ocr)
+                if salvar_em:
+                    self.salvar_variavel_contexto(salvar_em, capturado_ocr)
+            safe_print(
+                f"OCR confirmou pela ancora: esperado='{texto_ocr_esperado}' | capturado='{capturado_ocr}'",
+                flush=True,
+            )
+            ocr_bounds = local.get("ocr_bounds") if isinstance(local.get("ocr_bounds"), dict) else None
+            if ocr_bounds:
+                self.marcar_regiao_ocr(
+                    (
+                        int(ocr_bounds.get("left", 0) or 0),
+                        int(ocr_bounds.get("top", 0) or 0),
+                        int(ocr_bounds.get("width", 0) or 0),
+                        int(ocr_bounds.get("height", 0) or 0),
+                    ),
+                    confirmado=True,
+                    duracao=0.8,
+                )
+        elif not self.confirmar_ocr_relativo(
             local,
             texto_esperado=texto_ocr_esperado,
             leitura_relativa=leitura_relativa,
             ordem_bloco=ordem_bloco,
             dimensoes_referencia=dimensoes_referencia,
+            caminho_referencia=caminho_imagem,
         ):
             safe_print(
                 "Imagem encontrada, mas o OCR obrigatorio nao confirmou. "
@@ -4841,6 +5255,8 @@ class ExecutorAutomacao:
             bloco_id=bloco_id,
             modo_area_busca=modo_area_busca,
             area_personalizada=area_personalizada,
+            texto_ocr_esperado=texto_ocr_esperado,
+            leitura_relativa=leitura_relativa,
         )
         if not local:
             safe_print("Teste de reconhecimento: nenhuma correspondencia encontrada.", flush=True)
@@ -4859,13 +5275,32 @@ class ExecutorAutomacao:
                 duracao=max(0.12, float(duracao_marcador or 0.24)),
                 bloqueante=bool(marcador_bloqueante),
             )
-        if not self.confirmar_ocr_relativo(
+        if texto_ocr_esperado and isinstance(local, dict) and (local.get("ocr_anchor_confirmed") or local.get("ocr_visual_anchor")):
+            capturado_ocr = str(local.get("ocr_text") or texto_ocr_esperado).strip()
+            safe_print(
+                f"Teste de reconhecimento: OCR confirmado pela ancora '{capturado_ocr}'.",
+                flush=True,
+            )
+            ocr_bounds = local.get("ocr_bounds") if isinstance(local.get("ocr_bounds"), dict) else None
+            if mostrar_marcador and ocr_bounds:
+                self.marcar_regiao_ocr(
+                    (
+                        int(ocr_bounds.get("left", 0) or 0),
+                        int(ocr_bounds.get("top", 0) or 0),
+                        int(ocr_bounds.get("width", 0) or 0),
+                        int(ocr_bounds.get("height", 0) or 0),
+                    ),
+                    confirmado=True,
+                    duracao=max(0.12, float(duracao_marcador or 0.24)),
+                )
+        elif not self.confirmar_ocr_relativo(
             local,
             texto_esperado=texto_ocr_esperado,
             leitura_relativa=leitura_relativa,
             ordem_bloco=None,
             dimensoes_referencia=dimensoes_referencia,
             marcar_ocr=mostrar_marcador,
+            caminho_referencia=caminho_imagem,
         ):
             safe_print("Teste de reconhecimento: imagem encontrada, mas o OCR nao confirmou o texto esperado.", flush=True)
             return False
