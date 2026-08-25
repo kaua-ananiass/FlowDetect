@@ -72,9 +72,9 @@
         "startMenuFolder": "FlowDetect Agent",
         "installerIcon": "../../tauri_gerador/src-tauri/icons/icon.ico",
         "uninstallerIcon": "../../tauri_gerador/src-tauri/icons/icon.ico",
-        "headerImage": "../../tauri_gerador/src-tauri/installer_assets/flowdetect_header.bmp",
-        "uninstallerHeaderImage": "../../tauri_gerador/src-tauri/installer_assets/flowdetect_header.bmp",
-        "sidebarImage": "../../tauri_gerador/src-tauri/installer_assets/flowdetect_sidebar.bmp",
+        "headerImage": "../../tauri_gerador/src-tauri/installer_assets/flowdetect_agent_header.bmp",
+        "uninstallerHeaderImage": "../../tauri_gerador/src-tauri/installer_assets/flowdetect_agent_header.bmp",
+        "sidebarImage": "../../tauri_gerador/src-tauri/installer_assets/flowdetect_agent_sidebar.bmp",
         "installerHooks": "../../tauri_gerador/src-tauri/installer_assets/flowdetect_hooks.nsh"
       }
     }

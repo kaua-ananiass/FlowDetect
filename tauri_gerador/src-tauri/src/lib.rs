@@ -476,6 +476,11 @@ fn run_chrome_bridge_json(root: &PathBuf, args: &[String]) -> Result<Value, Stri
     serde_json::from_str(&raw).map_err(|err| format!("Falha ao interpretar retorno do Chrome/Web: {err}"))
 }
 
+fn run_uia_mapper_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
+    let raw = run_python_script(root, "mapear_elementos_janela.py", args)?;
+    serde_json::from_str(&raw).map_err(|err| format!("Falha ao interpretar retorno do mapeador de janela: {err}"))
+}
+
 fn launch_executor_for_current_root(
     app: &AppHandle,
     state: &State<'_, RuntimeState>,
@@ -3031,6 +3036,99 @@ fn list_open_windows(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+async fn map_window_elements(app: AppHandle, title: Option<String>, hwnd: Option<i64>) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "scan".into(),
+        "--max-depth".into(),
+        "8".into(),
+        "--max-items".into(),
+        "700".into(),
+    ];
+    if let Some(value) = hwnd {
+        if value > 0 {
+            args.push("--hwnd".into());
+            args.push(value.to_string());
+        }
+    }
+    if let Some(value) = title {
+        if !value.trim().is_empty() {
+            args.push("--title".into());
+            args.push(value);
+        }
+    }
+    tauri::async_runtime::spawn_blocking(move || run_uia_mapper_json(&root, &args))
+        .await
+        .map_err(|err| format!("Falha ao aguardar mapeamento da janela: {err}"))?
+}
+
+#[tauri::command]
+async fn capture_uia_element_from_cursor(app: AppHandle) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    tauri::async_runtime::spawn_blocking(move || run_uia_mapper_json(&root, &["capture-cursor".into()]))
+        .await
+        .map_err(|err| format!("Falha ao capturar elemento: {err}"))?
+}
+
+#[tauri::command]
+async fn capture_uia_element_from_click(app: AppHandle, timeout: Option<f64>) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let args = vec![
+        "capture-click".into(),
+        "--timeout".into(),
+        timeout.unwrap_or(12.0).max(1.0).to_string(),
+    ];
+    tauri::async_runtime::spawn_blocking(move || run_uia_mapper_json(&root, &args))
+        .await
+        .map_err(|err| format!("Falha ao capturar clique: {err}"))?
+}
+
+#[tauri::command]
+async fn select_uia_element_from_window(
+    app: AppHandle,
+    title: Option<String>,
+    hwnd: Option<i64>,
+    timeout: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "select-visual".into(),
+        "--timeout".into(),
+        timeout.unwrap_or(20.0).max(3.0).to_string(),
+    ];
+    if let Some(value) = hwnd {
+        if value > 0 {
+            args.push("--hwnd".into());
+            args.push(value.to_string());
+        }
+    }
+    if let Some(value) = title {
+        if !value.trim().is_empty() {
+            args.push("--title".into());
+            args.push(value);
+        }
+    }
+    tauri::async_runtime::spawn_blocking(move || run_uia_mapper_json(&root, &args))
+        .await
+        .map_err(|err| format!("Falha ao selecionar elemento na janela: {err}"))?
+}
+
+#[tauri::command]
+async fn highlight_uia_element(app: AppHandle, element: Value) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let args = vec![
+        "highlight".into(),
+        "--element-json".into(),
+        serde_json::to_string(&element).map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
+        "--seconds".into(),
+        "1.4".into(),
+    ];
+    tauri::async_runtime::spawn_blocking(move || run_uia_mapper_json(&root, &args))
+        .await
+        .map_err(|err| format!("Falha ao destacar elemento: {err}"))?
+}
+
+#[tauri::command]
 fn create_saved_automation(
     app: AppHandle,
     nome: String,
@@ -4044,6 +4142,72 @@ fn add_chrome_html_block(
 }
 
 #[tauri::command]
+fn add_uia_element_block(
+    app: AppHandle,
+    element: Value,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+    ao_falhar: Option<String>,
+    bloco_falha: Option<i32>,
+    sequencia_falha: Option<String>,
+    atraso_sequencia_falha: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "add-uia-element".into(),
+        "--elemento-json".into(),
+        serde_json::to_string(&element).map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
+        "--ao-sucesso".into(),
+        ao_sucesso.unwrap_or_else(|| "continuar".into()),
+        "--ao-falhar".into(),
+        ao_falhar.unwrap_or_else(|| "parar".into()),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(value) = bloco_sucesso {
+        if value > 0 {
+            args.push("--bloco-sucesso".into());
+            args.push(value.to_string());
+        }
+    }
+    if let Some(value) = sequencia_sucesso {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-sucesso".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_sucesso {
+        args.push("--atraso-sequencia-sucesso".into());
+        args.push(value.max(0.0).to_string());
+    }
+    if let Some(value) = bloco_falha {
+        if value > 0 {
+            args.push("--bloco-falha".into());
+            args.push(value.to_string());
+        }
+    }
+    if let Some(value) = sequencia_falha {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-falha".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_falha {
+        args.push("--atraso-sequencia-falha".into());
+        args.push(value.max(0.0).to_string());
+    }
+    if let Some(sequence_name) = sequencia {
+        args.push("--sequencia".into());
+        args.push(sequence_name);
+    }
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn add_open_url_block(
     app: AppHandle,
     url: String,
@@ -4725,6 +4889,78 @@ fn insert_chrome_html_block(
 }
 
 #[tauri::command]
+fn insert_uia_element_block(
+    app: AppHandle,
+    target_order: i32,
+    position: String,
+    element: Value,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+    ao_falhar: Option<String>,
+    bloco_falha: Option<i32>,
+    sequencia_falha: Option<String>,
+    atraso_sequencia_falha: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "insert-uia-element".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+        "--elemento-json".into(),
+        serde_json::to_string(&element).map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
+        "--ao-sucesso".into(),
+        ao_sucesso.unwrap_or_else(|| "continuar".into()),
+        "--ao-falhar".into(),
+        ao_falhar.unwrap_or_else(|| "parar".into()),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(value) = bloco_sucesso {
+        if value > 0 {
+            args.push("--bloco-sucesso".into());
+            args.push(value.to_string());
+        }
+    }
+    if let Some(value) = sequencia_sucesso {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-sucesso".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_sucesso {
+        args.push("--atraso-sequencia-sucesso".into());
+        args.push(value.max(0.0).to_string());
+    }
+    if let Some(value) = bloco_falha {
+        if value > 0 {
+            args.push("--bloco-falha".into());
+            args.push(value.to_string());
+        }
+    }
+    if let Some(value) = sequencia_falha {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-falha".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_falha {
+        args.push("--atraso-sequencia-falha".into());
+        args.push(value.max(0.0).to_string());
+    }
+    if let Some(sequence_name) = sequencia {
+        args.push("--sequencia".into());
+        args.push(sequence_name);
+    }
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn insert_open_url_block(
     app: AppHandle,
     target_order: i32,
@@ -5309,6 +5545,70 @@ fn update_chrome_html_block(
     if let Some(value) = atraso_sequencia_sucesso {
         args.push("--atraso-sequencia-sucesso".into());
         args.push(value.max(0.0).to_string());
+    }
+    if let Some(value) = sequencia_falha {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-falha".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_falha {
+        args.push("--atraso-sequencia-falha".into());
+        args.push(value.max(0.0).to_string());
+    }
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn update_uia_element_block(
+    app: AppHandle,
+    order: i32,
+    element: Value,
+    delay: f64,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+    ao_falhar: Option<String>,
+    bloco_falha: Option<i32>,
+    sequencia_falha: Option<String>,
+    atraso_sequencia_falha: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "update-uia-element".into(),
+        "--order".into(),
+        order.to_string(),
+        "--elemento-json".into(),
+        serde_json::to_string(&element).map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
+        "--ao-sucesso".into(),
+        ao_sucesso.unwrap_or_else(|| "continuar".into()),
+        "--ao-falhar".into(),
+        ao_falhar.unwrap_or_else(|| "parar".into()),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(value) = bloco_sucesso {
+        if value > 0 {
+            args.push("--bloco-sucesso".into());
+            args.push(value.to_string());
+        }
+    }
+    if let Some(value) = sequencia_sucesso {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-sucesso".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = atraso_sequencia_sucesso {
+        args.push("--atraso-sequencia-sucesso".into());
+        args.push(value.max(0.0).to_string());
+    }
+    if let Some(value) = bloco_falha {
+        if value > 0 {
+            args.push("--bloco-falha".into());
+            args.push(value.to_string());
+        }
     }
     if let Some(value) = sequencia_falha {
         if !value.trim().is_empty() {
@@ -6289,6 +6589,11 @@ pub fn run() {
             clear_workbook_column,
             list_saved_automations,
             list_open_windows,
+            map_window_elements,
+            capture_uia_element_from_cursor,
+            capture_uia_element_from_click,
+            select_uia_element_from_window,
+            highlight_uia_element,
             show_target_window_overlay,
             hide_target_window_overlay,
             get_agent_connection_info,
@@ -6335,6 +6640,7 @@ pub fn run() {
             add_image_click_block,
             add_verify_button_state_block,
             add_chrome_html_block,
+            add_uia_element_block,
             add_open_url_block,
             add_open_program_block,
             add_save_download_block,
@@ -6348,6 +6654,7 @@ pub fn run() {
             insert_mouse_block,
             insert_image_click_block,
             insert_chrome_html_block,
+            insert_uia_element_block,
             insert_open_url_block,
             insert_open_program_block,
             insert_save_download_block,
@@ -6361,6 +6668,7 @@ pub fn run() {
             update_image_click_block,
             update_verify_button_state_block,
             update_chrome_html_block,
+            update_uia_element_block,
             update_open_url_block,
             update_open_program_block,
             update_save_download_block,

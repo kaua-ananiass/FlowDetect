@@ -141,6 +141,7 @@ TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
 TIPOS_VERIFICACAO = {"verificar_estado_botao"}
 TIPOS_CHROME = {"chrome_elemento_html"}
+TIPOS_UIA = {"uia_elemento"}
 TIPOS_PREPARACAO_TELA = {"abrir_url", "abrir_programa"}
 TIPOS_SUPORTADOS_EXECUTOR = {
     "texto_livre",
@@ -154,6 +155,7 @@ TIPOS_SUPORTADOS_EXECUTOR = {
     *TIPOS_IMAGEM,
     *TIPOS_VERIFICACAO,
     *TIPOS_CHROME,
+    *TIPOS_UIA,
     *TIPOS_PREPARACAO_TELA,
 }
 MAPA_PYAUTOGUI = {
@@ -4191,6 +4193,487 @@ class ExecutorAutomacao:
             f"Falha ao executar bloco Chrome: {nome_bloco} | metodo={metodo} | alvo={valor_alvo} | erro: {ultima_falha}"
         ) from ultima_falha
 
+    def carregar_uia_runtime(self):
+        try:
+            import uiautomation as auto
+
+            return auto
+        except Exception as erro:
+            raise RuntimeError(
+                "A biblioteca uiautomation nao esta instalada neste computador. "
+                "Atualize as dependencias do FlowDetect/Agent antes de executar este bloco."
+            ) from erro
+
+    def controle_uia_existe(self, control, timeout=0.2):
+        try:
+            return bool(control.Exists(timeout))
+        except Exception:
+            return control is not None
+
+    def propriedades_controle_uia(self, control):
+        try:
+            parent = control.GetParentControl()
+            parent_name = str(getattr(parent, "Name", "") or "") if parent else ""
+        except Exception:
+            parent_name = ""
+        return {
+            "automation_id": str(getattr(control, "AutomationId", "") or ""),
+            "name": str(getattr(control, "Name", "") or ""),
+            "control_type": str(getattr(control, "ControlTypeName", "") or ""),
+            "class_name": str(getattr(control, "ClassName", "") or ""),
+            "parent": parent_name,
+        }
+
+    def candidatos_raiz_uia(self, auto, elemento_base=None):
+        elemento_base = elemento_base or {}
+        source_window = elemento_base.get("source_window") or {}
+        candidatos = []
+        vistos = set()
+
+        def adicionar(control):
+            if not control:
+                return
+            try:
+                chave = int(getattr(control, "NativeWindowHandle", 0) or 0)
+            except Exception:
+                chave = id(control)
+            if chave in vistos:
+                return
+            vistos.add(chave)
+            candidatos.append(control)
+
+        handle = int(source_window.get("handle") or elemento_base.get("handle") or 0)
+        if handle:
+            try:
+                control = auto.ControlFromHandle(handle)
+                if self.controle_uia_existe(control, 0.2):
+                    adicionar(control)
+            except Exception:
+                pass
+
+        title = str(source_window.get("title") or "").strip()
+        class_name = str(source_window.get("class_name") or "").strip()
+        if title:
+            try:
+                control = auto.WindowControl(searchDepth=1, Name=title)
+                if self.controle_uia_existe(control, 0.4):
+                    adicionar(control)
+            except Exception:
+                pass
+
+        try:
+            adicionar(auto.GetForegroundControl())
+        except Exception:
+            pass
+
+        try:
+            root = auto.GetRootControl()
+            for child in root.GetChildren():
+                props = self.propriedades_controle_uia(child)
+                if title and title.lower() not in props.get("name", "").lower():
+                    if class_name and class_name != props.get("class_name", ""):
+                        continue
+                    if not class_name:
+                        continue
+                elif class_name and class_name != props.get("class_name", ""):
+                    continue
+                adicionar(child)
+        except Exception:
+            pass
+
+        return candidatos
+
+    def consultas_selector_uia(self, selector, elemento_base=None):
+        elemento_base = elemento_base or {}
+        selector = selector or {}
+        query_original = dict(selector.get("query") or {})
+        permitidas = {"automation_id", "name", "control_type", "class_name", "parent"}
+        consultas = []
+
+        def adicionar(query):
+            filtrada = {k: str(v) for k, v in (query or {}).items() if k in permitidas and str(v).strip()}
+            if filtrada and filtrada not in consultas:
+                consultas.append(filtrada)
+
+        adicionar(query_original)
+        automation_id = elemento_base.get("automation_id")
+        name = elemento_base.get("name")
+        control_type = elemento_base.get("control_type")
+        class_name = elemento_base.get("class_name")
+        parent = elemento_base.get("parent")
+        adicionar({"automation_id": automation_id, "control_type": control_type})
+        adicionar({"automation_id": automation_id})
+        adicionar({"name": name, "control_type": control_type})
+        adicionar({"class_name": class_name, "name": name, "parent": parent})
+        adicionar({"class_name": class_name, "name": name})
+        adicionar({"class_name": class_name, "control_type": control_type, "parent": parent})
+        adicionar({"class_name": class_name, "control_type": control_type})
+        adicionar({"control_type": control_type, "parent": parent})
+        adicionar({"name": name})
+        return consultas
+
+    def controle_uia_compativel_com_elemento(self, control, elemento_base=None):
+        elemento_base = elemento_base or {}
+        props = self.propriedades_controle_uia(control)
+        control_type = str(elemento_base.get("control_type") or "").strip()
+        class_name = str(elemento_base.get("class_name") or "").strip()
+        parent = str(elemento_base.get("parent") or "").strip()
+        if control_type and props.get("control_type") != control_type:
+            return False
+        if class_name and props.get("class_name") != class_name:
+            return False
+        if parent and props.get("parent") and props.get("parent") != parent:
+            return False
+        return True
+
+    def retangulo_controle_uia(self, control):
+        try:
+            rect = getattr(control, "BoundingRectangle", None)
+            if not rect:
+                return None
+            return {
+                "left": int(rect.left),
+                "top": int(rect.top),
+                "width": int(rect.right) - int(rect.left),
+                "height": int(rect.bottom) - int(rect.top),
+            }
+        except Exception:
+            return None
+
+    def referencia_relativa_uia(self, elemento_base=None, root=None):
+        elemento_base = elemento_base or {}
+        rect = elemento_base.get("bounding_rectangle") or {}
+        source_rect = (elemento_base.get("source_window") or {}).get("bounding_rectangle") or {}
+        try:
+            left = int(rect.get("left", 0) or 0)
+            top = int(rect.get("top", 0) or 0)
+            width = int(rect.get("width", 0) or 0)
+            height = int(rect.get("height", 0) or 0)
+        except Exception:
+            return None
+        if width <= 0 or height <= 0:
+            return None
+        if root:
+            root_rect = self.retangulo_controle_uia(root)
+            try:
+                source_left = int(source_rect.get("left", 0) or 0)
+                source_top = int(source_rect.get("top", 0) or 0)
+            except Exception:
+                source_left = 0
+                source_top = 0
+            if root_rect and source_rect:
+                left = int(root_rect["left"]) + (left - source_left)
+                top = int(root_rect["top"]) + (top - source_top)
+        return {"left": left, "top": top, "width": width, "height": height}
+
+    def localizar_elemento_uia_por_area_salva(self, auto, elemento_base=None, roots=None):
+        ref = self.referencia_relativa_uia(elemento_base)
+        if not ref:
+            return None
+        if roots:
+            for root in roots:
+                ajustada = self.referencia_relativa_uia(elemento_base, root)
+                if ajustada:
+                    ref = ajustada
+                    break
+        left = ref["left"]
+        top = ref["top"]
+        width = ref["width"]
+        height = ref["height"]
+        pontos = [
+            (left + width // 2, top + height // 2),
+            (left + min(width - 1, max(1, width // 4)), top + height // 2),
+            (left + max(1, (width * 3) // 4), top + height // 2),
+        ]
+        for x, y in pontos:
+            try:
+                control = auto.ControlFromPoint(x, y)
+                if control and self.controle_uia_compativel_com_elemento(control, elemento_base):
+                    return control
+            except Exception:
+                continue
+        return None
+
+    def caminho_uia_parece(self, path_atual="", path_salvo=""):
+        if not path_atual or not path_salvo:
+            return False
+        atual = str(path_atual).strip()
+        salvo = str(path_salvo).strip()
+        return atual == salvo or atual.endswith(salvo.split("/", 1)[-1])
+
+    def pontuar_controle_uia(self, control, elemento_base=None, root=None, path_atual=""):
+        elemento_base = elemento_base or {}
+        score = 0
+        try:
+            if not bool(getattr(control, "IsOffscreen", False)):
+                score += 5
+        except Exception:
+            pass
+        try:
+            if bool(getattr(control, "IsEnabled", False)):
+                score += 3
+        except Exception:
+            pass
+        try:
+            rect = self.retangulo_controle_uia(control)
+            ref_rect = self.referencia_relativa_uia(elemento_base, root)
+            ref_left = int((ref_rect or {}).get("left", 0) or 0)
+            ref_top = int((ref_rect or {}).get("top", 0) or 0)
+            if rect and ref_left and ref_top:
+                distancia = abs(int(rect["left"]) - ref_left) + abs(int(rect["top"]) - ref_top)
+                score += max(0, 60 - min(60, distancia // 8))
+        except Exception:
+            pass
+        if self.caminho_uia_parece(path_atual, elemento_base.get("path") or ""):
+            score += 40
+        return score
+
+    def localizar_elemento_uia_por_selector(self, selector, elemento_base=None, timeout=5):
+        auto = self.carregar_uia_runtime()
+        consultas = self.consultas_selector_uia(selector, elemento_base)
+        strategy = str((selector or {}).get("strategy") or "").strip()
+        deadline = time.time() + max(0.5, float(timeout or 5))
+        ultimo_erro = None
+        while time.time() < deadline:
+            roots = self.candidatos_raiz_uia(auto, elemento_base)
+            for query in consultas:
+                encontrados = []
+                for root in roots:
+                    root_type = self.propriedades_controle_uia(root).get("control_type") or "WindowControl"
+                    fila = [(root, f"/{root_type}[0]")]
+                    visitados = 0
+                    while fila and visitados < 1200:
+                        visitados += 1
+                        control, path_atual = fila.pop(0)
+                        try:
+                            props = self.propriedades_controle_uia(control)
+                            if all(str(props.get(k, "")) == str(v) for k, v in query.items()):
+                                encontrados.append((control, root, path_atual))
+                            filhos = control.GetChildren()
+                            for index, filho in enumerate(filhos):
+                                child_type = self.propriedades_controle_uia(filho).get("control_type") or "Control"
+                                fila.append((filho, f"{path_atual}/{child_type}[{index}]"))
+                        except Exception as erro:
+                            ultimo_erro = erro
+                if encontrados:
+                    escolhidos = sorted(
+                        encontrados,
+                        key=lambda item: self.pontuar_controle_uia(item[0], elemento_base, root=item[1], path_atual=item[2]),
+                        reverse=True,
+                    )
+                    return escolhidos[0][0]
+            por_area = self.localizar_elemento_uia_por_area_salva(auto, elemento_base, roots=roots)
+            if por_area:
+                return por_area
+            if not consultas:
+                for root in roots:
+                    try:
+                        if self.propriedades_controle_uia(root).get("name"):
+                            return root
+                    except Exception as erro:
+                        ultimo_erro = erro
+            time.sleep(0.12)
+        alvo = (elemento_base or {}).get("name") or strategy or "elemento"
+        raise RuntimeError(f"Elemento UIA nao encontrado: {alvo}. Ultimo erro: {ultimo_erro}")
+
+    def resolver_valor_acao_uia(self, detalhes, contexto_loop=None):
+        acao_configurada = detalhes.get("acao_configurada") or {}
+        origem = str(acao_configurada.get("origem_valor") or "texto_fixo").strip().lower()
+        if origem == "planilha":
+            arquivo = self.normalizar_id_planilha(acao_configurada.get("arquivo"))
+            aba = str(acao_configurada.get("aba", "") or "").strip()
+            coluna = str(acao_configurada.get("coluna", "") or "").strip()
+            valor = self.obter_valor_coluna_linha_atual(arquivo, aba, coluna, contexto_loop)
+            return "" if valor is None else str(valor)
+        return self.substituir_variaveis_texto(str(acao_configurada.get("valor", "") or detalhes.get("valor", "") or ""), contexto_loop)
+
+    def pressionar_tecla_depois_uia(self, tecla):
+        tecla_normalizada = str(tecla or "").strip().lower()
+        if not tecla_normalizada:
+            return
+        mapa = {
+            "enter": "enter",
+            "tab": "tab",
+        }
+        pyautogui.press(mapa.get(tecla_normalizada, tecla_normalizada))
+
+    def invocar_controle_uia(self, control):
+        tentativas = [
+            lambda: control.GetInvokePattern().Invoke(),
+            lambda: control.Invoke(),
+            lambda: control.GetSelectionItemPattern().Select(),
+        ]
+        ultimo_erro = None
+        for tentativa in tentativas:
+            try:
+                tentativa()
+                return "interno"
+            except Exception as erro:
+                ultimo_erro = erro
+        try:
+            control.SetFocus()
+            pyautogui.press("space")
+            return "teclado"
+        except Exception as erro:
+            ultimo_erro = erro
+        raise RuntimeError(f"Nao foi possivel acionar o elemento internamente: {ultimo_erro}")
+
+    def ler_valor_uia(self, control):
+        try:
+            value_pattern = control.GetValuePattern()
+            return str(getattr(value_pattern, "Value", "") or "")
+        except Exception:
+            return ""
+
+    def valor_uia_confere(self, valor_atual, valor_esperado):
+        atual = str(valor_atual or "").strip()
+        esperado = str(valor_esperado or "").strip()
+        if atual == esperado:
+            return True
+        normalizar = getattr(self, "normalizar_texto_ocr", None)
+        if callable(normalizar):
+            return normalizar(atual) == normalizar(esperado)
+        return atual.lower() == esperado.lower()
+
+    def colar_texto_rapido(self, texto):
+        try:
+            import pyperclip
+
+            pyperclip.copy(str(texto))
+            pyautogui.hotkey("ctrl", "v")
+            return "area_transferencia"
+        except Exception:
+            pyautogui.write(str(texto), interval=0)
+            return "teclado"
+
+    def definir_texto_uia(self, control, valor, limpar_antes=True):
+        valor_texto = str(valor or "")
+        try:
+            control.GetValuePattern().SetValue(valor_texto)
+            time.sleep(0.05)
+            if self.valor_uia_confere(self.ler_valor_uia(control), valor_texto):
+                return "interno"
+        except Exception:
+            pass
+        try:
+            control.SetFocus()
+        except Exception as erro:
+            raise RuntimeError(
+                "Nao foi possivel focar o campo sem mover o mouse. "
+                "Capture o elemento editavel interno ou use um bloco visual para clicar antes de preencher."
+            ) from erro
+        time.sleep(0.08)
+        if limpar_antes:
+            pyautogui.hotkey("ctrl", "a")
+            time.sleep(0.03)
+            pyautogui.press("backspace")
+            time.sleep(0.03)
+        modo = self.colar_texto_rapido(valor_texto)
+        time.sleep(0.05)
+        if self.valor_uia_confere(self.ler_valor_uia(control), valor_texto):
+            return modo
+        return modo
+
+    def estado_checkbox_uia(self, control):
+        try:
+            return int(control.GetTogglePattern().ToggleState)
+        except Exception:
+            return None
+
+    def selecionar_opcao_uia(self, control, valor):
+        valor_normalizado = self.normalizar_texto_ocr(valor)
+        try:
+            control.GetExpandCollapsePattern().Expand()
+            time.sleep(0.15)
+        except Exception:
+            pass
+        fila = []
+        try:
+            fila.extend(control.GetChildren())
+        except Exception:
+            fila = []
+        while fila:
+            filho = fila.pop(0)
+            try:
+                nome_filho = str(getattr(filho, "Name", "") or "")
+                if self.normalizar_texto_ocr(nome_filho) == valor_normalizado:
+                    try:
+                        filho.GetSelectionItemPattern().Select()
+                    except Exception:
+                        self.invocar_controle_uia(filho)
+                    return
+                fila.extend(filho.GetChildren())
+            except Exception:
+                continue
+        self.definir_texto_uia(control, valor, True)
+
+    def executar_bloco_uia_elemento(self, evento, contexto_loop=None):
+        detalhes = evento.get("detalhes", {}) or {}
+        nome = str(detalhes.get("block_name") or "Mapear elemento").strip()
+        selector = detalhes.get("selector") or {}
+        elemento = detalhes.get("elemento") or {}
+        acao_configurada = detalhes.get("acao_configurada") or {}
+        acao = str(acao_configurada.get("tipo") or detalhes.get("configured_action") or detalhes.get("recommended_action") or "reference_only").strip().lower()
+        ao_sucesso = str(detalhes.get("ao_sucesso", "continuar") or "continuar").strip().lower()
+        bloco_sucesso = detalhes.get("bloco_sucesso", "")
+        sequencia_sucesso = str(detalhes.get("sequencia_sucesso", "") or "").strip()
+        atraso_sucesso = max(0.0, float(detalhes.get("atraso_antes_sequencia_sucesso", 0) or 0))
+        ao_falhar = str(detalhes.get("ao_falhar", "parar") or "parar").strip().lower()
+        bloco_falha = detalhes.get("bloco_falha", "")
+        sequencia_falha = str(detalhes.get("sequencia_falha", "") or "").strip()
+        atraso_falha = max(0.0, float(detalhes.get("atraso_antes_sequencia_falha", 0) or 0))
+
+        def finalizar_sucesso():
+            if ao_sucesso == "ir_para_sequencia" and sequencia_sucesso:
+                return self.resultado_fluxo("ir_para_sequencia", sequencia=sequencia_sucesso, atraso=atraso_sucesso)
+            if ao_sucesso == "ir_para_bloco" and str(bloco_sucesso or "").strip():
+                return self.resultado_fluxo("ir_para_bloco", bloco=bloco_sucesso, atraso=atraso_sucesso)
+            return self.resultado_fluxo("continuar")
+
+        try:
+            safe_print(f"[UIA: {nome}] Procurando elemento por seletor {selector.get('quality', 'FRAGIL')}", flush=True)
+            control = self.localizar_elemento_uia_por_selector(selector, elemento, timeout=5)
+            if acao in {"click", "select_tab", "select"}:
+                modo_acionamento = self.invocar_controle_uia(control)
+                safe_print(f"[UIA: {nome}] Clique executado por acionamento {modo_acionamento}, sem mover o mouse.", flush=True)
+            elif acao in {"set_text", "set_or_select", "select_option"}:
+                valor = self.resolver_valor_acao_uia(detalhes, contexto_loop)
+                if acao == "select_option":
+                    self.selecionar_opcao_uia(control, valor)
+                else:
+                    modo_preenchimento = self.definir_texto_uia(control, valor, bool(acao_configurada.get("limpar_antes", True)))
+                    safe_print(f"[UIA: {nome}] Preenchimento aplicado por {modo_preenchimento}.", flush=True)
+                self.pressionar_tecla_depois_uia(acao_configurada.get("pressionar_depois"))
+                safe_print(f"[UIA: {nome}] Valor aplicado: {self.limpar_saida_status(valor)}", flush=True)
+            elif acao == "toggle":
+                control.GetTogglePattern().Toggle()
+            elif acao in {"check", "uncheck"}:
+                estado_atual = self.estado_checkbox_uia(control)
+                deve_marcar = acao == "check"
+                if estado_atual is None or bool(estado_atual) != deve_marcar:
+                    control.GetTogglePattern().Toggle()
+            elif acao == "expand":
+                control.GetExpandCollapsePattern().Expand()
+            elif acao in {"read_text", "read_grid", "reference_only"}:
+                texto = str(getattr(control, "Name", "") or "")
+                salvar_em = str(acao_configurada.get("salvar_em") or "").strip()
+                if salvar_em:
+                    self.contexto_variaveis[salvar_em] = texto
+                safe_print(f"[UIA: {nome}] Referencia lida: {texto}", flush=True)
+            else:
+                safe_print(f"[UIA: {nome}] Elemento encontrado. Nenhuma acao executada.", flush=True)
+            safe_print(f"[UIA: {nome}] Resultado: sucesso", flush=True)
+            return finalizar_sucesso()
+        except Exception as erro:
+            safe_print(f"[UIA: {nome}] Resultado: erro | {erro}", flush=True)
+            if ao_falhar == "continuar":
+                return self.resultado_fluxo("continuar")
+            if ao_falhar == "ir_para_sequencia" and sequencia_falha:
+                return self.resultado_fluxo("ir_para_sequencia", sequencia=sequencia_falha, atraso=atraso_falha)
+            if ao_falhar == "ir_para_bloco" and str(bloco_falha or "").strip():
+                return self.resultado_fluxo("ir_para_bloco", bloco=bloco_falha, atraso=atraso_falha)
+            return self.resultado_fluxo("parar")
+
     def obter_empresa_evento_planilha(self, evento, indice_item, linha_referencia=None):
         detalhes = evento.get("detalhes", {})
         aba = detalhes.get("aba")
@@ -4291,6 +4774,14 @@ class ExecutorAutomacao:
                 f"{self.limpar_saida_status(detalhes.get('nome', 'elemento html'))} "
                 f"[{self.limpar_saida_status(alvo.get('metodo', 'css'))} -> "
                 f"{self.limpar_saida_status(acao.get('tipo', 'clicar'))}]"
+            )
+
+        if tipo in TIPOS_UIA:
+            detalhes = evento.get("detalhes", {})
+            return (
+                f"Evento #{ordem}: janela "
+                f"{self.limpar_saida_status(detalhes.get('block_name', 'elemento'))} "
+                f"[{self.limpar_saida_status(detalhes.get('recommended_action', 'reference_only'))}]"
             )
 
         return f"Evento #{ordem}: {self.limpar_saida_status(evento.get('texto', 'acao'))}"
@@ -5668,6 +6159,9 @@ class ExecutorAutomacao:
 
         if tipo in TIPOS_CHROME:
             return self.executar_bloco_chrome_elemento_html(evento, contexto_loop=contexto_loop)
+
+        if tipo in TIPOS_UIA:
+            return self.executar_bloco_uia_elemento(evento, contexto_loop=contexto_loop)
 
         teclas = evento.get("teclas", [])
         if not teclas:

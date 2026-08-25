@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "FlowDetect",
+  "productName": "FlowDetect Studio",
   "version": "1.0.0",
   "identifier": "com.kaua.gerador",
   "mainBinaryName": "FlowDetect",
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "FlowDetect",
+        "title": "FlowDetect Studio",
         "width": 1380,
         "height": 860,
         "minWidth": 1080,
@@ -68,12 +68,12 @@
           "English"
         ],
         "installMode": "currentUser",
-        "startMenuFolder": "FlowDetect",
+        "startMenuFolder": "FlowDetect Studio",
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
-        "headerImage": "installer_assets/flowdetect_header.bmp",
-        "uninstallerHeaderImage": "installer_assets/flowdetect_header.bmp",
-        "sidebarImage": "installer_assets/flowdetect_sidebar.bmp",
+        "headerImage": "installer_assets/flowdetect_studio_header.bmp",
+        "uninstallerHeaderImage": "installer_assets/flowdetect_studio_header.bmp",
+        "sidebarImage": "installer_assets/flowdetect_studio_sidebar.bmp",
         "installerHooks": "installer_assets/flowdetect_hooks.nsh"
       }
     }
