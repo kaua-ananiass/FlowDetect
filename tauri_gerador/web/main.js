@@ -60,6 +60,16 @@ const state = {
     pendingClickId: null,
     pollTimer: null,
   },
+  uiaMapper: {
+    map: null,
+    query: "",
+    selectedId: "",
+    activeOrder: null,
+    windows: [],
+    selectedWindowHwnd: "",
+    busy: false,
+    message: "Escolha uma janela alvo ou deixe a janela desejada em foco e clique em Mapear janela.",
+  },
   agents: {
     items: [],
     vms: [],
@@ -216,6 +226,12 @@ const state = {
   dragContainerRect: null,
   dragPlaceholderWidth: 0,
   dragPlaceholderHeight: 0,
+  commandMapReorderRunning: false,
+  commandMapReorderSyncActive: false,
+  commandMapReorderSyncQueue: [],
+  commandMapInstantRenderFrame: 0,
+  commandMapReorderSyncTimer: 0,
+  commandMapReorderKeyLastAt: 0,
   recognitionTreeTabs: {},
   recognitionPreviewMarkersVisible: {},
   spreadsheetTreeTabs: {},
@@ -3661,6 +3677,31 @@ function applyCommandMapDraftToEvent(event) {
     };
   }
 
+  if (nextEvent.type === "uia_elemento") {
+    const element = buildUiaElementWithActionValues(values.uiaElement || details.elemento || {}, values);
+    const selector = element.selector || details.selector || {};
+    details.block_name = element.name || details.block_name || "Elemento da janela";
+    details.block_type = element.block_type || details.block_type || "container_reference";
+    details.field_kind = element.field_kind || details.field_kind || "elemento";
+    details.recommended_action = element.recommended_action || details.recommended_action || "reference_only";
+    details.configured_action = element.configured_action || details.configured_action || details.recommended_action;
+    details.acao_configurada = element.acao_configurada || details.acao_configurada || {};
+    details.selector = selector;
+    details.selector_quality = element.selector_quality || selector.quality || details.selector_quality || "FRAGIL";
+    details.elemento = element;
+    applySuccessFlowDraft(details, values);
+    details.ao_falhar = values.failureAction || "parar";
+    details.bloco_falha = optionalPositiveInt(values.failureBlock) || "";
+    details.sequencia_falha = values.failureAction === "ir_para_sequencia"
+      ? optionalSequenceValue(values.failureSequence) || ""
+      : "";
+    details.atraso_antes_sequencia_falha = transitionSequenceDelayArg(
+      values.failureAction,
+      values.failureSequenceDelay,
+    );
+    return nextEvent;
+  }
+
   if (nextEvent.type === "verificar_estado_botao") {
     details.nome = values.verifyName || details.nome || "Verificar botao";
     details.imagem_ativo = values.verifyActiveImage ?? details.imagem_ativo ?? "";
@@ -4205,9 +4246,9 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
     animatedItems.push({
       element: connector,
       deltaX,
-      deltaY,
+      deltaY: 0,
       tilt: 0,
-      initialTransform: `translate(${deltaX}px, ${deltaY}px)`,
+      initialTransform: `translate(${deltaX}px, 0px)`,
       kind: "connector",
     });
   });
@@ -4235,7 +4276,8 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
   requestAnimationFrame(() => {
     animatedItems.forEach(({ element, deltaX, deltaY, tilt, initialTransform, kind }) => {
       const distance = Math.abs(deltaX);
-      const arcLift = mode === "slide" ? 0 : distance > 20 ? Math.min(18, Math.max(8, distance * 0.085)) : 0;
+      const isConnector = kind === "connector";
+      const arcLift = mode === "slide" || isConnector ? 0 : distance > 20 ? Math.min(18, Math.max(8, distance * 0.085)) : 0;
       const arcY = deltaY + (deltaX > 0 ? arcLift : -arcLift);
 
       const cleanup = () => {
@@ -4247,7 +4289,23 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
       };
 
       if (typeof element.animate === "function") {
-        const keyframes = mode === "slide"
+        const keyframes = isConnector
+          ? [
+              {
+                transform: initialTransform,
+                opacity: 0.72,
+              },
+              {
+                transform: `translate(${Math.round(deltaX * 0.24)}px, 0px)`,
+                opacity: 0.92,
+                offset: 0.55,
+              },
+              {
+                transform: "translate(0px, 0px)",
+                opacity: 1,
+              },
+            ]
+          : mode === "slide"
           ? [
               {
                 transform: initialTransform,
@@ -4586,7 +4644,22 @@ function releaseDragInteraction({ keepPreview = false } = {}) {
 }
 
 function updateDragTarget(targetIndex) {
-  if (!targetIndex || state.dragTargetIndex === targetIndex) {
+  if (!targetIndex) {
+    state.dragTargetIndex = null;
+    const dropZones = state.dragDropZones.length
+      ? state.dragDropZones
+      : Array.from(commandMapList.querySelectorAll(".command-drop-zone"));
+    dropZones.forEach((zone) => zone.classList.remove("is-drop-target"));
+    const dragSegments = state.dragSegments.length
+      ? state.dragSegments
+      : Array.from(commandMapList.querySelectorAll(".command-flow-segment"));
+    dragSegments.forEach((segment) => {
+      segment.classList.remove("is-drop-before", "is-drop-after");
+    });
+    return;
+  }
+
+  if (state.dragTargetIndex === targetIndex) {
     return;
   }
 
@@ -4652,35 +4725,42 @@ function getDragTargetIndexFromPoint(clientX, clientY) {
   const containerRect = state.dragContainerRect || commandMapList.getBoundingClientRect();
   const verticalTolerance = 160;
   const draggingOrder = Number(state.draggingOrder);
-  const liveThresholds = Array.from(commandMapList.querySelectorAll(".command-flow-segment"))
-    .map((segment) => {
-      const order = Number(segment.dataset.order);
-      if (!order || order === draggingOrder) {
-        return null;
-      }
-      const rect = segment.getBoundingClientRect();
-      return {
-        order,
-        centerX: rect.left - containerRect.left + commandMapList.scrollLeft + rect.width / 2,
-      };
-    })
-    .filter(Boolean)
-    .sort((first, second) => first.centerX - second.centerX);
+  const dragSegments = state.dragThresholds.length
+    ? state.dragThresholds
+    : Array.from(commandMapList.querySelectorAll(".command-flow-segment"))
+        .map((segment) => {
+          const order = Number(segment.dataset.order);
+          if (!order || order === draggingOrder) {
+            return null;
+          }
+          const rect = segment.getBoundingClientRect();
+          return {
+            order,
+            left: rect.left - containerRect.left + commandMapList.scrollLeft,
+            right: rect.right - containerRect.left + commandMapList.scrollLeft,
+            width: rect.width,
+          };
+        })
+        .filter(Boolean)
+        .sort((first, second) => first.left - second.left);
 
-  if (liveThresholds.length) {
+  if (dragSegments.length) {
     if (clientY < containerRect.top - verticalTolerance || clientY > containerRect.bottom + verticalTolerance) {
       return null;
     }
 
     const contentX = clientX - containerRect.left + commandMapList.scrollLeft;
-    for (const threshold of liveThresholds) {
-      if (contentX <= threshold.centerX) {
-        return threshold.order;
+    for (const segment of dragSegments) {
+      const isAdjacentAfterSource = segment.order === draggingOrder + 1;
+      const splitRatio = isAdjacentAfterSource ? 0.32 : 0.5;
+      const splitX = segment.left + segment.width * splitRatio;
+      if (contentX <= segment.right) {
+        return contentX <= splitX ? segment.order : segment.order + 1;
       }
     }
 
-    const lastThreshold = liveThresholds[liveThresholds.length - 1];
-    return lastThreshold ? lastThreshold.order + 1 : null;
+    const lastSegment = dragSegments[dragSegments.length - 1];
+    return lastSegment ? lastSegment.order + 1 : null;
   }
 
   const target = document.elementFromPoint(clientX, clientY);
@@ -4713,7 +4793,7 @@ function moveDragPreview(clientX, clientY) {
 
   const nextX = clientX - state.dragOffsetX;
   const nextY = clientY - state.dragOffsetY;
-  state.dragPreviewEl.style.transform = `translate3d(${nextX}px, ${nextY}px, 0) scale(1.01)`;
+  state.dragPreviewEl.style.transform = `translate3d(${nextX}px, ${nextY}px, 0) scale(1.015)`;
 }
 
 function refreshDragGeometry() {
@@ -4735,6 +4815,9 @@ function refreshDragGeometry() {
       const rect = segment.getBoundingClientRect();
       return {
         order,
+        left: rect.left - containerRect.left + scrollLeft,
+        right: rect.right - containerRect.left + scrollLeft,
+        width: rect.width,
         centerX: rect.left - containerRect.left + scrollLeft + rect.width / 2,
       };
     })
@@ -4761,9 +4844,7 @@ function scheduleDragUpdate(clientX, clientY) {
     autoScrollCommandMap(state.dragClientX);
 
     const targetIndex = getDragTargetIndexFromPoint(state.dragClientX, state.dragClientY);
-    if (targetIndex) {
-      updateDragTarget(targetIndex);
-    }
+    updateDragTarget(targetIndex);
   });
 }
 
@@ -4847,10 +4928,8 @@ function buildOptimisticReorderResult(roadmap, order, targetIndex) {
 
   const [draggedEvent] = events.splice(sourceIndex, 1);
   const focusClientKey = String(draggedEvent?.clientKey || "").trim();
-  let insertionIndex = Math.max(0, Math.min(events.length, Number(targetIndex) - 1));
-  if (sourceIndex < insertionIndex) {
-    insertionIndex -= 1;
-  }
+  const normalizedTargetIndex = getNormalizedDragTargetIndex(targetIndex, order);
+  let insertionIndex = Math.max(0, Math.min(events.length, Number(normalizedTargetIndex) - 1));
   insertionIndex = Math.max(0, Math.min(events.length, insertionIndex));
   events.splice(insertionIndex, 0, draggedEvent);
 
@@ -4903,7 +4982,7 @@ function buildOptimisticDirectionalMoveResult(roadmap, order, direction) {
   };
 }
 
-function applyOptimisticCommandMapReorder(optimistic, layoutSnapshot = null) {
+function applyOptimisticCommandMapReorder(optimistic, layoutSnapshot = null, renderOptions = {}) {
   if (!optimistic?.roadmap) {
     return;
   }
@@ -4914,40 +4993,97 @@ function applyOptimisticCommandMapReorder(optimistic, layoutSnapshot = null) {
     optimistic.focusClientKey,
     optimistic.focusOrder ?? state.commandMapFocusOrder
   );
-  renderCommandMap({ layoutSnapshot });
+  renderCommandMap({ layoutSnapshot, ...renderOptions });
   if (state.activeTab === "assist") {
     renderAssistExecutionMap();
   }
 }
 
-async function commitCardReorder(order, targetIndex, layoutSnapshot = null) {
+function enqueueCommandMapReorderSync(job) {
+  if (!job || !Number.isFinite(Number(job.order)) || !Number.isFinite(Number(job.targetIndex))) {
+    return;
+  }
+
+  state.commandMapReorderSyncQueue.push({
+    order: Number(job.order),
+    targetIndex: Number(job.targetIndex),
+    focusClientKey: String(job.focusClientKey || "").trim(),
+    focusOrder: Number(job.focusOrder || 0),
+  });
+  void processCommandMapReorderSyncQueue();
+}
+
+async function processCommandMapReorderSyncQueue() {
+  if (state.commandMapReorderSyncActive) {
+    return;
+  }
+
+  state.commandMapReorderSyncActive = true;
+  let latestRoadmap = null;
+  let latestJob = null;
+
+  try {
+    while (state.commandMapReorderSyncQueue.length) {
+      const job = state.commandMapReorderSyncQueue.shift();
+      latestJob = job;
+      latestRoadmap = await invoke("reorder_block", {
+        order: job.order,
+        targetIndex: job.targetIndex,
+      });
+    }
+
+    if (latestRoadmap) {
+      state.roadmap = decorateRoadmapForClient(latestRoadmap, state.roadmap);
+      state.library.dirty = false;
+      state.commandMapFocusOrder = resolveCommandMapFocusByClientKey(
+        state.roadmap,
+        latestJob?.focusClientKey,
+        latestJob?.focusOrder ?? state.commandMapFocusOrder
+      );
+    }
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(`Falha ao sincronizar a ordem dos blocos: ${String(error)}`, "error");
+    refreshRoadmap("Mapa recarregado apos falha na reordenacao.").catch((refreshError) => {
+      setMessage(String(refreshError), "error");
+    });
+  } finally {
+    state.commandMapReorderSyncActive = false;
+    if (state.commandMapReorderSyncQueue.length) {
+      void processCommandMapReorderSyncQueue();
+    }
+  }
+}
+
+async function commitCardReorder(order, targetIndex, layoutSnapshot = null, options = {}) {
   const previousRoadmap = state.roadmap;
   const previousFocus = state.commandMapFocusOrder;
   const optimistic = buildOptimisticReorderResult(previousRoadmap, order, targetIndex);
+  const backendTargetIndex = getNormalizedDragTargetIndex(targetIndex, order);
+  const instant = Boolean(options.instant);
 
   try {
-    setBusy("Reordenando");
     if (optimistic) {
-      applyOptimisticCommandMapReorder(optimistic, layoutSnapshot);
+      applyOptimisticCommandMapReorder(optimistic, layoutSnapshot, instant ? {
+        preserveScroll: true,
+        skipAutoFit: true,
+        suppressFocusScroll: true,
+        layoutAnimationMode: "slide",
+      } : {});
     }
 
-    const roadmap = await invoke("reorder_block", {
+    enqueueCommandMapReorderSync({
       order,
-      targetIndex,
+      targetIndex: backendTargetIndex,
+      focusClientKey: optimistic?.focusClientKey || "",
+      focusOrder: optimistic?.focusOrder ?? previousFocus,
     });
 
-    state.roadmap = decorateRoadmapForClient(roadmap, optimistic?.roadmap ?? previousRoadmap);
     state.library.dirty = false;
-    state.commandMapFocusOrder = resolveCommandMapFocusByClientKey(
-      state.roadmap,
-      optimistic?.focusClientKey,
-      optimistic?.focusOrder ?? previousFocus
-    );
-    if (state.activeTab === "commands" && state.commandMapFocusOrder) {
-      requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
+    if (!instant) {
+      setBusy("Pronto");
+      setMessage("Bloco movido.", "success");
     }
-    setBusy("Pronto");
-    setMessage("Bloco reordenado com sucesso.", "success");
   } catch (error) {
     if (previousRoadmap) {
       state.roadmap = previousRoadmap;
@@ -4960,7 +5096,7 @@ async function commitCardReorder(order, targetIndex, layoutSnapshot = null) {
   }
 }
 
-async function moveCommandMapCardByStep(order, direction) {
+async function moveCommandMapCardByStep(order, direction, options = {}) {
   const visibleOrders = getCommandMapOrders();
   const sourceIndex = visibleOrders.indexOf(Number(order));
   const step = direction === "up" ? -1 : direction === "down" ? 1 : 0;
@@ -4980,10 +5116,15 @@ async function moveCommandMapCardByStep(order, direction) {
 
   const layoutSnapshot = captureCommandMapCardPositions();
   const targetIndex = direction === "up" ? neighborOrder : neighborOrder + 1;
-  await commitCardReorder(order, targetIndex, layoutSnapshot);
+  await commitCardReorder(order, targetIndex, layoutSnapshot, options);
 }
 
 function beginCardDrag(handle, pointerEvent) {
+  if (state.commandMapReorderRunning) {
+    setMessage("Finalizando a troca anterior. Tente novamente em um instante.", "info");
+    return;
+  }
+
   const segment = handle.closest(".command-flow-segment");
   if (!segment) {
     return;
@@ -4994,20 +5135,33 @@ function beginCardDrag(handle, pointerEvent) {
     return;
   }
 
-  const rect = segment.getBoundingClientRect();
-  const preview = segment.cloneNode(true);
+  const cardElement = segment.querySelector(".command-tree-card, .insert-card-panel") || segment;
+  const rect = cardElement.getBoundingClientRect();
+  const preview = document.createElement("div");
+  const previewCard = cardElement.cloneNode(true);
   const dragZoom = Math.max(0.01, Number(state.commandMapZoom) || 1);
   const startX = Math.round(rect.left);
   const startY = Math.round(rect.top);
 
-  preview.classList.remove("is-drop-before", "is-drop-after");
-  preview.classList.add("command-drag-preview");
-  preview.style.zoom = String(dragZoom);
-  preview.style.width = `${rect.width / dragZoom}px`;
-  preview.style.height = `${rect.height / dragZoom}px`;
+  previewCard.classList.remove(
+    "is-focused",
+    "is-neighbor",
+    "is-inline-expanded",
+    "is-newly-created",
+    "is-drop-animating",
+    "is-removing"
+  );
+  previewCard.querySelectorAll("button, input, textarea, select").forEach((element) => {
+    element.setAttribute("tabindex", "-1");
+  });
+  preview.className = "command-drag-preview";
+  preview.setAttribute("aria-hidden", "true");
+  preview.appendChild(previewCard);
+  preview.style.width = `${Math.round(rect.width)}px`;
+  preview.style.height = `${Math.round(rect.height)}px`;
   preview.style.left = "0px";
   preview.style.top = "0px";
-  preview.style.transform = `translate3d(${startX}px, ${startY}px, 0) scale(1.01)`;
+  preview.style.transform = `translate3d(${startX}px, ${startY}px, 0) scale(1.015)`;
 
   document.body.appendChild(preview);
 
@@ -5128,6 +5282,8 @@ function createInsertPanelState(targetOrder, position) {
     chromeClearBefore: true,
     chromeFallbackVisual: false,
     chromeFallbackImage: "",
+    uiaElement: null,
+    uiaSearch: "",
     openUrl: "",
     openBrowser: "padrao",
     openMode: "nova_janela",
@@ -5333,6 +5489,615 @@ function chromeActionSupportsPressAfter(actionType = "") {
 
 function chromeActionSupportsSaveAs(actionType = "") {
   return String(actionType || "").trim() === "pegar_texto";
+}
+
+function uiaElementLabel(element = {}) {
+  return String(
+    element.name
+      || element.automation_id
+      || element.class_name
+      || element.control_type
+      || "Elemento sem nome"
+  ).trim();
+}
+
+function uiaActionLabel(action = "") {
+  const labels = {
+    set_text: "Preencher texto",
+    select_option: "Selecionar opcao",
+    set_or_select: "Preencher/selecionar",
+    click: "Clicar",
+    toggle: "Marcar/desmarcar",
+    select: "Selecionar",
+    select_tab: "Abrir aba",
+    expand: "Expandir",
+    read_grid: "Ler tabela",
+    select_grid_item: "Selecionar item",
+    read_text: "Ler texto",
+    reference_only: "Referencia",
+  };
+  return labels[String(action || "").trim()] || "Referencia";
+}
+
+function uiaFunctionalKind(element = {}) {
+  const controlType = String(element.control_type || element.ControlTypeName || "").toLowerCase();
+  const blockType = String(element.block_type || "").toLowerCase();
+  const fieldKind = String(element.field_kind || "").toLowerCase();
+  if (blockType.includes("input") || fieldKind.includes("texto edit") || controlType.includes("edit")) return "text";
+  if (blockType.includes("combo") || controlType.includes("combo")) return "combo";
+  if (blockType.includes("checkbox") || controlType.includes("check")) return "checkbox";
+  if (blockType.includes("radio") || controlType.includes("radio")) return "radio";
+  if (blockType.includes("tab") || controlType.includes("tabitem")) return "tab";
+  if (blockType.includes("menu") || controlType.includes("menuitem")) return "menu";
+  if (blockType.includes("grid") || controlType.includes("grid") || controlType.includes("datagrid")) return "grid";
+  if (blockType.includes("button") || controlType.includes("button")) return "button";
+  if (blockType.includes("text") || fieldKind.includes("somente leitura") || controlType.includes("text")) return "read";
+  return "reference";
+}
+
+function uiaKindLabel(element = {}) {
+  const labels = {
+    text: "Campo de texto",
+    combo: "Lista de escolha",
+    checkbox: "Caixa de marcar",
+    radio: "Opcao unica",
+    tab: "Aba",
+    menu: "Menu",
+    grid: "Tabela",
+    button: "Botao",
+    read: "Texto na tela",
+    reference: "Referencia",
+  };
+  return labels[uiaFunctionalKind(element)] || "Elemento";
+}
+
+function uiaActionOptionsForElement(element = {}, selected = "") {
+  const kind = uiaFunctionalKind(element);
+  const byKind = {
+    text: [
+      ["set_text", "Preencher campo"],
+      ["click", "Clicar no campo"],
+      ["reference_only", "So encontrar"],
+    ],
+    combo: [
+      ["select_option", "Escolher opcao"],
+      ["set_or_select", "Digitar ou escolher"],
+      ["expand", "Abrir lista"],
+    ],
+    checkbox: [
+      ["toggle", "Alternar"],
+      ["check", "Marcar"],
+      ["uncheck", "Desmarcar"],
+    ],
+    radio: [
+      ["select", "Selecionar"],
+      ["reference_only", "So encontrar"],
+    ],
+    tab: [
+      ["select_tab", "Abrir aba"],
+      ["reference_only", "So encontrar"],
+    ],
+    menu: [
+      ["click", "Clicar por dentro"],
+      ["expand", "Expandir"],
+    ],
+    grid: [
+      ["read_grid", "Ler tabela"],
+      ["select_grid_item", "Selecionar item"],
+    ],
+    button: [
+      ["click", "Clicar por dentro"],
+      ["reference_only", "So encontrar"],
+    ],
+    read: [
+      ["read_text", "Ler texto"],
+      ["reference_only", "So encontrar"],
+    ],
+    reference: [
+      ["reference_only", "So encontrar"],
+    ],
+  };
+  const options = byKind[kind] || byKind.reference;
+  const current = selected || element.configured_action || element.recommended_action || options[0][0];
+  if (!options.some(([value]) => value === current)) {
+    options.unshift([current, uiaActionLabel(current)]);
+  }
+  return options.map(([value, label]) =>
+    `<option value="${escapeHtml(value)}" ${value === current ? "selected" : ""}>${escapeHtml(label)}</option>`
+  ).join("");
+}
+
+function renderUiaWorkbookOptions(selectedWorkbook = "") {
+  return availableWorkbooks()
+    .map((workbook) => `<option value="${escapeHtml(workbook.id)}" ${workbook.id === selectedWorkbook ? "selected" : ""}>${escapeHtml(workbook.file_name)}</option>`)
+    .join("");
+}
+
+function renderUiaSheetOptions(workbookId = "", selectedSheet = "") {
+  return workbookSheetsFor(workbookId)
+    .map((sheet) => `<option value="${escapeHtml(sheet.name)}" ${sheet.name === selectedSheet ? "selected" : ""}>${escapeHtml(sheet.name)}</option>`)
+    .join("");
+}
+
+function renderUiaColumnOptions(workbookId = "", sheetName = "", selectedColumn = "") {
+  return columnsForSheetInWorkbook(workbookId, sheetName)
+    .map((column) => `<option value="${escapeHtml(column)}" ${column === selectedColumn ? "selected" : ""}>${escapeHtml(column)}</option>`)
+    .join("");
+}
+
+function uiaActionNeedsValue(action = "") {
+  return ["set_text", "set_or_select", "select_option"].includes(String(action || "").trim());
+}
+
+function uiaActionCanSaveText(action = "") {
+  return ["read_text", "read_grid"].includes(String(action || "").trim());
+}
+
+function renderUiaActionFields(fieldAttr, details = {}, element = {}) {
+  const configured = details.acao_configurada || {};
+  const action = String(configured.tipo || details.configured_action || details.recommended_action || element.recommended_action || "reference_only");
+  const valueSource = String(configured.origem_valor || "texto_fixo");
+  const workbookId = resolveWorkbookId(configured.arquivo || details.arquivo || "");
+  const selectedSheet = configured.aba || workbookSheetsFor(workbookId)[0]?.name || "";
+  const selectedColumn = configured.coluna || columnsForSheetInWorkbook(workbookId, selectedSheet)[0] || "";
+  const needsValue = uiaActionNeedsValue(action);
+  return `
+    <section class="uia-action-box uia-action-simple">
+      <div class="uia-action-heading">
+        <span>Como usar</span>
+        <strong>${escapeHtml(uiaKindLabel(element))}</strong>
+      </div>
+      <label>
+        <span>Acao</span>
+        <select ${fieldAttr}="uiaActionType">
+          ${uiaActionOptionsForElement(element, action)}
+        </select>
+      </label>
+      ${needsValue ? `
+        <div class="uia-value-mode">
+          <label class="pill-radio">
+            <input ${fieldAttr}="uiaValueSource" type="radio" value="texto_fixo" ${valueSource !== "planilha" ? "checked" : ""} />
+            <span>Texto fixo</span>
+          </label>
+          <label class="pill-radio">
+            <input ${fieldAttr}="uiaValueSource" type="radio" value="planilha" ${valueSource === "planilha" ? "checked" : ""} />
+            <span>Coluna da planilha</span>
+          </label>
+        </div>
+        <label class="${valueSource === "planilha" ? "is-soft-hidden" : ""}">
+          <span>Texto para preencher</span>
+          <input ${fieldAttr}="uiaActionValue" type="text" value="${escapeHtml(configured.valor ?? "")}" placeholder="Ex.: OK, aprovado ou {{empresa}}" />
+        </label>
+        <div class="uia-spreadsheet-pick ${valueSource === "planilha" ? "" : "is-soft-hidden"}">
+          <label>
+            <span>Planilha</span>
+            <select ${fieldAttr}="uiaWorkbook">
+              <option value="">Escolha</option>
+              ${renderUiaWorkbookOptions(workbookId)}
+            </select>
+          </label>
+          <label>
+            <span>Aba</span>
+            <select ${fieldAttr}="uiaSheet">
+              ${renderUiaSheetOptions(workbookId, selectedSheet)}
+            </select>
+          </label>
+          <label>
+            <span>Coluna</span>
+            <select ${fieldAttr}="uiaColumn">
+              ${renderUiaColumnOptions(workbookId, selectedSheet, selectedColumn)}
+            </select>
+          </label>
+        </div>
+        <div class="uia-action-options">
+          <label class="inline-checkbox">
+            <input ${fieldAttr}="uiaClearBefore" type="checkbox" ${configured.limpar_antes !== false ? "checked" : ""} />
+            <span>Limpar antes</span>
+          </label>
+          <label>
+            <span>Depois</span>
+            <select ${fieldAttr}="uiaPressAfter">
+              <option value="" ${!configured.pressionar_depois ? "selected" : ""}>Nada</option>
+              <option value="Enter" ${configured.pressionar_depois === "Enter" ? "selected" : ""}>Enter</option>
+              <option value="Tab" ${configured.pressionar_depois === "Tab" ? "selected" : ""}>Tab</option>
+            </select>
+          </label>
+        </div>
+      ` : ""}
+      ${uiaActionCanSaveText(action) ? `
+        <label>
+          <span>Guardar leitura como</span>
+          <input ${fieldAttr}="uiaSaveAs" type="text" value="${escapeHtml(configured.salvar_em ?? "")}" placeholder="Ex.: total_documentos" />
+        </label>
+      ` : `<input ${fieldAttr}="uiaSaveAs" type="hidden" value="${escapeHtml(configured.salvar_em ?? "")}" />`}
+    </section>
+  `;
+}
+
+function buildUiaElementWithActionValues(element = {}, values = {}) {
+  const actionType = values.uiaActionType || element.configured_action || element.recommended_action || "reference_only";
+  return prepareUiaElementForBlock({
+    ...element,
+    configured_action: actionType,
+    acao_configurada: {
+      tipo: actionType,
+      origem_valor: values.uiaValueSource || "texto_fixo",
+      valor: values.uiaActionValue || "",
+      arquivo: values.uiaWorkbook || "",
+      aba: values.uiaSheet || "",
+      coluna: values.uiaColumn || "",
+      limpar_antes: values.uiaClearBefore !== false,
+      pressionar_depois: values.uiaPressAfter || "",
+      salvar_em: values.uiaSaveAs || "",
+    },
+  });
+}
+
+function uiaQualityClass(quality = "") {
+  const normalized = String(quality || "").trim().toUpperCase();
+  if (normalized === "FORTE") return "is-strong";
+  if (normalized === "MEDIO") return "is-medium";
+  return "is-fragile";
+}
+
+function parseUiaElementJson(value = "") {
+  if (!String(value || "").trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function uiaFlatElements() {
+  return Array.isArray(state.uiaMapper.map?.elements) ? state.uiaMapper.map.elements : [];
+}
+
+function selectedUiaElement() {
+  return uiaFlatElements().find((item) => String(item.id) === String(state.uiaMapper.selectedId)) || null;
+}
+
+function hydrateUiaMapperForBlock(order, element = {}) {
+  if (String(state.uiaMapper.activeOrder || "") === String(order || "")) {
+    return;
+  }
+  state.uiaMapper.activeOrder = order || null;
+  state.uiaMapper.query = "";
+  const selector = element.selector && typeof element.selector === "object" ? element.selector : {};
+  const selectorQuery = selector.query && typeof selector.query === "object" ? selector.query : {};
+  const hasElement = Boolean(
+    Object.keys(selectorQuery).length
+      || selector.strategy
+      || element.automation_id
+      || element.name
+      || element.class_name
+      || element.control_type
+  );
+  if (!hasElement) {
+    state.uiaMapper.map = null;
+    state.uiaMapper.selectedId = "";
+    state.uiaMapper.message = "Mapeie ou capture um elemento para configurar este bloco.";
+    return;
+  }
+  const prepared = {
+    ...element,
+    source_window: element.source_window || {},
+    source_tab: element.source_tab || "",
+    context_signature: element.context_signature || "",
+  };
+  state.uiaMapper.map = {
+    ok: true,
+    count: 1,
+    elements: [prepared],
+    tree: prepared,
+    source_window: prepared.source_window || {},
+    source_tab: prepared.source_tab || "",
+    context_signature: prepared.context_signature || "",
+  };
+  state.uiaMapper.selectedId = prepared.id || "";
+  state.uiaMapper.message = "Elemento deste bloco carregado. Para trocar, capture outro elemento.";
+}
+
+function updateUiaMapperSelectionInPanel(mapperPanel, element) {
+  if (!mapperPanel || !element) {
+    return;
+  }
+  state.uiaMapper.selectedId = element.id || "";
+  mapperPanel.querySelectorAll(".uia-tree-item").forEach((item) => {
+    const selected = String(item.dataset.uiaId || "") === String(state.uiaMapper.selectedId);
+    item.classList.toggle("is-selected", selected);
+    if (selected) {
+      item.focus({ preventScroll: true });
+      item.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  });
+  const side = mapperPanel.querySelector(".uia-side");
+  if (side) {
+    side.innerHTML = renderUiaSelectedPanel();
+  }
+  const useButton = mapperPanel.querySelector('[data-insert-action="uia-use-element"], [data-tree-action="uia-use-element"]');
+  if (useButton) {
+    useButton.disabled = false;
+  }
+}
+
+async function moveUiaTreeSelection(mapperPanel, delta) {
+  if (!mapperPanel) {
+    return;
+  }
+  const elements = filterUiaElements(state.uiaMapper.query);
+  if (!elements.length) {
+    return;
+  }
+  const currentIndex = Math.max(0, elements.findIndex((item) => String(item.id) === String(state.uiaMapper.selectedId)));
+  const nextIndex = Math.max(0, Math.min(elements.length - 1, currentIndex + delta));
+  const element = elements[nextIndex];
+  updateUiaMapperSelectionInPanel(mapperPanel, element);
+  await invoke("highlight_uia_element", { element }).catch(() => null);
+}
+
+function prepareUiaElementForBlock(element = {}) {
+  const map = state.uiaMapper.map || {};
+  return {
+    ...element,
+    source_window: element.source_window || map.source_window || {},
+    source_tab: element.source_tab || map.source_tab || "",
+    context_signature: element.context_signature || map.context_signature || "",
+  };
+}
+
+function uiaElementFromDetails(details = {}) {
+  const element = details.elemento && typeof details.elemento === "object" ? details.elemento : {};
+  return {
+    ...element,
+    name: element.name || details.block_name,
+    block_type: element.block_type || details.block_type,
+    field_kind: element.field_kind || details.field_kind,
+    recommended_action: element.recommended_action || details.recommended_action,
+    configured_action: element.configured_action || details.configured_action || details.acao_configurada?.tipo,
+    acao_configurada: element.acao_configurada || details.acao_configurada || {},
+    selector: element.selector || details.selector || {},
+    selector_quality: element.selector_quality || details.selector_quality,
+    actionable: element.actionable ?? details.actionable,
+    editable: element.editable ?? details.editable,
+    clickable: element.clickable ?? details.clickable,
+    selectable: element.selectable ?? details.selectable,
+    expandable: element.expandable ?? details.expandable,
+    readable: element.readable ?? details.readable,
+    visible: element.visible ?? details.visible,
+    enabled: element.enabled ?? details.enabled,
+    warnings: element.warnings || details.warnings || [],
+    confidence: element.confidence || details.confidence || "media",
+    source_window: element.source_window || details.source_window || {},
+    source_tab: element.source_tab || details.source_tab || "",
+    context_signature: element.context_signature || details.context_signature || "",
+  };
+}
+
+function filterUiaElements(query = "") {
+  const normalized = String(query || "").trim().toLowerCase();
+  const elements = uiaFlatElements();
+  if (!normalized) {
+    return elements.slice(0, 180);
+  }
+  return elements
+    .filter((item) => [
+      item.name,
+      item.automation_id,
+      item.control_type,
+      item.class_name,
+      item.framework_id,
+      item.field_kind,
+      item.recommended_action,
+    ].some((value) => String(value || "").toLowerCase().includes(normalized)))
+    .slice(0, 180);
+}
+
+function renderUiaMapperTree() {
+  const elements = filterUiaElements(state.uiaMapper.query);
+  if (!state.uiaMapper.map) {
+    return `<div class="uia-empty">Clique em <strong>Mapear janela</strong> para carregar a arvore da tela atual.</div>`;
+  }
+  if (!elements.length) {
+    return `<div class="uia-empty">Nenhum elemento encontrado com esse filtro.</div>`;
+  }
+  return elements.map((item) => `
+    <button class="uia-tree-item ${String(item.id) === String(state.uiaMapper.selectedId) ? "is-selected" : ""}" data-uia-id="${escapeHtml(item.id)}" type="button" style="--depth:${Math.min(5, Number(item.depth || 0))}">
+      <span class="uia-tree-name">${escapeHtml(uiaElementLabel(item))}</span>
+      <span class="uia-tree-meta">${escapeHtml(item.control_type || "Elemento")} | ${escapeHtml(item.class_name || "-")}</span>
+    </button>
+  `).join("");
+}
+
+function renderUiaSelectedPanelLegacy() {
+  const element = selectedUiaElement();
+  if (!element) {
+    return `
+      <div class="uia-side-empty">
+        <strong>Nenhum elemento selecionado</strong>
+        <span>Escolha na arvore ou clique em Capturar elemento e depois aponte para a aplicacao alvo.</span>
+      </div>
+    `;
+  }
+  const selector = element.selector || {};
+  const rect = element.bounding_rectangle || {};
+  const warnings = Array.isArray(element.warnings) ? element.warnings.filter(Boolean) : [];
+  return `
+    <div class="uia-property-card">
+      <span class="uia-kind">${escapeHtml(element.field_kind || "elemento")}</span>
+      <h5>${escapeHtml(uiaElementLabel(element))}</h5>
+      <p>Ação recomendada: <strong>${escapeHtml(uiaActionLabel(element.recommended_action))}</strong></p>
+      <div class="uia-selector-quality ${uiaQualityClass(selector.quality || element.selector_quality)}">
+        ${escapeHtml(selector.quality || element.selector_quality || "FRAGIL")} · ${escapeHtml(selector.strategy || "seletor")}
+      </div>
+      <div class="uia-props-grid">
+        <span>Name</span><strong>${escapeHtml(element.name || "-")}</strong>
+        <span>AutomationId</span><strong>${escapeHtml(element.automation_id || "-")}</strong>
+        <span>Tipo</span><strong>${escapeHtml(element.control_type || "-")}</strong>
+        <span>Classe</span><strong>${escapeHtml(element.class_name || "-")}</strong>
+        <span>Área</span><strong>${escapeHtml(`${rect.width || 0}x${rect.height || 0}`)}</strong>
+        <span>Capacidades</span><strong>${escapeHtml((element.capabilities || []).join(", ") || "-")}</strong>
+      </div>
+      ${warnings.length ? `<div class="uia-warning">${escapeHtml(warnings.join(" "))}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderUiaSelectedPanel() {
+  const element = selectedUiaElement();
+  if (!element) {
+    return `
+      <div class="uia-side-empty">
+        <strong>Nenhum elemento selecionado</strong>
+        <span>Escolha na lista ou clique em Selecionar na janela.</span>
+      </div>
+    `;
+  }
+  const selector = element.selector || {};
+  const warnings = Array.isArray(element.warnings) ? element.warnings.filter(Boolean) : [];
+  const quality = String(selector.quality || element.selector_quality || "FRAGIL").toUpperCase();
+  return `
+    <div class="uia-property-card uia-property-simple">
+      <span class="uia-kind">${escapeHtml(uiaKindLabel(element))}</span>
+      <h5>${escapeHtml(uiaElementLabel(element))}</h5>
+      <p>Este elemento pode atualizar o bloco atual sem mostrar detalhes tecnicos.</p>
+      <div class="uia-selector-quality ${uiaQualityClass(quality)}">
+        ${escapeHtml(quality === "FORTE" ? "Pronto para usar" : "Pode precisar recapturar")}
+      </div>
+      ${warnings.length ? `<div class="uia-warning">${escapeHtml(warnings.join(" "))}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderUiaWindowOptions() {
+  const windows = Array.isArray(state.uiaMapper.windows) ? state.uiaMapper.windows : [];
+  const selected = String(state.uiaMapper.selectedWindowHwnd || "");
+  const options = windows.map((item) => {
+    const title = item.title || "Janela sem titulo";
+    const meta = item.class_name ? ` | ${item.class_name}` : "";
+    return `<option value="${escapeHtml(item.hwnd)}" ${String(item.hwnd) === selected ? "selected" : ""}>${escapeHtml(title + meta)}</option>`;
+  }).join("");
+  return `
+    <div class="uia-window-picker">
+      <span>Janela para mapear</span>
+      <div class="uia-window-row">
+        <select ${state.uiaMapper.busy ? "disabled" : ""} data-uia-window-select="true">
+          <option value="">Janela ativa / alvo atual</option>
+          ${options}
+        </select>
+        <button class="tree-open-button" data-uia-window-refresh="true" type="button" ${state.uiaMapper.busy ? "disabled" : ""}>Atualizar janelas</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderUiaMapperPanel(options = {}) {
+  const actionAttr = options.actionAttr || "data-insert-action";
+  const fieldAttr = options.fieldAttr || "data-insert-field";
+  const useLabel = options.useLabel || "Usar este elemento";
+  const compact = Boolean(options.compact);
+  return `
+    <div class="uia-mapper-panel ${compact ? "is-compact" : ""}">
+      ${renderUiaWindowOptions()}
+      <div class="uia-toolbar">
+        <button class="tree-open-button" ${actionAttr}="uia-map-window" type="button" ${state.uiaMapper.busy ? "disabled" : ""}>Mapear janela</button>
+        <button class="tree-open-button" ${actionAttr}="uia-capture-element" type="button" ${state.uiaMapper.busy ? "disabled" : ""}>Capturar elemento</button>
+        <button class="tree-open-button" ${actionAttr}="uia-select-visual" type="button" ${state.uiaMapper.map && !state.uiaMapper.busy ? "" : "disabled"}>Passar mouse e capturar</button>
+        <button class="tree-open-button" ${actionAttr}="uia-highlight-element" type="button" ${selectedUiaElement() ? "" : "disabled"}>Destacar</button>
+      </div>
+      <div class="uia-status ${state.uiaMapper.busy ? "is-busy" : ""}">
+        ${escapeHtml(state.uiaMapper.busy ? "Mapeando a janela sem travar a interface..." : state.uiaMapper.message)}
+      </div>
+      <input class="uia-search" ${fieldAttr}="uiaSearch" type="search" value="${escapeHtml(state.uiaMapper.query)}" placeholder="Buscar por nome, AutomationId, tipo ou classe" />
+      <div class="uia-content">
+        <div class="uia-tree" tabindex="0" aria-label="Elementos mapeados">${renderUiaMapperTree()}</div>
+        <aside class="uia-side">${renderUiaSelectedPanel()}</aside>
+      </div>
+      <button class="tree-save-button" ${actionAttr}="uia-use-element" type="button" ${selectedUiaElement() ? "" : "disabled"}>${escapeHtml(useLabel)}</button>
+    </div>
+  `;
+}
+
+function selectedUiaWindowTarget() {
+  const hwnd = Number(state.uiaMapper.selectedWindowHwnd || 0);
+  if (hwnd) {
+    return (state.uiaMapper.windows || []).find((item) => Number(item.hwnd) === hwnd) || { hwnd };
+  }
+  return state.assist?.targetWindow || null;
+}
+
+function mergeUiaElementIntoCurrentMap(element = {}) {
+  const prepared = prepareUiaElementForBlock(element);
+  if (!prepared || !Object.keys(prepared).length) {
+    return null;
+  }
+  const elements = uiaFlatElements();
+  const existingIndex = elements.findIndex((item) => String(item.id) === String(prepared.id));
+  if (!state.uiaMapper.map) {
+    state.uiaMapper.map = {
+      ok: true,
+      count: 1,
+      elements: [prepared],
+      tree: prepared,
+      source_window: prepared.source_window || {},
+      source_tab: prepared.source_tab || "",
+      context_signature: prepared.context_signature || "",
+    };
+  } else if (existingIndex >= 0) {
+    state.uiaMapper.map.elements = elements.map((item, index) => index === existingIndex ? prepared : item);
+  } else {
+    state.uiaMapper.map.elements = [...elements, prepared];
+    state.uiaMapper.map.count = state.uiaMapper.map.elements.length;
+  }
+  state.uiaMapper.selectedId = prepared.id || "";
+  return prepared;
+}
+
+async function selectUiaElementVisually() {
+  const target = selectedUiaWindowTarget();
+  setMessage("Modo captura ativo: passe o mouse no elemento desejado e clique para confirmar.", "info");
+  const result = await invoke("select_uia_element_from_window", {
+    title: target?.title || null,
+    hwnd: target?.hwnd ? Number(target.hwnd) : null,
+    timeout: 20,
+  });
+  if (!result?.ok) {
+    throw new Error(result?.erro || "Selecao visual cancelada.");
+  }
+  const element = mergeUiaElementIntoCurrentMap(result.element || {});
+  state.uiaMapper.message = `Selecionado na janela: ${uiaElementLabel(element)}.`;
+  return element;
+}
+
+async function refreshUiaWindowCatalog() {
+  state.uiaMapper.busy = true;
+  state.uiaMapper.message = "Atualizando janelas abertas...";
+  try {
+    const result = await invoke("list_open_windows");
+    state.uiaMapper.windows = Array.isArray(result?.items) ? result.items.map(normalizeAssistTargetWindow) : [];
+    state.uiaMapper.message = state.uiaMapper.windows.length
+      ? "Escolha a janela que deseja mapear e clique em Mapear janela."
+      : "Nenhuma janela disponivel encontrada.";
+  } catch (error) {
+    state.uiaMapper.message = String(error);
+    setMessage(String(error), "error");
+  } finally {
+    state.uiaMapper.busy = false;
+  }
+}
+
+function preloadUiaWindowsForDetails(order) {
+  const currentEvent = findRoadmapEventByOrder(Number(order));
+  if (currentEvent?.type !== "uia_elemento" || state.uiaMapper.windows.length || state.uiaMapper.busy) {
+    return;
+  }
+  refreshUiaWindowCatalog().then(() => {
+    if (Number(state.expandedTreeCardOrder) === Number(order)) {
+      renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    }
+  });
 }
 
 function chromeWebFriendlyError(resultOrError) {
@@ -6607,6 +7372,47 @@ function renderRelativeOcrPreviewOverlay(relativeOcr = {}, clickTarget = {}) {
   `;
 }
 
+function renderFailureFlowFields(
+  fieldAttr,
+  failureAction = "parar",
+  failureBlock = "",
+  failureSequence = "",
+  failureSequenceDelay = 0,
+  currentOrder = null,
+) {
+  const action = String(failureAction || "parar");
+  const block = String(failureBlock ?? "");
+  const sequence = String(failureSequence ?? "");
+  return `
+    <label>
+      <span>Se falhar</span>
+      <select ${fieldAttr}="failureAction">
+        <option value="parar" ${action === "parar" ? "selected" : ""}>Parar</option>
+        <option value="continuar" ${action === "continuar" ? "selected" : ""}>Continuar</option>
+        <option value="ir_para_bloco" ${action === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
+        <option value="ir_para_sequencia" ${action === "ir_para_sequencia" ? "selected" : ""}>Ir para pagina</option>
+      </select>
+    </label>
+    ${renderActionTargetFields(
+      fieldAttr,
+      "failureAction",
+      action,
+      "failureSequence",
+      sequence,
+      "failureBlock",
+      block,
+      currentOrder,
+      {
+        sequenceLabel: "Abrir esta pagina",
+        blockLabel: "Abrir este bloco",
+        delayFieldName: "failureSequenceDelay",
+        delayValue: failureSequenceDelay,
+        delayLabel: "Esperar antes de ir (s)",
+      }
+    )}
+  `;
+}
+
 function updateRelativeOcrPreviewOverlay(container) {
   if (!container) {
     return;
@@ -7458,6 +8264,30 @@ function renderCompactTreeEditorFields(event) {
     `);
   }
 
+  if (event.type === "uia_elemento") {
+    const element = uiaElementFromDetails(details);
+    const configured = details.acao_configurada || {};
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Elemento", value: uiaKindLabel(element) },
+      { label: "Nome", value: details.block_name || uiaElementLabel(element) },
+      { label: "Acao", value: uiaActionLabel(configured.tipo || details.configured_action || details.recommended_action || element.recommended_action) },
+      { label: "Seletor", value: details.selector_quality || element.selector?.quality || "FRAGIL" },
+    ], `
+      ${hiddenTreeField("uiaElementJson", JSON.stringify(element))}
+      ${hiddenTreeField("uiaActionType", configured.tipo || details.configured_action || details.recommended_action || element.recommended_action || "reference_only")}
+      ${hiddenTreeField("uiaValueSource", configured.origem_valor || "texto_fixo")}
+      ${hiddenTreeField("uiaActionValue", configured.valor || "")}
+      ${hiddenTreeField("uiaWorkbook", configured.arquivo || "")}
+      ${hiddenTreeField("uiaSheet", configured.aba || "")}
+      ${hiddenTreeField("uiaColumn", configured.coluna || "")}
+      ${hiddenTreeField("uiaClearBefore", configured.limpar_antes !== false ? "true" : "false")}
+      ${hiddenTreeField("uiaPressAfter", configured.pressionar_depois || "")}
+      ${hiddenTreeField("uiaSaveAs", configured.salvar_em || "")}
+      ${renderSuccessHiddenTreeFields(details)}
+      ${renderFailureHiddenTreeFields(details)}
+    `);
+  }
+
   return renderGenericCompactTreeEditor(event, [
     { label: "Tipo", value: typeChipLabel(event.type) },
     { label: "Resumo", value: event.description || event.command },
@@ -7716,6 +8546,8 @@ function typeChipLabel(type) {
       return "ESTADO DO BOTAO";
     case "chrome_elemento_html":
       return "CHROME/WEB";
+    case "uia_elemento":
+      return "MAPEAR ELEMENTO";
     case "abrir_url":
       return "ABRIR URL";
     case "abrir_programa":
@@ -9816,6 +10648,7 @@ async function createAutomationFromDraft() {
       descricao: String(state.library.createDraft?.descricao || "").trim(),
       categoria: String(state.library.createDraft?.categoria || "").trim() || "Outros",
     });
+    state.insertPanel = null;
     applyPersistedRoadmap(result);
     state.library.items = result.library?.items || state.library.items;
     state.library.categories = result.library?.categories || state.library.categories;
@@ -12826,6 +13659,38 @@ function renderTreeEditorFields(event) {
     return renderChromeBlockFields(event, "tree", event.order);
   }
 
+  if (event.type === "uia_elemento") {
+    const element = uiaElementFromDetails(details);
+    const selector = element.selector || details.selector || {};
+    const warnings = Array.isArray(details.warnings) ? details.warnings.filter(Boolean) : [];
+    hydrateUiaMapperForBlock(event.order, element);
+    return `
+      <div class="field-stack uia-card-fields">
+        <input data-tree-field="uiaElementJson" type="hidden" value="${escapeHtml(JSON.stringify(element))}" />
+        <section class="uia-card-summary uia-card-summary-simple">
+          <span class="uia-kind">${escapeHtml(uiaKindLabel(element))}</span>
+          <h5>${escapeHtml(uiaElementLabel(element))}</h5>
+          <p>Escolha a acao deste bloco. Para trocar o elemento, use o mapeador abaixo.</p>
+          <div class="uia-selector-quality ${uiaQualityClass(details.selector_quality || selector.quality)}">
+            ${escapeHtml((details.selector_quality || selector.quality || "").toUpperCase() === "FORTE" ? "Pronto para usar" : "Verificar elemento")}
+          </div>
+        </section>
+        ${renderUiaActionFields("data-tree-field", details, element)}
+        ${warnings.length ? `<div class="uia-warning">${escapeHtml(warnings.join(" "))}</div>` : ""}
+        ${renderUiaMapperPanel({
+          actionAttr: "data-tree-action",
+          fieldAttr: "data-tree-field",
+          useLabel: "Atualizar bloco com este elemento",
+          compact: true,
+        })}
+        <div class="tree-inline-fields">
+          ${renderSuccessFlowFields("data-tree-field", details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, event.order)}
+          ${renderFailureFlowFields("data-tree-field", details.ao_falhar ?? "parar", details.bloco_falha ?? "", details.sequencia_falha ?? "", details.atraso_antes_sequencia_falha ?? 0, event.order)}
+        </div>
+      </div>
+    `;
+  }
+
   if (event.type === "abrir_url") {
     return renderOpenUrlFields("data-tree-field", details, event.order);
   }
@@ -13217,6 +14082,12 @@ function renderInsertPanel(order) {
       description: "Para clicar, preencher ou ler elementos de paginas no Chrome.",
       hint: "Depois de criar, abra os detalhes e capture o elemento.",
     },
+    uia_element: {
+      title: "Mapear elemento",
+      label: "Janela",
+      description: "Para mapear uma janela Windows e criar um bloco pelo elemento real.",
+      hint: "Use Mapear janela, selecione na arvore e confirme.",
+    },
     key: {
       title: "Tecla",
       label: "Atalho",
@@ -13309,6 +14180,7 @@ function renderInsertPanel(order) {
       </div>
       <div class="insert-type-row is-compact">
         <button class="insert-type-button ${panel.type === "chrome" ? "is-active" : ""}" data-insert-type="chrome" type="button" ${panel.isSaving ? "disabled" : ""}>Chrome/Web</button>
+        <button class="insert-type-button ${panel.type === "uia_element" ? "is-active" : ""}" data-insert-type="uia_element" type="button" ${panel.isSaving ? "disabled" : ""}>Mapear janela</button>
         <button class="insert-type-button ${panel.type === "key" ? "is-active" : ""}" data-insert-type="key" type="button" ${panel.isSaving ? "disabled" : ""}>Tecla</button>
         <button class="insert-type-button ${panel.type === "text" ? "is-active" : ""}" data-insert-type="text" type="button" ${panel.isSaving ? "disabled" : ""}>Texto</button>
         <button class="insert-type-button ${panel.type === "mouse" ? "is-active" : ""}" data-insert-type="mouse" type="button" ${panel.isSaving ? "disabled" : ""}>Mouse</button>
@@ -13576,6 +14448,26 @@ function renderInsertPanel(order) {
         </div>
       </div>
     `;
+  } else if (panel.type === "uia_element") {
+    const selectedElement = panel.uiaElement || selectedUiaElement();
+    body = `
+      ${renderUiaMapperPanel()}
+      ${selectedElement ? renderUiaActionFields("data-insert-field", {
+        acao_configurada: {
+          ...(selectedElement.acao_configurada || {}),
+          tipo: panel.uiaActionType || selectedElement.configured_action || selectedElement.recommended_action,
+          origem_valor: panel.uiaValueSource || selectedElement.acao_configurada?.origem_valor || "texto_fixo",
+          valor: panel.uiaActionValue ?? selectedElement.acao_configurada?.valor ?? "",
+          arquivo: panel.uiaWorkbook ?? selectedElement.acao_configurada?.arquivo ?? "",
+          aba: panel.uiaSheet ?? selectedElement.acao_configurada?.aba ?? "",
+          coluna: panel.uiaColumn ?? selectedElement.acao_configurada?.coluna ?? "",
+          limpar_antes: panel.uiaClearBefore ?? selectedElement.acao_configurada?.limpar_antes ?? true,
+          pressionar_depois: panel.uiaPressAfter ?? selectedElement.acao_configurada?.pressionar_depois ?? "",
+          salvar_em: panel.uiaSaveAs ?? selectedElement.acao_configurada?.salvar_em ?? "",
+        },
+        recommended_action: selectedElement.recommended_action,
+      }, selectedElement) : ""}
+    `;
   } else if (panel.type === "open_url") {
     body = renderOpenUrlFields("data-insert-field", {
       url: panel.openUrl,
@@ -13691,39 +14583,25 @@ function renderInsertPanel(order) {
 }
 
 function renderEmptyCommandMapStarter() {
-  const pageDefinition = getCommandMapPageDefinition(state.commandMapPageSequence);
-  const hasAnyEvent = Boolean(state.roadmap?.events?.length);
-  if (!state.insertPanel || state.insertPanel.targetOrder !== 0) {
-    return `
-      <div class="empty-command-map-state">
-        <div class="empty-command-map-copy">
-          <p class="panel-kicker">${escapeHtml(pageDefinition.label)}</p>
-          <h3>${hasAnyEvent ? "Esta pagina ainda esta vazia" : "Crie o primeiro bloco por aqui"}</h3>
-          <p>${hasAnyEvent
-            ? `Adicione uma sequencia nesta ${escapeHtml(pageDefinition.label.toLowerCase())} para separar esse fluxo do restante da automacao.`
-            : "A automacao ainda nao tem comandos. Escolha um tipo abaixo para comecar direto no mapa."}</p>
-        </div>
-        <div class="empty-command-map-actions">
-          <button class="insert-type-button is-active" data-empty-insert-type="key" type="button">Tecla</button>
-          <button class="insert-type-button" data-empty-insert-type="text" type="button">Texto</button>
-          <button class="insert-type-button" data-empty-insert-type="mouse" type="button">Mouse</button>
-          <button class="insert-type-button" data-empty-insert-type="image" type="button">Reconhecimento</button>
-          <button class="insert-type-button" data-empty-insert-type="chrome" type="button">Chrome/Web</button>
-          <button class="insert-type-button" data-empty-insert-type="open_url" type="button">Abrir URL</button>
-          <button class="insert-type-button" data-empty-insert-type="open_program" type="button">Abrir Programa</button>
-          <button class="insert-type-button" data-empty-insert-type="save_download" type="button">Salvar download</button>
-          <button class="insert-type-button" data-empty-insert-type="spreadsheet" type="button">Planilha</button>
-          <button class="insert-type-button" data-empty-insert-type="write_spreadsheet" type="button">Escrever celula</button>
-          <button class="insert-type-button" data-empty-insert-type="loop_start" type="button">Inicio loop</button>
-          <button class="insert-type-button" data-empty-insert-type="loop_end" type="button">Fim loop</button>
-        </div>
-      </div>
-    `;
-  }
+  const shouldShowInsertPanel =
+    state.insertPanel &&
+    Number(state.insertPanel.targetOrder) === 0 &&
+    state.insertPanel.emptyStarterOpen;
 
   return `
-    <div class="empty-command-map-panel-wrap">
-      ${renderInsertPanel(0)}
+    <div class="empty-command-map-start-row ${shouldShowInsertPanel ? "is-open" : ""}">
+      <button class="empty-command-map-add" data-empty-insert-open type="button" aria-label="Criar primeiro bloco" title="Criar primeiro bloco">
+        <span>+</span>
+      </button>
+      ${
+        shouldShowInsertPanel
+          ? `
+            <div class="empty-command-map-panel-wrap">
+              ${renderInsertPanel(0)}
+            </div>
+          `
+          : ""
+      }
     </div>
   `;
 }
@@ -13931,6 +14809,32 @@ window.addEventListener("keydown", (event) => {
       return;
     }
     moveCommandMapFocus(1);
+    return;
+  }
+
+  if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+    event.preventDefault();
+    const now = performance.now();
+    if (event.repeat || now - Number(state.commandMapReorderKeyLastAt || 0) < 140) {
+      return;
+    }
+    state.commandMapReorderKeyLastAt = now;
+
+    const focusedOrder = Number(state.expandedTreeCardOrder || state.commandMapFocusOrder || 0);
+    if (!Number.isFinite(focusedOrder) || focusedOrder <= 0) {
+      return;
+    }
+
+    const direction = event.key === "ArrowUp" ? "down" : "up";
+    if (state.expandedTreeCardOrder) {
+      closeExpandedTreeCard();
+      requestAnimationFrame(() => {
+        void moveCommandMapCardByStep(focusedOrder, direction, { instant: true });
+      });
+      return;
+    }
+
+    void moveCommandMapCardByStep(focusedOrder, direction, { instant: true });
   }
 });
 
@@ -14012,8 +14916,8 @@ function renderCommandMap(options = {}) {
     return;
   }
 
-  const renderInlineConnector = ({ label, value, order = "", insertDelay = false }) => `
-    <div class="command-inline-connector ${insertDelay ? "is-insert-connector" : ""}" data-target-index="${escapeHtml(order || "")}" data-layout-key="${escapeHtml(insertDelay ? `insert:${label}` : `next:${order || label}`)}">
+  const renderInlineConnector = ({ label, value, order = "", insertDelay = false, extraClass = "" }) => `
+    <div class="command-inline-connector ${insertDelay ? "is-insert-connector" : ""} ${escapeHtml(extraClass)}" data-target-index="${escapeHtml(order || "")}" data-layout-key="${escapeHtml(insertDelay ? `insert:${label}` : `next:${order || label}`)}">
       <label class="connector-time connector-time-inline">
         <span class="connector-link-label">${escapeHtml(label)}</span>
         <input
@@ -14148,6 +15052,7 @@ function renderCommandMap(options = {}) {
         label: `novo > ${event.order}`,
         value: event.delay,
         order: event.order,
+        extraClass: "is-new-block-forward-connector is-new-block-start-connector",
       });
       return `
         ${insertSegment}
@@ -14161,7 +15066,7 @@ function renderCommandMap(options = {}) {
       if (shouldRenderInsert) {
         return `
           ${card}
-          ${renderInlineConnector({ label: `${event.order} > novo`, value: insertDelayValue, insertDelay: true })}
+          ${renderInlineConnector({ label: `${event.order} > novo`, value: insertDelayValue, insertDelay: true, extraClass: "is-new-block-back-connector" })}
           ${insertSegment}
           <div class="command-flow-end">Fim da ${escapeHtml(pageDefinition.label.toLowerCase())}</div>
         `;
@@ -14172,16 +15077,16 @@ function renderCommandMap(options = {}) {
     if (state.insertPanel?.position === "before" && Number(state.insertPanel.targetOrder) === Number(nextEvent.order)) {
       return `
         ${card}
-        ${renderInlineConnector({ label: `${event.order} > novo`, value: state.insertPanel.delay ?? 0.3, insertDelay: true })}
+        ${renderInlineConnector({ label: `${event.order} > novo`, value: state.insertPanel.delay ?? 0.3, insertDelay: true, extraClass: "is-new-block-back-connector" })}
       `;
     }
 
     if (shouldRenderInsert) {
       return `
         ${card}
-        ${renderInlineConnector({ label: `${event.order} > novo`, value: insertDelayValue, insertDelay: true })}
+        ${renderInlineConnector({ label: `${event.order} > novo`, value: insertDelayValue, insertDelay: true, extraClass: "is-new-block-back-connector" })}
         ${insertSegment}
-        ${renderInlineConnector({ label: `novo > ${nextEvent.order}`, value: nextEvent.delay, order: nextEvent.order })}
+        ${renderInlineConnector({ label: `novo > ${nextEvent.order}`, value: nextEvent.delay, order: nextEvent.order, extraClass: "is-new-block-forward-connector" })}
       `;
     }
 
@@ -14430,6 +15335,7 @@ function withOperationTimeout(promise, timeoutMs = 12000, message = "A operacao 
 
 function formValuesFromCard(card) {
   const get = (field) => card.querySelector(`[data-field="${field}"]`);
+  const getChecked = (field) => card.querySelector(`[data-field="${field}"]:checked`);
   return {
     delay: parseNumber(get("delay")?.value, 0),
     successAction: get("successAction")?.value ?? "continuar",
@@ -14507,6 +15413,19 @@ function formValuesFromCard(card) {
     chromeClearBefore: Boolean(get("chromeClearBefore")?.checked),
     chromeFallbackVisual: Boolean(get("chromeFallbackVisual")?.checked),
     chromeFallbackImage: get("chromeFallbackImage")?.value ?? "",
+    uiaElement: parseUiaElementJson(get("uiaElementJson")?.value) || state.insertPanel?.uiaElement || selectedUiaElement(),
+    uiaActionType: get("uiaActionType")?.value ?? "",
+    uiaValueSource: getChecked("uiaValueSource")?.value ?? get("uiaValueSource")?.value ?? "texto_fixo",
+    uiaActionValue: get("uiaActionValue")?.value ?? "",
+    uiaWorkbook: get("uiaWorkbook")?.value ?? "",
+    uiaSheet: get("uiaSheet")?.value ?? "",
+    uiaColumn: get("uiaColumn")?.value ?? "",
+    uiaClearBefore: get("uiaClearBefore")
+      ? (get("uiaClearBefore")?.type === "checkbox" ? Boolean(get("uiaClearBefore")?.checked) : parseBoolean(get("uiaClearBefore")?.value, true))
+      : true,
+    uiaPressAfter: get("uiaPressAfter")?.value ?? "",
+    uiaSaveAs: get("uiaSaveAs")?.value ?? "",
+    uiaSearch: get("uiaSearch")?.value ?? state.uiaMapper.query,
     openUrl: get("openUrl")?.value ?? "",
     openBrowser: get("openBrowser")?.value ?? "padrao",
     openMode: get("openMode")?.value ?? "nova_janela",
@@ -14540,6 +15459,7 @@ function formValuesFromCard(card) {
 
 function treeValuesFromCard(card) {
   const get = (field) => card.querySelector(`[data-tree-field="${field}"]`);
+  const getChecked = (field) => card.querySelector(`[data-tree-field="${field}"]:checked`);
   return {
     delay: parseNumber(card.dataset.delay, 0),
     successAction: get("successAction")?.value ?? "continuar",
@@ -14617,6 +15537,19 @@ function treeValuesFromCard(card) {
     chromeClearBefore: Boolean(get("chromeClearBefore")?.checked),
     chromeFallbackVisual: Boolean(get("chromeFallbackVisual")?.checked),
     chromeFallbackImage: get("chromeFallbackImage")?.value ?? "",
+    uiaElement: parseUiaElementJson(get("uiaElementJson")?.value) || uiaElementFromDetails(findRoadmapEventByOrder(Number(card.dataset.order))?.details || {}),
+    uiaActionType: get("uiaActionType")?.value ?? "",
+    uiaValueSource: getChecked("uiaValueSource")?.value ?? get("uiaValueSource")?.value ?? "texto_fixo",
+    uiaActionValue: get("uiaActionValue")?.value ?? "",
+    uiaWorkbook: get("uiaWorkbook")?.value ?? "",
+    uiaSheet: get("uiaSheet")?.value ?? "",
+    uiaColumn: get("uiaColumn")?.value ?? "",
+    uiaClearBefore: get("uiaClearBefore")
+      ? (get("uiaClearBefore")?.type === "checkbox" ? Boolean(get("uiaClearBefore")?.checked) : parseBoolean(get("uiaClearBefore")?.value, true))
+      : true,
+    uiaPressAfter: get("uiaPressAfter")?.value ?? "",
+    uiaSaveAs: get("uiaSaveAs")?.value ?? "",
+    uiaSearch: get("uiaSearch")?.value ?? state.uiaMapper.query,
     openUrl: get("openUrl")?.value ?? "",
     openBrowser: get("openBrowser")?.value ?? "padrao",
     openMode: get("openMode")?.value ?? "nova_janela",
@@ -14985,6 +15918,36 @@ function commandCardHasUnsavedChanges(snapshot) {
     );
   }
 
+  if (snapshot.type === "uia_elemento") {
+    const nextElement = values.uiaElement || {};
+    const nextSelector = nextElement.selector || {};
+    const currentSelector = details.selector || {};
+    const configured = details.acao_configurada || {};
+    return (
+      normalizeStringValue(nextElement.name || values.uiaName) !== normalizeStringValue(details.elemento?.name || details.block_name)
+      || normalizeStringValue(nextElement.control_type) !== normalizeStringValue(details.elemento?.control_type)
+      || normalizeStringValue(nextSelector.query) !== normalizeStringValue(currentSelector.query)
+      || normalizeStringValue(nextSelector.quality || nextElement.selector_quality) !== normalizeStringValue(details.selector_quality || currentSelector.quality)
+      || normalizeStringValue(values.uiaActionType || nextElement.configured_action) !== normalizeStringValue(configured.tipo || details.configured_action || details.recommended_action)
+      || normalizeStringValue(values.uiaValueSource) !== normalizeStringValue(configured.origem_valor || "texto_fixo")
+      || normalizeStringValue(values.uiaActionValue) !== normalizeStringValue(configured.valor || "")
+      || normalizeStringValue(values.uiaWorkbook) !== normalizeStringValue(configured.arquivo || "")
+      || normalizeStringValue(values.uiaSheet) !== normalizeStringValue(configured.aba || "")
+      || normalizeStringValue(values.uiaColumn) !== normalizeStringValue(configured.coluna || "")
+      || Boolean(values.uiaClearBefore) !== Boolean(configured.limpar_antes ?? true)
+      || normalizeStringValue(values.uiaPressAfter) !== normalizeStringValue(configured.pressionar_depois || "")
+      || normalizeStringValue(values.uiaSaveAs) !== normalizeStringValue(configured.salvar_em || "")
+      || successFlowChanged(values, details)
+      || normalizeStringValue(values.failureAction) !== normalizeStringValue(details.ao_falhar ?? "parar")
+      || Number(optionalPositiveInt(values.failureBlock) || 0) !== Number(details.bloco_falha ?? 0)
+      || normalizeStringValue(values.failureSequence) !== normalizeStringValue(details.sequencia_falha ?? "")
+      || !approxEqual(
+        normalizeTransitionDelay(values.failureSequenceDelay),
+        normalizeTransitionDelay(details.atraso_antes_sequencia_falha ?? 0),
+      )
+    );
+  }
+
   if (snapshot.type === "abrir_url") {
     return (
       normalizeStringValue(values.openUrl) !== normalizeStringValue(details.url)
@@ -15200,6 +16163,30 @@ async function invokeCommandCardUpdate(snapshot) {
       quantidadeTentativas: details.quantidade_tentativas,
       intervaloTentativas: details.intervalo_tentativas,
       delay: values.delay,
+    });
+  }
+
+  if (type === "uia_elemento") {
+    const element = buildUiaElementWithActionValues(values.uiaElement || {}, values);
+    if (!element || typeof element !== "object" || !Object.keys(element).length) {
+      throw new Error(`O bloco ${order} de elemento mapeado esta sem seletor.`);
+    }
+    return invoke("update_uia_element_block", {
+      order,
+      element,
+      delay: values.delay,
+      aoSucesso: values.successAction,
+      blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
+      aoFalhar: values.failureAction,
+      blocoFalha: optionalPositiveInt(values.failureBlock),
+      sequenciaFalha: values.failureAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.failureSequence)
+        : null,
+      atrasoSequenciaFalha: transitionSequenceDelayArg(values.failureAction, values.failureSequenceDelay),
     });
   }
 
@@ -15497,6 +16484,7 @@ async function autoSaveCommandMapPageSwitch() {
 
 function insertValuesFromPanel(panelElement) {
   const get = (field) => panelElement.querySelector(`[data-insert-field="${field}"]`);
+  const getChecked = (field) => panelElement.querySelector(`[data-insert-field="${field}"]:checked`);
   return {
     type: state.insertPanel?.type ?? "key",
     targetOrder: Number(panelElement.dataset.targetOrder),
@@ -15565,6 +16553,19 @@ function insertValuesFromPanel(panelElement) {
     chromeClearBefore: Boolean(get("chromeClearBefore")?.checked ?? state.insertPanel?.chromeClearBefore),
     chromeFallbackVisual: Boolean(get("chromeFallbackVisual")?.checked ?? state.insertPanel?.chromeFallbackVisual),
     chromeFallbackImage: get("chromeFallbackImage")?.value ?? state.insertPanel?.chromeFallbackImage ?? "",
+    uiaElement: state.insertPanel?.uiaElement || selectedUiaElement(),
+    uiaActionType: get("uiaActionType")?.value ?? state.insertPanel?.uiaActionType ?? "",
+    uiaValueSource: getChecked("uiaValueSource")?.value ?? get("uiaValueSource")?.value ?? state.insertPanel?.uiaValueSource ?? "texto_fixo",
+    uiaActionValue: get("uiaActionValue")?.value ?? state.insertPanel?.uiaActionValue ?? "",
+    uiaWorkbook: get("uiaWorkbook")?.value ?? state.insertPanel?.uiaWorkbook ?? "",
+    uiaSheet: get("uiaSheet")?.value ?? state.insertPanel?.uiaSheet ?? "",
+    uiaColumn: get("uiaColumn")?.value ?? state.insertPanel?.uiaColumn ?? "",
+    uiaClearBefore: get("uiaClearBefore")
+      ? (get("uiaClearBefore")?.type === "checkbox" ? Boolean(get("uiaClearBefore")?.checked) : parseBoolean(get("uiaClearBefore")?.value, true))
+      : (state.insertPanel?.uiaClearBefore ?? true),
+    uiaPressAfter: get("uiaPressAfter")?.value ?? state.insertPanel?.uiaPressAfter ?? "",
+    uiaSaveAs: get("uiaSaveAs")?.value ?? state.insertPanel?.uiaSaveAs ?? "",
+    uiaSearch: get("uiaSearch")?.value ?? state.insertPanel?.uiaSearch ?? state.uiaMapper.query,
     openUrl: get("openUrl")?.value ?? state.insertPanel?.openUrl ?? "",
     openBrowser: get("openBrowser")?.value ?? state.insertPanel?.openBrowser ?? "padrao",
     openMode: get("openMode")?.value ?? state.insertPanel?.openMode ?? "nova_janela",
@@ -15611,6 +16612,7 @@ function closeInsertPanelWithAnimation(panelElement) {
   }
 
   panelElement.classList.add("is-closing");
+  panelElement.closest(".command-flow-row")?.classList.add("is-insert-closing");
   const layoutSnapshot = captureCommandMapCardPositions();
   window.setTimeout(() => {
     if (state.insertPanel === panelState || Number(state.insertPanel?.targetOrder) === targetOrder) {
@@ -16578,6 +17580,7 @@ launcherList.addEventListener("click", async (event) => {
       }
       setBusy("Abrindo");
       const result = await invoke("open_saved_automation", { id: automationId });
+      state.insertPanel = null;
       applyPersistedRoadmap(result);
       await refreshTestLoopData();
       state.library.items = result.library?.items || state.library.items;
@@ -17793,6 +18796,27 @@ commandMapList.addEventListener("change", (event) => {
     return;
   }
 
+  if (
+    target.matches('[data-tree-field="uiaActionType"], [data-tree-field="uiaValueSource"], [data-tree-field="uiaWorkbook"], [data-tree-field="uiaSheet"], [data-insert-field="uiaActionType"], [data-insert-field="uiaValueSource"], [data-insert-field="uiaWorkbook"], [data-insert-field="uiaSheet"]')
+  ) {
+    const container = target.closest(".command-tree-card, .insert-card-panel");
+    if (container?.classList.contains("insert-card-panel") && state.insertPanel) {
+      state.insertPanel = {
+        ...state.insertPanel,
+        ...insertValuesFromPanel(container),
+      };
+      renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+      return;
+    }
+    if (container?.classList.contains("command-tree-card")) {
+      const order = Number(container.dataset.order);
+      state.expandedTreeCardOrder = order;
+      syncCommandMapDraftFromCard(container);
+      renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+      return;
+    }
+  }
+
   if (target.matches("[data-jump-delay]")) {
     saveCommandJumpDelayFromInput(target);
     return;
@@ -17914,6 +18938,29 @@ commandMapList.addEventListener("change", (event) => {
     }
     return;
   }
+
+  if (target.matches('[data-uia-window-select]')) {
+    state.uiaMapper.selectedWindowHwnd = target.value || "";
+    const selected = (state.uiaMapper.windows || []).find((item) => String(item.hwnd) === String(target.value));
+    state.uiaMapper.message = selected
+      ? `Janela escolhida para mapear: ${selected.title || "sem titulo"}.`
+      : "Usando a janela ativa ou a janela alvo atual.";
+    return;
+  }
+
+  if (target.matches('[data-insert-field="uiaSearch"], [data-tree-field="uiaSearch"]')) {
+    const panel = target.closest(".uia-mapper-panel");
+    state.uiaMapper.query = target.value || "";
+    if (state.insertPanel) {
+      state.insertPanel.uiaSearch = state.uiaMapper.query;
+    }
+    const tree = panel?.querySelector(".uia-tree");
+    if (tree) {
+      tree.innerHTML = renderUiaMapperTree();
+    }
+    return;
+  }
+
   if (target.matches('[data-tree-field="chromeTargetMethod"]')) {
     const card = target.closest(".command-tree-card");
     const analysis = parseChromeAnalysisJson(card?.querySelector('[data-tree-field="chromeAnalysis"]')?.value);
@@ -18058,7 +19105,7 @@ commandMapList.addEventListener("focusin", (event) => {
   }
 });
 
-commandMapList.addEventListener("click", (event) => {
+commandMapList.addEventListener("click", async (event) => {
   const detailsButton = event.target.closest('button[data-tree-action="open-card-details"]');
   if (!detailsButton) {
     return;
@@ -18072,6 +19119,7 @@ commandMapList.addEventListener("click", (event) => {
   event.stopPropagation();
   setCommandMapFocus(order, "auto", { skipConnectorLayout: true, suppressScroll: true });
   openExpandedTreeCard(order, detailsButton);
+  preloadUiaWindowsForDetails(order);
 }, true);
 
 window.addEventListener("pointermove", (event) => {
@@ -18114,9 +19162,7 @@ window.addEventListener("pointerup", (event) => {
 
   event.preventDefault();
   const targetIndex = getDragTargetIndexFromPoint(event.clientX, event.clientY);
-  if (targetIndex) {
-    updateDragTarget(targetIndex);
-  }
+  updateDragTarget(targetIndex);
   finishCardDrag(true);
 });
 
@@ -18133,7 +19179,7 @@ window.addEventListener("pointercancel", (event) => {
   finishCardDrag(false);
 });
 
-commandMapList.addEventListener("click", (event) => {
+commandMapList.addEventListener("click", async (event) => {
   const recognitionTabButton = event.target.closest("button[data-recognition-tab-target]");
   if (recognitionTabButton) {
     const card = recognitionTabButton.closest(".command-tree-card");
@@ -18214,6 +19260,95 @@ commandMapList.addEventListener("click", (event) => {
   if (action === "open-card-details") {
     setCommandMapFocus(order, "auto", { skipConnectorLayout: true, suppressScroll: true });
     openExpandedTreeCard(order, button);
+    return;
+  }
+
+  if (action === "uia-map-window") {
+    state.uiaMapper.busy = true;
+    state.uiaMapper.message = "Mapeando a janela escolhida...";
+    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    try {
+      const target = selectedUiaWindowTarget();
+      const result = await invoke("map_window_elements", {
+        title: target?.title || null,
+        hwnd: target?.hwnd ? Number(target.hwnd) : null,
+      });
+      if (!result?.ok) {
+        throw new Error(result?.erro || "Nao consegui mapear a janela.");
+      }
+      state.uiaMapper.map = result;
+      state.uiaMapper.selectedId = result.elements?.find((item) => item.actionable)?.id || result.elements?.[0]?.id || "";
+      state.uiaMapper.message = `${result.count || 0} elemento(s) mapeado(s) em ${result.duration_ms || 0}ms.`;
+      setMessage("Mapa carregado. Selecione pela lista ou use Selecionar na janela.", "success");
+    } catch (error) {
+      state.uiaMapper.message = String(error);
+      setMessage(String(error), "error");
+    } finally {
+      state.uiaMapper.busy = false;
+      renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    }
+    return;
+  }
+
+  if (action === "uia-capture-element") {
+    state.uiaMapper.busy = true;
+    state.uiaMapper.message = "Passe o mouse no elemento da janela alvo e clique para capturar.";
+    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    try {
+      const element = await selectUiaElementVisually();
+      state.uiaMapper.message = `Elemento capturado: ${uiaElementLabel(element)}.`;
+      await invoke("highlight_uia_element", { element }).catch(() => null);
+      setMessage("Elemento capturado.", "success");
+    } catch (error) {
+      state.uiaMapper.message = String(error);
+      setMessage(String(error), "error");
+    } finally {
+      state.uiaMapper.busy = false;
+      renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    }
+    return;
+  }
+
+  if (action === "uia-select-visual") {
+    state.uiaMapper.busy = true;
+    state.uiaMapper.message = "Clique no contorno do elemento na janela alvo.";
+    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    try {
+      const element = await selectUiaElementVisually();
+      await invoke("highlight_uia_element", { element }).catch(() => null);
+      setMessage("Elemento selecionado na janela.", "success");
+    } catch (error) {
+      state.uiaMapper.message = String(error);
+      setMessage(String(error), "error");
+    } finally {
+      state.uiaMapper.busy = false;
+      renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    }
+    return;
+  }
+
+  if (action === "uia-highlight-element") {
+    const element = selectedUiaElement();
+    if (element) {
+      await invoke("highlight_uia_element", { element }).catch((error) => setMessage(String(error), "error"));
+    }
+    return;
+  }
+
+  if (action === "uia-use-element") {
+    const currentValues = treeValuesFromCard(card);
+    const element = buildUiaElementWithActionValues(selectedUiaElement() || {}, currentValues);
+    if (!element || !Object.keys(element).length) {
+      setMessage("Selecione um elemento mapeado antes de atualizar o bloco.", "error");
+      return;
+    }
+    const hidden = card.querySelector('[data-tree-field="uiaElementJson"]');
+    if (hidden) {
+      hidden.value = JSON.stringify(element);
+    }
+    state.uiaMapper.activeOrder = order;
+    const values = { ...currentValues, uiaElement: element };
+    runMutation("Elemento mapeado atualizado", () => invokeCommandCardUpdate({ order, type, values }));
     return;
   }
 
@@ -18373,10 +19508,53 @@ commandMapList.addEventListener("load", (event) => {
   updateRelativeOcrPreviewOverlay(container);
 }, true);
 
-commandMapList.addEventListener("click", (event) => {
+commandMapList.addEventListener("keydown", async (event) => {
+  const mapperPanel = event.target.closest?.(".uia-mapper-panel");
+  if (!mapperPanel || !event.target.closest?.(".uia-tree")) {
+    return;
+  }
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+    return;
+  }
+  event.preventDefault();
+  const elements = filterUiaElements(state.uiaMapper.query);
+  if (!elements.length) {
+    return;
+  }
+  if (event.key === "Home") {
+    updateUiaMapperSelectionInPanel(mapperPanel, elements[0]);
+    await invoke("highlight_uia_element", { element: elements[0] }).catch(() => null);
+    return;
+  }
+  if (event.key === "End") {
+    const last = elements[elements.length - 1];
+    updateUiaMapperSelectionInPanel(mapperPanel, last);
+    await invoke("highlight_uia_element", { element: last }).catch(() => null);
+    return;
+  }
+  await moveUiaTreeSelection(mapperPanel, event.key === "ArrowDown" ? 1 : -1);
+});
+
+commandMapList.addEventListener("click", async (event) => {
+  const emptyOpenButton = event.target.closest("button[data-empty-insert-open]");
+  if (emptyOpenButton) {
+    state.insertPanel = createInsertPanelState(0, "after");
+    state.insertPanel.emptyStarterOpen = true;
+    state.insertPanel.suppressIntro = false;
+    state.commandMapFocusOrder = 0;
+    renderCommandMap({
+      preserveScroll: true,
+      skipAutoFit: true,
+      suppressFocusScroll: true,
+      quietUpdate: true,
+    });
+    return;
+  }
+
   const emptyTypeButton = event.target.closest("button[data-empty-insert-type]");
   if (emptyTypeButton) {
     state.insertPanel = createInsertPanelState(0, "after");
+    state.insertPanel.emptyStarterOpen = true;
     state.insertPanel.type = emptyTypeButton.dataset.emptyInsertType || "key";
     if (state.insertPanel.type === "spreadsheet" || state.insertPanel.type === "write_spreadsheet") {
       state.insertPanel.workbook = resolveWorkbookId(state.insertPanel.workbook);
@@ -18440,6 +19618,36 @@ commandMapList.addEventListener("click", (event) => {
     return;
   }
 
+  const uiaTreeItem = event.target.closest("button[data-uia-id]");
+  if (uiaTreeItem) {
+    const panel = uiaTreeItem.closest(".insert-card-panel");
+    if (panel && state.insertPanel) {
+      state.insertPanel = {
+        ...state.insertPanel,
+        ...insertValuesFromPanel(panel),
+      };
+    }
+    state.uiaMapper.selectedId = uiaTreeItem.dataset.uiaId || "";
+    const element = selectedUiaElement();
+    const mapperPanel = uiaTreeItem.closest(".uia-mapper-panel");
+    if (mapperPanel && element) {
+      updateUiaMapperSelectionInPanel(mapperPanel, element);
+    } else {
+      renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    }
+    if (element) {
+      await invoke("highlight_uia_element", { element }).catch(() => null);
+    }
+    return;
+  }
+
+  const uiaWindowRefreshButton = event.target.closest("[data-uia-window-refresh]");
+  if (uiaWindowRefreshButton) {
+    await refreshUiaWindowCatalog();
+    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    return;
+  }
+
   const button = event.target.closest("button[data-insert-action], button[data-insert-type]");
   if (!button) {
     return;
@@ -18487,6 +19695,96 @@ commandMapList.addEventListener("click", (event) => {
   if (state.insertPanel.isSaving) {
     return;
   }
+
+  if (action === "uia-map-window") {
+    const values = insertValuesFromPanel(panel);
+    state.uiaMapper.query = values.uiaSearch || "";
+    state.uiaMapper.busy = true;
+    state.uiaMapper.message = "Mapeando janela ativa...";
+    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    try {
+      const target = selectedUiaWindowTarget();
+      const result = await invoke("map_window_elements", {
+        title: target?.title || null,
+        hwnd: target?.hwnd ? Number(target.hwnd) : null,
+      });
+      if (!result?.ok) {
+        throw new Error(result?.erro || "Nao consegui mapear a janela.");
+      }
+      state.uiaMapper.map = result;
+      state.uiaMapper.selectedId = result.elements?.find((item) => item.actionable)?.id || result.elements?.[0]?.id || "";
+      state.uiaMapper.message = `${result.count || 0} elemento(s) mapeado(s) em ${result.duration_ms || 0}ms.`;
+      setMessage("Mapa carregado. Selecione pela lista ou use Selecionar na janela.", "success");
+    } catch (error) {
+      state.uiaMapper.message = String(error);
+      setMessage(String(error), "error");
+    } finally {
+      state.uiaMapper.busy = false;
+      renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    }
+    return;
+  }
+
+  if (action === "uia-capture-element") {
+    state.uiaMapper.busy = true;
+    state.uiaMapper.message = "Passe o mouse no elemento da janela alvo e clique para capturar.";
+    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    try {
+      const element = await selectUiaElementVisually();
+      state.uiaMapper.message = `Elemento capturado: ${uiaElementLabel(element)}.`;
+      await invoke("highlight_uia_element", { element }).catch(() => null);
+      setMessage("Elemento capturado no mapa.", "success");
+    } catch (error) {
+      state.uiaMapper.message = String(error);
+      setMessage(String(error), "error");
+    } finally {
+      state.uiaMapper.busy = false;
+      renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    }
+    return;
+  }
+
+  if (action === "uia-select-visual") {
+    state.uiaMapper.busy = true;
+    state.uiaMapper.message = "Clique no contorno do elemento na janela alvo.";
+    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    try {
+      const element = await selectUiaElementVisually();
+      await invoke("highlight_uia_element", { element }).catch(() => null);
+      setMessage("Elemento selecionado na janela.", "success");
+    } catch (error) {
+      state.uiaMapper.message = String(error);
+      setMessage(String(error), "error");
+    } finally {
+      state.uiaMapper.busy = false;
+      renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    }
+    return;
+  }
+
+  if (action === "uia-highlight-element") {
+    const element = selectedUiaElement();
+    if (element) {
+      await invoke("highlight_uia_element", { element }).catch((error) => setMessage(String(error), "error"));
+    }
+    return;
+  }
+
+  if (action === "uia-use-element") {
+    const element = selectedUiaElement();
+    if (!element) {
+      setMessage("Selecione um elemento antes de criar o bloco.", "error");
+      return;
+    }
+    state.insertPanel = {
+      ...state.insertPanel,
+      ...insertValuesFromPanel(panel),
+      uiaElement: prepareUiaElementForBlock(element),
+    };
+    panel.querySelector('[data-insert-action="save"]')?.click();
+    return;
+  }
+
   if (action === "cancel") {
     closeInsertPanelWithAnimation(panel);
     return;
@@ -18837,6 +20135,42 @@ commandMapList.addEventListener("click", (event) => {
               sequencia: currentSequenceName(),
             });
       };
+    } else if (values.type === "uia_element") {
+      const element = buildUiaElementWithActionValues(values.uiaElement || selectedUiaElement() || {}, values);
+      if (!element || !Object.keys(element).length) {
+        setMessage("Mapeie a janela e selecione um elemento antes de criar esse bloco.", "error");
+        return;
+      }
+      promiseFactory = () =>
+        isFirstBlock
+          ? invoke("add_uia_element_block", {
+              element,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+              aoFalhar: "parar",
+              blocoFalha: null,
+              sequenciaFalha: null,
+              atrasoSequenciaFalha: 0,
+            })
+          : invoke("insert_uia_element_block", {
+              targetOrder: common.targetOrder,
+              position: common.position,
+              element,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+              aoFalhar: "parar",
+              blocoFalha: null,
+              sequenciaFalha: null,
+              atrasoSequenciaFalha: 0,
+            });
     } else if (values.type === "open_url") {
       promiseFactory = () =>
         isFirstBlock

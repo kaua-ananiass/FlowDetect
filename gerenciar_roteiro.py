@@ -48,6 +48,7 @@ TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
 TIPOS_VERIFICACAO = {"verificar_estado_botao"}
 TIPOS_CHROME = {"chrome_elemento_html"}
+TIPOS_UIA = {"uia_elemento"}
 TIPOS_PREPARACAO_TELA = {"abrir_url", "abrir_programa"}
 TIPOS_SUPORTADOS_RUNTIME = {
     "texto_livre",
@@ -59,6 +60,7 @@ TIPOS_SUPORTADOS_RUNTIME = {
     *TIPOS_IMAGEM,
     *TIPOS_VERIFICACAO,
     *TIPOS_CHROME,
+    *TIPOS_UIA,
     *TIPOS_PREPARACAO_TELA,
 }
 MODOS_EXECUCAO_SEQUENCIA = {"normal", "loop_planilha"}
@@ -72,6 +74,7 @@ ARQUIVOS_RUNTIME_ATUALIZACAO = [
     "capturar_mouse_global.py",
     "comandos_teclado.py",
     "overlay_janela_alvo.py",
+    "mapear_elementos_janela.py",
     "listar_janelas_abertas.py",
     "validar_dependencias_instaladas.py",
     "diagnostico_ambiente.py",
@@ -1243,6 +1246,16 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
             f"sucesso:{acao_sucesso}{sufixo_sucesso}]"
         )
 
+    if tipo_evento in TIPOS_UIA:
+        detalhes = metadados or {}
+        elemento = detalhes.get("elemento") or {}
+        seletor = detalhes.get("selector") or {}
+        nome = detalhes.get("block_name") or elemento.get("name") or "Elemento da janela"
+        tipo_funcional = detalhes.get("field_kind") or elemento.get("control_type") or "elemento"
+        acao = detalhes.get("recommended_action") or "reference_only"
+        qualidade = seletor.get("quality") or detalhes.get("selector_quality") or "FRAGIL"
+        return f"[JANELA:{str(nome)[:42]} | {tipo_funcional} | acao:{acao} | seletor:{qualidade}]"
+
     if tipo_evento == "abrir_url":
         detalhes = metadados or {}
         url = str(detalhes.get("url", "") or "").strip()
@@ -1346,6 +1359,14 @@ def montar_comando_python(teclas, tipo_evento, texto_livre=None, metadados=None)
         return (
             f"# chrome_elemento_html metodo={str(alvo.get('metodo', 'css'))!r} "
             f"valor={str(alvo.get('valor', ''))!r} acao={str(acao.get('tipo', 'clicar'))!r}"
+        )
+
+    if tipo_evento in TIPOS_UIA:
+        detalhes = metadados or {}
+        seletor = detalhes.get("selector") or {}
+        return (
+            f"# uia_elemento acao={str(detalhes.get('recommended_action', 'reference_only'))!r} "
+            f"qualidade={str(seletor.get('quality') or detalhes.get('selector_quality', 'FRAGIL'))!r}"
         )
 
     if tipo_evento == "abrir_url":
@@ -1834,8 +1855,13 @@ def criar_bloco_texto(
     bloco_sucesso="",
     sequencia_sucesso="",
     atraso_sequencia_sucesso=0,
+    editavel_execucao=False,
+    rotulo_execucao="",
 ):
     detalhes = aplicar_fluxo_sucesso({}, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
+    detalhes["editavel_execucao"] = bool(editavel_execucao)
+    detalhes["rotulo_execucao"] = str(rotulo_execucao or "").strip()
+    texto = str(texto or "").strip() or "Configurar texto"
     return {
         "ordem": 0,
         "sequencia": normalizar_nome_sequencia(sequencia),
@@ -2114,6 +2140,86 @@ def criar_bloco_chrome_elemento_html(
     }
 
 
+def criar_bloco_uia_elemento(
+    element,
+    delay=0,
+    sequencia="principal",
+    ao_sucesso="continuar",
+    bloco_sucesso="",
+    sequencia_sucesso="",
+    atraso_sequencia_sucesso=0,
+    ao_falhar="parar",
+    bloco_falha="",
+    sequencia_falha="",
+    atraso_sequencia_falha=0,
+):
+    elemento = element if isinstance(element, dict) else {}
+    seletor = elemento.get("selector") or {}
+    nome_base = (
+        elemento.get("name")
+        or elemento.get("automation_id")
+        or elemento.get("class_name")
+        or elemento.get("control_type")
+        or "Elemento da janela"
+    )
+    block_type = str(elemento.get("block_type") or "container_reference")
+    acao = str(elemento.get("recommended_action") or "reference_only")
+    acao_configurada_origem = elemento.get("acao_configurada") if isinstance(elemento.get("acao_configurada"), dict) else {}
+    acao_configurada = {
+        "tipo": str(elemento.get("configured_action") or acao_configurada_origem.get("tipo") or acao),
+        "origem_valor": str(acao_configurada_origem.get("origem_valor") or "texto_fixo"),
+        "valor": str(acao_configurada_origem.get("valor") or ""),
+        "arquivo": str(acao_configurada_origem.get("arquivo") or ""),
+        "aba": str(acao_configurada_origem.get("aba") or ""),
+        "coluna": str(acao_configurada_origem.get("coluna") or ""),
+        "limpar_antes": bool(acao_configurada_origem.get("limpar_antes", True)),
+        "pressionar_depois": str(acao_configurada_origem.get("pressionar_depois") or ""),
+        "salvar_em": str(acao_configurada_origem.get("salvar_em") or ""),
+    }
+    detalhes = {
+        "block_name": str(nome_base).strip(),
+        "block_type": block_type,
+        "field_kind": str(elemento.get("field_kind") or "elemento"),
+        "recommended_action": acao,
+        "configured_action": acao_configurada["tipo"],
+        "acao_configurada": acao_configurada,
+        "selector": seletor,
+        "selector_quality": str(elemento.get("selector_quality") or seletor.get("quality") or "FRAGIL"),
+        "actionable": bool(elemento.get("actionable")),
+        "editable": bool(elemento.get("editable")),
+        "clickable": bool(elemento.get("clickable")),
+        "selectable": bool(elemento.get("selectable")),
+        "expandable": bool(elemento.get("expandable")),
+        "readable": bool(elemento.get("readable")),
+        "visible": bool(elemento.get("visible", elemento.get("is_visible", True))),
+        "enabled": bool(elemento.get("enabled", elemento.get("is_enabled", True))),
+        "warnings": list(elemento.get("warnings") or []),
+        "confidence": str(elemento.get("confidence") or "media"),
+        "source_window": elemento.get("source_window") or {},
+        "source_tab": str(elemento.get("source_tab") or ""),
+        "context_signature": str(elemento.get("context_signature") or ""),
+        "elemento": elemento,
+        "ao_sucesso": str(ao_sucesso or "continuar"),
+        "bloco_sucesso": int(bloco_sucesso) if str(bloco_sucesso or "").strip() else "",
+        "sequencia_sucesso": normalizar_nome_sequencia(sequencia_sucesso) if str(sequencia_sucesso or "").strip() else "",
+        "atraso_antes_sequencia_sucesso": normalizar_atraso_transicao(atraso_sequencia_sucesso),
+        "ao_falhar": str(ao_falhar or "parar"),
+        "bloco_falha": int(bloco_falha) if str(bloco_falha or "").strip() else "",
+        "sequencia_falha": normalizar_nome_sequencia(sequencia_falha) if str(sequencia_falha or "").strip() else "",
+        "atraso_antes_sequencia_falha": normalizar_atraso_transicao(atraso_sequencia_falha),
+    }
+    return {
+        "ordem": 0,
+        "sequencia": normalizar_nome_sequencia(sequencia),
+        "tipo": "uia_elemento",
+        "teclas": ["uia"],
+        "texto": formatar_evento(["uia"], "uia_elemento", metadados=detalhes),
+        "intervalo_antes": round(float(delay), 3),
+        "comando_python": montar_comando_python(["uia"], "uia_elemento", metadados=detalhes),
+        "detalhes": detalhes,
+    }
+
+
 def normalizar_navegador_url(navegador):
     valor = str(navegador or "padrao").strip().lower()
     if valor in {"chrome", "edge"}:
@@ -2306,6 +2412,18 @@ def card_do_evento(evento):
         descricao = (
             f"Acao: {acao.get('tipo', 'clicar')} | "
             f"Timeout {int(detalhes.get('timeout', 10000) or 10000)}ms"
+        )
+    elif tipo == "uia_elemento":
+        titulo = detalhes.get("block_name", "Mapear elemento")
+        elemento = detalhes.get("elemento") or {}
+        seletor = detalhes.get("selector") or {}
+        subtitulo = (
+            f"{detalhes.get('field_kind', 'elemento')} | "
+            f"{elemento.get('control_type', '-')}"
+        )
+        descricao = (
+            f"Acao: {detalhes.get('recommended_action', 'reference_only')} | "
+            f"Seletor: {seletor.get('quality', detalhes.get('selector_quality', 'FRAGIL'))}"
         )
     elif tipo == "abrir_url":
         titulo = "Abrir URL"
@@ -2792,7 +2910,19 @@ def comando_preview_planilha(args):
 
 def comando_adicionar_texto(args):
     payload = carregar_e_normalizar()
-    payload["eventos"].append(criar_bloco_texto(args.text, args.delay, args.sequencia, args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso))
+    payload["eventos"].append(
+        criar_bloco_texto(
+            args.text,
+            args.delay,
+            args.sequencia,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+            getattr(args, "editavel_execucao", False),
+            getattr(args, "rotulo_execucao", ""),
+        )
+    )
     return salvar_e_retornar(payload)
 
 
@@ -2899,6 +3029,26 @@ def comando_adicionar_chrome_html(args):
     return salvar_e_retornar(payload)
 
 
+def comando_adicionar_uia_elemento(args):
+    payload = carregar_e_normalizar()
+    payload["eventos"].append(
+        criar_bloco_uia_elemento(
+            json.loads(args.elemento_json) if args.elemento_json else {},
+            args.delay,
+            args.sequencia,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+            args.ao_falhar,
+            args.bloco_falha,
+            args.sequencia_falha,
+            args.atraso_sequencia_falha,
+        )
+    )
+    return salvar_e_retornar(payload)
+
+
 def comando_adicionar_abrir_url(args):
     payload = carregar_e_normalizar()
     payload["eventos"].append(
@@ -2972,7 +3122,17 @@ def comando_inserir_texto(args):
     payload = carregar_e_normalizar()
     inserir_evento(
         payload,
-        criar_bloco_texto(args.text, args.delay, args.sequencia, args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso),
+        criar_bloco_texto(
+            args.text,
+            args.delay,
+            args.sequencia,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+            getattr(args, "editavel_execucao", False),
+            getattr(args, "rotulo_execucao", ""),
+        ),
         args.target_order,
         args.position,
     )
@@ -3101,6 +3261,29 @@ def comando_inserir_chrome_html(args):
     return salvar_e_retornar(payload)
 
 
+def comando_inserir_uia_elemento(args):
+    payload = carregar_e_normalizar()
+    inserir_evento(
+        payload,
+        criar_bloco_uia_elemento(
+            json.loads(args.elemento_json) if args.elemento_json else {},
+            args.delay,
+            args.sequencia,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+            args.ao_falhar,
+            args.bloco_falha,
+            args.sequencia_falha,
+            args.atraso_sequencia_falha,
+        ),
+        args.target_order,
+        args.position,
+    )
+    return salvar_e_retornar(payload)
+
+
 def comando_inserir_abrir_url(args):
     payload = carregar_e_normalizar()
     inserir_evento(
@@ -3196,6 +3379,10 @@ def comando_atualizar_texto(args):
         raise ValueError("O bloco selecionado nao eh do tipo texto livre.")
     evento["texto"] = args.text
     detalhes = aplicar_fluxo_sucesso(evento.get("detalhes"), args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso)
+    if hasattr(args, "editavel_execucao") and args.editavel_execucao is not None:
+        detalhes["editavel_execucao"] = bool(args.editavel_execucao)
+    if hasattr(args, "rotulo_execucao") and args.rotulo_execucao is not None:
+        detalhes["rotulo_execucao"] = str(args.rotulo_execucao or "").strip()
     evento["detalhes"] = detalhes
     if args.sequencia is not None:
         evento["sequencia"] = normalizar_nome_sequencia(args.sequencia)
@@ -3334,6 +3521,31 @@ def comando_atualizar_chrome_html(args):
         args.intervalo_tentativas,
         args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
         args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
+    )
+    evento.update(bloco)
+    return salvar_e_retornar(payload)
+
+
+def comando_atualizar_uia_elemento(args):
+    payload = carregar_e_normalizar()
+    _, evento = localizar_evento(payload, args.order)
+    if evento.get("tipo") != "uia_elemento":
+        raise ValueError("O bloco selecionado nao eh do tipo Mapear e Capturar Elemento.")
+    elemento_base = dict((evento.get("detalhes") or {}).get("elemento") or {})
+    elemento_novo = json.loads(args.elemento_json) if args.elemento_json else {}
+    elemento_base.update({chave: valor for chave, valor in elemento_novo.items() if valor not in (None, "")})
+    bloco = criar_bloco_uia_elemento(
+        elemento_base,
+        args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
+        args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
+        args.ao_sucesso,
+        args.bloco_sucesso,
+        args.sequencia_sucesso,
+        args.atraso_sequencia_sucesso,
+        args.ao_falhar,
+        args.bloco_falha,
+        args.sequencia_falha,
+        args.atraso_sequencia_falha,
     )
     evento.update(bloco)
     return salvar_e_retornar(payload)
@@ -3588,6 +3800,8 @@ def build_parser():
     add_text.add_argument("--text", required=True)
     add_text.add_argument("--delay", type=float, default=0)
     add_text.add_argument("--sequencia", default="principal")
+    add_text.add_argument("--editavel-execucao", type=lambda value: str(value).lower() in {"1", "true", "sim", "yes"}, default=False)
+    add_text.add_argument("--rotulo-execucao", default="")
     adicionar_argumentos_fluxo_sucesso(add_text)
 
     add_key = subparsers.add_parser("add-key")
@@ -3669,6 +3883,19 @@ def build_parser():
     add_chrome.add_argument("--delay", type=float, default=0)
     add_chrome.add_argument("--sequencia", default="principal")
 
+    add_uia = subparsers.add_parser("add-uia-element")
+    add_uia.add_argument("--elemento-json", required=True)
+    add_uia.add_argument("--ao-sucesso", choices=["continuar", "ir_para_bloco", "ir_para_sequencia"], default="continuar")
+    add_uia.add_argument("--bloco-sucesso", default="")
+    add_uia.add_argument("--sequencia-sucesso", default="")
+    add_uia.add_argument("--atraso-sequencia-sucesso", type=float, default=0)
+    add_uia.add_argument("--ao-falhar", choices=["parar", "continuar", "tentar_novamente", "ir_para_bloco", "ir_para_sequencia"], default="parar")
+    add_uia.add_argument("--bloco-falha", default="")
+    add_uia.add_argument("--sequencia-falha", default="")
+    add_uia.add_argument("--atraso-sequencia-falha", type=float, default=0)
+    add_uia.add_argument("--delay", type=float, default=0)
+    add_uia.add_argument("--sequencia", default="principal")
+
     add_open_url = subparsers.add_parser("add-open-url")
     adicionar_argumentos_abrir_url(add_open_url)
     add_open_url.add_argument("--delay", type=float, default=0)
@@ -3705,6 +3932,8 @@ def build_parser():
     insert_text.add_argument("--text", required=True)
     insert_text.add_argument("--delay", type=float, default=0)
     insert_text.add_argument("--sequencia", default="principal")
+    insert_text.add_argument("--editavel-execucao", type=lambda value: str(value).lower() in {"1", "true", "sim", "yes"}, default=False)
+    insert_text.add_argument("--rotulo-execucao", default="")
     adicionar_argumentos_fluxo_sucesso(insert_text)
 
     insert_key = subparsers.add_parser("insert-key")
@@ -3796,6 +4025,21 @@ def build_parser():
     insert_chrome.add_argument("--delay", type=float, default=0)
     insert_chrome.add_argument("--sequencia", default="principal")
 
+    insert_uia = subparsers.add_parser("insert-uia-element")
+    insert_uia.add_argument("--target-order", type=int, required=True)
+    insert_uia.add_argument("--position", choices=["before", "after"], required=True)
+    insert_uia.add_argument("--elemento-json", required=True)
+    insert_uia.add_argument("--ao-sucesso", choices=["continuar", "ir_para_bloco", "ir_para_sequencia"], default="continuar")
+    insert_uia.add_argument("--bloco-sucesso", default="")
+    insert_uia.add_argument("--sequencia-sucesso", default="")
+    insert_uia.add_argument("--atraso-sequencia-sucesso", type=float, default=0)
+    insert_uia.add_argument("--ao-falhar", choices=["parar", "continuar", "tentar_novamente", "ir_para_bloco", "ir_para_sequencia"], default="parar")
+    insert_uia.add_argument("--bloco-falha", default="")
+    insert_uia.add_argument("--sequencia-falha", default="")
+    insert_uia.add_argument("--atraso-sequencia-falha", type=float, default=0)
+    insert_uia.add_argument("--delay", type=float, default=0)
+    insert_uia.add_argument("--sequencia", default="principal")
+
     insert_open_url = subparsers.add_parser("insert-open-url")
     insert_open_url.add_argument("--target-order", type=int, required=True)
     insert_open_url.add_argument("--position", choices=["before", "after"], required=True)
@@ -3841,6 +4085,8 @@ def build_parser():
     update_text.add_argument("--text", required=True)
     update_text.add_argument("--delay", type=float)
     update_text.add_argument("--sequencia")
+    update_text.add_argument("--editavel-execucao", type=lambda value: str(value).lower() in {"1", "true", "sim", "yes"}, default=None)
+    update_text.add_argument("--rotulo-execucao", default=None)
     adicionar_argumentos_fluxo_sucesso(update_text)
 
     update_key = subparsers.add_parser("update-key")
@@ -3927,6 +4173,20 @@ def build_parser():
     update_chrome.add_argument("--delay", type=float)
     update_chrome.add_argument("--sequencia")
 
+    update_uia = subparsers.add_parser("update-uia-element")
+    update_uia.add_argument("--order", type=int, required=True)
+    update_uia.add_argument("--elemento-json", required=True)
+    update_uia.add_argument("--ao-sucesso", choices=["continuar", "ir_para_bloco", "ir_para_sequencia"], default="continuar")
+    update_uia.add_argument("--bloco-sucesso", default="")
+    update_uia.add_argument("--sequencia-sucesso", default="")
+    update_uia.add_argument("--atraso-sequencia-sucesso", type=float, default=0)
+    update_uia.add_argument("--ao-falhar", choices=["parar", "continuar", "tentar_novamente", "ir_para_bloco", "ir_para_sequencia"], default="parar")
+    update_uia.add_argument("--bloco-falha", default="")
+    update_uia.add_argument("--sequencia-falha", default="")
+    update_uia.add_argument("--atraso-sequencia-falha", type=float, default=0)
+    update_uia.add_argument("--delay", type=float)
+    update_uia.add_argument("--sequencia")
+
     update_open_url = subparsers.add_parser("update-open-url")
     update_open_url.add_argument("--order", type=int, required=True)
     adicionar_argumentos_abrir_url(update_open_url)
@@ -4006,6 +4266,7 @@ COMANDOS = {
     "add-image-click": comando_adicionar_imagem,
     "add-verify-button-state": comando_adicionar_verificacao,
     "add-chrome-html": comando_adicionar_chrome_html,
+    "add-uia-element": comando_adicionar_uia_elemento,
     "add-open-url": comando_adicionar_abrir_url,
     "add-open-program": comando_adicionar_abrir_programa,
     "add-planilha": comando_adicionar_planilha,
@@ -4017,6 +4278,7 @@ COMANDOS = {
     "insert-image-click": comando_inserir_imagem,
     "insert-verify-button-state": comando_inserir_verificacao,
     "insert-chrome-html": comando_inserir_chrome_html,
+    "insert-uia-element": comando_inserir_uia_elemento,
     "insert-open-url": comando_inserir_abrir_url,
     "insert-open-program": comando_inserir_abrir_programa,
     "insert-planilha": comando_inserir_planilha,
@@ -4028,6 +4290,7 @@ COMANDOS = {
     "update-image-click": comando_atualizar_imagem,
     "update-verify-button-state": comando_atualizar_verificacao,
     "update-chrome-html": comando_atualizar_chrome_html,
+    "update-uia-element": comando_atualizar_uia_elemento,
     "update-open-url": comando_atualizar_abrir_url,
     "update-open-program": comando_atualizar_abrir_programa,
     "update-planilha": comando_atualizar_planilha,

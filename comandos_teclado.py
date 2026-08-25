@@ -156,11 +156,15 @@ def verificar_estado_botao(
 
 def executar():
     time.sleep(0.3)
-    clicar_por_imagem(imagem='imagens/imagem_capturada_0077', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=2, offset_x=16, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)
+    # uia_elemento acao='set_text' qualidade='FORTE'
     time.sleep(0.3)
-    executar_sequencia([330, 44, 228, 72, 42, 125, 301, 81, 11, 84, 94, 276, 278, 298, 238, 37, 165, 51, 275, 261, 340, 337, 253, 153, 220, 273, 282, 27, 35, 230, 67, 183, 215, 34], acao_apos_item=['enter'], intervalo_entre_itens=0.5)
+    # uia_elemento acao='select' qualidade='FORTE'
     time.sleep(0.3)
-    executar_teclas(['enter'], repeticoes=1)
+    # uia_elemento acao='select_option' qualidade='FORTE'
+    time.sleep(0.3)
+    # uia_elemento acao='select_option' qualidade='FORTE'
+    time.sleep(0.3)
+    # uia_elemento acao='click' qualidade='FORTE'
 
 
 if __name__ == "__main__":

@@ -141,6 +141,7 @@ TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
 TIPOS_VERIFICACAO = {"verificar_estado_botao"}
 TIPOS_CHROME = {"chrome_elemento_html"}
+TIPOS_UIA = {"uia_elemento"}
 TIPOS_PREPARACAO_TELA = {"abrir_url", "abrir_programa"}
 TIPOS_SUPORTADOS_EXECUTOR = {
     "texto_livre",
@@ -154,6 +155,7 @@ TIPOS_SUPORTADOS_EXECUTOR = {
     *TIPOS_IMAGEM,
     *TIPOS_VERIFICACAO,
     *TIPOS_CHROME,
+    *TIPOS_UIA,
     *TIPOS_PREPARACAO_TELA,
 }
 MAPA_PYAUTOGUI = {
@@ -225,6 +227,7 @@ class ExecutorAutomacao:
         self._ultima_busca_template_info = None
         self._ultima_busca_ocr_info = None
         self._ultimo_ocr_global_em = 0.0
+        self._cache_ocr_curto = {}
         self._janela_alvo_perdida_logada = False
         self._conflitos_janela_evento_logados = set()
         self.contexto_variaveis = {}
@@ -1415,7 +1418,232 @@ class ExecutorAutomacao:
             altura_ocr,
         ), limite=limite_reconhecido)
 
-    def confirmar_ocr_relativo(self, local, texto_esperado="", leitura_relativa=None, ordem_bloco=None, dimensoes_referencia=None, marcar_ocr=True):
+    def construir_regiao_ocr_referencia(self, leitura_relativa=None, dimensoes_referencia=None):
+        if not dimensoes_referencia:
+            return None
+        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        try:
+            ref_largura, ref_altura = [int(valor) for valor in dimensoes_referencia]
+        except Exception:
+            return None
+        if ref_largura <= 0 or ref_altura <= 0:
+            return None
+        largura_ocr = max(16, int(leitura.get("largura", leitura.get("width", 140)) or 140))
+        altura_ocr = max(12, int(leitura.get("altura", leitura.get("height", 40)) or 40))
+        offset_x = int(leitura.get("offset_x", leitura.get("offsetX", 0)) or 0)
+        offset_y = int(leitura.get("offset_y", leitura.get("offsetY", 0)) or 0)
+        centro_x = int(ref_largura / 2) + offset_x
+        centro_y = int(ref_altura / 2) + offset_y
+        return self.limitar_regiao(
+            (
+                int(centro_x - largura_ocr / 2),
+                int(centro_y - altura_ocr / 2),
+                largura_ocr,
+                altura_ocr,
+            ),
+            limite=(0, 0, ref_largura, ref_altura),
+        )
+
+    def confirmar_ocr_visual_pela_referencia(self, captura_ocr, caminho_referencia=None, leitura_relativa=None, dimensoes_referencia=None):
+        if not OPENCV_DISPONIVEL or np is None or Image is None or captura_ocr is None or not caminho_referencia:
+            return False
+        try:
+            caminho = Path(caminho_referencia)
+            if not caminho.exists():
+                return False
+            regiao_ref = self.construir_regiao_ocr_referencia(leitura_relativa, dimensoes_referencia=dimensoes_referencia)
+            if not regiao_ref:
+                return False
+            with Image.open(caminho) as imagem_ref:
+                x_ref, y_ref, w_ref, h_ref = [int(valor) for valor in regiao_ref]
+                recorte_ref = imagem_ref.convert("RGB").crop((x_ref, y_ref, x_ref + w_ref, y_ref + h_ref))
+            tela = cv2.cvtColor(np.array(captura_ocr.convert("RGB")), cv2.COLOR_RGB2GRAY)
+            ref = cv2.cvtColor(np.array(recorte_ref), cv2.COLOR_RGB2GRAY)
+            if tela.size <= 0 or ref.size <= 0:
+                return False
+            if tela.shape[:2] != ref.shape[:2]:
+                tela = cv2.resize(tela, (ref.shape[1], ref.shape[0]), interpolation=cv2.INTER_AREA)
+            diff = cv2.absdiff(tela, ref)
+            similaridade_tons = 1.0 - (float(diff.mean()) / 255.0)
+            correlacao = float(cv2.matchTemplate(tela, ref, cv2.TM_CCOEFF_NORMED)[0][0]) if min(ref.shape[:2]) >= 3 else 0.0
+            ref_bin = cv2.threshold(ref, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            tela_bin = cv2.threshold(tela, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            bin_diff = cv2.absdiff(tela_bin, ref_bin)
+            similaridade_binaria = 1.0 - (float(bin_diff.mean()) / 255.0)
+            confirmado = (
+                similaridade_tons >= 0.88
+                and similaridade_binaria >= 0.88
+                and correlacao >= 0.62
+            )
+            safe_print(
+                "OCR visual pela referencia "
+                f"{'confirmou' if confirmado else 'nao confirmou'} "
+                f"(tons={similaridade_tons:.2f}, bin={similaridade_binaria:.2f}, corr={correlacao:.2f}).",
+                flush=True,
+            )
+            return confirmado
+        except Exception as erro:
+            safe_print(f"OCR visual pela referencia falhou: {erro}", flush=True)
+            return False
+
+    def localizar_referencia_por_ancora_ocr(
+        self,
+        caminho_referencia,
+        texto_ocr_esperado="",
+        region=None,
+        leitura_relativa=None,
+        dimensoes_referencia=None,
+    ):
+        esperado = str(texto_ocr_esperado or "").strip()
+        if not esperado or not OCR_DISPONIVEL or not dimensoes_referencia:
+            return None
+        regiao_ref_ocr = self.construir_regiao_ocr_referencia(
+            leitura_relativa,
+            dimensoes_referencia=dimensoes_referencia,
+        )
+        if not regiao_ref_ocr:
+            return None
+        try:
+            ref_largura, ref_altura = [int(valor) for valor in dimensoes_referencia]
+            ref_x, ref_y, ref_w, ref_h = [int(valor) for valor in regiao_ref_ocr]
+        except Exception:
+            return None
+        if ref_largura <= 0 or ref_altura <= 0 or ref_w <= 0 or ref_h <= 0:
+            return None
+
+        regiao_busca = region
+        if regiao_busca is None:
+            try:
+                tela_largura, tela_altura = pyautogui.size()
+                regiao_busca = (0, 0, int(tela_largura), int(tela_altura))
+            except Exception:
+                return None
+
+        local_ocr = self.procurar_texto_por_ocr(esperado, region=regiao_busca)
+        if not local_ocr:
+            return None
+
+        try:
+            largura_lida = max(1, int(local_ocr.get("width", 0) or 0))
+            altura_lida = max(1, int(local_ocr.get("height", 0) or 0))
+            escala_x = largura_lida / max(1, ref_w)
+            escala_y = altura_lida / max(1, ref_h)
+            if not 0.65 <= escala_x <= 1.55:
+                escala_x = 1.0
+            if not 0.65 <= escala_y <= 1.55:
+                escala_y = 1.0
+            centro_ref_x = ref_x + (ref_w / 2.0)
+            centro_ref_y = ref_y + (ref_h / 2.0)
+            centro_ocr_x = float(local_ocr.get("left", 0) or 0) + (largura_lida / 2.0)
+            centro_ocr_y = float(local_ocr.get("top", 0) or 0) + (altura_lida / 2.0)
+            largura_estimativa = max(8, int(round(ref_largura * escala_x)))
+            altura_estimativa = max(8, int(round(ref_altura * escala_y)))
+            esquerda = int(round(centro_ocr_x - (centro_ref_x * escala_x)))
+            topo = int(round(centro_ocr_y - (centro_ref_y * escala_y)))
+            limite = self.limitar_regiao((esquerda, topo, largura_estimativa, altura_estimativa))
+            if limite:
+                esquerda, topo, largura_estimativa, altura_estimativa = limite
+            local = {
+                "x": int(esquerda + largura_estimativa / 2),
+                "y": int(topo + altura_estimativa / 2),
+                "left": int(esquerda),
+                "top": int(topo),
+                "width": int(largura_estimativa),
+                "height": int(altura_estimativa),
+                "score": float(local_ocr.get("score", 0.0) or 0.0),
+                "search_stage": "ocr_anchor",
+                "ocr_anchor_confirmed": True,
+                "ocr_text": str(local_ocr.get("texto", "") or esperado),
+                "ocr_bounds": {
+                    "left": int(local_ocr.get("left", 0) or 0),
+                    "top": int(local_ocr.get("top", 0) or 0),
+                    "width": largura_lida,
+                    "height": altura_lida,
+                },
+            }
+            safe_print(
+                "Imagem localizada por ancora OCR "
+                f"(texto='{esperado}', capturado='{local.get('ocr_text', '')}', "
+                f"area={self.formatar_regiao_log(regiao_busca)}, score={local['score']:.2f}).",
+                flush=True,
+            )
+            return local
+        except Exception as erro:
+            safe_print(f"Falha ao reconstruir referencia pela ancora OCR: {erro}", flush=True)
+            return None
+
+    def localizar_referencia_por_recorte_ocr_visual(
+        self,
+        caminho_referencia,
+        region=None,
+        leitura_relativa=None,
+        dimensoes_referencia=None,
+        confianca=0.78,
+    ):
+        if not OPENCV_DISPONIVEL or np is None or Image is None or not caminho_referencia or not dimensoes_referencia:
+            return None
+        regiao_ref_ocr = self.construir_regiao_ocr_referencia(
+            leitura_relativa,
+            dimensoes_referencia=dimensoes_referencia,
+        )
+        if not regiao_ref_ocr:
+            return None
+        try:
+            ref_largura, ref_altura = [int(valor) for valor in dimensoes_referencia]
+            ref_x, ref_y, ref_w, ref_h = [int(valor) for valor in regiao_ref_ocr]
+            if ref_w <= 4 or ref_h <= 4:
+                return None
+            with Image.open(caminho_referencia) as imagem_ref:
+                recorte_ref = imagem_ref.convert("RGB").crop((ref_x, ref_y, ref_x + ref_w, ref_y + ref_h))
+            captura, base_left, base_top = self.capturar_tela_pil(region=region)
+            tela_gray = cv2.cvtColor(np.array(captura.convert("RGB")), cv2.COLOR_RGB2GRAY)
+            ref_gray = cv2.cvtColor(np.array(recorte_ref), cv2.COLOR_RGB2GRAY)
+            if tela_gray.shape[0] < ref_gray.shape[0] or tela_gray.shape[1] < ref_gray.shape[1]:
+                return None
+            resultado = cv2.matchTemplate(tela_gray, ref_gray, cv2.TM_CCOEFF_NORMED)
+            _min_val, max_val, _min_loc, max_loc = cv2.minMaxLoc(resultado)
+            score = float(max_val or 0.0)
+            if score < float(confianca or 0.78):
+                return None
+
+            ocr_left = int(base_left + max_loc[0])
+            ocr_top = int(base_top + max_loc[1])
+            centro_ocr_x = ocr_left + (ref_w / 2.0)
+            centro_ocr_y = ocr_top + (ref_h / 2.0)
+            centro_ref_x = ref_x + (ref_w / 2.0)
+            centro_ref_y = ref_y + (ref_h / 2.0)
+            esquerda = int(round(centro_ocr_x - centro_ref_x))
+            topo = int(round(centro_ocr_y - centro_ref_y))
+            limite = self.limitar_regiao((esquerda, topo, ref_largura, ref_altura))
+            if limite:
+                esquerda, topo, ref_largura, ref_altura = limite
+            safe_print(
+                "Referencia localizada pelo recorte visual do Ler aqui "
+                f"(score={score:.2f}, area={self.formatar_regiao_log(region)}).",
+                flush=True,
+            )
+            return {
+                "x": int(esquerda + ref_largura / 2),
+                "y": int(topo + ref_altura / 2),
+                "left": int(esquerda),
+                "top": int(topo),
+                "width": int(ref_largura),
+                "height": int(ref_altura),
+                "score": score,
+                "search_stage": "ocr_visual_anchor",
+                "ocr_visual_anchor": True,
+                "ocr_bounds": {
+                    "left": int(ocr_left),
+                    "top": int(ocr_top),
+                    "width": int(ref_w),
+                    "height": int(ref_h),
+                },
+            }
+        except Exception as erro:
+            safe_print(f"Falha ao localizar recorte visual do Ler aqui: {erro}", flush=True)
+            return None
+
+    def confirmar_ocr_relativo(self, local, texto_esperado="", leitura_relativa=None, ordem_bloco=None, dimensoes_referencia=None, marcar_ocr=True, caminho_referencia=None):
         esperado = str(texto_esperado or "").strip()
         leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
         salvar_em = str(leitura.get("salvar_em", "") or "").strip()
@@ -1432,14 +1660,14 @@ class ExecutorAutomacao:
                 captura, _base_left, _base_top = self.capturar_tela_pil(region=regiao_ocr)
             except Exception as erro:
                 safe_print(f"OCR nao confirmou: falha ao capturar area de leitura ({erro}).", flush=True)
-                return ""
-            textos = self.extrair_variantes_texto_ocr_imagem(captura)
+                return "", None
+            textos = self.extrair_textos_ocr_rapido(captura, texto_esperado=esperado)
             if not textos:
                 textos = [
                     self.extrair_texto_ocr_imagem_pil(captura, config="--psm 6"),
                     self.extrair_texto_ocr_imagem_pil(captura, config="--psm 7"),
                 ]
-            return " ".join(texto for texto in textos if texto).strip()
+            return " ".join(texto for texto in textos if texto).strip(), captura
 
         def texto_confirma(capturado_atual):
             if not esperado:
@@ -1454,7 +1682,7 @@ class ExecutorAutomacao:
                 or float(comparacao_atual.get("ratio", 0.0) or 0.0) >= 0.96
             )
 
-        capturado = ler_texto_regiao(regiao)
+        capturado, captura_ocr = ler_texto_regiao(regiao)
         confirmado = texto_confirma(capturado)
 
         if not confirmado:
@@ -1483,14 +1711,27 @@ class ExecutorAutomacao:
                 regiao_ampliada = None
             if regiao_ampliada and regiao_ampliada != regiao:
                 safe_print(f"OCR tentando area ampliada: {self.formatar_regiao_log(regiao_ampliada)}", flush=True)
-                capturado_ampliado = ler_texto_regiao(regiao_ampliada)
+                capturado_ampliado, captura_ampliada = ler_texto_regiao(regiao_ampliada)
                 if texto_confirma(capturado_ampliado):
                     regiao = regiao_ampliada
                     capturado = capturado_ampliado
+                    captura_ocr = captura_ampliada
                     confirmado = True
                 elif not capturado and capturado_ampliado:
                     regiao = regiao_ampliada
                     capturado = capturado_ampliado
+                    captura_ocr = captura_ampliada
+
+        if not confirmado and caminho_referencia:
+            confirmado_visual = self.confirmar_ocr_visual_pela_referencia(
+                captura_ocr,
+                caminho_referencia=caminho_referencia,
+                leitura_relativa=leitura_relativa,
+                dimensoes_referencia=dimensoes_referencia,
+            )
+            if confirmado_visual:
+                capturado = capturado or esperado
+                confirmado = True
 
         if capturado:
             self.salvar_variavel_contexto("ultimo_ocr", capturado)
@@ -1687,6 +1928,60 @@ class ExecutorAutomacao:
             return imagem.resize((largura, altura), metodo)
         except Exception:
             return imagem
+
+    def extrair_textos_ocr_rapido(self, imagem, texto_esperado=""):
+        if not OCR_DISPONIVEL or imagem is None or Image is None:
+            return []
+
+        esperado = self.normalizar_texto_ocr(texto_esperado)
+        possui_digitos = bool(re.search(r"\d", esperado))
+        try:
+            base = imagem.convert("L")
+            maior_lado = max(int(base.width or 0), int(base.height or 0))
+            fator = 4 if maior_lado < 130 else (3 if maior_lado < 260 else 2)
+            ampliada = self.ampliar_imagem_para_ocr(base, fator=fator)
+            variantes = [ampliada]
+            try:
+                histograma = ampliada.histogram()
+                total = max(1, sum(histograma))
+                media = int(sum(indice * valor for indice, valor in enumerate(histograma)) / total)
+            except Exception:
+                media = 128
+            limiar = 128 if media < 120 else 150
+            variantes.append(ampliada.point(lambda valor: 255 if valor >= limiar else 0))
+            if media < 105:
+                variantes.append(ampliada.point(lambda valor: 255 - valor))
+        except Exception:
+            return []
+
+        whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/.-:_ "
+        if possui_digitos and not re.search(r"[a-zA-Z]", esperado):
+            whitelist = "0123456789/.-:"
+        configs = [
+            f"--psm 7 -c tessedit_char_whitelist={whitelist}",
+            f"--psm 6 -c tessedit_char_whitelist={whitelist}",
+        ]
+        if len(esperado.split()) <= 1:
+            configs.insert(0, f"--psm 8 -c tessedit_char_whitelist={whitelist}")
+
+        textos = []
+        for variante in variantes:
+            for config in configs:
+                texto = self.extrair_texto_ocr_imagem_pil(variante, config=config)
+                if texto and texto not in textos:
+                    textos.append(texto)
+                if esperado and texto:
+                    comparacao = self.comparar_texto_reconhecimento_preciso(esperado, texto)
+                    if (
+                        comparacao.get("reference") == comparacao.get("captured")
+                        or (
+                            comparacao.get("has_digits")
+                            and float(comparacao.get("digit_ratio", 0.0) or 0.0) >= 0.999
+                        )
+                        or float(comparacao.get("ratio", 0.0) or 0.0) >= 0.96
+                    ):
+                        return textos
+        return textos
 
     def extrair_variantes_texto_ocr_imagem(self, imagem):
         if not OCR_DISPONIVEL or imagem is None or Image is None:
@@ -2342,6 +2637,13 @@ class ExecutorAutomacao:
             return None
 
         inicio_ocr = time.perf_counter()
+        regiao_chave = tuple(int(valor) for valor in region) if region else None
+        chave_cache = (texto_alvo, regiao_chave)
+        cache = self._cache_ocr_curto.get(chave_cache) if isinstance(self._cache_ocr_curto, dict) else None
+        if cache and time.perf_counter() - float(cache.get("em", 0.0) or 0.0) <= 0.65:
+            self._ultima_busca_ocr_info = dict(cache.get("info") or {})
+            resultado_cache = cache.get("resultado")
+            return dict(resultado_cache) if isinstance(resultado_cache, dict) else None
 
         try:
             captura, base_left, base_top = self.capturar_tela_pil(region=region)
@@ -2349,10 +2651,16 @@ class ExecutorAutomacao:
             raise RuntimeError(f"PyAutoGUI nao conseguiu capturar a tela para OCR: {erro}") from erro
 
         try:
+            area_ocr = max(1, int(captura.width or 0) * int(captura.height or 0))
+            whitelist = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/.-:_ "
+            config_ocr = (
+                f"--psm {'11' if area_ocr > 420000 else '6'} "
+                f"-c tessedit_char_whitelist={whitelist}"
+            )
             dados = pytesseract.image_to_data(
                 captura,
                 output_type=pytesseract.Output.DICT,
-                config="--psm 6",
+                config=config_ocr,
             )
         except Exception:
             return None
@@ -2380,6 +2688,11 @@ class ExecutorAutomacao:
                 "region": list(region) if region else None,
                 "score": 0.0,
                 "used_fallback": False,
+            }
+            self._cache_ocr_curto[chave_cache] = {
+                "em": time.perf_counter(),
+                "resultado": None,
+                "info": dict(self._ultima_busca_ocr_info),
             }
             return None
 
@@ -2429,7 +2742,17 @@ class ExecutorAutomacao:
         }
         if melhor and melhor_pontuacao >= limite:
             safe_print(f"Texto da referencia encontrado por OCR (score={melhor_pontuacao:.2f})", flush=True)
+            self._cache_ocr_curto[chave_cache] = {
+                "em": time.perf_counter(),
+                "resultado": dict(melhor),
+                "info": dict(self._ultima_busca_ocr_info),
+            }
             return melhor
+        self._cache_ocr_curto[chave_cache] = {
+            "em": time.perf_counter(),
+            "resultado": None,
+            "info": dict(self._ultima_busca_ocr_info),
+        }
         return None
 
     def procurar_imagem_por_template(self, caminho_imagem, confianca=0.8, region=None, perfil_busca="balanced"):
@@ -3870,6 +4193,487 @@ class ExecutorAutomacao:
             f"Falha ao executar bloco Chrome: {nome_bloco} | metodo={metodo} | alvo={valor_alvo} | erro: {ultima_falha}"
         ) from ultima_falha
 
+    def carregar_uia_runtime(self):
+        try:
+            import uiautomation as auto
+
+            return auto
+        except Exception as erro:
+            raise RuntimeError(
+                "A biblioteca uiautomation nao esta instalada neste computador. "
+                "Atualize as dependencias do FlowDetect/Agent antes de executar este bloco."
+            ) from erro
+
+    def controle_uia_existe(self, control, timeout=0.2):
+        try:
+            return bool(control.Exists(timeout))
+        except Exception:
+            return control is not None
+
+    def propriedades_controle_uia(self, control):
+        try:
+            parent = control.GetParentControl()
+            parent_name = str(getattr(parent, "Name", "") or "") if parent else ""
+        except Exception:
+            parent_name = ""
+        return {
+            "automation_id": str(getattr(control, "AutomationId", "") or ""),
+            "name": str(getattr(control, "Name", "") or ""),
+            "control_type": str(getattr(control, "ControlTypeName", "") or ""),
+            "class_name": str(getattr(control, "ClassName", "") or ""),
+            "parent": parent_name,
+        }
+
+    def candidatos_raiz_uia(self, auto, elemento_base=None):
+        elemento_base = elemento_base or {}
+        source_window = elemento_base.get("source_window") or {}
+        candidatos = []
+        vistos = set()
+
+        def adicionar(control):
+            if not control:
+                return
+            try:
+                chave = int(getattr(control, "NativeWindowHandle", 0) or 0)
+            except Exception:
+                chave = id(control)
+            if chave in vistos:
+                return
+            vistos.add(chave)
+            candidatos.append(control)
+
+        handle = int(source_window.get("handle") or elemento_base.get("handle") or 0)
+        if handle:
+            try:
+                control = auto.ControlFromHandle(handle)
+                if self.controle_uia_existe(control, 0.2):
+                    adicionar(control)
+            except Exception:
+                pass
+
+        title = str(source_window.get("title") or "").strip()
+        class_name = str(source_window.get("class_name") or "").strip()
+        if title:
+            try:
+                control = auto.WindowControl(searchDepth=1, Name=title)
+                if self.controle_uia_existe(control, 0.4):
+                    adicionar(control)
+            except Exception:
+                pass
+
+        try:
+            adicionar(auto.GetForegroundControl())
+        except Exception:
+            pass
+
+        try:
+            root = auto.GetRootControl()
+            for child in root.GetChildren():
+                props = self.propriedades_controle_uia(child)
+                if title and title.lower() not in props.get("name", "").lower():
+                    if class_name and class_name != props.get("class_name", ""):
+                        continue
+                    if not class_name:
+                        continue
+                elif class_name and class_name != props.get("class_name", ""):
+                    continue
+                adicionar(child)
+        except Exception:
+            pass
+
+        return candidatos
+
+    def consultas_selector_uia(self, selector, elemento_base=None):
+        elemento_base = elemento_base or {}
+        selector = selector or {}
+        query_original = dict(selector.get("query") or {})
+        permitidas = {"automation_id", "name", "control_type", "class_name", "parent"}
+        consultas = []
+
+        def adicionar(query):
+            filtrada = {k: str(v) for k, v in (query or {}).items() if k in permitidas and str(v).strip()}
+            if filtrada and filtrada not in consultas:
+                consultas.append(filtrada)
+
+        adicionar(query_original)
+        automation_id = elemento_base.get("automation_id")
+        name = elemento_base.get("name")
+        control_type = elemento_base.get("control_type")
+        class_name = elemento_base.get("class_name")
+        parent = elemento_base.get("parent")
+        adicionar({"automation_id": automation_id, "control_type": control_type})
+        adicionar({"automation_id": automation_id})
+        adicionar({"name": name, "control_type": control_type})
+        adicionar({"class_name": class_name, "name": name, "parent": parent})
+        adicionar({"class_name": class_name, "name": name})
+        adicionar({"class_name": class_name, "control_type": control_type, "parent": parent})
+        adicionar({"class_name": class_name, "control_type": control_type})
+        adicionar({"control_type": control_type, "parent": parent})
+        adicionar({"name": name})
+        return consultas
+
+    def controle_uia_compativel_com_elemento(self, control, elemento_base=None):
+        elemento_base = elemento_base or {}
+        props = self.propriedades_controle_uia(control)
+        control_type = str(elemento_base.get("control_type") or "").strip()
+        class_name = str(elemento_base.get("class_name") or "").strip()
+        parent = str(elemento_base.get("parent") or "").strip()
+        if control_type and props.get("control_type") != control_type:
+            return False
+        if class_name and props.get("class_name") != class_name:
+            return False
+        if parent and props.get("parent") and props.get("parent") != parent:
+            return False
+        return True
+
+    def retangulo_controle_uia(self, control):
+        try:
+            rect = getattr(control, "BoundingRectangle", None)
+            if not rect:
+                return None
+            return {
+                "left": int(rect.left),
+                "top": int(rect.top),
+                "width": int(rect.right) - int(rect.left),
+                "height": int(rect.bottom) - int(rect.top),
+            }
+        except Exception:
+            return None
+
+    def referencia_relativa_uia(self, elemento_base=None, root=None):
+        elemento_base = elemento_base or {}
+        rect = elemento_base.get("bounding_rectangle") or {}
+        source_rect = (elemento_base.get("source_window") or {}).get("bounding_rectangle") or {}
+        try:
+            left = int(rect.get("left", 0) or 0)
+            top = int(rect.get("top", 0) or 0)
+            width = int(rect.get("width", 0) or 0)
+            height = int(rect.get("height", 0) or 0)
+        except Exception:
+            return None
+        if width <= 0 or height <= 0:
+            return None
+        if root:
+            root_rect = self.retangulo_controle_uia(root)
+            try:
+                source_left = int(source_rect.get("left", 0) or 0)
+                source_top = int(source_rect.get("top", 0) or 0)
+            except Exception:
+                source_left = 0
+                source_top = 0
+            if root_rect and source_rect:
+                left = int(root_rect["left"]) + (left - source_left)
+                top = int(root_rect["top"]) + (top - source_top)
+        return {"left": left, "top": top, "width": width, "height": height}
+
+    def localizar_elemento_uia_por_area_salva(self, auto, elemento_base=None, roots=None):
+        ref = self.referencia_relativa_uia(elemento_base)
+        if not ref:
+            return None
+        if roots:
+            for root in roots:
+                ajustada = self.referencia_relativa_uia(elemento_base, root)
+                if ajustada:
+                    ref = ajustada
+                    break
+        left = ref["left"]
+        top = ref["top"]
+        width = ref["width"]
+        height = ref["height"]
+        pontos = [
+            (left + width // 2, top + height // 2),
+            (left + min(width - 1, max(1, width // 4)), top + height // 2),
+            (left + max(1, (width * 3) // 4), top + height // 2),
+        ]
+        for x, y in pontos:
+            try:
+                control = auto.ControlFromPoint(x, y)
+                if control and self.controle_uia_compativel_com_elemento(control, elemento_base):
+                    return control
+            except Exception:
+                continue
+        return None
+
+    def caminho_uia_parece(self, path_atual="", path_salvo=""):
+        if not path_atual or not path_salvo:
+            return False
+        atual = str(path_atual).strip()
+        salvo = str(path_salvo).strip()
+        return atual == salvo or atual.endswith(salvo.split("/", 1)[-1])
+
+    def pontuar_controle_uia(self, control, elemento_base=None, root=None, path_atual=""):
+        elemento_base = elemento_base or {}
+        score = 0
+        try:
+            if not bool(getattr(control, "IsOffscreen", False)):
+                score += 5
+        except Exception:
+            pass
+        try:
+            if bool(getattr(control, "IsEnabled", False)):
+                score += 3
+        except Exception:
+            pass
+        try:
+            rect = self.retangulo_controle_uia(control)
+            ref_rect = self.referencia_relativa_uia(elemento_base, root)
+            ref_left = int((ref_rect or {}).get("left", 0) or 0)
+            ref_top = int((ref_rect or {}).get("top", 0) or 0)
+            if rect and ref_left and ref_top:
+                distancia = abs(int(rect["left"]) - ref_left) + abs(int(rect["top"]) - ref_top)
+                score += max(0, 60 - min(60, distancia // 8))
+        except Exception:
+            pass
+        if self.caminho_uia_parece(path_atual, elemento_base.get("path") or ""):
+            score += 40
+        return score
+
+    def localizar_elemento_uia_por_selector(self, selector, elemento_base=None, timeout=5):
+        auto = self.carregar_uia_runtime()
+        consultas = self.consultas_selector_uia(selector, elemento_base)
+        strategy = str((selector or {}).get("strategy") or "").strip()
+        deadline = time.time() + max(0.5, float(timeout or 5))
+        ultimo_erro = None
+        while time.time() < deadline:
+            roots = self.candidatos_raiz_uia(auto, elemento_base)
+            for query in consultas:
+                encontrados = []
+                for root in roots:
+                    root_type = self.propriedades_controle_uia(root).get("control_type") or "WindowControl"
+                    fila = [(root, f"/{root_type}[0]")]
+                    visitados = 0
+                    while fila and visitados < 1200:
+                        visitados += 1
+                        control, path_atual = fila.pop(0)
+                        try:
+                            props = self.propriedades_controle_uia(control)
+                            if all(str(props.get(k, "")) == str(v) for k, v in query.items()):
+                                encontrados.append((control, root, path_atual))
+                            filhos = control.GetChildren()
+                            for index, filho in enumerate(filhos):
+                                child_type = self.propriedades_controle_uia(filho).get("control_type") or "Control"
+                                fila.append((filho, f"{path_atual}/{child_type}[{index}]"))
+                        except Exception as erro:
+                            ultimo_erro = erro
+                if encontrados:
+                    escolhidos = sorted(
+                        encontrados,
+                        key=lambda item: self.pontuar_controle_uia(item[0], elemento_base, root=item[1], path_atual=item[2]),
+                        reverse=True,
+                    )
+                    return escolhidos[0][0]
+            por_area = self.localizar_elemento_uia_por_area_salva(auto, elemento_base, roots=roots)
+            if por_area:
+                return por_area
+            if not consultas:
+                for root in roots:
+                    try:
+                        if self.propriedades_controle_uia(root).get("name"):
+                            return root
+                    except Exception as erro:
+                        ultimo_erro = erro
+            time.sleep(0.12)
+        alvo = (elemento_base or {}).get("name") or strategy or "elemento"
+        raise RuntimeError(f"Elemento UIA nao encontrado: {alvo}. Ultimo erro: {ultimo_erro}")
+
+    def resolver_valor_acao_uia(self, detalhes, contexto_loop=None):
+        acao_configurada = detalhes.get("acao_configurada") or {}
+        origem = str(acao_configurada.get("origem_valor") or "texto_fixo").strip().lower()
+        if origem == "planilha":
+            arquivo = self.normalizar_id_planilha(acao_configurada.get("arquivo"))
+            aba = str(acao_configurada.get("aba", "") or "").strip()
+            coluna = str(acao_configurada.get("coluna", "") or "").strip()
+            valor = self.obter_valor_coluna_linha_atual(arquivo, aba, coluna, contexto_loop)
+            return "" if valor is None else str(valor)
+        return self.substituir_variaveis_texto(str(acao_configurada.get("valor", "") or detalhes.get("valor", "") or ""), contexto_loop)
+
+    def pressionar_tecla_depois_uia(self, tecla):
+        tecla_normalizada = str(tecla or "").strip().lower()
+        if not tecla_normalizada:
+            return
+        mapa = {
+            "enter": "enter",
+            "tab": "tab",
+        }
+        pyautogui.press(mapa.get(tecla_normalizada, tecla_normalizada))
+
+    def invocar_controle_uia(self, control):
+        tentativas = [
+            lambda: control.GetInvokePattern().Invoke(),
+            lambda: control.Invoke(),
+            lambda: control.GetSelectionItemPattern().Select(),
+        ]
+        ultimo_erro = None
+        for tentativa in tentativas:
+            try:
+                tentativa()
+                return "interno"
+            except Exception as erro:
+                ultimo_erro = erro
+        try:
+            control.SetFocus()
+            pyautogui.press("space")
+            return "teclado"
+        except Exception as erro:
+            ultimo_erro = erro
+        raise RuntimeError(f"Nao foi possivel acionar o elemento internamente: {ultimo_erro}")
+
+    def ler_valor_uia(self, control):
+        try:
+            value_pattern = control.GetValuePattern()
+            return str(getattr(value_pattern, "Value", "") or "")
+        except Exception:
+            return ""
+
+    def valor_uia_confere(self, valor_atual, valor_esperado):
+        atual = str(valor_atual or "").strip()
+        esperado = str(valor_esperado or "").strip()
+        if atual == esperado:
+            return True
+        normalizar = getattr(self, "normalizar_texto_ocr", None)
+        if callable(normalizar):
+            return normalizar(atual) == normalizar(esperado)
+        return atual.lower() == esperado.lower()
+
+    def colar_texto_rapido(self, texto):
+        try:
+            import pyperclip
+
+            pyperclip.copy(str(texto))
+            pyautogui.hotkey("ctrl", "v")
+            return "area_transferencia"
+        except Exception:
+            pyautogui.write(str(texto), interval=0)
+            return "teclado"
+
+    def definir_texto_uia(self, control, valor, limpar_antes=True):
+        valor_texto = str(valor or "")
+        try:
+            control.GetValuePattern().SetValue(valor_texto)
+            time.sleep(0.05)
+            if self.valor_uia_confere(self.ler_valor_uia(control), valor_texto):
+                return "interno"
+        except Exception:
+            pass
+        try:
+            control.SetFocus()
+        except Exception as erro:
+            raise RuntimeError(
+                "Nao foi possivel focar o campo sem mover o mouse. "
+                "Capture o elemento editavel interno ou use um bloco visual para clicar antes de preencher."
+            ) from erro
+        time.sleep(0.08)
+        if limpar_antes:
+            pyautogui.hotkey("ctrl", "a")
+            time.sleep(0.03)
+            pyautogui.press("backspace")
+            time.sleep(0.03)
+        modo = self.colar_texto_rapido(valor_texto)
+        time.sleep(0.05)
+        if self.valor_uia_confere(self.ler_valor_uia(control), valor_texto):
+            return modo
+        return modo
+
+    def estado_checkbox_uia(self, control):
+        try:
+            return int(control.GetTogglePattern().ToggleState)
+        except Exception:
+            return None
+
+    def selecionar_opcao_uia(self, control, valor):
+        valor_normalizado = self.normalizar_texto_ocr(valor)
+        try:
+            control.GetExpandCollapsePattern().Expand()
+            time.sleep(0.15)
+        except Exception:
+            pass
+        fila = []
+        try:
+            fila.extend(control.GetChildren())
+        except Exception:
+            fila = []
+        while fila:
+            filho = fila.pop(0)
+            try:
+                nome_filho = str(getattr(filho, "Name", "") or "")
+                if self.normalizar_texto_ocr(nome_filho) == valor_normalizado:
+                    try:
+                        filho.GetSelectionItemPattern().Select()
+                    except Exception:
+                        self.invocar_controle_uia(filho)
+                    return
+                fila.extend(filho.GetChildren())
+            except Exception:
+                continue
+        self.definir_texto_uia(control, valor, True)
+
+    def executar_bloco_uia_elemento(self, evento, contexto_loop=None):
+        detalhes = evento.get("detalhes", {}) or {}
+        nome = str(detalhes.get("block_name") or "Mapear elemento").strip()
+        selector = detalhes.get("selector") or {}
+        elemento = detalhes.get("elemento") or {}
+        acao_configurada = detalhes.get("acao_configurada") or {}
+        acao = str(acao_configurada.get("tipo") or detalhes.get("configured_action") or detalhes.get("recommended_action") or "reference_only").strip().lower()
+        ao_sucesso = str(detalhes.get("ao_sucesso", "continuar") or "continuar").strip().lower()
+        bloco_sucesso = detalhes.get("bloco_sucesso", "")
+        sequencia_sucesso = str(detalhes.get("sequencia_sucesso", "") or "").strip()
+        atraso_sucesso = max(0.0, float(detalhes.get("atraso_antes_sequencia_sucesso", 0) or 0))
+        ao_falhar = str(detalhes.get("ao_falhar", "parar") or "parar").strip().lower()
+        bloco_falha = detalhes.get("bloco_falha", "")
+        sequencia_falha = str(detalhes.get("sequencia_falha", "") or "").strip()
+        atraso_falha = max(0.0, float(detalhes.get("atraso_antes_sequencia_falha", 0) or 0))
+
+        def finalizar_sucesso():
+            if ao_sucesso == "ir_para_sequencia" and sequencia_sucesso:
+                return self.resultado_fluxo("ir_para_sequencia", sequencia=sequencia_sucesso, atraso=atraso_sucesso)
+            if ao_sucesso == "ir_para_bloco" and str(bloco_sucesso or "").strip():
+                return self.resultado_fluxo("ir_para_bloco", bloco=bloco_sucesso, atraso=atraso_sucesso)
+            return self.resultado_fluxo("continuar")
+
+        try:
+            safe_print(f"[UIA: {nome}] Procurando elemento por seletor {selector.get('quality', 'FRAGIL')}", flush=True)
+            control = self.localizar_elemento_uia_por_selector(selector, elemento, timeout=5)
+            if acao in {"click", "select_tab", "select"}:
+                modo_acionamento = self.invocar_controle_uia(control)
+                safe_print(f"[UIA: {nome}] Clique executado por acionamento {modo_acionamento}, sem mover o mouse.", flush=True)
+            elif acao in {"set_text", "set_or_select", "select_option"}:
+                valor = self.resolver_valor_acao_uia(detalhes, contexto_loop)
+                if acao == "select_option":
+                    self.selecionar_opcao_uia(control, valor)
+                else:
+                    modo_preenchimento = self.definir_texto_uia(control, valor, bool(acao_configurada.get("limpar_antes", True)))
+                    safe_print(f"[UIA: {nome}] Preenchimento aplicado por {modo_preenchimento}.", flush=True)
+                self.pressionar_tecla_depois_uia(acao_configurada.get("pressionar_depois"))
+                safe_print(f"[UIA: {nome}] Valor aplicado: {self.limpar_saida_status(valor)}", flush=True)
+            elif acao == "toggle":
+                control.GetTogglePattern().Toggle()
+            elif acao in {"check", "uncheck"}:
+                estado_atual = self.estado_checkbox_uia(control)
+                deve_marcar = acao == "check"
+                if estado_atual is None or bool(estado_atual) != deve_marcar:
+                    control.GetTogglePattern().Toggle()
+            elif acao == "expand":
+                control.GetExpandCollapsePattern().Expand()
+            elif acao in {"read_text", "read_grid", "reference_only"}:
+                texto = str(getattr(control, "Name", "") or "")
+                salvar_em = str(acao_configurada.get("salvar_em") or "").strip()
+                if salvar_em:
+                    self.contexto_variaveis[salvar_em] = texto
+                safe_print(f"[UIA: {nome}] Referencia lida: {texto}", flush=True)
+            else:
+                safe_print(f"[UIA: {nome}] Elemento encontrado. Nenhuma acao executada.", flush=True)
+            safe_print(f"[UIA: {nome}] Resultado: sucesso", flush=True)
+            return finalizar_sucesso()
+        except Exception as erro:
+            safe_print(f"[UIA: {nome}] Resultado: erro | {erro}", flush=True)
+            if ao_falhar == "continuar":
+                return self.resultado_fluxo("continuar")
+            if ao_falhar == "ir_para_sequencia" and sequencia_falha:
+                return self.resultado_fluxo("ir_para_sequencia", sequencia=sequencia_falha, atraso=atraso_falha)
+            if ao_falhar == "ir_para_bloco" and str(bloco_falha or "").strip():
+                return self.resultado_fluxo("ir_para_bloco", bloco=bloco_falha, atraso=atraso_falha)
+            return self.resultado_fluxo("parar")
+
     def obter_empresa_evento_planilha(self, evento, indice_item, linha_referencia=None):
         detalhes = evento.get("detalhes", {})
         aba = detalhes.get("aba")
@@ -3970,6 +4774,14 @@ class ExecutorAutomacao:
                 f"{self.limpar_saida_status(detalhes.get('nome', 'elemento html'))} "
                 f"[{self.limpar_saida_status(alvo.get('metodo', 'css'))} -> "
                 f"{self.limpar_saida_status(acao.get('tipo', 'clicar'))}]"
+            )
+
+        if tipo in TIPOS_UIA:
+            detalhes = evento.get("detalhes", {})
+            return (
+                f"Evento #{ordem}: janela "
+                f"{self.limpar_saida_status(detalhes.get('block_name', 'elemento'))} "
+                f"[{self.limpar_saida_status(detalhes.get('recommended_action', 'reference_only'))}]"
             )
 
         return f"Evento #{ordem}: {self.limpar_saida_status(evento.get('texto', 'acao'))}"
@@ -4273,6 +5085,8 @@ class ExecutorAutomacao:
         bloco_id=None,
         modo_area_busca="target_window",
         area_personalizada=None,
+        texto_ocr_esperado="",
+        leitura_relativa=None,
     ):
         caminho_imagem, imagem_id = self.resolver_imagem(imagem)
         if not imagem_id:
@@ -4349,6 +5163,7 @@ class ExecutorAutomacao:
         self._ultimo_diagnostico_reconhecimento = None
         texto_referencia = self.extrair_texto_referencia(caminho_imagem) if permitir_ocr_geral else ""
         dimensoes_referencia = self.obter_dimensoes_imagem(caminho_imagem)
+        texto_ocr_ancora = str(texto_ocr_esperado or "").strip()
 
         def adicionar_regiao_busca(destino, regiao, etapa, fallback=False):
             regiao_normalizada = self.limitar_regiao(regiao) if regiao is not None else None
@@ -4657,6 +5472,59 @@ class ExecutorAutomacao:
                                     return local_confirmado
                                 safe_print("Correspondencia por template descartada apos confirmacao.", flush=True)
 
+            intervalo_ocr_ancora = 0.9 if perfil_busca == "fast" else 1.25
+            permitir_ocr_ancora = (
+                texto_ocr_ancora
+                and OCR_DISPONIVEL
+                and dimensoes_referencia
+                and not modo_estrito
+                and time.perf_counter() - ultima_tentativa_ocr >= intervalo_ocr_ancora
+                and time.perf_counter() - self._ultimo_ocr_global_em >= intervalo_ocr_ancora
+            )
+            if permitir_ocr_ancora:
+                ultima_tentativa_ocr = time.perf_counter()
+                self._ultimo_ocr_global_em = ultima_tentativa_ocr
+                regioes_ocr = regioes_busca or [{"region": None, "stage": "screen", "fallback": False}]
+                for entrada_ocr in regioes_ocr:
+                    regiao_ocr = entrada_ocr.get("region")
+                    local_ancora_visual = self.localizar_referencia_por_recorte_ocr_visual(
+                        caminho_imagem,
+                        region=regiao_ocr,
+                        leitura_relativa=leitura_relativa,
+                        dimensoes_referencia=dimensoes_referencia,
+                        confianca=0.76 if perfil_busca == "fast" else 0.80,
+                    )
+                    if local_ancora_visual:
+                        self.registrar_reconhecimento_bem_sucedido(
+                            imagem_id,
+                            local_ancora_visual,
+                            janela_alvo=janela_alvo,
+                            bloco_id=bloco_id,
+                            janela_info=janela_info_cache,
+                        )
+                        return local_ancora_visual
+                    safe_print(
+                        f"Tentando localizar pela ancora OCR: {texto_ocr_ancora} "
+                        f"(area={self.formatar_regiao_log(regiao_ocr)}).",
+                        flush=True,
+                    )
+                    local_ancora = self.localizar_referencia_por_ancora_ocr(
+                        caminho_imagem,
+                        texto_ocr_esperado=texto_ocr_ancora,
+                        region=regiao_ocr,
+                        leitura_relativa=leitura_relativa,
+                        dimensoes_referencia=dimensoes_referencia,
+                    )
+                    if local_ancora:
+                        self.registrar_reconhecimento_bem_sucedido(
+                            imagem_id,
+                            local_ancora,
+                            janela_alvo=janela_alvo,
+                            bloco_id=bloco_id,
+                            janela_info=janela_info_cache,
+                        )
+                        return local_ancora
+
             intervalo_ocr = max(1.8, min(3.2, timeout_total * 0.45))
             permitir_ocr = (
                 permitir_ocr_geral
@@ -4749,6 +5617,8 @@ class ExecutorAutomacao:
             bloco_id=bloco_id,
             modo_area_busca=modo_area_busca,
             area_personalizada=area_personalizada,
+            texto_ocr_esperado=texto_ocr_esperado,
+            leitura_relativa=leitura_relativa,
         )
         if not local:
             return None
@@ -4757,12 +5627,47 @@ class ExecutorAutomacao:
             ordem_bloco = str(bloco_id).split(":", 1)[1].strip()
         duracao_marcacao = 0.95 if clicar else 1.35
         self.marcar_area_reconhecida(local, duracao=0.55, bloqueante=True)
-        if not self.confirmar_ocr_relativo(
+        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        salvar_em = str(leitura.get("salvar_em", "") or "").strip()
+        ocr_ja_confirmado = (
+            isinstance(local, dict)
+            and (
+                local.get("ocr_anchor_confirmed")
+                or (local.get("ocr_visual_anchor") and texto_ocr_esperado and not salvar_em)
+            )
+        )
+        if texto_ocr_esperado and ocr_ja_confirmado:
+            capturado_ocr = str(local.get("ocr_text") or texto_ocr_esperado).strip()
+            if capturado_ocr:
+                self.salvar_variavel_contexto("ultimo_ocr", capturado_ocr)
+                if ordem_bloco:
+                    self.salvar_variavel_contexto(f"ocr_bloco_{ordem_bloco}", capturado_ocr)
+                    self.salvar_variavel_contexto(f"bloco_{ordem_bloco}_ocr", capturado_ocr)
+                if salvar_em:
+                    self.salvar_variavel_contexto(salvar_em, capturado_ocr)
+            safe_print(
+                f"OCR confirmou pela ancora: esperado='{texto_ocr_esperado}' | capturado='{capturado_ocr}'",
+                flush=True,
+            )
+            ocr_bounds = local.get("ocr_bounds") if isinstance(local.get("ocr_bounds"), dict) else None
+            if ocr_bounds:
+                self.marcar_regiao_ocr(
+                    (
+                        int(ocr_bounds.get("left", 0) or 0),
+                        int(ocr_bounds.get("top", 0) or 0),
+                        int(ocr_bounds.get("width", 0) or 0),
+                        int(ocr_bounds.get("height", 0) or 0),
+                    ),
+                    confirmado=True,
+                    duracao=0.8,
+                )
+        elif not self.confirmar_ocr_relativo(
             local,
             texto_esperado=texto_ocr_esperado,
             leitura_relativa=leitura_relativa,
             ordem_bloco=ordem_bloco,
             dimensoes_referencia=dimensoes_referencia,
+            caminho_referencia=caminho_imagem,
         ):
             safe_print(
                 "Imagem encontrada, mas o OCR obrigatorio nao confirmou. "
@@ -4841,6 +5746,8 @@ class ExecutorAutomacao:
             bloco_id=bloco_id,
             modo_area_busca=modo_area_busca,
             area_personalizada=area_personalizada,
+            texto_ocr_esperado=texto_ocr_esperado,
+            leitura_relativa=leitura_relativa,
         )
         if not local:
             safe_print("Teste de reconhecimento: nenhuma correspondencia encontrada.", flush=True)
@@ -4859,13 +5766,32 @@ class ExecutorAutomacao:
                 duracao=max(0.12, float(duracao_marcador or 0.24)),
                 bloqueante=bool(marcador_bloqueante),
             )
-        if not self.confirmar_ocr_relativo(
+        if texto_ocr_esperado and isinstance(local, dict) and (local.get("ocr_anchor_confirmed") or local.get("ocr_visual_anchor")):
+            capturado_ocr = str(local.get("ocr_text") or texto_ocr_esperado).strip()
+            safe_print(
+                f"Teste de reconhecimento: OCR confirmado pela ancora '{capturado_ocr}'.",
+                flush=True,
+            )
+            ocr_bounds = local.get("ocr_bounds") if isinstance(local.get("ocr_bounds"), dict) else None
+            if mostrar_marcador and ocr_bounds:
+                self.marcar_regiao_ocr(
+                    (
+                        int(ocr_bounds.get("left", 0) or 0),
+                        int(ocr_bounds.get("top", 0) or 0),
+                        int(ocr_bounds.get("width", 0) or 0),
+                        int(ocr_bounds.get("height", 0) or 0),
+                    ),
+                    confirmado=True,
+                    duracao=max(0.12, float(duracao_marcador or 0.24)),
+                )
+        elif not self.confirmar_ocr_relativo(
             local,
             texto_esperado=texto_ocr_esperado,
             leitura_relativa=leitura_relativa,
             ordem_bloco=None,
             dimensoes_referencia=dimensoes_referencia,
             marcar_ocr=mostrar_marcador,
+            caminho_referencia=caminho_imagem,
         ):
             safe_print("Teste de reconhecimento: imagem encontrada, mas o OCR nao confirmou o texto esperado.", flush=True)
             return False
@@ -5233,6 +6159,9 @@ class ExecutorAutomacao:
 
         if tipo in TIPOS_CHROME:
             return self.executar_bloco_chrome_elemento_html(evento, contexto_loop=contexto_loop)
+
+        if tipo in TIPOS_UIA:
+            return self.executar_bloco_uia_elemento(evento, contexto_loop=contexto_loop)
 
         teclas = evento.get("teclas", [])
         if not teclas:
