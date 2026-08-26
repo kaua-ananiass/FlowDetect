@@ -418,6 +418,7 @@ const addAgentCardButton = document.getElementById("addAgentCardButton");
 const refreshAgentVmsButton = document.getElementById("refreshAgentVmsButton");
 const agentCreatePanel = document.getElementById("agentCreatePanel");
 const agentNameInput = document.getElementById("agentNameInput");
+const agentProfileSelect = document.getElementById("agentProfileSelect");
 const agentAddressInput = document.getElementById("agentAddressInput");
 const agentVmNameInput = document.getElementById("agentVmNameInput");
 const agentVmOptions = document.getElementById("agentVmOptions");
@@ -11615,7 +11616,12 @@ function normalizeAgent(agent = {}) {
     name,
     address,
     vmName: String(agent.vmName || "").trim(),
+    profile: ["fiscal", "dp", "contabil", "ti"].includes(String(agent.profile || "").trim())
+      ? String(agent.profile).trim()
+      : "fiscal",
+    localPort: Number(agent.localPort || 0),
     status: status || (address ? "ready" : "waiting"),
+    connectionStage: String(agent.connectionStage || "").trim(),
     createdAt: Number(agent.createdAt || Date.now()),
     lastSeenAt: Number(agent.lastSeenAt || 0),
   };
@@ -11774,6 +11780,9 @@ function resetAgentForm() {
   if (agentNameInput) {
     agentNameInput.value = "";
   }
+  if (agentProfileSelect) {
+    agentProfileSelect.value = "fiscal";
+  }
   if (agentAddressInput) {
     agentAddressInput.value = "";
   }
@@ -11795,6 +11804,9 @@ function openAgentForm(agent = null) {
     agentNameInput.value = agent?.name || "";
     window.setTimeout(() => agentNameInput.focus(), 30);
   }
+  if (agentProfileSelect) {
+    agentProfileSelect.value = agent?.profile || "fiscal";
+  }
   if (agentAddressInput) {
     agentAddressInput.value = agent?.address || "";
   }
@@ -11804,8 +11816,9 @@ function openAgentForm(agent = null) {
   renderAgents();
 }
 
-function saveAgentFromForm() {
+async function saveAgentFromForm() {
   const name = String(agentNameInput?.value || "").trim() || "FlowDetect Agent";
+  const profile = String(agentProfileSelect?.value || "fiscal").trim();
   const address = normalizeAgentAddress(agentAddressInput?.value || "");
   const vmName = String(agentVmNameInput?.value || "").trim();
   if (!name) {
@@ -11819,6 +11832,7 @@ function saveAgentFromForm() {
     ...previousAgent,
     id: editingId || createAgentId(name),
     name,
+    profile,
     address,
     vmName,
     status: address ? "ready" : "waiting",
@@ -11842,6 +11856,9 @@ function saveAgentFromForm() {
   resetAgentForm();
   renderAgents();
   setMessage(`Agente salvo: ${name}`, "success");
+  if (nextAgent.vmName && !editingId) {
+    await startAndWatchAgent(nextAgent);
+  }
 }
 
 function editAgentCard(id) {
@@ -11874,11 +11891,13 @@ function saveAgentCardEdit(id) {
   const name = readField("name") || "FlowDetect Agent";
   const address = normalizeAgentAddress(readField("address"));
   const vmName = readField("vmName");
+  const profile = readField("profile") || "fiscal";
   state.agents.items = state.agents.items.map((item) => (
     String(item.id) === String(id)
       ? normalizeAgent({
           ...item,
           name,
+          profile,
           address,
           vmName,
           status: address ? "ready" : "waiting",
@@ -11924,6 +11943,43 @@ async function connectAgentFromCard(agent, options = {}) {
   }
 }
 
+function updateAgentRuntime(id, changes = {}) {
+  let updated = null;
+  state.agents.items = state.agents.items.map((item) => {
+    if (String(item.id) !== String(id)) {
+      return item;
+    }
+    updated = normalizeAgent({ ...item, ...changes });
+    return updated;
+  });
+  persistAgentsConfig();
+  renderAgents();
+  return updated;
+}
+
+async function prepareAgentVmConnection(agent) {
+  const vmName = String(agent?.vmName || "").trim();
+  if (!vmName) {
+    return agent;
+  }
+  updateAgentRuntime(agent.id, { connectionStage: "Configurando conexao", status: "starting" });
+  const usedPorts = state.agents.items
+    .filter((item) => String(item.id) !== String(agent.id))
+    .map((item) => Number(item.localPort || 0))
+    .filter((port) => port >= 1024);
+  const suggestedPort = Number(agent.localPort || 0) || Math.max(18452, ...usedPorts) + 1;
+  const result = await invoke("configure_virtualbox_agent_network", {
+    vmName,
+    preferredPort: suggestedPort,
+  });
+  return updateAgentRuntime(agent.id, {
+    address: result?.address || agent.address,
+    localPort: Number(result?.host_port || result?.hostPort || agent.localPort || 0),
+    connectionStage: "Conexao preparada",
+    status: "ready",
+  }) || agent;
+}
+
 async function startAgentVm(agent) {
   const vmName = String(agent?.vmName || "").trim();
   if (!vmName) {
@@ -11931,13 +11987,22 @@ async function startAgentVm(agent) {
     return false;
   }
   try {
-    setBusy("Iniciando VM");
+    setBusy("Preparando VM");
+    const preparedAgent = await prepareAgentVmConnection(agent);
+    updateAgentRuntime(agent.id, { connectionStage: "Ligando maquina", status: "starting" });
     await invoke("start_virtualbox_vm_headless", { vmName });
     setBusy("Pronto");
-    setMessage(`VM iniciada em segundo plano: ${vmName}`, "success");
-    return true;
+    const updated = updateAgentRuntime(agent.id, {
+      address: preparedAgent.address,
+      localPort: preparedAgent.localPort,
+      connectionStage: "Aguardando o Agent iniciar",
+      status: "starting",
+    });
+    setMessage(`VM iniciada. Aguardando o FlowDetect Agent: ${vmName}`, "success");
+    return updated || preparedAgent;
   } catch (error) {
     setBusy("Erro");
+    updateAgentRuntime(agent.id, { connectionStage: "Falha ao iniciar", status: "error" });
     setMessage(String(error), "error");
     return false;
   }
@@ -11945,11 +12010,16 @@ async function startAgentVm(agent) {
 
 async function waitAndConnectAgent(agent, attempts = 18) {
   for (let index = 0; index < attempts; index += 1) {
+    updateAgentRuntime(agent.id, {
+      connectionStage: `Iniciando Windows e Agent (${index + 1}/${attempts})`,
+      status: "starting",
+    });
     const connected = await connectAgentFromCard(agent, { silent: true });
     if (connected) {
+      updateAgentRuntime(agent.id, { connectionStage: "Online", status: "online", lastSeenAt: Date.now() });
       return true;
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 1600));
+    await new Promise((resolve) => window.setTimeout(resolve, 2000));
   }
   return false;
 }
@@ -11958,8 +12028,13 @@ async function startAndWatchAgent(agent) {
   if (!agent) {
     return;
   }
+  const previousAddress = normalizeAgentAddress(state.remoteControl.address);
   if (agent.vmName) {
-    await startAgentVm(agent);
+    const startedAgent = await startAgentVm(agent);
+    if (!startedAgent) {
+      return;
+    }
+    agent = startedAgent;
   }
   if (!normalizeAgentAddress(agent.address || "")) {
     setBusy("Pronto");
@@ -11967,9 +12042,14 @@ async function startAndWatchAgent(agent) {
     renderAgents();
     return;
   }
-  const connected = agentConnected(agent) || await waitAndConnectAgent(agent, agent.vmName ? 22 : 1);
+  if (previousAddress && previousAddress !== normalizeAgentAddress(agent.address || "")) {
+    stopStudioControlScreenStream({ clear: true });
+    state.remoteControl.connected = false;
+  }
+  const connected = agentConnected(agent) || await waitAndConnectAgent(agent, agent.vmName ? 75 : 1);
   if (!connected) {
     setBusy("Erro");
+    updateAgentRuntime(agent.id, { connectionStage: "Agent nao respondeu", status: "error" });
     setMessage(`Nao consegui conectar no Agent ${agent.address}. Confira se o Agent esta aberto e na mesma rede.`, "error");
     return;
   }
@@ -12019,22 +12099,34 @@ function renderAgents() {
     const connected = agentConnected(agent);
     const hasAddress = Boolean(normalizeAgentAddress(agent.address || ""));
     const waiting = !hasAddress && !connected;
-    const statusText = connected ? "Online" : hasAddress ? "Pronto para conectar" : "Aguardando maquina";
+    const starting = agent.status === "starting";
+    const failed = agent.status === "error";
+    const statusText = connected
+      ? "Online"
+      : starting
+        ? "Iniciando"
+        : failed
+          ? "Precisa de atencao"
+          : hasAddress
+            ? "Pronto para conectar"
+            : "Aguardando maquina";
     const isEditing = String(state.agents.editingId || "") === String(agent.id);
+    const profileLabels = { fiscal: "Fiscal", dp: "Departamento Pessoal", contabil: "Contabil", ti: "TI" };
+    const profileLabel = profileLabels[agent.profile] || "Fiscal";
     return `
       <article class="agent-card ${connected ? "is-connected" : ""} ${waiting ? "is-waiting" : ""} ${isEditing ? "is-flipped" : ""}" data-agent-id="${escapeHtml(agent.id)}">
         <div class="agent-card-stage">
           <section class="agent-card-face agent-card-front">
             <div class="agent-card-top">
-              <span class="agent-card-status ${connected ? "is-online" : waiting ? "is-waiting" : ""}">${statusText}</span>
-              ${agent.vmName ? '<span class="agent-card-chip">VM</span>' : '<span class="agent-card-chip">PC</span>'}
+              <span class="agent-card-status ${connected ? "is-online" : waiting || starting || failed ? "is-waiting" : ""}">${statusText}</span>
+              <span class="agent-card-chip">${escapeHtml(profileLabel)}</span>
             </div>
             <h3>${escapeHtml(agent.name)}</h3>
-            <p class="agent-card-description">${escapeHtml(hasAddress ? "Tela e automacoes remotas liberadas." : "Sem endereco ainda. Inicie o Agent nesta maquina.")}</p>
+            <p class="agent-card-description">${escapeHtml(agent.connectionStage || (hasAddress ? "Tela e automacoes remotas liberadas." : "O FlowDetect vai preparar a conexao automaticamente."))}</p>
             <div class="agent-card-summary">
               <div class="agent-card-meta">
                 <span>Endereco</span>
-                <strong>${escapeHtml(agent.address || "Aguardando")}</strong>
+                <strong>${escapeHtml(agent.localPort ? `Localhost:${agent.localPort}` : agent.address || "Automatico")}</strong>
               </div>
               <div class="agent-card-meta">
                 <span>${agent.vmName ? "VM" : "Ultima vez"}</span>
@@ -12042,7 +12134,7 @@ function renderAgents() {
               </div>
             </div>
             <div class="agent-card-actions">
-              <button class="primary-button" type="button" data-agent-action="watch" data-agent-id="${escapeHtml(agent.id)}" ${hasAddress || agent.vmName ? "" : "disabled"}>${hasAddress ? "Conectar e assistir" : "Iniciar maquina"}</button>
+              <button class="primary-button" type="button" data-agent-action="watch" data-agent-id="${escapeHtml(agent.id)}" ${hasAddress || agent.vmName ? "" : "disabled"}>${connected ? "Assistir tela" : agent.vmName ? "Iniciar e conectar" : "Conectar e assistir"}</button>
               <button class="ghost-button" type="button" data-agent-action="connect" data-agent-id="${escapeHtml(agent.id)}" ${hasAddress ? "" : "disabled"}>Conectar</button>
               <button class="ghost-button" type="button" data-agent-action="start-vm" data-agent-id="${escapeHtml(agent.id)}" ${agent.vmName ? "" : "disabled"}>Iniciar VM</button>
               <button class="ghost-button" type="button" data-agent-action="edit" data-agent-id="${escapeHtml(agent.id)}">Editar</button>
@@ -12059,6 +12151,15 @@ function renderAgents() {
               <label>
                 <span>Nome</span>
                 <input data-agent-edit-field="name" type="text" value="${escapeHtml(agent.name)}" />
+              </label>
+              <label>
+                <span>Perfil</span>
+                <select data-agent-edit-field="profile">
+                  <option value="fiscal" ${agent.profile === "fiscal" ? "selected" : ""}>Fiscal</option>
+                  <option value="dp" ${agent.profile === "dp" ? "selected" : ""}>Departamento Pessoal</option>
+                  <option value="contabil" ${agent.profile === "contabil" ? "selected" : ""}>Contabil</option>
+                  <option value="ti" ${agent.profile === "ti" ? "selected" : ""}>TI</option>
+                </select>
               </label>
               <label>
                 <span>Endereco atual</span>

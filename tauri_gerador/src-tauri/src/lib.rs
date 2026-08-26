@@ -302,6 +302,78 @@ fn virtualbox_manage_program() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("VBoxManage"))
 }
 
+fn run_virtualbox_manage(args: &[String]) -> Result<(String, String), String> {
+    let mut command = Command::new(virtualbox_manage_program());
+    command.args(args);
+    configure_no_window(&mut command);
+    let output = command.output().map_err(|err| {
+        format!("Nao foi possivel executar o VirtualBox. Verifique se ele esta instalado. Detalhe: {err}")
+    })?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if output.status.success() {
+        Ok((stdout, stderr))
+    } else {
+        Err(if stderr.is_empty() {
+            format!("O VirtualBox recusou o comando: {}", args.join(" "))
+        } else {
+            stderr
+        })
+    }
+}
+
+fn flowdetect_nat_port(machine_info: &str) -> Option<u16> {
+    machine_info.lines().find_map(|line| {
+        if !line.contains("flowdetect-agent") {
+            return None;
+        }
+        let value = line.split_once('=')?.1.trim().trim_matches('"');
+        let fields: Vec<&str> = value.split(',').collect();
+        (fields.len() >= 4 && fields[0] == "flowdetect-agent")
+            .then(|| fields[3].parse::<u16>().ok())
+            .flatten()
+    })
+}
+
+fn available_agent_host_port(preferred_port: Option<u16>) -> Result<u16, String> {
+    let start = preferred_port.filter(|port| *port >= 1024).unwrap_or(18453);
+    (start..=start.saturating_add(200))
+        .find(|port| TcpListener::bind(("127.0.0.1", *port)).is_ok())
+        .ok_or_else(|| "Nao encontrei uma porta local livre para conectar o Agent.".to_string())
+}
+
+#[tauri::command]
+fn configure_virtualbox_agent_network(vm_name: String, preferred_port: Option<u16>) -> Result<Value, String> {
+    let trimmed_name = vm_name.trim();
+    if trimmed_name.is_empty() {
+        return Err("Informe o nome da VM do VirtualBox.".to_string());
+    }
+    let (machine_info, _) = run_virtualbox_manage(&[
+        "showvminfo".into(), trimmed_name.into(), "--machinereadable".into(),
+    ])?;
+    let existing_port = flowdetect_nat_port(&machine_info);
+    let host_port = existing_port.unwrap_or(available_agent_host_port(preferred_port)?);
+    if existing_port.is_none() {
+        let rule = format!("flowdetect-agent,tcp,127.0.0.1,{host_port},,18452");
+        let modify_result = run_virtualbox_manage(&[
+            "modifyvm".into(), trimmed_name.into(), "--natpf1".into(), rule.clone(),
+        ]);
+        if modify_result.is_err() {
+            run_virtualbox_manage(&[
+                "controlvm".into(), trimmed_name.into(), "natpf1".into(), rule,
+            ])?;
+        }
+    }
+    Ok(serde_json::json!({
+        "ok": true,
+        "vm_name": trimmed_name,
+        "host_port": host_port,
+        "guest_port": 18452,
+        "address": format!("127.0.0.1:{host_port}"),
+        "reused": existing_port.is_some(),
+    }))
+}
+
 #[tauri::command]
 fn start_virtualbox_vm_headless(vm_name: String) -> Result<Value, String> {
     let trimmed_name = vm_name.trim();
@@ -6599,6 +6671,7 @@ pub fn run() {
             get_agent_connection_info,
             get_agent_remote_snapshot,
             list_virtualbox_vms,
+            configure_virtualbox_agent_network,
             start_virtualbox_vm_headless,
             get_login_session,
             save_login_session,
