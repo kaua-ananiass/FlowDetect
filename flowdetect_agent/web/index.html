@@ -7,8 +7,52 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
+    <section class="agent-observer-frame" aria-hidden="true">
+      <div class="agent-observer-corner agent-observer-corner-tl"></div>
+      <div class="agent-observer-corner agent-observer-corner-tr"></div>
+      <div class="agent-observer-corner agent-observer-corner-bl"></div>
+      <div class="agent-observer-corner agent-observer-corner-br"></div>
+      <header class="agent-observer-header">
+        <strong>FLOWDETECT <span>AGENT</span></strong>
+        <strong id="observerAgentName" class="agent-observer-name">AGENTE PRINCIPAL</strong>
+        <div class="agent-observer-online"><i></i><span id="observerConnectionStatus">ONLINE</span></div>
+      </header>
+      <aside class="agent-observer-progress">
+        <span>EXECUCAO</span>
+        <strong id="observerProgressPercent">0%</strong>
+        <div class="agent-observer-progress-track">
+          <div id="observerProgressFill" class="agent-observer-progress-fill"></div>
+        </div>
+        <small id="observerProgressTitle">Aguardando execucao</small>
+      </aside>
+      <section class="agent-observer-blocks" aria-live="polite">
+        <div class="agent-observer-blocks-head">
+          <span>BLOCOS EM TEMPO REAL</span>
+          <strong id="observerCurrentBlockText">Aguardando execucao</strong>
+        </div>
+        <div id="observerBlockList" class="agent-observer-block-list"></div>
+      </section>
+      <footer class="agent-observer-footer">
+        <div class="agent-observer-footer-item">
+          <span>AGENTE</span>
+          <strong>FLOWDETECT AGENT</strong>
+        </div>
+        <div class="agent-observer-footer-item agent-observer-footer-address">
+          <span>IP PARA CONEXÃO</span>
+          <strong id="observerConnectionAddress">Carregando IP...</strong>
+        </div>
+        <div class="agent-observer-footer-item">
+          <span>ESTADO</span>
+          <strong class="agent-observer-active"><i></i>AGENTE ATIVO</strong>
+        </div>
+        <div class="agent-observer-footer-item agent-observer-footer-shortcut">
+          <span>PAINEL COMPLETO</span>
+          <strong>CTRL + SHIFT + F12</strong>
+        </div>
+      </footer>
+    </section>
     <main id="agentShell" class="agent-shell" data-page-theme="principal">
-      <section class="agent-hero">
+      <section class="agent-hero" data-tauri-drag-region>
         <div class="agent-hero-copy">
           <h1 class="agent-brand-title">
             <span class="agent-brand-flow">FlowDetect</span>
@@ -21,6 +65,8 @@
           <span id="meshCentralStatusChip" class="agent-mesh-chip">Tela remota: parada</span>
           <button id="importZipButton" class="agent-primary-button" type="button">Importar ZIP</button>
           <button id="refreshLibraryButton" class="agent-secondary-button" type="button">Atualizar</button>
+          <button id="toggleAgentPanelButton" class="agent-secondary-button agent-panel-toggle" type="button">Detalhes</button>
+          <button id="minimizeAgentButton" class="agent-window-button" type="button" title="Minimizar">—</button>
           <input id="automationZipInput" type="file" accept=".zip,application/zip" hidden />
         </div>
       </section>

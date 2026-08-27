@@ -1247,10 +1247,25 @@
               <p>Crie o ambiente primeiro. Quando a maquina ligar e o Agent aparecer, o Studio conecta e mostra a tela aqui.</p>
             </div>
             <div class="agents-header-actions">
+              <button id="setupHypervBaseButton" class="ghost-button" type="button">Preparar VM-base</button>
               <button id="refreshAgentVmsButton" class="ghost-button" type="button">Atualizar VMs</button>
               <button id="addAgentCardButton" class="primary-button" type="button">+ Adicionar agente</button>
             </div>
           </header>
+
+          <section id="hypervBasePanel" class="agents-create-panel" hidden>
+            <div id="hypervBaseStatus" class="hyperv-base-status" role="status">Verificando o Hyper-V...</div>
+            <label><span>Nome da VM-base</span><input id="hypervBaseNameInput" type="text" value="FlowDetect-Windows10-Base" /></label>
+            <label><span>ISO do Windows 10</span><input id="hypervIsoPathInput" type="text" readonly placeholder="Selecione o arquivo .iso" /></label>
+            <label><span>Memoria inicial (MB)</span><input id="hypervMemoryInput" type="number" min="2048" value="4096" /></label>
+            <label><span>Processadores</span><input id="hypervProcessorsInput" type="number" min="1" max="8" value="2" /></label>
+            <label><span>Disco (GB)</span><input id="hypervDiskInput" type="number" min="40" value="64" /></label>
+            <div class="agents-create-actions">
+              <button id="selectHypervIsoButton" class="ghost-button" type="button">Selecionar ISO</button>
+              <button id="createHypervBaseButton" class="primary-button" type="button">Criar e abrir VM-base</button>
+              <button id="cancelHypervBaseButton" class="ghost-button" type="button">Cancelar</button>
+            </div>
+          </section>
 
           <section id="agentCreatePanel" class="agents-create-panel" hidden>
             <label>
@@ -1272,7 +1287,11 @@
             </label>
             <label>
               <span>Maquina virtual</span>
-              <input id="agentVmNameInput" type="text" list="agentVmOptions" placeholder="Opcional. Ex.: FlowDetect-FGTS" />
+              <input id="agentVmNameInput" type="text" list="agentVmOptions" placeholder="Ex.: FlowDetect-FGTS" />
+            </label>
+            <label>
+              <span>Clonar a partir da VM-base (opcional)</span>
+              <select id="agentBaseVmSelect"><option value="">Usar VM existente</option></select>
             </label>
             <datalist id="agentVmOptions"></datalist>
             <div class="agents-create-actions">
@@ -1283,7 +1302,7 @@
 
           <section id="agentVmListPanel" class="agents-vm-list-panel" hidden>
             <div>
-              <p class="panel-kicker">VirtualBox</p>
+              <p class="panel-kicker">Hyper-V</p>
               <strong>VMs encontradas neste PC</strong>
             </div>
             <div id="agentVmList" class="agents-vm-list"></div>
@@ -1293,8 +1312,8 @@
 
           <section class="agents-help-card">
             <p class="panel-kicker">Fluxo recomendado</p>
-            <strong>Agente nasce sem IP fixo</strong>
-            <span>O IP e apenas o endereco atual da maquina. A identidade fica no card; depois vamos vincular a VM para iniciar e conectar automaticamente.</span>
+            <strong>Uma base, varios agentes independentes</strong>
+            <span>Configure o Windows e os aplicativos uma vez na VM-base, desligue-a e clone uma copia para Fiscal, DP ou qualquer outro perfil.</span>
           </section>
         </section>
       </section>

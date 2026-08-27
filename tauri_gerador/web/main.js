@@ -416,11 +416,23 @@ const agentsPanel = document.getElementById("agentsPanel");
 const agentScreenPanel = document.getElementById("agentScreenPanel");
 const addAgentCardButton = document.getElementById("addAgentCardButton");
 const refreshAgentVmsButton = document.getElementById("refreshAgentVmsButton");
+const setupHypervBaseButton = document.getElementById("setupHypervBaseButton");
+const hypervBasePanel = document.getElementById("hypervBasePanel");
+const hypervBaseStatus = document.getElementById("hypervBaseStatus");
+const hypervBaseNameInput = document.getElementById("hypervBaseNameInput");
+const hypervIsoPathInput = document.getElementById("hypervIsoPathInput");
+const hypervMemoryInput = document.getElementById("hypervMemoryInput");
+const hypervProcessorsInput = document.getElementById("hypervProcessorsInput");
+const hypervDiskInput = document.getElementById("hypervDiskInput");
+const selectHypervIsoButton = document.getElementById("selectHypervIsoButton");
+const createHypervBaseButton = document.getElementById("createHypervBaseButton");
+const cancelHypervBaseButton = document.getElementById("cancelHypervBaseButton");
 const agentCreatePanel = document.getElementById("agentCreatePanel");
 const agentNameInput = document.getElementById("agentNameInput");
 const agentProfileSelect = document.getElementById("agentProfileSelect");
 const agentAddressInput = document.getElementById("agentAddressInput");
 const agentVmNameInput = document.getElementById("agentVmNameInput");
+const agentBaseVmSelect = document.getElementById("agentBaseVmSelect");
 const agentVmOptions = document.getElementById("agentVmOptions");
 const agentVmListPanel = document.getElementById("agentVmListPanel");
 const agentVmList = document.getElementById("agentVmList");
@@ -11616,6 +11628,7 @@ function normalizeAgent(agent = {}) {
     name,
     address,
     vmName: String(agent.vmName || "").trim(),
+    baseVmName: String(agent.baseVmName || "").trim(),
     profile: ["fiscal", "dp", "contabil", "ti"].includes(String(agent.profile || "").trim())
       ? String(agent.profile).trim()
       : "fiscal",
@@ -11646,6 +11659,12 @@ function renderAgentVmOptions() {
   agentVmOptions.innerHTML = (state.agents.vms || [])
     .map((vm) => `<option value="${escapeHtml(vm.name || "")}">${escapeHtml(vm.uuid || "")}</option>`)
     .join("");
+  if (agentBaseVmSelect) {
+    const selected = agentBaseVmSelect.value;
+    agentBaseVmSelect.innerHTML = '<option value="">Usar VM existente</option>' + (state.agents.vms || [])
+      .map((vm) => `<option value="${escapeHtml(vm.name || "")}">${escapeHtml(vm.name || "")} (${escapeHtml(vm.state || "")})</option>`).join("");
+    agentBaseVmSelect.value = selected;
+  }
 }
 
 function renderAgentVmList() {
@@ -11659,19 +11678,24 @@ function renderAgentVmList() {
   agentVmList.innerHTML = vms.map((vm) => {
     const name = String(vm.name || "").trim();
     const exists = state.agents.items.some((agent) => String(agent.vmName || "").trim() === name);
+    const isBase = /(?:^|[-_\s])base(?:$|[-_\s])/i.test(name);
     return `
-      <article class="agents-vm-item">
+      <article class="agents-vm-item ${isBase ? "is-base" : ""}">
         <div>
+          ${isBase ? '<span class="agents-vm-base-badge">VM-base principal</span>' : ""}
           <strong>${escapeHtml(name || "VM sem nome")}</strong>
-          <span>${escapeHtml(vm.uuid || "VirtualBox")}</span>
+          <span>${escapeHtml(`${vm.state || "Desconhecido"}${vm.ip ? ` · ${vm.ip}` : ""}`)}</span>
         </div>
-        <button class="ghost-button" type="button" data-agent-vm-name="${escapeHtml(name)}" ${exists ? "disabled" : ""}>${exists ? "Ja vinculada" : "Usar esta VM"}</button>
+        <div class="agents-vm-actions">
+          ${isBase ? `<button class="primary-button" type="button" data-hyperv-base-action="configure" data-hyperv-vm-name="${escapeHtml(name)}">Configurar VM-base</button><button class="ghost-button" type="button" data-hyperv-base-action="stop" data-hyperv-vm-name="${escapeHtml(name)}" ${String(vm.state).toLowerCase() === "off" ? "disabled" : ""}>Desligar base</button>` : ""}
+          <button class="ghost-button" type="button" data-agent-vm-name="${escapeHtml(name)}" ${exists || isBase ? "disabled" : ""}>${isBase ? "Modelo dos agentes" : exists ? "Ja vinculada" : "Usar esta VM"}</button>
+        </div>
       </article>
     `;
   }).join("");
 }
 
-function useVirtualboxVm(vmName = "") {
+function useHypervVm(vmName = "") {
   const name = String(vmName || "").trim();
   if (!name) {
     return;
@@ -11695,7 +11719,7 @@ async function refreshAgentVmList(options = {}) {
     refreshAgentVmsButton.textContent = "Buscando...";
   }
   try {
-    const result = await invoke("list_virtualbox_vms");
+    const result = await invoke("list_hyperv_vms");
     state.agents.vms = Array.isArray(result?.items) ? result.items : [];
     renderAgentVmOptions();
     renderAgentVmList();
@@ -11703,8 +11727,8 @@ async function refreshAgentVmList(options = {}) {
     if (!silent) {
       setMessage(
         state.agents.vms.length
-          ? `${state.agents.vms.length} VM(s) encontradas no VirtualBox.`
-          : "VirtualBox encontrado, mas ainda nao existe nenhuma VM criada.",
+          ? `${state.agents.vms.length} VM(s) encontradas no Hyper-V.`
+          : "Hyper-V pronto, mas ainda nao existe nenhuma VM.",
         state.agents.vms.length ? "success" : "info"
       );
     }
@@ -11789,6 +11813,7 @@ function resetAgentForm() {
   if (agentVmNameInput) {
     agentVmNameInput.value = "";
   }
+  if (agentBaseVmSelect) agentBaseVmSelect.value = "";
   if (agentCreatePanel) {
     agentCreatePanel.hidden = true;
   }
@@ -11813,6 +11838,7 @@ function openAgentForm(agent = null) {
   if (agentVmNameInput) {
     agentVmNameInput.value = agent?.vmName || "";
   }
+  if (agentBaseVmSelect) agentBaseVmSelect.value = agent?.baseVmName || "";
   renderAgents();
 }
 
@@ -11821,6 +11847,7 @@ async function saveAgentFromForm() {
   const profile = String(agentProfileSelect?.value || "fiscal").trim();
   const address = normalizeAgentAddress(agentAddressInput?.value || "");
   const vmName = String(agentVmNameInput?.value || "").trim();
+  const baseVmName = String(agentBaseVmSelect?.value || "").trim();
   if (!name) {
     setMessage("Informe um nome para identificar este Agent.", "error");
     agentNameInput?.focus();
@@ -11835,6 +11862,7 @@ async function saveAgentFromForm() {
     profile,
     address,
     vmName,
+    baseVmName,
     status: address ? "ready" : "waiting",
     createdAt: previousAgent?.createdAt || Date.now(),
   });
@@ -11857,6 +11885,13 @@ async function saveAgentFromForm() {
   renderAgents();
   setMessage(`Agente salvo: ${name}`, "success");
   if (nextAgent.vmName && !editingId) {
+    if (nextAgent.baseVmName) {
+      setBusy("Clonando VM-base");
+      await invoke("clone_hyperv_vm", { baseVmName: nextAgent.baseVmName, vmName: nextAgent.vmName });
+      nextAgent.baseVmName = "";
+      updateAgentRuntime(nextAgent.id, { baseVmName: "", connectionStage: "VM clonada" });
+      await refreshAgentVmList({ silent: true });
+    }
     await startAndWatchAgent(nextAgent);
   }
 }
@@ -11928,6 +11963,7 @@ async function connectAgentFromCard(agent, options = {}) {
       studioControlAddressInput.value = address;
     }
     await connectStudioControl();
+    await invoke("remote_agent_set_identity", { address, name: agent.name });
     renderAgents();
     if (!silent) {
       setBusy("Pronto");
@@ -11962,35 +11998,27 @@ async function prepareAgentVmConnection(agent) {
   if (!vmName) {
     return agent;
   }
-  updateAgentRuntime(agent.id, { connectionStage: "Configurando conexao", status: "starting" });
-  const usedPorts = state.agents.items
-    .filter((item) => String(item.id) !== String(agent.id))
-    .map((item) => Number(item.localPort || 0))
-    .filter((port) => port >= 1024);
-  const suggestedPort = Number(agent.localPort || 0) || Math.max(18452, ...usedPorts) + 1;
-  const result = await invoke("configure_virtualbox_agent_network", {
-    vmName,
-    preferredPort: suggestedPort,
-  });
+  updateAgentRuntime(agent.id, { connectionStage: "Consultando rede do Hyper-V", status: "starting" });
+  const result = await invoke("get_hyperv_vm_connection", { vmName });
   return updateAgentRuntime(agent.id, {
     address: result?.address || agent.address,
-    localPort: Number(result?.host_port || result?.hostPort || agent.localPort || 0),
-    connectionStage: "Conexao preparada",
-    status: "ready",
+    localPort: 0,
+    connectionStage: result?.address ? "IP da VM encontrado" : "Aguardando IP do Windows",
+    status: "starting",
   }) || agent;
 }
 
 async function startAgentVm(agent) {
   const vmName = String(agent?.vmName || "").trim();
   if (!vmName) {
-    setMessage("Esse agente nao tem nome de VM configurado. Edite o card e informe o nome do VirtualBox.", "error");
+    setMessage("Esse agente nao tem nome de VM configurado. Edite o card e informe o nome no Hyper-V.", "error");
     return false;
   }
   try {
     setBusy("Preparando VM");
     const preparedAgent = await prepareAgentVmConnection(agent);
     updateAgentRuntime(agent.id, { connectionStage: "Ligando maquina", status: "starting" });
-    await invoke("start_virtualbox_vm_headless", { vmName });
+    await invoke("start_hyperv_vm", { vmName });
     setBusy("Pronto");
     const updated = updateAgentRuntime(agent.id, {
       address: preparedAgent.address,
@@ -12014,6 +12042,14 @@ async function waitAndConnectAgent(agent, attempts = 18) {
       connectionStage: `Iniciando Windows e Agent (${index + 1}/${attempts})`,
       status: "starting",
     });
+    if (agent.vmName) {
+      try {
+        const connection = await invoke("get_hyperv_vm_connection", { vmName: agent.vmName });
+        if (connection?.address) agent = updateAgentRuntime(agent.id, { address: connection.address }) || agent;
+      } catch (error) {
+        console.warn("Hyper-V ainda nao informou o IP da VM.", error);
+      }
+    }
     const connected = await connectAgentFromCard(agent, { silent: true });
     if (connected) {
       updateAgentRuntime(agent.id, { connectionStage: "Online", status: "online", lastSeenAt: Date.now() });
@@ -12035,12 +12071,6 @@ async function startAndWatchAgent(agent) {
       return;
     }
     agent = startedAgent;
-  }
-  if (!normalizeAgentAddress(agent.address || "")) {
-    setBusy("Pronto");
-    setMessage("Maquina preparada. Quando o FlowDetect Agent mostrar o endereco, edite este card e preencha para conectar.", "success");
-    renderAgents();
-    return;
   }
   if (previousAddress && previousAddress !== normalizeAgentAddress(agent.address || "")) {
     stopStudioControlScreenStream({ clear: true });
@@ -12137,6 +12167,7 @@ function renderAgents() {
               <button class="primary-button" type="button" data-agent-action="watch" data-agent-id="${escapeHtml(agent.id)}" ${hasAddress || agent.vmName ? "" : "disabled"}>${connected ? "Assistir tela" : agent.vmName ? "Iniciar e conectar" : "Conectar e assistir"}</button>
               <button class="ghost-button" type="button" data-agent-action="connect" data-agent-id="${escapeHtml(agent.id)}" ${hasAddress ? "" : "disabled"}>Conectar</button>
               <button class="ghost-button" type="button" data-agent-action="start-vm" data-agent-id="${escapeHtml(agent.id)}" ${agent.vmName ? "" : "disabled"}>Iniciar VM</button>
+              <button class="ghost-button" type="button" data-agent-action="console" data-agent-id="${escapeHtml(agent.id)}" ${agent.vmName ? "" : "disabled"}>Abrir tela da VM</button>
               <button class="ghost-button" type="button" data-agent-action="edit" data-agent-id="${escapeHtml(agent.id)}">Editar</button>
               <button class="danger-button" type="button" data-agent-action="delete" data-agent-id="${escapeHtml(agent.id)}">Excluir</button>
             </div>
@@ -17446,21 +17477,111 @@ agentsTabButton?.addEventListener("click", () => {
 agentScreenTabButton?.addEventListener("click", () => setWorkspaceTab("agent-screen"));
 smartRecorderTabButton?.addEventListener("click", () => setWorkspaceTab("smart-recorder"));
 addAgentCardButton?.addEventListener("click", () => openAgentForm());
+function setHypervBaseStatus(message, variant = "info") {
+  if (!hypervBaseStatus) return;
+  hypervBaseStatus.textContent = message;
+  hypervBaseStatus.dataset.variant = variant;
+}
+
+setupHypervBaseButton?.addEventListener("click", async () => {
+  hypervBasePanel.hidden = false;
+  hypervBaseNameInput?.focus();
+  setHypervBaseStatus("Verificando o Hyper-V...");
+  try {
+    const status = await invoke("get_hyperv_status");
+    if (!status?.module || !status?.hypervisor) {
+      setHypervBaseStatus("O Hyper-V ainda nao esta completamente habilitado neste computador.", "error");
+    } else if (!status?.admin) {
+      setHypervBaseStatus("Permissao necessaria: feche o FlowDetect e abra o VS Code/FlowDetect como administrador.", "error");
+    } else {
+      setHypervBaseStatus("Hyper-V pronto. Selecione a ISO e crie a VM-base.", "success");
+    }
+  } catch (error) {
+    setHypervBaseStatus(String(error), "error");
+  }
+});
+cancelHypervBaseButton?.addEventListener("click", () => { hypervBasePanel.hidden = true; });
+selectHypervIsoButton?.addEventListener("click", async () => {
+  try {
+    const selected = await openNativeFileDialog({ multiple: false, filters: [{ name: "Imagem do Windows", extensions: ["iso"] }] });
+    if (typeof selected === "string") hypervIsoPathInput.value = selected;
+  } catch (error) { setMessage(String(error), "error"); }
+});
+createHypervBaseButton?.addEventListener("click", async () => {
+  const vmName = String(hypervBaseNameInput?.value || "").trim();
+  const isoPath = String(hypervIsoPathInput?.value || "").trim();
+  if (!vmName || !isoPath) { setMessage("Informe o nome e selecione a ISO do Windows 10.", "error"); return; }
+  try {
+    createHypervBaseButton.disabled = true;
+    setHypervBaseStatus("Criando disco e configurando a VM. Isso pode levar alguns segundos...");
+    setBusy("Criando VM-base");
+    await invoke("create_hyperv_base_vm", {
+      vmName, isoPath,
+      memoryMb: Number(hypervMemoryInput?.value || 4096),
+      processors: Number(hypervProcessorsInput?.value || 2),
+      diskSizeGb: Number(hypervDiskInput?.value || 64),
+    });
+    await invoke("start_hyperv_vm", { vmName });
+    await invoke("open_hyperv_vm_console", { vmName });
+    hypervBasePanel.hidden = true;
+    await refreshAgentVmList({ silent: true });
+    setBusy("Pronto");
+    setMessage("VM-base criada. Instale o Windows e os aplicativos; depois desligue a VM para poder cloná-la.", "success");
+  } catch (error) {
+    const detail = String(error);
+    setBusy("Erro");
+    setHypervBaseStatus(detail, "error");
+    setMessage(detail, "error");
+  }
+  finally { createHypervBaseButton.disabled = false; }
+});
 refreshAgentVmsButton?.addEventListener("click", () => {
   refreshAgentVmList().catch((error) => setMessage(String(error), "error"));
 });
 agentVmList?.addEventListener("click", (event) => {
+  const baseButton = event.target.closest("[data-hyperv-base-action]");
+  if (baseButton) {
+    const vmName = String(baseButton.dataset.hypervVmName || "").trim();
+    const action = baseButton.dataset.hypervBaseAction;
+    baseButton.disabled = true;
+    if (action === "configure") {
+      setBusy("Abrindo VM-base");
+      invoke("start_hyperv_vm", { vmName })
+        .then(() => invoke("open_hyperv_vm_console", { vmName }))
+        .then(() => {
+          setBusy("Pronto");
+          setMessage("VM-base aberta. As alteracoes valerão para os próximos agentes clonados.", "success");
+        })
+        .catch((error) => { setBusy("Erro"); setMessage(String(error), "error"); })
+        .finally(() => { baseButton.disabled = false; refreshAgentVmList({ silent: true }).catch(() => null); });
+    } else if (action === "stop") {
+      setBusy("Desligando VM-base");
+      invoke("stop_hyperv_vm", { vmName })
+        .then(() => {
+          setBusy("Pronto");
+          setMessage("VM-base desligada e pronta para gerar novos agentes.", "success");
+        })
+        .catch((error) => { setBusy("Erro"); setMessage(String(error), "error"); })
+        .finally(() => { baseButton.disabled = false; refreshAgentVmList({ silent: true }).catch(() => null); });
+    }
+    return;
+  }
   const button = event.target.closest("[data-agent-vm-name]");
   if (!button) {
     return;
   }
-  useVirtualboxVm(button.dataset.agentVmName || "");
+  useHypervVm(button.dataset.agentVmName || "");
 });
 cancelAgentCardButton?.addEventListener("click", () => {
   resetAgentForm();
   renderAgents();
 });
-saveAgentCardButton?.addEventListener("click", saveAgentFromForm);
+saveAgentCardButton?.addEventListener("click", () => {
+  saveAgentFromForm().catch((error) => {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  });
+});
 agentsList?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-agent-action]");
   if (!button) {
@@ -17482,6 +17603,8 @@ agentsList?.addEventListener("click", (event) => {
     startAndWatchAgent(agent);
   } else if (action === "start-vm") {
     startAgentVm(agent);
+  } else if (action === "console") {
+    invoke("open_hyperv_vm_console", { vmName: agent.vmName }).catch((error) => setMessage(String(error), "error"));
   } else if (action === "edit") {
     editAgentCard(id);
   } else if (action === "cancel-edit") {

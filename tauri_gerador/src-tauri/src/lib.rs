@@ -9,7 +9,7 @@ use std::{
     net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex, OnceLock},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -18,19 +18,23 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 use windows::Win32::{
-    Foundation::HWND,
+    Foundation::{BOOL, HWND, LPARAM, RECT},
     Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
         GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
         HBITMAP, HGDIOBJ, RGBQUAD, SRCCOPY,
     },
     UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
+        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
         KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
         MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
-        MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, VIRTUAL_KEY,
+        MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, VIRTUAL_KEY, VK_CONTROL, VK_F12, VK_SHIFT,
     },
-    UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN},
+    UI::WindowsAndMessaging::{
+        EnumWindows, GetForegroundWindow, GetSystemMetrics, GetWindowRect, GetWindowThreadProcessId,
+        IsWindow, IsWindowVisible, IsZoomed, SetWindowPos, ShowWindow, SM_CXSCREEN, SM_CYSCREEN,
+        SWP_NOZORDER, SWP_SHOWWINDOW, SW_RESTORE,
+    },
 };
 
 #[derive(Serialize)]
@@ -92,6 +96,12 @@ static WEBRTC_SIGNAL_STATE: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
 static TARGET_OVERLAY_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 static SMART_RECORDER_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 static RECOGNITION_WORKER: Mutex<Option<RecognitionWorker>> = Mutex::new(None);
+static AGENT_WORK_AREA_GUARD_ENABLED: AtomicBool = AtomicBool::new(false);
+
+const AGENT_SAFE_MARGIN_LEFT: i32 = 25;
+const AGENT_SAFE_MARGIN_RIGHT: i32 = 25;
+const AGENT_SAFE_MARGIN_TOP: i32 = 76;
+const AGENT_SAFE_MARGIN_BOTTOM: i32 = 166;
 
 #[derive(Serialize)]
 struct AutomationConfig {
@@ -285,6 +295,93 @@ fn configure_no_window(command: &mut Command) {
     }
 }
 
+/* Hyper-V replaces the former VirtualBox integration. */
+fn powershell_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn run_hyperv_powershell(script: &str) -> Result<String, String> {
+    let wrapped = format!("$ErrorActionPreference='Stop'; Import-Module Hyper-V -ErrorAction Stop; {script}");
+    let mut command = Command::new("powershell.exe");
+    command.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &wrapped]);
+    configure_no_window(&mut command);
+    let output = command.output().map_err(|err| format!("Nao foi possivel abrir o PowerShell do Hyper-V: {err}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if output.status.success() { Ok(stdout) } else {
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        Err(format!("Falha no Hyper-V. Execute o FlowDetect como administrador. {detail}"))
+    }
+}
+
+fn hyperv_json(script: &str) -> Result<Value, String> {
+    let output = run_hyperv_powershell(script)?;
+    if output.is_empty() { return Ok(Value::Null); }
+    serde_json::from_str(&output).map_err(|err| format!("Resposta invalida do Hyper-V: {err}. Saida: {output}"))
+}
+
+#[tauri::command]
+fn get_hyperv_status() -> Result<Value, String> {
+    let script = "$principal=[Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent(); $admin=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator); $module=[bool](Get-Module -ListAvailable Hyper-V); $hypervisor=(Get-CimInstance Win32_ComputerSystem).HypervisorPresent; [pscustomobject]@{ok=$true;admin=$admin;module=$module;hypervisor=$hypervisor} | ConvertTo-Json -Compress";
+    let mut command = Command::new("powershell.exe");
+    command.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+    configure_no_window(&mut command);
+    let output = command.output().map_err(|err| format!("Falha ao verificar o Hyper-V: {err}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    serde_json::from_str(&stdout).map_err(|err| format!("Falha ao interpretar o estado do Hyper-V: {err}"))
+}
+
+#[tauri::command]
+fn list_hyperv_vms() -> Result<Value, String> {
+    let items = hyperv_json("[array]$items=@(Get-VM | ForEach-Object { $vm=$_; $ips=@(Get-VMNetworkAdapter -VM $vm -ErrorAction SilentlyContinue | ForEach-Object IPAddresses | Where-Object { $_ -match '^\\d+\\.' -and $_ -notmatch '^169\\.254\\.' }); [pscustomobject]@{ name=$vm.Name; uuid=$vm.Id.Guid; state=$vm.State.ToString(); generation=$vm.Generation; path=$vm.Path; ip=($ips | Select-Object -First 1) } }); ConvertTo-Json -InputObject $items -Compress")?;
+    Ok(serde_json::json!({ "ok": true, "provider": "hyper-v", "items": items.as_array().cloned().unwrap_or_default() }))
+}
+
+#[tauri::command]
+fn create_hyperv_base_vm(vm_name: String, iso_path: String, memory_mb: Option<u64>, processors: Option<u32>, disk_size_gb: Option<u64>) -> Result<Value, String> {
+    let name = vm_name.trim(); let iso = PathBuf::from(iso_path.trim());
+    if name.is_empty() { return Err("Informe o nome da VM-base.".to_string()); }
+    if !iso.is_file() || iso.extension().and_then(|v| v.to_str()).map(|v| !v.eq_ignore_ascii_case("iso")).unwrap_or(true) { return Err("Selecione uma ISO valida do Windows 10.".to_string()); }
+    let memory = memory_mb.unwrap_or(4096).clamp(2048, 16384); let cpu = processors.unwrap_or(2).clamp(1, 8); let disk = disk_size_gb.unwrap_or(64).clamp(40, 512);
+    let script = format!(r#"$name={name}; $iso={iso}; if (Get-VM -Name $name -ErrorAction SilentlyContinue) {{ throw 'Ja existe uma VM com esse nome.' }}; $switch=Get-VMSwitch -Name 'Default Switch' -ErrorAction SilentlyContinue; if (-not $switch) {{ throw 'O Default Switch do Hyper-V nao foi encontrado.' }}; $root=Join-Path $env:ProgramData 'FlowDetect\HyperV'; $vmPath=Join-Path $root $name; New-Item -ItemType Directory -Path $vmPath -Force | Out-Null; $vhd=Join-Path $vmPath ($name+'.vhdx'); New-VHD -Path $vhd -Dynamic -SizeBytes {disk}GB | Out-Null; $vm=New-VM -Name $name -Generation 2 -MemoryStartupBytes {memory}MB -VHDPath $vhd -Path $vmPath -SwitchName $switch.Name; Set-VMProcessor -VM $vm -Count {cpu}; Set-VMMemory -VM $vm -DynamicMemoryEnabled $true -MinimumBytes 2048MB -StartupBytes {memory}MB -MaximumBytes {max_memory}MB; Set-VM -VM $vm -AutomaticStartAction Nothing -AutomaticStopAction ShutDown; Set-VMFirmware -VM $vm -EnableSecureBoot On -SecureBootTemplate MicrosoftWindows; $dvd=Add-VMDvdDrive -VM $vm -Path $iso -Passthru; Set-VMFirmware -VM $vm -FirstBootDevice $dvd; [pscustomobject]@{{ok=$true;name=$vm.Name;path=$vm.Path;vhd=$vhd;switch=$switch.Name}} | ConvertTo-Json -Compress"#, name=powershell_literal(name), iso=powershell_literal(&iso.to_string_lossy()), disk=disk, memory=memory, max_memory=(memory*2).min(16384), cpu=cpu);
+    hyperv_json(&script)
+}
+
+#[tauri::command]
+fn clone_hyperv_vm(base_vm_name: String, vm_name: String) -> Result<Value, String> {
+    let base=base_vm_name.trim(); let name=vm_name.trim(); if base.is_empty() || name.is_empty() { return Err("Informe a VM-base e o nome da nova VM.".to_string()); }
+    let script=format!(r#"$baseName={base}; $name={name}; $base=Get-VM -Name $baseName; if ($base.State -ne 'Off') {{ throw 'Desligue a VM-base antes de clonar.' }}; if (Get-VM -Name $name -ErrorAction SilentlyContinue) {{ throw 'Ja existe uma VM com esse nome.' }}; $source=(Get-VMHardDiskDrive -VM $base | Select-Object -First 1).Path; if (-not $source) {{ throw 'A VM-base nao possui disco virtual.' }}; $root=Join-Path $env:ProgramData 'FlowDetect\HyperV'; $vmPath=Join-Path $root $name; New-Item -ItemType Directory -Path $vmPath -Force | Out-Null; $target=Join-Path $vmPath ($name+'.vhdx'); Copy-Item -LiteralPath $source -Destination $target; $adapter=Get-VMNetworkAdapter -VM $base | Select-Object -First 1; $vm=New-VM -Name $name -Generation $base.Generation -MemoryStartupBytes $base.MemoryStartup -VHDPath $target -Path $vmPath -SwitchName $adapter.SwitchName; Set-VMProcessor -VM $vm -Count $base.ProcessorCount; Set-VM -VM $vm -AutomaticStartAction Nothing -AutomaticStopAction ShutDown; Set-VMFirmware -VM $vm -EnableSecureBoot On -SecureBootTemplate MicrosoftWindows; [pscustomobject]@{{ok=$true;name=$vm.Name;base=$baseName;path=$vm.Path}} | ConvertTo-Json -Compress"#, base=powershell_literal(base), name=powershell_literal(name)); hyperv_json(&script)
+}
+
+#[tauri::command]
+fn start_hyperv_vm(vm_name: String) -> Result<Value, String> {
+    let name=vm_name.trim(); if name.is_empty() { return Err("Informe o nome da VM do Hyper-V.".to_string()); }
+    hyperv_json(&format!("$vm=Get-VM -Name {}; if ($vm.State -eq 'Off') {{ Start-VM -VM $vm | Out-Null }}; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString()}} | ConvertTo-Json -Compress", powershell_literal(name)))
+}
+
+#[tauri::command]
+fn stop_hyperv_vm(vm_name: String) -> Result<Value, String> {
+    let name = vm_name.trim();
+    if name.is_empty() {
+        return Err("Informe o nome da VM do Hyper-V.".to_string());
+    }
+    hyperv_json(&format!("$vm=Get-VM -Name {}; if ($vm.State -ne 'Off') {{ Stop-VM -VM $vm -Shutdown }}; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString()}} | ConvertTo-Json -Compress", powershell_literal(name)))
+}
+
+#[tauri::command]
+fn get_hyperv_vm_connection(vm_name: String) -> Result<Value, String> {
+    let name=vm_name.trim(); if name.is_empty() { return Err("Informe o nome da VM do Hyper-V.".to_string()); }
+    hyperv_json(&format!("$vm=Get-VM -Name {}; $ip=@(Get-VMNetworkAdapter -VM $vm | ForEach-Object IPAddresses | Where-Object {{ $_ -match '^\\d+\\.' -and $_ -notmatch '^169\\.254\\.' }} | Select-Object -First 1); [pscustomobject]@{{ok=$true;name=$vm.Name;state=$vm.State.ToString();ip=($ip | Select-Object -First 1);address=$(if($ip){{$ip[0]+':18452'}}else{{$null}})}} | ConvertTo-Json -Compress", powershell_literal(name)))
+}
+
+#[tauri::command]
+fn open_hyperv_vm_console(vm_name: String) -> Result<Value, String> {
+    let name=vm_name.trim(); if name.is_empty() { return Err("Informe o nome da VM do Hyper-V.".to_string()); }
+    Command::new("vmconnect.exe").args(["localhost", name]).spawn().map_err(|err| format!("Nao foi possivel abrir a tela da VM: {err}"))?; Ok(serde_json::json!({"ok":true,"name":name}))
+}
+
+/* Legacy implementation kept out of the build while persisted agent data migrates. */
+#[cfg(any())]
 fn virtualbox_manage_program() -> PathBuf {
     let env_candidates = ["VBOX_MSI_INSTALL_PATH", "VBOX_INSTALL_PATH"]
         .iter()
@@ -302,6 +399,7 @@ fn virtualbox_manage_program() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("VBoxManage"))
 }
 
+#[cfg(any())]
 fn run_virtualbox_manage(args: &[String]) -> Result<(String, String), String> {
     let mut command = Command::new(virtualbox_manage_program());
     command.args(args);
@@ -322,6 +420,7 @@ fn run_virtualbox_manage(args: &[String]) -> Result<(String, String), String> {
     }
 }
 
+#[cfg(any())]
 fn flowdetect_nat_port(machine_info: &str) -> Option<u16> {
     machine_info.lines().find_map(|line| {
         if !line.contains("flowdetect-agent") {
@@ -335,6 +434,7 @@ fn flowdetect_nat_port(machine_info: &str) -> Option<u16> {
     })
 }
 
+#[cfg(any())]
 fn available_agent_host_port(preferred_port: Option<u16>) -> Result<u16, String> {
     let start = preferred_port.filter(|port| *port >= 1024).unwrap_or(18453);
     (start..=start.saturating_add(200))
@@ -342,6 +442,7 @@ fn available_agent_host_port(preferred_port: Option<u16>) -> Result<u16, String>
         .ok_or_else(|| "Nao encontrei uma porta local livre para conectar o Agent.".to_string())
 }
 
+#[cfg(any())]
 #[tauri::command]
 fn configure_virtualbox_agent_network(vm_name: String, preferred_port: Option<u16>) -> Result<Value, String> {
     let trimmed_name = vm_name.trim();
@@ -374,6 +475,7 @@ fn configure_virtualbox_agent_network(vm_name: String, preferred_port: Option<u1
     }))
 }
 
+#[cfg(any())]
 #[tauri::command]
 fn start_virtualbox_vm_headless(vm_name: String) -> Result<Value, String> {
     let trimmed_name = vm_name.trim();
@@ -421,6 +523,7 @@ fn start_virtualbox_vm_headless(vm_name: String) -> Result<Value, String> {
     })
 }
 
+#[cfg(any())]
 #[tauri::command]
 fn list_virtualbox_vms() -> Result<Value, String> {
     let vbox_manage = virtualbox_manage_program();
@@ -1134,12 +1237,23 @@ fn local_meshcentral_url() -> String {
     format!("http://{host}:8080")
 }
 
+fn agent_identity_name(root: &PathBuf) -> String {
+    fs::read_to_string(root.join("agent_identity.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|value| value.get("name").and_then(Value::as_str).map(str::to_string))
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "Agente principal".to_string())
+}
+
 #[tauri::command]
-fn get_agent_connection_info() -> Result<Value, String> {
+fn get_agent_connection_info(app: AppHandle) -> Result<Value, String> {
+    let root = workspace_root(&app);
     Ok(serde_json::json!({
         "port": 18452,
         "address": local_agent_address(),
         "local": "127.0.0.1:18452",
+        "agent_name": agent_identity_name(&root),
     }))
 }
 
@@ -1589,32 +1703,6 @@ fn update_remote_progress_from_stdout(root: &PathBuf, automation_id: &str, raw_l
     }
 }
 
-fn launch_execution_screen_overlay(root: &PathBuf, label: &str, follow_pid: Option<u32>) {
-    let script_path = root.join("overlay_automacao_tela.py");
-    if !script_path.exists() {
-        append_launcher_log(root, format!("Overlay de execucao nao encontrado: {}", script_path.display()));
-        return;
-    }
-    let Ok((python_program, python_args)) = python_command(root) else {
-        append_launcher_log(root, "Nao foi possivel iniciar overlay de execucao: Python indisponivel.");
-        return;
-    };
-    let mut command = Command::new(&python_program);
-    command
-        .current_dir(root)
-        .args(&python_args)
-        .arg(script_path)
-        .arg("--texto")
-        .arg(label);
-    if let Some(pid) = follow_pid {
-        command.arg("--seguir-pid").arg(pid.to_string());
-    }
-    configure_no_window(&mut command);
-    if let Err(err) = command.spawn() {
-        append_launcher_log(root, format!("Falha ao iniciar overlay de execucao: {err}"));
-    }
-}
-
 fn resolve_remote_loop_start(root: &PathBuf, requested_line: i32, start_company: Option<&str>) -> Result<i32, String> {
     let company_query = start_company.map(str::trim).filter(|value| !value.is_empty());
     let Some(query) = company_query else {
@@ -1709,7 +1797,6 @@ fn execute_remote_automation(
     let mut child = command
         .spawn()
         .map_err(|err| format!("Falha ao iniciar automacao remota no Agent: {err}"))?;
-    launch_execution_screen_overlay(root, "Executando automacao...", Some(child.id()));
     append_launcher_log(root, "Processo remoto iniciado pelo Control.");
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -1834,10 +1921,25 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
         http_json_response("204 No Content", serde_json::json!({}))
     } else if method == "GET" && clean_path == "/api/ping" {
         http_json_response("200 OK", serde_json::json!({
-            "agent": "FlowDetect Agent",
+            "agent": agent_identity_name(&root),
             "port": 18452,
             "address": local_agent_address()
         }))
+    } else if method == "POST" && clean_path == "/api/identity" {
+        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let name = payload.get("name").and_then(Value::as_str).unwrap_or("").trim();
+        if name.is_empty() {
+            http_json_response("400 Bad Request", serde_json::json!({"error":"Informe o nome do Agent."}))
+        } else {
+            let safe_name: String = name.chars().take(80).collect();
+            match fs::write(root.join("agent_identity.json"), serde_json::json!({"name":safe_name}).to_string()) {
+                Ok(()) => {
+                    let _ = app.emit("agent-identity-updated", serde_json::json!({"name":safe_name}));
+                    http_json_response("200 OK", serde_json::json!({"ok":true,"name":safe_name}))
+                }
+                Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error":format!("Falha ao salvar o nome do Agent: {error}")})),
+            }
+        }
     } else if method == "GET" && clean_path == "/api/automations" {
         match run_helper_json(&root, &["automation-library-list".into()]) {
             Ok(value) => http_json_response("200 OK", value),
@@ -2517,6 +2619,12 @@ fn remote_agent_ping(address: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn remote_agent_set_identity(address: String, name: String) -> Result<Value, String> {
+    let body = serde_json::to_vec(&serde_json::json!({"name":name})).map_err(|err| err.to_string())?;
+    remote_agent_request(&address, "POST", "/api/identity", Some(&body))
+}
+
+#[tauri::command]
 fn remote_agent_list_automations(address: String) -> Result<Value, String> {
     remote_agent_request(&address, "GET", "/api/automations", None)
 }
@@ -2720,6 +2828,210 @@ fn hide_target_window_overlay(_app: AppHandle, clear_target: bool) -> Result<Val
 }
 
 #[tauri::command]
+fn fit_target_window_to_agent_area(_app: AppHandle, hwnd: i64) -> Result<Value, String> {
+    if hwnd <= 0 {
+        return Err("Janela alvo invalida.".to_string());
+    }
+
+    #[cfg(windows)]
+    {
+        let window = HWND(hwnd as isize as *mut std::ffi::c_void);
+        fit_window_to_agent_safe_area(window, hwnd, "Janela alvo")
+    }
+
+    #[cfg(not(windows))]
+    {
+        Err("Ajuste de janela alvo disponivel apenas no Windows.".to_string())
+    }
+}
+
+#[tauri::command]
+fn fit_active_window_to_agent_area(_app: AppHandle) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        unsafe {
+            let window = GetForegroundWindow();
+            if window.0.is_null() || !IsWindow(window).as_bool() {
+                return Err("Nenhuma janela ativa valida para ajustar.".to_string());
+            }
+            fit_window_to_agent_safe_area(window, window.0 as isize as i64, "Janela ativa")
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        Err("Ajuste de janela ativa disponivel apenas no Windows.".to_string())
+    }
+}
+
+#[cfg(windows)]
+fn fit_window_to_agent_safe_area(window: HWND, hwnd_value: i64, label: &str) -> Result<Value, String> {
+    unsafe {
+        if !IsWindow(window).as_bool() {
+            return Err(format!("{label} nao existe mais."));
+        }
+
+        let screen_width = GetSystemMetrics(SM_CXSCREEN).max(1024);
+        let screen_height = GetSystemMetrics(SM_CYSCREEN).max(768);
+        let margin_left = AGENT_SAFE_MARGIN_LEFT;
+        let margin_right = AGENT_SAFE_MARGIN_RIGHT;
+        let margin_top = AGENT_SAFE_MARGIN_TOP;
+        let margin_bottom = AGENT_SAFE_MARGIN_BOTTOM;
+        let target_width = (screen_width - margin_left - margin_right).max(640);
+        let target_height = (screen_height - margin_top - margin_bottom).max(420);
+
+        let mut current_rect = RECT::default();
+        if GetWindowRect(window, &mut current_rect).is_ok() {
+            let tolerance = 12;
+            let target_right = margin_left + target_width;
+            let target_bottom = margin_top + target_height;
+            let already_safe = current_rect.left >= margin_left - tolerance
+                && current_rect.top >= margin_top - tolerance
+                && current_rect.right <= target_right + tolerance
+                && current_rect.bottom <= target_bottom + tolerance;
+            if already_safe {
+                return Ok(serde_json::json!({
+                    "ok": true,
+                    "adjusted": false,
+                    "hwnd": hwnd_value,
+                    "safe_area": {
+                        "left": margin_left,
+                        "top": margin_top,
+                        "width": target_width,
+                        "height": target_height,
+                        "right_margin": margin_right,
+                        "bottom_margin": margin_bottom
+                    }
+                }));
+            }
+        }
+
+        let _ = ShowWindow(window, SW_RESTORE);
+        SetWindowPos(
+            window,
+            None,
+            margin_left,
+            margin_top,
+            target_width,
+            target_height,
+            SWP_NOZORDER | SWP_SHOWWINDOW,
+        )
+        .map_err(|err| format!("Nao foi possivel ajustar {label}: {err}"))?;
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "adjusted": true,
+            "hwnd": hwnd_value,
+            "safe_area": {
+                "left": margin_left,
+                "top": margin_top,
+                "width": target_width,
+                "height": target_height,
+                "right_margin": margin_right,
+                "bottom_margin": margin_bottom
+            }
+        }))
+    }
+}
+
+#[cfg(windows)]
+fn set_agent_windows_work_area(enabled: bool) -> Result<Value, String> {
+    AGENT_WORK_AREA_GUARD_ENABLED.store(enabled, Ordering::Relaxed);
+    let screen_width = unsafe { GetSystemMetrics(SM_CXSCREEN).max(1024) };
+    let screen_height = unsafe { GetSystemMetrics(SM_CYSCREEN).max(768) };
+    Ok(serde_json::json!({
+        "ok": true,
+        "enabled": enabled,
+        "mode": "fullscreen_guard",
+        "safe_area": {
+            "left": AGENT_SAFE_MARGIN_LEFT,
+            "top": AGENT_SAFE_MARGIN_TOP,
+            "width": screen_width - AGENT_SAFE_MARGIN_LEFT - AGENT_SAFE_MARGIN_RIGHT,
+            "height": screen_height - AGENT_SAFE_MARGIN_TOP - AGENT_SAFE_MARGIN_BOTTOM
+        }
+    }))
+}
+
+#[cfg(not(windows))]
+fn set_agent_windows_work_area(_enabled: bool) -> Result<Value, String> {
+    Ok(serde_json::json!({"ok": true, "enabled": false}))
+}
+
+#[cfg(windows)]
+fn protect_agent_fullscreen_area() {
+    if !AGENT_WORK_AREA_GUARD_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    unsafe {
+        let _ = EnumWindows(Some(protect_maximized_window_callback), LPARAM(0));
+
+        let window = GetForegroundWindow();
+        if window.0.is_null() || !IsWindow(window).as_bool() {
+            return;
+        }
+
+        let mut process_id = 0u32;
+        GetWindowThreadProcessId(window, Some(&mut process_id));
+        if process_id == std::process::id() {
+            return;
+        }
+
+        let mut rect = RECT::default();
+        if GetWindowRect(window, &mut rect).is_err() {
+            return;
+        }
+        let screen_width = GetSystemMetrics(SM_CXSCREEN).max(1024);
+        let screen_height = GetSystemMetrics(SM_CYSCREEN).max(768);
+        let width = rect.right - rect.left;
+        let height = rect.bottom - rect.top;
+        let nearly_fullscreen = width >= screen_width - 24 && height >= screen_height - 96;
+        if !IsZoomed(window).as_bool() && !nearly_fullscreen {
+            return;
+        }
+
+        let target_right = screen_width - AGENT_SAFE_MARGIN_RIGHT;
+        let target_bottom = screen_height - AGENT_SAFE_MARGIN_BOTTOM;
+        let outside_safe_area = rect.left < AGENT_SAFE_MARGIN_LEFT - 12
+            || rect.top < AGENT_SAFE_MARGIN_TOP - 12
+            || rect.right > target_right + 12
+            || rect.bottom > target_bottom + 12;
+        if outside_safe_area {
+            let _ = fit_window_to_agent_safe_area(window, window.0 as isize as i64, "Janela em tela cheia");
+        }
+    }
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn protect_maximized_window_callback(window: HWND, _lparam: LPARAM) -> BOOL {
+    if window.0.is_null() || !IsWindow(window).as_bool() || !IsWindowVisible(window).as_bool() || !IsZoomed(window).as_bool() {
+        return BOOL(1);
+    }
+
+    let mut process_id = 0u32;
+    GetWindowThreadProcessId(window, Some(&mut process_id));
+    if process_id == std::process::id() {
+        return BOOL(1);
+    }
+
+    let mut rect = RECT::default();
+    if GetWindowRect(window, &mut rect).is_err() {
+        return BOOL(1);
+    }
+    let screen_width = GetSystemMetrics(SM_CXSCREEN).max(1024);
+    let screen_height = GetSystemMetrics(SM_CYSCREEN).max(768);
+    let target_right = screen_width - AGENT_SAFE_MARGIN_RIGHT;
+    let target_bottom = screen_height - AGENT_SAFE_MARGIN_BOTTOM;
+    let outside_safe_area = rect.left < AGENT_SAFE_MARGIN_LEFT - 12
+        || rect.top < AGENT_SAFE_MARGIN_TOP - 12
+        || rect.right > target_right + 12
+        || rect.bottom > target_bottom + 12;
+    if outside_safe_area {
+        let _ = fit_window_to_agent_safe_area(window, window.0 as isize as i64, "Janela maximizada");
+    }
+    BOOL(1)
+}
+
+#[tauri::command]
 fn update_sequence_settings(app: AppHandle, sequence: String, execution_mode: String, after_loop_sequence: Option<String>) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -2908,7 +3220,6 @@ fn spawn_test_process(
         .spawn()
         .map_err(|err| format!("Falha ao iniciar {error_context}: {err}"))?;
     let child_pid = child.id();
-
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
@@ -6636,6 +6947,31 @@ fn export_automation_bundle(app: AppHandle, automation_name: String) -> Result<E
     })
 }
 
+#[tauri::command]
+fn set_agent_compact_mode(app: AppHandle, compact: bool) -> Result<Value, String> {
+    if !is_flowdetect_agent_runtime(&app) {
+        return Err("Este modo esta disponivel apenas no FlowDetect Agent.".to_string());
+    }
+    let window = app.get_webview_window("main").ok_or_else(|| "Janela principal do Agent nao encontrada.".to_string())?;
+    let monitor = window.current_monitor().map_err(|err| err.to_string())?.ok_or_else(|| "Monitor atual nao encontrado.".to_string())?;
+    let screen = monitor.size();
+    let monitor_position = monitor.position();
+    let (width, height, x, y) = if compact {
+        (screen.width, screen.height, monitor_position.x, monitor_position.y)
+    } else {
+        let width = screen.width.saturating_sub(48).min(1240);
+        let height = screen.height.saturating_sub(96).min(820);
+        (width, height, (screen.width.saturating_sub(width) / 2) as i32, 24)
+    };
+    window.set_size(tauri::PhysicalSize::new(width, height)).map_err(|err| err.to_string())?;
+    window.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|err| err.to_string())?;
+    window.set_always_on_top(compact).map_err(|err| err.to_string())?;
+    window.set_resizable(!compact).map_err(|err| err.to_string())?;
+    window.set_ignore_cursor_events(compact).map_err(|err| err.to_string())?;
+    let work_area = set_agent_windows_work_area(compact)?;
+    Ok(serde_json::json!({"ok":true,"compact":compact,"width":width,"height":height,"work_area":work_area}))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -6650,10 +6986,31 @@ pub fn run() {
             if is_flowdetect_agent_runtime(&app_handle) {
                 let root = workspace_root(&app_handle);
                 start_agent_http_server(app_handle.clone(), root);
+                let hotkey_app = app_handle.clone();
+                thread::spawn(move || {
+                    let mut pressed = false;
+                    loop {
+                        let active = unsafe {
+                            GetAsyncKeyState(VK_CONTROL.0 as i32) < 0
+                                && GetAsyncKeyState(VK_SHIFT.0 as i32) < 0
+                                && GetAsyncKeyState(VK_F12.0 as i32) < 0
+                        };
+                        if active && !pressed {
+                            let _ = hotkey_app.emit("agent-overlay-toggle-request", ());
+                        }
+                        pressed = active;
+                        thread::sleep(Duration::from_millis(90));
+                    }
+                });
+                thread::spawn(move || loop {
+                    protect_agent_fullscreen_area();
+                    thread::sleep(Duration::from_millis(250));
+                });
             }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            set_agent_compact_mode,
             get_roadmap,
             get_workbook_meta,
             get_workbook_preview,
@@ -6668,11 +7025,18 @@ pub fn run() {
             highlight_uia_element,
             show_target_window_overlay,
             hide_target_window_overlay,
+            fit_target_window_to_agent_area,
+            fit_active_window_to_agent_area,
             get_agent_connection_info,
             get_agent_remote_snapshot,
-            list_virtualbox_vms,
-            configure_virtualbox_agent_network,
-            start_virtualbox_vm_headless,
+            list_hyperv_vms,
+            get_hyperv_status,
+            create_hyperv_base_vm,
+            clone_hyperv_vm,
+            start_hyperv_vm,
+            stop_hyperv_vm,
+            get_hyperv_vm_connection,
+            open_hyperv_vm_console,
             get_login_session,
             save_login_session,
             create_saved_automation,
@@ -6770,6 +7134,7 @@ pub fn run() {
             launch_assisted_loop_test,
             stop_test_execution,
             remote_agent_ping,
+            remote_agent_set_identity,
             remote_agent_list_automations,
             remote_agent_open_automation,
             remote_agent_status,
@@ -6795,6 +7160,11 @@ pub fn run() {
             remote_agent_delete_automation,
             export_automation_bundle,
         ])
-        .run(tauri::generate_context!())
-        .expect("erro ao executar o gerador");
+        .build(tauri::generate_context!())
+        .expect("erro ao preparar o gerador")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) && is_flowdetect_agent_runtime(app) {
+                let _ = set_agent_windows_work_area(false);
+            }
+        });
 }

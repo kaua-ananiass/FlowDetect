@@ -4127,6 +4127,26 @@ label span {
   display: none !important;
 }
 
+.hyperv-base-status {
+  grid-column: 1 / -1;
+  padding: 11px 13px;
+  border: 1px solid rgba(18, 181, 203, 0.24);
+  border-radius: 14px;
+  color: rgba(230, 247, 255, 0.82);
+  background: rgba(18, 181, 203, 0.08);
+}
+
+.hyperv-base-status[data-variant="success"] {
+  border-color: rgba(75, 220, 150, 0.35);
+  color: #a8f5ce;
+}
+
+.hyperv-base-status[data-variant="error"] {
+  border-color: rgba(255, 105, 120, 0.4);
+  color: #ffb3bd;
+  background: rgba(255, 75, 95, 0.09);
+}
+
 .agents-vm-list-panel {
   display: grid;
   gap: 12px;
@@ -4157,6 +4177,28 @@ label span {
   border-radius: 16px;
   border: 1px solid rgba(18, 181, 203, 0.16);
   background: rgba(7, 17, 31, 0.62);
+}
+
+.agents-vm-item.is-base {
+  border-color: rgba(57, 224, 202, 0.42);
+  background: linear-gradient(135deg, rgba(20, 91, 105, 0.2), rgba(7, 17, 31, 0.72));
+}
+
+.agents-vm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.agents-vm-base-badge {
+  display: block;
+  margin-bottom: 5px;
+  color: #54ead5;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .agents-vm-item div {

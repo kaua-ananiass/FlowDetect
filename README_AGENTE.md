@@ -1,392 +1,619 @@
-# FlowDetect - Guia para outro agente
+# FlowDetect - Handoff completo para outro agente
 
-Este arquivo e o handoff principal do projeto. Leia antes de alterar qualquer codigo.
+Este arquivo resume o contexto tecnico e de produto para outro agente continuar o FlowDetect sem depender do historico da conversa.
 
-## Resumo do produto
+## 1. Visao geral
 
-FlowDetect e uma plataforma visual para criar, testar e executar automacoes desktop em blocos.
+FlowDetect e uma plataforma Windows de automacao visual por blocos.
 
-O projeto hoje tem dois usos principais:
+O usuario cria fluxos no **FlowDetect Studio**, testa no proprio PC e pode enviar para um **FlowDetect Agent** instalado em outro computador. O foco do produto e permitir automacoes desktop e web para usuario leigo, sem exigir codigo, XPath, CSS selector, terminal ou conhecimento tecnico.
 
-- **FlowDetect Studio:** programa principal usado para criar, editar, testar, exportar e controlar automacoes.
-- **FlowDetect Agent:** programa separado para instalar em outro computador e executar automacoes criadas no Studio.
+O produto atual possui:
 
-O usuario final nao deve precisar entender codigo, HTML, XPath, terminal ou estrutura de arquivos. A UX deve ser simples, visual e didatica.
+- criacao visual de automacoes em blocos;
+- mapa de comandos com paginas;
+- execucao assistida em tempo real;
+- loop por planilha;
+- reconhecimento visual por imagem/OCR;
+- captura de elementos Chrome/Web;
+- captura de elementos de janela via UI Automation;
+- gravador inteligente de cliques/teclas/textos;
+- controle remoto do Agent pelo Studio;
+- visualizacao da tela do Agent;
+- instaladores separados para Studio e Agent.
 
-## Stack
+## 2. Raiz correta do projeto
 
-- Frontend desktop: Tauri + HTML/CSS/JavaScript puro.
-- Backend nativo Tauri: Rust.
-- Motor de automacao: Python.
-- Reconhecimento visual: OpenCV/Pillow/PyAutoGUI.
-- Planilhas: OpenPyXL.
-- Chrome/Web: ponte local com Chrome DevTools/Playwright quando necessario.
-- Controle remoto/tela do Agent: integracao interna via rede local/WebRTC/snapshots conforme implementado no projeto.
+A raiz atual de trabalho e:
 
-## Raiz correta
+```powershell
+F:\FlowDetect\Capturar_atalhos_hotkeys
+```
 
-Edite sempre a raiz principal:
+Evite trabalhar na copia antiga em:
 
 ```powershell
 C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
 ```
 
-Evite trabalhar em copias, exports ou pastas de build.
+Essa pasta antiga ainda pode aparecer em documentos antigos, mas o desenvolvimento atual foi movido para o disco `F:`.
 
-## Estrutura principal
+## 3. Stack principal
 
-- `tauri_gerador/web/index.html`: estrutura do FlowDetect Studio.
-- `tauri_gerador/web/main.js`: maior parte da regra de UI do Studio.
-- `tauri_gerador/web/style.css`: visual do Studio.
-- `tauri_gerador/src-tauri/src/lib.rs`: comandos Tauri do Studio.
+- Interface desktop: Tauri + HTML/CSS/JavaScript puro.
+- Backend nativo: Rust/Tauri commands.
+- Motor de automacao: Python.
+- Reconhecimento visual: OpenCV, Pillow, PyAutoGUI/MSS.
+- OCR: mecanismo Python usado no executor, com otimizacoes por area.
+- Planilhas: OpenPyXL.
+- UI Automation Windows: `uiautomation` + Win32 fallback.
+- Chrome/Web: ponte local com Chrome DevTools/Playwright/bridge interno.
+- Controle remoto/tela do Agent: fluxo interno via rede local/WebRTC/snapshots conforme implementacao atual.
+
+## 4. Projetos dentro da raiz
+
+### FlowDetect Studio
+
+Projeto principal:
+
+```text
+tauri_gerador/
+```
+
+Arquivos mais importantes:
+
+- `tauri_gerador/web/index.html`
+- `tauri_gerador/web/main.js`
+- `tauri_gerador/web/style.css`
+- `tauri_gerador/src-tauri/src/lib.rs`
+- `tauri_gerador/src-tauri/tauri.conf.json`
+
+### FlowDetect Agent
+
+Projeto do executador remoto:
+
+```text
+flowdetect_agent/
+```
+
+Arquivos mais importantes:
+
+- `flowdetect_agent/web/index.html`
+- `flowdetect_agent/web/main.js`
+- `flowdetect_agent/web/style.css`
+- `flowdetect_agent/src-tauri/src/lib.rs`
+- `flowdetect_agent/src-tauri/tauri.conf.json`
+
+### Motor Python compartilhado
+
+Arquivos centrais na raiz:
+
 - `executar_automacao.py`: executor real das automacoes.
-- `gerenciar_roteiro.py`: persistencia, criacao e edicao dos blocos.
-- `capturar_imagem_tela.py`: captura de imagens/referencias visuais.
-- `gravador_inteligente.py`: apoio ao gravador de cliques/teclas.
-- `chrome_web_bridge.py`: ponte para recursos Chrome/Web.
-- `gerenciar_dados_planilha.py`: leitura/alteracao de planilhas.
+- `gerenciar_roteiro.py`: cria, atualiza, move, remove, importa/exporta e salva blocos.
+- `capturar_imagem_tela.py`: captura de referencias visuais.
+- `mapear_elementos_janela.py`: mapeamento UI Automation/Win32 de janelas.
+- `chrome_web_bridge.py`: ponte Chrome/Web.
+- `gerenciar_dados_planilha.py`: leitura/preview/limpeza/alteracao de planilhas.
+- `gravador_inteligente.py`: apoio ao gravador de cliques/teclas/textos.
+- `listar_janelas_abertas.py`: lista janelas para janela alvo.
 - `overlay_janela_alvo.py`: contorno da janela alvo.
-- `overlay_automacao_tela.py`: overlay de execucao/gravadacao na tela.
-- `flowdetect_agent/`: projeto separado do FlowDetect Agent.
+- `overlay_automacao_tela.py`: overlay de execucao/gravacao.
+- `diagnostico_ambiente.py`: diagnostico de dependencias.
+- `validar_dependencias_instaladas.py`: validacao pos-instalacao.
 
-## Como rodar o Studio em dev
+## 5. Como rodar em desenvolvimento
+
+### Studio
 
 ```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys\tauri_gerador
+cd F:\FlowDetect\Capturar_atalhos_hotkeys\tauri_gerador
 & "C:\Program Files\nodejs\npm.cmd" install
 & "C:\Program Files\nodejs\npm.cmd" run tauri:dev
 ```
 
-Se o PowerShell bloquear `npm`, use:
+### Agent
 
 ```powershell
-& "C:\Program Files\nodejs\npm.cmd" run tauri:dev
-```
-
-## Como rodar o Agent em dev
-
-```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys\flowdetect_agent
+cd F:\FlowDetect\Capturar_atalhos_hotkeys\flowdetect_agent
 & "C:\Program Files\nodejs\npm.cmd" install
 & "C:\Program Files\nodejs\npm.cmd" run tauri:dev
 ```
 
-## Dependencias Python
+Se o PowerShell bloquear `npm`, use sempre o caminho completo.
+
+## 6. Build e instaladores
+
+### Studio
 
 ```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
-python -m pip install -r requirements.txt
-python -m playwright install
-```
-
-## Build
-
-Build do Studio:
-
-```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
+cd F:\FlowDetect\Capturar_atalhos_hotkeys
 powershell -ExecutionPolicy Bypass -File .\compilar_gerador_exe.ps1
 ```
 
-Build do Agent:
+### Agent
 
 ```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys\flowdetect_agent
+cd F:\FlowDetect\Capturar_atalhos_hotkeys\flowdetect_agent
 & "C:\Program Files\nodejs\npm.cmd" run tauri:build
 ```
 
-## Abas principais do Studio
+### Visual dos instaladores
 
-- **Launcher de Automacoes:** biblioteca local de automacoes, criar, editar, duplicar, excluir, exportar/importar ZIP e executar.
-- **Execucao assistida:** acompanha a execucao em tempo real com status, progresso, logs e trilha dos blocos.
-- **Mapa dos comandos:** editor visual principal dos blocos e das paginas do fluxo.
-- **Planilha e dados:** importa, visualiza, abre e edita planilhas usadas no loop.
-- **Controle remoto:** conecta no FlowDetect Agent, envia automacoes, executa remotamente e acompanha progresso/tela.
-- **Tela do Agent:** visualizacao remota do computador onde o Agent esta rodando.
-- **Gravador Inteligente:** grava cliques, teclas e textos para gerar blocos automaticamente.
+Os instaladores usam NSIS via Tauri.
 
-## Blocos atuais importantes
+Assets:
 
-- **Texto livre:** escreve texto fixo ou dado dinamico. Pode ser marcado como bloco editavel na execucao.
-- **Tecla/Atalho:** pressiona teclas e atalhos, com repeticoes.
-- **Mouse:** cliques por coordenada quando necessario.
-- **Reconhecimento visual:** procura uma imagem na tela/janela, valida OCR opcional e decide o fluxo.
-- **Chrome/Web:** automatiza elementos do Chrome por captura de elemento, sem expor seletores tecnicos para usuario leigo.
-- **Abrir URL:** abre site no navegador escolhido, com opcao de tela cheia.
-- **Abrir Programa:** abre um executavel com parametros opcionais.
-- **Planilha:** define loop por coluna/linha.
-- **Escrever celula:** escreve status ou resultado na linha atual do loop.
-- **Inicio loop / Fim loop:** delimita trechos repetidos.
-- **Salvar download:** monitora pasta de origem, espera arquivo baixar, renomeia e move para destino.
+```text
+tauri_gerador/src-tauri/installer_assets/
+```
 
-## Mapa dos comandos
+Arquivos recentes:
 
-O Mapa dos comandos e uma area sensivel do projeto. O usuario se importa muito com:
+- `flowdetect_studio_header.bmp`
+- `flowdetect_studio_sidebar.bmp`
+- `flowdetect_agent_header.bmp`
+- `flowdetect_agent_sidebar.bmp`
+- `flowdetect_header.bmp`
+- `flowdetect_sidebar.bmp`
+- `flowdetect_hooks.nsh`
+- `gerar_assets_instalador.py`
 
-- layout compacto;
-- alinhamento dos cards;
-- animacoes suaves;
-- blocos visualmente claros;
-- pouco espaco morto;
-- navegacao fluida entre blocos;
-- caminhos/linhas entre blocos bem posicionados;
-- compatibilidade com automacoes antigas.
+O Studio deve usar assets com `studio`.
+O Agent deve usar assets com `agent`.
 
-Recursos atuais:
+Para regenerar:
 
+```powershell
+cd F:\FlowDetect\Capturar_atalhos_hotkeys
+python tauri_gerador/src-tauri/installer_assets/gerar_assets_instalador.py
+```
+
+## 7. Abas do Studio
+
+### Launcher de Automacoes
+
+Biblioteca local de automacoes:
+
+- criar;
+- editar;
+- duplicar;
+- excluir;
+- executar;
+- importar/exportar ZIP;
+- cards com flip para detalhes.
+
+### Execucao assistida
+
+Mostra a automacao rodando:
+
+- status;
+- progresso;
+- empresa/linha atual;
+- pagina atual;
+- bloco atual;
+- logs;
+- trilha visual dos blocos.
+
+O foco visual deve ser a trilha dos blocos. Janela alvo e configuracoes devem ficar discretas.
+
+### Mapa dos comandos
+
+Editor visual principal e area mais sensivel do projeto.
+
+Recursos:
+
+- cards compactos;
+- cards expandidos em "Ver detalhes";
 - paginas de fluxo;
-- tema por pagina;
-- criacao de bloco diretamente no espaco onde ele vai entrar;
-- preview do novo bloco antes de criar;
-- animacao de abertura/fechamento do painel de novo bloco;
-- animacao de criacao, exclusao e movimentacao de blocos;
-- cards compactos com botao de detalhes;
-- detalhes expandidos com layout mais completo;
-- linhas entre blocos com tempo de espera editavel;
-- fluxo de sucesso/falha para pular blocos.
+- linhas/conectores entre blocos;
+- tempo entre blocos editavel;
+- criacao de bloco no local onde ele entrara;
+- animacao de abertura/fechamento do painel "Novo bloco";
+- animacao ao criar/excluir/mover blocos;
+- reordenacao por arrastar;
+- reordenacao por setas do teclado;
+- blocos podem apontar para outros blocos/paginas.
 
-Ao mexer no mapa, valide especialmente:
+Ao mexer no mapa, validar:
 
-- adicionar bloco depois de outro bloco;
-- excluir bloco no meio da sequencia;
-- mover bloco com setas;
-- arrastar bloco;
-- abrir e fechar detalhes;
-- mudar de pagina;
+- adicionar bloco antes/depois;
+- adicionar no comeco e no fim;
+- excluir bloco no meio;
+- mover por arrastar;
+- mover por setas;
+- abrir/fechar detalhes;
+- conectores/tempos alinhados;
 - salvar e recarregar automacao.
 
-## Reconhecimento visual
+### Planilha e dados
 
-O reconhecimento visual foi bastante trabalhado. Nao simplifique sem entender.
-
-Pontos atuais:
-
-- usa janela alvo quando configurada;
-- pode procurar por imagem;
-- pode validar texto OCR obrigatorio;
-- possui modos de precisao;
-- usa cache/ultima posicao para acelerar;
-- faz fallback quando a posicao antiga falha;
-- evita OCR em tela inteira por padrao;
-- tem preview da imagem no card.
-
-O modo preciso deve evitar confundir textos parecidos, especialmente datas como `09/2023` e `09/2025`.
-
-Arquivos importantes:
-
-- `executar_automacao.py`
-- `capturar_imagem_tela.py`
-- `gerenciar_roteiro.py`
-- `tauri_gerador/web/main.js`
-
-## Chrome/Web
-
-Existe uma integracao para automatizar sites sem exigir HTML do usuario.
-
-Ideia:
-
-- usuario clica em Capturar elemento;
-- o Chrome entra em modo captura;
-- usuario clica no elemento;
-- o app salva uma ficha amigavel do elemento;
-- na execucao, tenta encontrar por id, name, placeholder, aria-label, texto, CSS selector e XPath.
-
-Blocos relacionados:
-
-- Chrome/Web
-- Abrir URL
-
-Importante:
-
-- sites com certificado, GOV.BR, CAPTCHA ou politicas anti-bot podem limitar automacao por browser controlado.
-- para casos sensiveis, o fluxo visual/OCR pode ser mais confiavel que HTML.
-
-## Planilhas
-
-O projeto usa planilhas para loop e dados dinamicos.
-
-Funcoes atuais:
+Funcoes:
 
 - importar planilha;
 - abrir planilha atual no Excel;
 - deletar linha para nao rodar no loop;
 - limpar coluna/status;
-- escrever na linha atual durante a execucao;
-- escolher linha inicial do loop;
-- executar a partir de uma empresa/linha especifica no controle remoto.
+- preview da planilha;
+- escolher coluna de loop;
+- sincronizar planilha com blocos.
 
-Cuidados:
+### Controle remoto
 
-- algumas planilhas podem ter `Chartsheet`; nao assuma que toda aba tem `iter_rows`.
-- quando deletar linha na aba de planilha, blocos que usam essa planilha devem refletir a mudanca.
-- a empresa exibida na execucao assistida deve bater com a linha atual real.
+Controla o Agent pelo Studio:
 
-## Gravador Inteligente
-
-Aba para criar automacoes gravando acoes.
-
-Comportamento esperado:
-
-- ao clicar na tela, abre menu de confirmacao no ponto do clique;
-- permite ajustar area capturada;
-- permite escolher 1 clique, 2 cliques ou somente identificar;
-- botao direito abre menu para adicionar texto ou tecla;
-- F10 pausa/retoma a gravacao;
-- blocos gerados aparecem visualmente;
-- ao enviar para o mapa, o bloco some da area de gravacao;
-- cada bloco pode escolher para qual pagina sera enviado.
-
-Cuidados:
-
-- o menu de gravacao nao pode aparecer dentro do print capturado;
-- clicar em opcoes do menu nao deve encerrar a gravacao;
-- nao execute testes que cliquem/teclem no PC real sem avisar.
-
-## FlowDetect Agent
-
-O Agent e instalado no computador alvo.
-
-Responsabilidades:
-
-- receber automacoes enviadas pelo Studio;
-- listar automacoes disponiveis;
-- executar automacoes localmente no PC alvo;
-- expor IP/porta para conexao;
-- mostrar status simples;
-- permitir acompanhar tempo real/biblioteca;
-- minimizar/maximizar conforme pedido pelo Studio;
-- mostrar overlay discreto quando estiver executando.
-
-O usuario quer que o Agent seja mais simples que o Studio. Ele nao e editor.
-
-## Controle remoto no Studio
-
-O Studio controla o Agent por IP/porta.
-
-Funcoes esperadas:
-
-- conectar ao Agent;
+- conectar por IP/porta;
 - importar ZIP para o Agent;
 - listar biblioteca remota;
-- executar/parar automacao remota;
-- escolher se o Agent minimiza ao executar;
-- acompanhar progresso;
-- ver planilha do projeto remoto;
-- limpar coluna/status;
+- executar/parar;
+- escolher linha inicial/empresa;
+- ver progresso;
+- ver planilha remota;
+- limpar coluna remota;
 - assistir tela do Agent;
 - ativar/desativar controle de mouse/teclado remoto.
 
+### Tela do Agent
+
+Mostra a tela do computador remoto.
+
 Cuidados:
 
-- conexao nao pode travar a UI;
-- comandos de rede devem ser assicronos;
-- se nao houver janela alvo, considere tela inteira;
-- ao clicar em assistir, o Agent deve maximizar se estiver minimizado.
+- nao travar a UI do Studio;
+- ao clicar em assistir, Agent deve maximizar se estiver minimizado;
+- controle de mouse/teclado deve ser opcional.
 
-## Dados e arquivos que nao devem ir para GitHub
+### Agentes
 
-Nao subir dados reais do usuario:
+Gerenciamento conceitual de agentes/maquinas:
+
+- cards no estilo launcher;
+- status online/offline/aguardando maquina;
+- dados tecnicos atras do card com flip;
+- possivel vinculacao futura com VM.
+
+### Gravador Inteligente
+
+Grava acoes e gera blocos:
+
+- clique visual com menu no ponto clicado;
+- ajustar area capturada;
+- escolher 1 clique, 2 cliques ou so identificar;
+- botao direito para adicionar texto ou tecla;
+- F10 pausa/retoma;
+- escolher pagina de destino;
+- enviar blocos para o mapa.
+
+## 8. Tipos de bloco importantes
+
+### Texto livre
+
+Escreve texto fixo ou dinamico.
+
+Pode ser marcado como editavel na execucao. O controle remoto e o Agent tambem devem respeitar esses valores.
+
+### Tecla
+
+Pressiona tecla/atalho com repeticoes.
+
+### Mouse
+
+Clique por coordenada. Usar com cuidado.
+
+### Reconhecimento visual
+
+Procura imagem e pode validar OCR.
+
+Pontos atuais:
+
+- preview da imagem;
+- marcador do ponto de clique;
+- area "ler aqui" para OCR relativo;
+- modo rapido deve ser bem rapido;
+- OCR deve ser limitado a area pequena;
+- pode clicar, confirmar ou seguir fluxo;
+- se falhar, pode parar, continuar, tentar de novo ou ir para bloco.
+
+### Chrome/Web
+
+Automatiza elementos do Chrome sem expor selector tecnico ao usuario.
+
+Tela principal deve mostrar:
+
+- nome amigavel;
+- tipo do elemento;
+- acao simples;
+- capturar/testar.
+
+Detalhes tecnicos ficam escondidos.
+
+### Mapear janela / Elemento da janela
+
+Recurso de UI Automation.
+
+Objetivo:
+
+- mapear elementos da janela atual;
+- selecionar por arvore ou hover;
+- criar bloco pronto baseado em elemento real;
+- nao usar OCR nem imagem como identidade principal.
+
+Arquivos:
+
+- `mapear_elementos_janela.py`
+- `gerenciar_roteiro.py`
+- `executar_automacao.py`
+- `tauri_gerador/web/main.js`
+- `tauri_gerador/src-tauri/src/lib.rs`
+
+Regras:
+
+- UI Automation como principal;
+- Win32 como fallback;
+- coordenadas apenas para highlight/captura;
+- nao clicar durante scan;
+- scanner nao pode congelar UI;
+- tratar erro por elemento individual.
+
+### Abrir URL
+
+Abre site no navegador:
+
+- navegador padrao/Chrome/Edge;
+- nova janela/nova aba;
+- aguardar apos abrir;
+- tela cheia.
+
+### Abrir Programa
+
+Abre executavel com parametros opcionais.
+
+### Planilha / Loop de dados
+
+Controla loop por linha/coluna.
+
+Importante:
+
+- loop deve avancar mesmo quando o fluxo volta para pagina anterior;
+- empresa exibida deve bater com a linha atual real;
+- loop pode existir sem digitar a coluna em campo.
+
+### Escrever celula
+
+Escreve valor em coluna da linha atual.
+
+### Conferir valor
+
+Compara valor esperado da planilha com OCR capturado por um bloco de reconhecimento especifico.
+
+Fluxo desejado:
+
+- escolher qual bloco fornece OCR;
+- escolher valor esperado da linha/coluna;
+- se bater, escolher acao/bloco;
+- se nao bater, escolher acao/bloco.
+
+### Salvar download
+
+Monitora downloads, espera arquivo chegar e move/renomeia para destino.
+
+Deve ser simples:
+
+- pasta monitorada;
+- pasta destino;
+- tipo de arquivo;
+- nome final com modelos/botoes;
+- poucos termos tecnicos.
+
+## 9. Reconhecimento visual e OCR
+
+Historico importante:
+
+- reconhecimento foi otimizado para tentar ser quase instantaneo;
+- cache da ultima posicao ajuda, mas precisa fallback quando elemento muda;
+- OCR ja gerou problemas com datas parecidas;
+- OCR deve validar exatamente quando necessario;
+- OCR nao deve rodar em tela inteira por padrao;
+- area "ler aqui" deve ser relativa a referencia encontrada.
+
+Problemas ja vistos:
+
+- OCR confirmou `09/2025` quando o correto era `09/2023`;
+- OCR nao confirmava texto visivel;
+- marcador azul do OCR aparecia longe da referencia;
+- "Procurar agora" apenas minimizava e voltava;
+- cache procurava apenas local antigo.
+
+Ao mexer:
+
+- testar imagem sem OCR;
+- testar imagem com OCR;
+- testar texto parecido;
+- testar mudanca de posicao;
+- validar marcador verde e marcador azul.
+
+## 10. Regras de UX/design
+
+Preferencias do usuario:
+
+- layout compacto;
+- poucos textos;
+- nada tecnico na tela principal;
+- botoes arredondados;
+- azul `#12B5CB`;
+- verde igual botao Salvar;
+- fundo `#07111F`;
+- cards `#0E1B2E`;
+- feedback visual claro;
+- animacoes suaves;
+- alinhamento preciso.
+
+Evitar:
+
+- campos enormes;
+- texto para fora do botao;
+- cards muito compridos;
+- modais deslocados;
+- brilho exagerado;
+- delay em navegacao;
+- scroll involuntario junto com animacao;
+- salvar automaticamente a cada troca de pagina.
+
+## 11. Compatibilidade
+
+Nao quebrar automacoes existentes.
+
+Sempre que adicionar campo novo:
+
+- dar valor padrao;
+- aceitar ausencia do campo no executor;
+- atualizar persistencia em `gerenciar_roteiro.py`;
+- atualizar Studio;
+- atualizar Agent quando o tipo precisar executar remotamente.
+
+Se o Studio cria um bloco novo, o Agent precisa saber executar esse bloco.
+
+## 12. Dados que nao devem ir para GitHub
+
+Nao subir dados reais:
 
 - `automacoes/`
 - `imagens/`
 - `planilhas/`
 - `relatorios_loop/`
 - `diagnosticos_reconhecimento/`
-- logs grandes;
-- builds;
-- instaladores;
-- node_modules;
-- target;
-- arquivos `.xlsx`, `.pdf`, `.png` gerados por uso real.
+- `saida_exe/`
+- `target/`
+- `node_modules/`
+- logs temporarios;
+- arquivos `.xlsx`, `.pdf`, `.png` de uso real;
+- instaladores e builds.
 
-Confira `.gitignore` antes de commitar.
-
-## Preferencias do usuario
-
-O usuario prefere:
-
-- implementacao direta;
-- pouca teoria;
-- UX simples para usuario leigo;
-- cards compactos;
-- textos curtos e didaticos;
-- botoes arredondados no padrao do FlowDetect;
-- azul principal `#12B5CB`;
-- verde de sucesso igual botao Salvar;
-- fundo escuro do programa;
-- animacoes suaves e fluidas;
-- alinhamento preciso;
-- pouca area vazia.
-
-Evite:
-
-- campos muito tecnicos na tela principal;
-- textos longos dentro de cards;
-- inputs enormes;
-- modais desalinhados;
-- efeitos exagerados;
-- salvar automaticamente a cada troca de pagina;
-- quebrar automacoes antigas.
-
-## Validacao minima
-
-Se mexer em `tauri_gerador/web/main.js`:
+Antes de commit:
 
 ```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
-node --check tauri_gerador/web/main.js
-```
-
-Se mexer em Python:
-
-```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
-python -m py_compile executar_automacao.py gerenciar_roteiro.py gravador_inteligente.py chrome_web_bridge.py gerenciar_dados_planilha.py
-```
-
-Se mexer em Rust/Tauri Studio:
-
-```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys\tauri_gerador\src-tauri
-cargo check
-```
-
-Se mexer no Agent:
-
-```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys\flowdetect_agent
-& "C:\Program Files\nodejs\npm.cmd" run tauri:build
-```
-
-## Comandos uteis de Git
-
-Criar uma rama nova:
-
-```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
-git checkout -b nome-da-atualizacao
-```
-
-Ver o que mudou:
-
-```powershell
+cd F:\FlowDetect\Capturar_atalhos_hotkeys
 git status
 git diff --stat
 ```
 
-Commit e push:
+## 13. Validacao minima
+
+JavaScript:
 
 ```powershell
-git add README.md README_AGENTE.md tauri_gerador/web/main.js tauri_gerador/web/style.css gerenciar_roteiro.py executar_automacao.py
-git commit -m "Descrever atualizacao"
-git push -u origin nome-da-atualizacao
+cd F:\FlowDetect\Capturar_atalhos_hotkeys
+node --check tauri_gerador/web/main.js
 ```
 
-## Observacoes importantes
+Python:
 
-- Nao rode automacoes reais que mexem mouse/teclado sem necessidade.
-- Nao use `git reset --hard` ou comandos destrutivos sem pedido claro.
-- O projeto pode estar com worktree suja; preserve alteracoes existentes.
-- Ao alterar estrutura de bloco, mantenha valores padrao para automacoes antigas.
-- Ao alterar executor, garanta que Studio e Agent continuem entendendo os mesmos tipos de bloco.
-- Antes de entregar, diga exatamente quais arquivos foram alterados e quais validacoes passaram.
+```powershell
+cd F:\FlowDetect\Capturar_atalhos_hotkeys
+python -m py_compile executar_automacao.py gerenciar_roteiro.py mapear_elementos_janela.py chrome_web_bridge.py gerenciar_dados_planilha.py gravador_inteligente.py
+```
+
+Rust/Tauri Studio:
+
+```powershell
+cd F:\FlowDetect\Capturar_atalhos_hotkeys\tauri_gerador\src-tauri
+cargo check
+```
+
+Agent:
+
+```powershell
+cd F:\FlowDetect\Capturar_atalhos_hotkeys\flowdetect_agent
+& "C:\Program Files\nodejs\npm.cmd" run tauri:build
+```
+
+## 14. Git
+
+Criar rama nova:
+
+```powershell
+cd F:\FlowDetect\Capturar_atalhos_hotkeys
+git checkout main
+git pull origin main
+git checkout -b nome-da-rama
+```
+
+Commit:
+
+```powershell
+git add -A
+git commit -m "Descricao objetiva da atualizacao"
+```
+
+Push:
+
+```powershell
+git push -u origin nome-da-rama
+```
+
+## 15. Ultimas areas sensiveis
+
+Areas mexidas recentemente:
+
+- mapa dos comandos;
+- card "Novo bloco";
+- conectores/tempos entre blocos;
+- criacao de blocos;
+- bloco de reconhecimento visual;
+- OCR relativo "ler aqui";
+- bloco Mapear janela/UI Automation;
+- captura visual de elementos por hover;
+- instalador Studio/Agent;
+- Agent remoto e tela remota.
+
+## 16. Erros recentes e contexto
+
+### GetCursorPos / UIA hover
+
+Erro:
+
+```text
+ctypes.ArgumentError: expected LP_POINT instance instead
+```
+
+Causa:
+
+- conflito de `ctypes` quando `GetCursorPos.argtypes` usava classe `POINT` diferente.
+
+Correcao:
+
+- em `mapear_elementos_janela.py`, o fallback `pick_element_from_hover_pynput` reaplica `GetCursorPos.argtypes` com o `POINT` local.
+
+### Criar bloco eterno
+
+Sintoma:
+
+- botao fica em `Criando...`.
+
+Causas comuns:
+
+- argumento novo no JS nao aceito pelo `gerenciar_roteiro.py`;
+- tipo sem comando `add-*` ou `insert-*`;
+- excecao silenciosa em Tauri command.
+
+### Tempos/conectores desalinhados
+
+Sintoma:
+
+- tempos entre blocos sobem, encostam ou sobrepoem cards ao abrir/fechar novo bloco ou detalhes.
+
+Regra desejada:
+
+- conectores alinhados ao centro visual entre blocos;
+- ao inserir no meio, tempos vao para o lado, nao sobem;
+- ao fechar novo bloco, conectores retornam suave, sem sumir seco.
+
+## 17. Como entregar
+
+Ao finalizar uma tarefa:
+
+- diga arquivos alterados em alto nivel;
+- diga validacoes executadas;
+- se nao rodou algo, explique;
+- seja curto e objetivo.
+
+O usuario prefere implementacao direta, pouca teoria e resultado visual refinado.
