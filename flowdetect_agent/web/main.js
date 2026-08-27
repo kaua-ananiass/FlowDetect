@@ -24,6 +24,8 @@ const state = {
   activeView: "realtime",
   imagePreviewCache: {},
   imagePreviewLoading: {},
+  safeAreaTimer: null,
+  safeAreaBusy: false,
   progress: {
     percent: 0,
     title: "Aguardando execucao",
@@ -54,7 +56,17 @@ const state = {
 const elements = {
   agentShell: document.getElementById("agentShell"),
   agentConnectionAddress: document.getElementById("agentConnectionAddress"),
+  observerConnectionAddress: document.getElementById("observerConnectionAddress"),
+  observerConnectionStatus: document.getElementById("observerConnectionStatus"),
+  observerAgentName: document.getElementById("observerAgentName"),
+  observerProgressPercent: document.getElementById("observerProgressPercent"),
+  observerProgressFill: document.getElementById("observerProgressFill"),
+  observerProgressTitle: document.getElementById("observerProgressTitle"),
+  observerCurrentBlockText: document.getElementById("observerCurrentBlockText"),
+  observerBlockList: document.getElementById("observerBlockList"),
   meshCentralStatusChip: document.getElementById("meshCentralStatusChip"),
+  toggleAgentPanelButton: document.getElementById("toggleAgentPanelButton"),
+  minimizeAgentButton: document.getElementById("minimizeAgentButton"),
   importZipButton: document.getElementById("importZipButton"),
   refreshLibraryButton: document.getElementById("refreshLibraryButton"),
   automationZipInput: document.getElementById("automationZipInput"),
@@ -605,10 +617,13 @@ async function loadAgentConnectionInfo() {
     const info = await invoke("get_agent_connection_info");
     const address = String(info?.address || info?.local || "127.0.0.1:18452").trim();
     elements.agentConnectionAddress.textContent = `Aguardando Studio: ${address}`;
+    setElementText(elements.observerConnectionAddress, address);
+    setElementText(elements.observerAgentName, info?.agent_name || info?.agentName || "AGENTE PRINCIPAL");
     elements.agentConnectionAddress.title = `Use este endereco no FlowDetect Control: ${address}`;
     elements.agentConnectionAddress.classList.remove("is-online");
   } catch (error) {
     elements.agentConnectionAddress.textContent = "Aguardando conexao: 127.0.0.1:18452";
+    setElementText(elements.observerConnectionAddress, "127.0.0.1:18452");
     elements.agentConnectionAddress.title = "Use este endereco se o Control estiver no mesmo computador.";
     elements.agentConnectionAddress.classList.remove("is-online");
   }
@@ -630,6 +645,8 @@ function renderAgentConnectionState(snapshot = {}) {
   elements.agentConnectionAddress.textContent = connected
     ? `Conectado ao Studio: ${safeAddress}`
     : `Aguardando Studio: ${safeAddress}`;
+  setElementText(elements.observerConnectionAddress, safeAddress);
+  setElementText(elements.observerConnectionStatus, connected ? "STUDIO CONECTADO" : "ONLINE");
 }
 
 function renderMeshCentralStatus() {
@@ -757,9 +774,6 @@ function restoreAgentWindowDuringShare() {
       }
       if (currentWindow.unminimize) {
         currentWindow.unminimize().catch(() => {});
-      }
-      if (currentWindow.maximize) {
-        currentWindow.maximize().catch(() => {});
       }
       if (currentWindow.setFocus) {
         currentWindow.setFocus().catch(() => {});
@@ -956,6 +970,111 @@ function renderOverview() {
   elements.overviewProgressText.textContent = `${Math.round(Math.max(0, Math.min(100, Number(state.progress.percent || 0))))}%`;
 }
 
+async function fitSelectedTargetToSafeArea({ log = false } = {}) {
+  if (!state.selectedTarget?.hwnd) {
+    return null;
+  }
+  const result = await invoke("fit_target_window_to_agent_area", {
+    hwnd: Number(state.selectedTarget.hwnd),
+  });
+  if (result?.safe_area) {
+    state.selectedTarget = {
+      ...state.selectedTarget,
+      left: Number(result.safe_area.left || state.selectedTarget.left || 0),
+      top: Number(result.safe_area.top || state.selectedTarget.top || 0),
+      width: Number(result.safe_area.width || state.selectedTarget.width || 0),
+      height: Number(result.safe_area.height || state.selectedTarget.height || 0),
+    };
+    renderTarget();
+  }
+  if (log) {
+    pushLog(`Janela alvo encaixada na area segura: ${state.selectedTarget.title} / hwnd ${state.selectedTarget.hwnd}`, "success", "Area segura");
+  }
+  return result;
+}
+
+async function fitActiveWindowToSafeArea() {
+  return invoke("fit_active_window_to_agent_area").catch(() => null);
+}
+
+async function protectAgentSafeArea() {
+  if (!state.running || state.safeAreaBusy) {
+    return;
+  }
+  state.safeAreaBusy = true;
+  try {
+    if (state.selectedTarget?.hwnd) {
+      await fitSelectedTargetToSafeArea();
+    } else {
+      await fitActiveWindowToSafeArea();
+    }
+  } finally {
+    state.safeAreaBusy = false;
+  }
+}
+
+function syncSafeAreaGuard() {
+  if (state.running) {
+    if (!state.safeAreaTimer) {
+      state.safeAreaTimer = window.setInterval(() => {
+        protectAgentSafeArea().catch(() => {});
+      }, 1500);
+    }
+    protectAgentSafeArea().catch(() => {});
+    return;
+  }
+  if (state.safeAreaTimer) {
+    window.clearInterval(state.safeAreaTimer);
+    state.safeAreaTimer = null;
+  }
+}
+
+function observerBlockMarkup(event = {}, stateClass = "is-upcoming") {
+  return `
+    <article class="agent-observer-block ${stateClass}">
+      <span>${String(event.order || 0).padStart(2, "0")}</span>
+      <strong>${escapeHtml(compactText(event.title || blockChipLabel(event), 38))}</strong>
+      <small>${escapeHtml(blockChipLabel(event))}</small>
+    </article>
+  `;
+}
+
+function renderObserverBlocks() {
+  if (!elements.observerBlockList) {
+    return;
+  }
+
+  const visibleEvents = currentVisibleEvents();
+  const activeOrder = Number(state.currentOrder || 0);
+  const activeIndex = visibleEvents.findIndex((event) => Number(event.order) === activeOrder);
+  const currentEvent = activeIndex >= 0 ? visibleEvents[activeIndex] : currentBlockEvent();
+  setElementText(elements.observerCurrentBlockText, currentEvent?.title || "Aguardando execucao");
+
+  if (!visibleEvents.length) {
+    elements.observerBlockList.innerHTML = `
+      <article class="agent-observer-block is-empty">
+        <span>--</span>
+        <strong>Nenhuma automacao carregada</strong>
+        <small>AGUARDANDO</small>
+      </article>
+    `;
+    return;
+  }
+
+  const safeActiveIndex = activeIndex >= 0 ? activeIndex : 0;
+  const start = Math.max(0, safeActiveIndex - 2);
+  const end = Math.min(visibleEvents.length, start + 6);
+  elements.observerBlockList.innerHTML = visibleEvents.slice(start, end).map((event, offset) => {
+    const index = start + offset;
+    const stateClass = index === safeActiveIndex
+      ? "is-current"
+      : index < safeActiveIndex
+        ? "is-done"
+        : "is-upcoming";
+    return observerBlockMarkup(event, stateClass);
+  }).join("");
+}
+
 function renderProgress() {
   const percent = Math.max(0, Math.min(100, Number(state.progress.percent || 0)));
   elements.progressTitle.textContent = state.progress.title;
@@ -968,6 +1087,14 @@ function renderProgress() {
   elements.currentPageText.textContent = currentPage?.label || "Pagina 1";
   elements.currentBlockText.textContent = currentBlockEvent()?.title || "Aguardando execucao";
 
+  setElementText(elements.observerProgressPercent, `${Math.round(percent)}%`);
+  setElementText(elements.observerProgressTitle, state.progress.title || "Aguardando execucao");
+  if (elements.observerProgressFill) {
+    elements.observerProgressFill.style.width = `${percent}%`;
+  }
+  document.body.classList.toggle("agent-is-running", Boolean(state.running));
+  syncSafeAreaGuard();
+  renderObserverBlocks();
   renderOverview();
 }
 
@@ -1378,10 +1505,13 @@ async function refreshWindows() {
 }
 
 async function setSelectedTarget(windowItem) {
-  const result = await invoke("show_target_window_overlay", { target: windowItem });
+  const result = await invoke("show_target_window_overlay", {
+    hwnd: Number(windowItem?.hwnd || 0),
+    title: windowItem?.title || "",
+  });
   state.selectedTarget = normalizeWindow(result?.target || windowItem);
+  await fitSelectedTargetToSafeArea({ log: true }).catch((error) => pushLog(String(error), "error", "Area segura"));
   renderTarget();
-  pushLog(`Janela alvo selecionada: ${state.selectedTarget.title} / hwnd ${state.selectedTarget.hwnd}`, "success", "Janela alvo");
 }
 
 async function clearSelectedTarget() {
@@ -1418,6 +1548,9 @@ async function runAutomation(id = "") {
   const automation = selectedAutomation();
   const delay = Number(elements.delayInput?.value || 0);
   const loopStart = Number(elements.loopStartInput?.value || 1);
+
+  await (state.selectedTarget?.hwnd ? fitSelectedTargetToSafeArea() : fitActiveWindowToSafeArea())
+    .catch((error) => pushLog(String(error), "error", "Area segura"));
 
   const message = await invoke("execute_saved_automation", {
     id: targetId,
@@ -1716,6 +1849,8 @@ function handleAssistMapKeydown(event) {
 }
 
 async function boot() {
+  document.body.classList.add("agent-compact-mode");
+  await invoke("set_agent_compact_mode", { compact: true }).catch((error) => console.warn("Modo compacto indisponivel.", error));
   await loadAgentConnectionInfo();
   renderLogs();
   renderSelection();
@@ -1727,6 +1862,17 @@ async function boot() {
   renderAgentViews();
   updateButtons();
 
+  const toggleOverlayMode = async () => {
+    const compact = !document.body.classList.contains("agent-compact-mode");
+    document.body.classList.toggle("agent-compact-mode", compact);
+    elements.toggleAgentPanelButton.textContent = compact ? "Detalhes" : "Recolher";
+    await invoke("set_agent_compact_mode", { compact }).catch((error) => pushLog(String(error), "error", "Janela"));
+  };
+  await safeListen("agent-overlay-toggle-request", () => { void toggleOverlayMode(); });
+  await safeListen("agent-identity-updated", (event) => {
+    setElementText(elements.observerAgentName, event.payload?.name || "AGENTE PRINCIPAL");
+  });
+
   elements.viewButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.activeView = button.dataset.agentView || "realtime";
@@ -1735,6 +1881,12 @@ async function boot() {
   });
 
   elements.importZipButton?.addEventListener("click", () => elements.automationZipInput?.click());
+  elements.toggleAgentPanelButton?.addEventListener("click", async () => {
+    await toggleOverlayMode();
+  });
+  elements.minimizeAgentButton?.addEventListener("click", () => {
+    tauriWindow?.getCurrentWindow?.()?.minimize?.().catch(() => {});
+  });
   elements.refreshLibraryButton?.addEventListener("click", async () => {
     try {
       await refreshLibrary({ silent: true });

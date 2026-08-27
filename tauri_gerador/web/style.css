@@ -4127,6 +4127,26 @@ label span {
   display: none !important;
 }
 
+.hyperv-base-status {
+  grid-column: 1 / -1;
+  padding: 11px 13px;
+  border: 1px solid rgba(18, 181, 203, 0.24);
+  border-radius: 14px;
+  color: rgba(230, 247, 255, 0.82);
+  background: rgba(18, 181, 203, 0.08);
+}
+
+.hyperv-base-status[data-variant="success"] {
+  border-color: rgba(75, 220, 150, 0.35);
+  color: #a8f5ce;
+}
+
+.hyperv-base-status[data-variant="error"] {
+  border-color: rgba(255, 105, 120, 0.4);
+  color: #ffb3bd;
+  background: rgba(255, 75, 95, 0.09);
+}
+
 .agents-vm-list-panel {
   display: grid;
   gap: 12px;
@@ -4157,6 +4177,28 @@ label span {
   border-radius: 16px;
   border: 1px solid rgba(18, 181, 203, 0.16);
   background: rgba(7, 17, 31, 0.62);
+}
+
+.agents-vm-item.is-base {
+  border-color: rgba(57, 224, 202, 0.42);
+  background: linear-gradient(135deg, rgba(20, 91, 105, 0.2), rgba(7, 17, 31, 0.72));
+}
+
+.agents-vm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.agents-vm-base-badge {
+  display: block;
+  margin-bottom: 5px;
+  color: #54ead5;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .agents-vm-item div {
@@ -4196,7 +4238,8 @@ label span {
   text-transform: uppercase;
 }
 
-.agents-create-panel input {
+.agents-create-panel input,
+.agents-create-panel select {
   min-height: 42px;
   padding: 0 14px;
   border: 1px solid rgba(230, 247, 255, 0.1);
@@ -4206,7 +4249,8 @@ label span {
   outline: none;
 }
 
-.agents-create-panel input:focus {
+.agents-create-panel input:focus,
+.agents-create-panel select:focus {
   border-color: rgba(18, 181, 203, 0.58);
   box-shadow: 0 0 0 3px rgba(18, 181, 203, 0.12);
 }
@@ -4454,7 +4498,8 @@ label span {
   text-transform: uppercase;
 }
 
-.agent-card-edit-form input {
+.agent-card-edit-form input,
+.agent-card-edit-form select {
   min-height: 40px;
   width: 100%;
   padding: 0 12px;
@@ -4466,7 +4511,8 @@ label span {
   outline: none;
 }
 
-.agent-card-edit-form input:focus {
+.agent-card-edit-form input:focus,
+.agent-card-edit-form select:focus {
   border-color: rgba(18, 181, 203, 0.58);
   box-shadow: 0 0 0 3px rgba(18, 181, 203, 0.12);
 }

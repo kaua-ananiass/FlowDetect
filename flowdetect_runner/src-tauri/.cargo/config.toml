@@ -1,2 +1,2 @@
 [build]
-target-dir = "F:/FlowDetect_Cache/cargo/runner-target"
+target-dir = "../target"
