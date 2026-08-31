@@ -143,7 +143,6 @@
         <button id="assistTabButton" class="workspace-tab" data-tab="assist">Execucao assistida</button>
         <button id="commandTabButton" class="workspace-tab" data-tab="commands">Mapa dos comandos</button>
         <button id="workbookTabButton" class="workspace-tab" data-tab="workbook">Planilha e dados</button>
-        <button id="remoteControlTabButton" class="workspace-tab" data-tab="remote-control">Controle remoto</button>
         <button id="agentsTabButton" class="workspace-tab" data-tab="agents">Agentes</button>
         <button id="agentScreenTabButton" class="workspace-tab" data-tab="agent-screen">Tela do Agent</button>
         <button id="smartRecorderTabButton" class="workspace-tab" data-tab="smart-recorder">Gravador inteligente</button>
@@ -1243,13 +1242,12 @@
           <header class="agents-header">
             <div>
               <p class="panel-kicker">Ambientes</p>
-              <h2>Agentes</h2>
-              <p>Crie o ambiente primeiro. Quando a maquina ligar e o Agent aparecer, o Studio conecta e mostra a tela aqui.</p>
+              <h2>Maquinas virtuais</h2>
+              <p>Abra e controle diretamente as VMs locais do Hyper-V.</p>
             </div>
             <div class="agents-header-actions">
               <button id="setupHypervBaseButton" class="ghost-button" type="button">Preparar VM-base</button>
               <button id="refreshAgentVmsButton" class="ghost-button" type="button">Atualizar VMs</button>
-              <button id="addAgentCardButton" class="primary-button" type="button">+ Adicionar agente</button>
             </div>
           </header>
 
@@ -1300,14 +1298,6 @@
             </div>
           </section>
 
-          <section id="agentVmListPanel" class="agents-vm-list-panel" hidden>
-            <div>
-              <p class="panel-kicker">Hyper-V</p>
-              <strong>VMs encontradas neste PC</strong>
-            </div>
-            <div id="agentVmList" class="agents-vm-list"></div>
-          </section>
-
           <div id="agentsList" class="agents-grid"></div>
 
           <section class="agents-help-card">
@@ -1322,38 +1312,18 @@
         <section class="studio-control-screen-panel">
           <div class="studio-control-screen-head">
             <div>
-              <p class="panel-kicker">Tela do Agent</p>
-              <h3>Assistir ou controlar PC</h3>
-              <span id="studioControlScreenStatus">Conecte no Agent para o FlowDetect montar a URL do MeshCentral automaticamente.</span>
+              <p class="panel-kicker">Console nativo Hyper-V</p>
+              <h3>Tela da maquina virtual</h3>
+              <span id="studioControlScreenStatus">Selecione uma VM na aba Agentes. A conexao usa o GUID do Hyper-V, sem IP.</span>
             </div>
             <div class="studio-control-screen-actions">
-              <label>
-                <span>URL do MeshCentral</span>
-                <input id="studioControlMeshUrlInput" type="text" placeholder="Automatico pelo IP do Agent" />
-              </label>
-              <label>
-                <span>Pasta no Agent</span>
-                <input id="studioControlMeshPathInput" type="text" placeholder="Padrao: pasta meshcentral instalada junto do Agent" />
-              </label>
-              <button id="studioControlMeshStartButton" class="soft-button" type="button">Iniciar no Agent</button>
-              <button id="studioControlMeshLoadButton" class="primary-button" type="button">Assistir no Studio</button>
-              <label class="studio-control-input-toggle">
-                <span>Mouse e teclado</span>
-                <input id="studioControlRemoteInputToggle" type="checkbox" />
-                <i aria-hidden="true"></i>
-              </label>
-              <button id="studioControlMeshEmbedButton" class="ghost-button" type="button">Incorporar aqui</button>
-              <button id="studioControlMeshOpenButton" class="ghost-button" type="button">Abrir fora</button>
-              <button id="studioControlMeshClearButton" class="ghost-button" type="button">Limpar</button>
+              <button id="studioControlHypervCloseButton" class="ghost-button" type="button" hidden>Fechar tela</button>
             </div>
           </div>
-          <div class="studio-control-screen-frame-wrap">
-            <video id="studioControlScreenVideo" class="studio-control-screen-video" autoplay playsinline muted tabindex="0"></video>
-            <img id="studioControlScreenImage" class="studio-control-screen-image" alt="Tela atual do Agent" />
-            <iframe id="studioControlMeshFrame" title="Tela remota MeshCentral" loading="lazy" referrerpolicy="no-referrer"></iframe>
+          <div id="studioControlScreenFrameWrap" class="studio-control-screen-frame-wrap">
             <div class="studio-control-screen-placeholder">
-              <strong>Tela remota pronta para carregar</strong>
-              <span>Clique em Assistir no Studio para receber snapshots da tela do Agent sem depender do iframe do MeshCentral.</span>
+              <strong>Nenhuma VM selecionada</strong>
+              <span>Abra a aba Agentes e clique em uma maquina virtual para iniciar a sessao nativa.</span>
             </div>
           </div>
         </section>

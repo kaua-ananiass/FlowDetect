@@ -1,6 +1,8 @@
 ﻿use serde::Serialize;
 use base64::{engine::general_purpose, Engine as _};
 #[cfg(windows)]
+mod native_rdp;
+#[cfg(windows)]
 use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, ImageBuffer, Rgba};
 use serde_json::Value;
 use std::{
@@ -18,12 +20,13 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 use windows::Win32::{
-    Foundation::{BOOL, HWND, LPARAM, RECT},
+    Foundation::{BOOL, HWND, LPARAM, POINT, RECT},
     Graphics::Gdi::{
-        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
+        BitBlt, ClientToScreen, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
         GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
         HBITMAP, HGDIOBJ, RGBQUAD, SRCCOPY,
     },
+    Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
     UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
         KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
@@ -31,9 +34,12 @@ use windows::Win32::{
         MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, VIRTUAL_KEY, VK_CONTROL, VK_F12, VK_SHIFT,
     },
     UI::WindowsAndMessaging::{
-        EnumWindows, GetForegroundWindow, GetSystemMetrics, GetWindowRect, GetWindowThreadProcessId,
-        IsWindow, IsWindowVisible, IsZoomed, SetWindowPos, ShowWindow, SM_CXSCREEN, SM_CYSCREEN,
-        SWP_NOZORDER, SWP_SHOWWINDOW, SW_RESTORE,
+        EnumWindows, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW,
+        GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible, IsZoomed,
+        SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_HWNDPARENT, GWL_STYLE, SM_CXSCREEN,
+        SM_CYSCREEN, SWP_FRAMECHANGED, SWP_NOZORDER, SWP_SHOWWINDOW,
+        SW_HIDE, SW_RESTORE, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP,
+        WS_SYSMENU, WS_THICKFRAME,
     },
 };
 
@@ -92,16 +98,25 @@ static MESHCENTRAL_PROCESS: OnceLock<Arc<Mutex<Option<Child>>>> = OnceLock::new(
 static MESHCENTRAL_STARTING: OnceLock<Arc<Mutex<bool>>> = OnceLock::new();
 static MESHCENTRAL_LAST_MESSAGE: OnceLock<Arc<Mutex<String>>> = OnceLock::new();
 static WEBRTC_SIGNAL_STATE: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
+static NATIVE_REMOTE_STATUS: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
 
 static TARGET_OVERLAY_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 static SMART_RECORDER_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 static RECOGNITION_WORKER: Mutex<Option<RecognitionWorker>> = Mutex::new(None);
+static EMBEDDED_HYPERV_CONSOLE: Mutex<Option<EmbeddedHypervConsole>> = Mutex::new(None);
 static AGENT_WORK_AREA_GUARD_ENABLED: AtomicBool = AtomicBool::new(false);
 
 const AGENT_SAFE_MARGIN_LEFT: i32 = 25;
 const AGENT_SAFE_MARGIN_RIGHT: i32 = 25;
 const AGENT_SAFE_MARGIN_TOP: i32 = 76;
 const AGENT_SAFE_MARGIN_BOTTOM: i32 = 166;
+
+struct EmbeddedHypervConsole {
+    child: Child,
+    hwnd: isize,
+    owner_hwnd: isize,
+    vm_name: String,
+}
 
 #[derive(Serialize)]
 struct AutomationConfig {
@@ -310,7 +325,32 @@ fn run_hyperv_powershell(script: &str) -> Result<String, String> {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if output.status.success() { Ok(stdout) } else {
         let detail = if stderr.is_empty() { stdout } else { stderr };
-        Err(format!("Falha no Hyper-V. Execute o FlowDetect como administrador. {detail}"))
+        let log_dir = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("FlowDetect Studio");
+        let _ = fs::create_dir_all(&log_dir);
+        if let Ok(mut log) = fs::OpenOptions::new().create(true).append(true).open(log_dir.join("hyperv.log")) {
+            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|value| value.as_secs()).unwrap_or_default();
+            let _ = writeln!(log, "[{timestamp}] PowerShell: {detail}\n");
+        }
+        let normalized = detail.to_lowercase();
+        if normalized.contains("permissão necessária")
+            || normalized.contains("permissao necessaria")
+            || normalized.contains("access is denied")
+            || normalized.contains("acesso negado")
+            || normalized.contains("unauthorizedaccess")
+        {
+            Err(format!("O Studio não recebeu permissão para controlar o Hyper-V. Feche-o e abra pelo atalho como administrador. Detalhe: {detail}"))
+        } else if normalized.contains("não foi possível encontrar")
+            || normalized.contains("nao foi possivel encontrar")
+            || normalized.contains("cannot find a virtual machine")
+            || normalized.contains("was not found")
+        {
+            Err(format!("A VM configurada não foi encontrada no Hyper-V. Detalhe: {detail}"))
+        } else {
+            Err(format!("Falha no Hyper-V: {detail}"))
+        }
     }
 }
 
@@ -356,7 +396,7 @@ fn clone_hyperv_vm(base_vm_name: String, vm_name: String) -> Result<Value, Strin
 #[tauri::command]
 fn start_hyperv_vm(vm_name: String) -> Result<Value, String> {
     let name=vm_name.trim(); if name.is_empty() { return Err("Informe o nome da VM do Hyper-V.".to_string()); }
-    hyperv_json(&format!("$vm=Get-VM -Name {}; if ($vm.State -eq 'Off') {{ Start-VM -VM $vm | Out-Null }}; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString()}} | ConvertTo-Json -Compress", powershell_literal(name)))
+    hyperv_json(&format!("$vm=Get-VM -Name {}; Set-VMHost -EnableEnhancedSessionMode $true; Get-VMIntegrationService -VM $vm | Where-Object {{ $_.Name -match 'Guest|Convidado' }} | Enable-VMIntegrationService; if ($vm.State -eq 'Off') {{ Set-VM -VM $vm -EnhancedSessionTransportType VMBus; Start-VM -VM $vm | Out-Null }} elseif ($vm.EnhancedSessionTransportType -ne 'VMBus') {{ throw 'Desligue completamente a VM uma vez para ativar a sessao aprimorada VMBus.' }}; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();enhancedSessionTransport=(Get-VM -Name $vm.Name).EnhancedSessionTransportType.ToString();guestServiceEnabled=$true}} | ConvertTo-Json -Compress", powershell_literal(name)))
 }
 
 #[tauri::command]
@@ -365,19 +405,342 @@ fn stop_hyperv_vm(vm_name: String) -> Result<Value, String> {
     if name.is_empty() {
         return Err("Informe o nome da VM do Hyper-V.".to_string());
     }
-    hyperv_json(&format!("$vm=Get-VM -Name {}; if ($vm.State -ne 'Off') {{ Stop-VM -VM $vm -Shutdown }}; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString()}} | ConvertTo-Json -Compress", powershell_literal(name)))
+    hyperv_json(&format!(r#"$vm=Get-VM -Name {}; if ($vm.State -eq 'Off') {{ [pscustomobject]@{{ok=$true;name=$vm.Name;state='Off';requiresForce=$false}} | ConvertTo-Json -Compress; return }}; $job=Stop-VM -VM $vm -AsJob; $finished=Wait-Job -Job $job -Timeout 25; if (-not $finished) {{ Stop-Job -Job $job -ErrorAction SilentlyContinue; Remove-Job -Job $job -Force -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$false;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();requiresForce=$true;message='O Windows da VM nao respondeu ao desligamento normal.'}} | ConvertTo-Json -Compress; return }}; Receive-Job -Job $job -ErrorAction SilentlyContinue | Out-Null; Remove-Job -Job $job -Force -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();requiresForce=$false}} | ConvertTo-Json -Compress"#, powershell_literal(name)))
+}
+
+#[tauri::command]
+fn turn_off_hyperv_vm(vm_name: String) -> Result<Value, String> {
+    let name = vm_name.trim();
+    if name.is_empty() {
+        return Err("Informe o nome da VM do Hyper-V.".to_string());
+    }
+    hyperv_json(&format!("$vm=Get-VM -Name {}; if ($vm.State -ne 'Off') {{ Stop-VM -VM $vm -TurnOff -Force }}; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();forced=$true}} | ConvertTo-Json -Compress", powershell_literal(name)))
 }
 
 #[tauri::command]
 fn get_hyperv_vm_connection(vm_name: String) -> Result<Value, String> {
     let name=vm_name.trim(); if name.is_empty() { return Err("Informe o nome da VM do Hyper-V.".to_string()); }
-    hyperv_json(&format!("$vm=Get-VM -Name {}; $ip=@(Get-VMNetworkAdapter -VM $vm | ForEach-Object IPAddresses | Where-Object {{ $_ -match '^\\d+\\.' -and $_ -notmatch '^169\\.254\\.' }} | Select-Object -First 1); [pscustomobject]@{{ok=$true;name=$vm.Name;state=$vm.State.ToString();ip=($ip | Select-Object -First 1);address=$(if($ip){{$ip[0]+':18452'}}else{{$null}})}} | ConvertTo-Json -Compress", powershell_literal(name)))
+    hyperv_json(&format!("$vm=Get-VM -Name {}; $ips=@(Get-VMNetworkAdapter -VM $vm | ForEach-Object IPAddresses | Where-Object {{ $_ -match '^\\d+\\.' -and $_ -notmatch '^169\\.254\\.' }} | Select-Object -Unique); [pscustomobject]@{{ok=$true;name=$vm.Name;uuid=$vm.Id.Guid;state=$vm.State.ToString();ips=$ips;ip=($ips | Select-Object -First 1);address=$(if($ips.Count -gt 0){{$ips[0]+':18452'}}else{{$null}})}} | ConvertTo-Json -Compress", powershell_literal(name)))
 }
+
+#[tauri::command]
+fn probe_native_hyperv_rdp() -> Result<Value, String> { native_rdp::probe() }
+
+#[tauri::command]
+async fn open_native_hyperv_rdp(app: AppHandle, vm_name: String, x: i32, y: i32, width: i32, height: i32) -> Result<Value, String> {
+    let vm_name = vm_name.trim().to_string();
+    run_hyperv_powershell(&format!("$vm=Get-VM -Name {}; Set-VMHost -EnableEnhancedSessionMode $true; if($vm.State -ne 'Off' -and $vm.EnhancedSessionTransportType -ne 'VMBus'){{ throw 'A VM precisa ser desligada completamente uma vez para ativar a sessao aprimorada VMBus.' }}; if($vm.State -eq 'Off'){{ Set-VM -VM $vm -EnhancedSessionTransportType VMBus }}", powershell_literal(&vm_name)))?;
+    let connection = get_hyperv_vm_connection(vm_name.clone())?;
+    let vm_id = connection.get("uuid").and_then(Value::as_str).ok_or_else(|| "O Hyper-V nao informou o GUID da VM.".to_string())?.to_string();
+    let owner = app.get_webview_window("main").ok_or_else(|| "Janela principal indisponivel.".to_string())?;
+    let hwnd = owner.hwnd().map_err(|error| error.to_string())?;
+    let owner_hwnd = hwnd.0 as isize;
+    tauri::async_runtime::spawn_blocking(move || native_rdp::open(owner_hwnd, &vm_id, &vm_name, x, y, width, height))
+        .await
+        .map_err(|error| format!("A thread nativa do RDP falhou: {error}"))?
+}
+
+#[tauri::command]
+fn resize_native_hyperv_rdp(x: i32, y: i32, width: i32, height: i32, visible: bool) -> Result<Value, String> {
+    native_rdp::resize(x, y, width, height, visible)
+}
+
+#[tauri::command]
+fn close_native_hyperv_rdp() -> Result<Value, String> { native_rdp::close() }
 
 #[tauri::command]
 fn open_hyperv_vm_console(vm_name: String) -> Result<Value, String> {
     let name=vm_name.trim(); if name.is_empty() { return Err("Informe o nome da VM do Hyper-V.".to_string()); }
     Command::new("vmconnect.exe").args(["localhost", name]).spawn().map_err(|err| format!("Nao foi possivel abrir a tela da VM: {err}"))?; Ok(serde_json::json!({"ok":true,"name":name}))
+}
+
+#[cfg(windows)]
+struct WindowSearchData {
+    process_id: u32,
+    hwnd: isize,
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn find_process_window(window: HWND, lparam: LPARAM) -> BOOL {
+    let search = &mut *(lparam.0 as *mut WindowSearchData);
+    let mut process_id = 0u32;
+    GetWindowThreadProcessId(window, Some(&mut process_id));
+    if process_id == search.process_id && IsWindowVisible(window).as_bool() {
+        search.hwnd = window.0 as isize;
+        return BOOL(0);
+    }
+    BOOL(1)
+}
+
+#[cfg(windows)]
+fn close_embedded_hyperv_console_native() {
+    if let Ok(mut guard) = EMBEDDED_HYPERV_CONSOLE.lock() {
+        if let Some(mut console) = guard.take() {
+            unsafe {
+                let window = HWND(console.hwnd as *mut std::ffi::c_void);
+                if IsWindow(window).as_bool() {
+                    let _ = ShowWindow(window, SW_HIDE);
+                }
+            }
+            let _ = console.child.kill();
+            let _ = console.child.wait();
+        }
+    }
+}
+
+#[cfg(windows)]
+fn dock_hyperv_console_window(window: HWND, owner: HWND, x: i32, y: i32, width: i32, height: i32) -> Result<(), String> {
+    unsafe {
+        if !IsWindow(window).as_bool() || !IsWindow(owner).as_bool() {
+            return Err("A janela do Studio ou do console nao esta mais disponivel.".to_string());
+        }
+        let mut client_origin = POINT { x: 0, y: 0 };
+        if !ClientToScreen(owner, &mut client_origin).as_bool() {
+            return Err("Nao foi possivel alinhar o console ao Studio.".to_string());
+        }
+        let current_style = GetWindowLongPtrW(window, GWL_STYLE) as u32;
+        let docked_style = (current_style
+            & !(WS_CAPTION.0 | WS_THICKFRAME.0 | WS_SYSMENU.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0))
+            | WS_POPUP.0;
+        SetWindowLongPtrW(window, GWL_STYLE, docked_style as isize);
+        SetWindowLongPtrW(window, GWLP_HWNDPARENT, owner.0 as isize);
+        SetWindowPos(
+            window,
+            None,
+            client_origin.x + x.max(0),
+            client_origin.y + y.max(0),
+            width.max(320),
+            height.max(240),
+            SWP_NOZORDER | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+        )
+        .map_err(|err| format!("Nao foi possivel encaixar o console no Studio: {err}"))?;
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn configure_vmconnect_zoom(zoom_level: u32) -> Result<u32, String> {
+    let zoom = zoom_level.clamp(25, 100);
+    let app_data = std::env::var_os("APPDATA")
+        .ok_or_else(|| "A pasta de configuracao do usuario nao foi encontrada.".to_string())?;
+    let config_path = PathBuf::from(app_data)
+        .join("Microsoft")
+        .join("Windows")
+        .join("Hyper-V")
+        .join("Client")
+        .join("1.0")
+        .join("vmconnect.config");
+    let Some(parent) = config_path.parent() else {
+        return Err("O caminho de configuracao do VMConnect e invalido.".to_string());
+    };
+    fs::create_dir_all(parent)
+        .map_err(|err| format!("Nao foi possivel preparar a configuracao do VMConnect: {err}"))?;
+
+    let zoom_setting = format!(
+        "        <setting name=\"ZoomLevel\" type=\"System.UInt32\">\r\n            <value>{zoom}</value>\r\n        </setting>"
+    );
+    let updated = if config_path.exists() {
+        let current = fs::read_to_string(&config_path)
+            .map_err(|err| format!("Nao foi possivel ler a configuracao do VMConnect: {err}"))?;
+        if let Some(setting_start) = current.find("<setting name=\"ZoomLevel\"") {
+            let line_start = current[..setting_start].rfind('\n').map(|index| index + 1).unwrap_or(setting_start);
+            let setting_end = current[setting_start..]
+                .find("</setting>")
+                .map(|index| setting_start + index + "</setting>".len())
+                .ok_or_else(|| "A configuracao de zoom do VMConnect esta incompleta.".to_string())?;
+            format!("{}{}{}", &current[..line_start], zoom_setting, &current[setting_end..])
+        } else {
+            current.replace(
+                "<Microsoft.Virtualization.Client.InteractiveSession.InteractiveSessionConfigurationOptions>",
+                &format!(
+                    "<Microsoft.Virtualization.Client.InteractiveSession.InteractiveSessionConfigurationOptions>\r\n{zoom_setting}"
+                ),
+            )
+        }
+    } else {
+        format!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<configuration>\r\n    <Microsoft.Virtualization.Client.InteractiveSession.InteractiveSessionConfigurationOptions>\r\n{zoom_setting}\r\n    </Microsoft.Virtualization.Client.InteractiveSession.InteractiveSessionConfigurationOptions>\r\n</configuration>\r\n"
+        )
+    };
+    fs::write(&config_path, updated)
+        .map_err(|err| format!("Nao foi possivel ajustar o zoom do VMConnect: {err}"))?;
+    Ok(zoom)
+}
+
+#[tauri::command]
+fn open_embedded_hyperv_console(app: AppHandle, vm_name: String, x: i32, y: i32, width: i32, height: i32, zoom_level: u32) -> Result<Value, String> {
+    let name = vm_name.trim();
+    if name.is_empty() {
+        return Err("Informe o nome da VM do Hyper-V.".to_string());
+    }
+
+    #[cfg(windows)]
+    {
+        close_embedded_hyperv_console_native();
+        let applied_zoom = configure_vmconnect_zoom(zoom_level)?;
+        let mut child = Command::new("vmconnect.exe")
+            .args(["localhost", name])
+            .spawn()
+            .map_err(|err| format!("Nao foi possivel abrir o console local da VM: {err}"))?;
+        let process_id = child.id();
+        let mut embedded_hwnd = 0isize;
+        for _ in 0..120 {
+            let mut search = WindowSearchData { process_id, hwnd: 0 };
+            unsafe {
+                let _ = EnumWindows(Some(find_process_window), LPARAM((&mut search as *mut WindowSearchData) as isize));
+            }
+            if search.hwnd != 0 {
+                embedded_hwnd = search.hwnd;
+                break;
+            }
+            if child.try_wait().map_err(|err| err.to_string())?.is_some() {
+                return Err("O console do Hyper-V foi encerrado antes de abrir a tela.".to_string());
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        if embedded_hwnd == 0 {
+            let _ = child.kill();
+            return Err("A janela do console do Hyper-V nao apareceu a tempo.".to_string());
+        }
+
+        let studio_window = app.get_webview_window("main").ok_or_else(|| "Janela principal do Studio nao encontrada.".to_string())?;
+        let tauri_owner = studio_window.hwnd().map_err(|err| err.to_string())?;
+        let owner_hwnd = HWND(tauri_owner.0);
+        let console_hwnd = HWND(embedded_hwnd as *mut std::ffi::c_void);
+        dock_hyperv_console_window(console_hwnd, owner_hwnd, x, y, width, height)?;
+        if let Ok(mut guard) = EMBEDDED_HYPERV_CONSOLE.lock() {
+            *guard = Some(EmbeddedHypervConsole {
+                child,
+                hwnd: embedded_hwnd,
+                owner_hwnd: owner_hwnd.0 as isize,
+                vm_name: name.to_string(),
+            });
+        }
+        return Ok(serde_json::json!({"ok":true,"embedded":true,"mode":"native_dock","vm_name":name,"hwnd":embedded_hwnd,"zoom":applied_zoom}));
+    }
+
+    #[cfg(not(windows))]
+    Err("Console local do Hyper-V disponivel apenas no Windows.".to_string())
+}
+
+#[tauri::command]
+fn resize_embedded_hyperv_console(x: i32, y: i32, width: i32, height: i32, visible: bool) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let guard = EMBEDDED_HYPERV_CONSOLE.lock().map_err(|_| "Console local indisponivel.".to_string())?;
+        let Some(console) = guard.as_ref() else {
+            return Ok(serde_json::json!({"ok":true,"active":false}));
+        };
+        let window = HWND(console.hwnd as *mut std::ffi::c_void);
+        let owner = HWND(console.owner_hwnd as *mut std::ffi::c_void);
+        unsafe {
+            if !IsWindow(window).as_bool() {
+                return Ok(serde_json::json!({"ok":true,"active":false}));
+            }
+            if visible {
+                dock_hyperv_console_window(window, owner, x, y, width, height)?;
+            } else {
+                let _ = ShowWindow(window, SW_HIDE);
+            }
+        }
+        return Ok(serde_json::json!({"ok":true,"active":true,"visible":visible,"vm_name":console.vm_name}));
+    }
+    #[cfg(not(windows))]
+    Ok(serde_json::json!({"ok":true,"active":false}))
+}
+
+#[tauri::command]
+fn get_embedded_hyperv_console_frame() -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        let guard = EMBEDDED_HYPERV_CONSOLE.lock().map_err(|_| "Console local indisponivel.".to_string())?;
+        let Some(console) = guard.as_ref() else {
+            return Err("Nenhum console local do Hyper-V esta ativo.".to_string());
+        };
+        let window = HWND(console.hwnd as *mut std::ffi::c_void);
+        unsafe {
+            if !IsWindow(window).as_bool() {
+                return Err("A janela do console local foi encerrada.".to_string());
+            }
+            let mut rect = RECT::default();
+            GetWindowRect(window, &mut rect).map_err(|err| format!("Nao foi possivel medir o console: {err}"))?;
+            let width = (rect.right - rect.left).max(1);
+            let height = (rect.bottom - rect.top).max(1);
+            let pixel_count = (width as usize).checked_mul(height as usize).ok_or_else(|| "Console grande demais para captura.".to_string())?;
+            let mut bgra = vec![0u8; pixel_count * 4];
+
+            let window_dc = GetDC(window);
+            if window_dc.0.is_null() {
+                return Err("Nao foi possivel acessar a imagem do console.".to_string());
+            }
+            let memory_dc = CreateCompatibleDC(window_dc);
+            let bitmap = CreateCompatibleBitmap(window_dc, width, height);
+            if memory_dc.0.is_null() || bitmap.0.is_null() {
+                if !bitmap.0.is_null() { let _ = DeleteObject(HGDIOBJ(bitmap.0)); }
+                if !memory_dc.0.is_null() { let _ = DeleteDC(memory_dc); }
+                let _ = ReleaseDC(window, window_dc);
+                return Err("Nao foi possivel preparar a captura do console.".to_string());
+            }
+            let old_object = SelectObject(memory_dc, HGDIOBJ(bitmap.0));
+            let printed = PrintWindow(window, memory_dc, PRINT_WINDOW_FLAGS(2)).as_bool();
+            let mut bitmap_info = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: width,
+                    biHeight: -height,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    ..Default::default()
+                },
+                bmiColors: [RGBQUAD::default(); 1],
+            };
+            let lines = if printed {
+                GetDIBits(memory_dc, HBITMAP(bitmap.0), 0, height as u32, Some(bgra.as_mut_ptr() as *mut _), &mut bitmap_info, DIB_RGB_COLORS)
+            } else { 0 };
+            let _ = SelectObject(memory_dc, old_object);
+            let _ = DeleteObject(HGDIOBJ(bitmap.0));
+            let _ = DeleteDC(memory_dc);
+            let _ = ReleaseDC(window, window_dc);
+            if !printed || lines == 0 {
+                return Err("O Hyper-V ainda nao disponibilizou um quadro da VM.".to_string());
+            }
+
+            for pixel in bgra.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+                pixel[3] = 255;
+            }
+            let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width as u32, height as u32, bgra)
+                .ok_or_else(|| "Nao foi possivel montar o quadro do console.".to_string())?;
+            let max_width = 1280u32;
+            let scaled = if image.width() > max_width {
+                let target_height = ((image.height() as f64) * (max_width as f64 / image.width() as f64)).round().max(1.0) as u32;
+                image::imageops::resize(&image, max_width, target_height, FilterType::Triangle)
+            } else { image };
+            let mut bytes = Vec::new();
+            JpegEncoder::new_with_quality(&mut bytes, 60)
+                .encode_image(&scaled)
+                .map_err(|err| format!("Nao foi possivel compactar o quadro do console: {err}"))?;
+            return Ok(serde_json::json!({
+                "ok": true,
+                "mime": "image/jpeg",
+                "data": general_purpose::STANDARD.encode(bytes),
+                "width": scaled.width(),
+                "height": scaled.height(),
+                "vm_name": console.vm_name,
+                "captured_at": now_millis()
+            }));
+        }
+    }
+    #[cfg(not(windows))]
+    Err("Captura do console local disponivel apenas no Windows.".to_string())
+}
+
+#[tauri::command]
+fn close_embedded_hyperv_console() -> Result<Value, String> {
+    #[cfg(windows)]
+    close_embedded_hyperv_console_native();
+    Ok(serde_json::json!({"ok":true,"active":false}))
 }
 
 /* Legacy implementation kept out of the build while persisted agent data migrates. */
@@ -1374,6 +1737,26 @@ fn webrtc_signal_store() -> Arc<Mutex<Value>> {
         .clone()
 }
 
+fn native_remote_status_store() -> Arc<Mutex<Value>> {
+    NATIVE_REMOTE_STATUS.get_or_init(|| Arc::new(Mutex::new(serde_json::json!({
+        "capture_frames": 0, "encoded_frames": 0, "sent_frames": 0,
+        "capture_resolution": "", "stage": "idle", "last_error": ""
+    })))).clone()
+}
+
+pub(crate) fn update_native_remote_status(update: Value) {
+    if let (Ok(mut status), Some(fields)) = (native_remote_status_store().lock(), update.as_object()) {
+        if let Some(target) = status.as_object_mut() {
+            for (key, value) in fields { target.insert(key.clone(), value.clone()); }
+            target.insert("updated_at".into(), serde_json::json!(now_millis()));
+        }
+    }
+}
+
+fn get_native_remote_status() -> Value {
+    native_remote_status_store().lock().map(|status| status.clone()).unwrap_or_else(|_| serde_json::json!({}))
+}
+
 fn set_webrtc_offer(offer: Value) -> Value {
     let session_id = format!("rtc-{}", now_millis());
     let payload = serde_json::json!({
@@ -1389,7 +1772,7 @@ fn set_webrtc_offer(offer: Value) -> Value {
     payload
 }
 
-fn set_webrtc_answer(session_id: String, answer: Value) -> Value {
+pub(crate) fn set_webrtc_answer(session_id: String, answer: Value) -> Value {
     if let Ok(mut guard) = webrtc_signal_store().lock() {
         let current_session = guard
             .get("session_id")
@@ -1404,7 +1787,7 @@ fn set_webrtc_answer(session_id: String, answer: Value) -> Value {
     serde_json::json!({})
 }
 
-fn get_webrtc_signal_payload() -> Value {
+pub(crate) fn get_webrtc_signal_payload() -> Value {
     webrtc_signal_store()
         .lock()
         .map(|guard| guard.clone())
@@ -1430,6 +1813,10 @@ fn browser_key_to_vk(key: &str) -> Option<u16> {
     match key {
         "Backspace" => Some(0x08),
         "Tab" => Some(0x09),
+        "Shift" => Some(0x10),
+        "Control" => Some(0x11),
+        "Alt" => Some(0x12),
+        "CapsLock" => Some(0x14),
         "Enter" => Some(0x0D),
         "Escape" => Some(0x1B),
         " " | "Space" | "Spacebar" => Some(0x20),
@@ -1438,10 +1825,12 @@ fn browser_key_to_vk(key: &str) -> Option<u16> {
         "ArrowRight" => Some(0x27),
         "ArrowDown" => Some(0x28),
         "Delete" => Some(0x2E),
+        "Insert" => Some(0x2D),
         "Home" => Some(0x24),
         "End" => Some(0x23),
         "PageUp" => Some(0x21),
         "PageDown" => Some(0x22),
+        "Meta" => Some(0x5B),
         _ => {
             let upper = key.to_uppercase();
             if upper.len() == 1 {
@@ -1541,7 +1930,7 @@ fn send_remote_key_event(event: &Value) -> Result<(), String> {
     }
 }
 
-fn handle_agent_remote_control_event(event: Value) -> Result<Value, String> {
+pub(crate) fn handle_agent_remote_control_event(event: Value) -> Result<Value, String> {
     #[cfg(not(windows))]
     {
         let _ = event;
@@ -1954,6 +2343,14 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             Ok(value) => http_json_response("200 OK", value),
             Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
         }
+    } else if method == "GET" && clean_path == "/api/native-remote/status" {
+        http_json_response("200 OK", get_native_remote_status())
+    } else if method == "POST" && clean_path == "/api/control/event" {
+        let event = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        match handle_agent_remote_control_event(event) {
+            Ok(value) => http_json_response("200 OK", value),
+            Err(error) => http_json_response("400 Bad Request", serde_json::json!({"error": error})),
+        }
     } else if method == "POST" && clean_path == "/api/webrtc/offer" {
         let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
         let offer = payload.get("offer").cloned().unwrap_or(payload);
@@ -2350,7 +2747,7 @@ fn capture_screen_snapshot(root: &Path) -> Result<Value, String> {
         }
         let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width as u32, height as u32, bgra)
             .ok_or_else(|| "Nao foi possivel montar a imagem da tela.".to_string())?;
-        let max_width = 960u32;
+        let max_width = 1600u32;
         let scaled = if image.width() > max_width {
             let target_height = ((image.height() as f64) * (max_width as f64 / image.width() as f64)).round().max(1.0) as u32;
             image::imageops::resize(&image, max_width, target_height, FilterType::Nearest)
@@ -2358,7 +2755,7 @@ fn capture_screen_snapshot(root: &Path) -> Result<Value, String> {
             image
         };
         let mut bytes = Vec::new();
-        let mut encoder = JpegEncoder::new_with_quality(&mut bytes, 42);
+        let mut encoder = JpegEncoder::new_with_quality(&mut bytes, 62);
         encoder
             .encode_image(&scaled)
             .map_err(|err| format!("Nao foi possivel compactar a tela do Agent: {err}"))?;
@@ -2678,6 +3075,13 @@ fn remote_agent_meshcentral_status(address: String) -> Result<Value, String> {
 #[tauri::command]
 fn remote_agent_screen_snapshot(address: String) -> Result<Value, String> {
     remote_agent_request(&address, "GET", "/api/screen/snapshot", None)
+}
+
+#[tauri::command]
+fn remote_agent_control_event(address: String, event: Value) -> Result<Value, String> {
+    let body = serde_json::to_vec(&event)
+        .map_err(|err| format!("Falha ao preparar evento remoto: {err}"))?;
+    remote_agent_request(&address, "POST", "/api/control/event", Some(&body))
 }
 
 #[tauri::command]
@@ -7035,8 +7439,17 @@ pub fn run() {
             clone_hyperv_vm,
             start_hyperv_vm,
             stop_hyperv_vm,
+            turn_off_hyperv_vm,
             get_hyperv_vm_connection,
+            probe_native_hyperv_rdp,
+            open_native_hyperv_rdp,
+            resize_native_hyperv_rdp,
+            close_native_hyperv_rdp,
             open_hyperv_vm_console,
+            open_embedded_hyperv_console,
+            resize_embedded_hyperv_console,
+            get_embedded_hyperv_console_frame,
+            close_embedded_hyperv_console,
             get_login_session,
             save_login_session,
             create_saved_automation,
@@ -7143,6 +7556,7 @@ pub fn run() {
             remote_agent_execute_watch_automation,
             remote_agent_meshcentral_status,
             remote_agent_screen_snapshot,
+            remote_agent_control_event,
             remote_agent_webrtc_offer,
             remote_agent_webrtc_answer,
             remote_agent_webrtc_clear,
@@ -7163,8 +7577,16 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("erro ao preparar o gerador")
         .run(|app, event| {
-            if matches!(event, tauri::RunEvent::Exit) && is_flowdetect_agent_runtime(app) {
-                let _ = set_agent_windows_work_area(false);
+            if matches!(event, tauri::RunEvent::Exit) {
+                if is_flowdetect_agent_runtime(app) {
+                    let _ = set_agent_windows_work_area(false);
+                } else {
+                    #[cfg(windows)]
+                    {
+                        close_embedded_hyperv_console_native();
+                        let _ = native_rdp::close();
+                    }
+                }
             }
         });
 }

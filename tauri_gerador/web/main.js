@@ -76,6 +76,8 @@ const state = {
     vmLoading: false,
     createOpen: false,
     editingId: "",
+    startingIds: new Set(),
+    lastConnectionError: "",
   },
   activeTab: "launcher",
   remoteControl: {
@@ -85,6 +87,18 @@ const state = {
     meshPath: "",
     meshRunning: false,
     meshStarting: false,
+    hypervConsoleActive: false,
+    hypervConsoleOpening: false,
+    hypervVmName: "",
+    hypervZoomLevel: 0,
+    hypervResizeTimer: null,
+    hypervKeepaliveTimer: null,
+    hypervFrameTimer: null,
+    hypervFrameLoading: false,
+    nativeRdpActive: false,
+    nativeRdpOpening: false,
+    nativeRdpVmName: "",
+    nativeRdpLastError: "",
     screenStreaming: false,
     screenStreamTimer: null,
     screenSnapshotUrl: "",
@@ -492,6 +506,8 @@ const studioControlMeshFrame = document.getElementById("studioControlMeshFrame")
 const studioControlScreenVideo = document.getElementById("studioControlScreenVideo");
 const studioControlScreenImage = document.getElementById("studioControlScreenImage");
 const studioControlScreenStatus = document.getElementById("studioControlScreenStatus");
+const studioControlScreenFrameWrap = document.getElementById("studioControlScreenFrameWrap");
+const studioControlHypervCloseButton = document.getElementById("studioControlHypervCloseButton");
 const mapZoomOutButton = document.getElementById("mapZoomOutButton");
 const mapZoomInButton = document.getElementById("mapZoomInButton");
 const mapZoomRange = document.getElementById("mapZoomRange");
@@ -930,6 +946,24 @@ function setWorkspaceTab(tabName) {
   if (agentScreenActive) {
     renderStudioControlScreen();
     refreshStudioControlMeshStatus({ silent: true }).catch(() => null);
+  }
+  if (state.remoteControl.hypervConsoleActive) {
+    scheduleEmbeddedHypervConsoleSync();
+  }
+  if (state.remoteControl.nativeRdpActive) {
+    // HWNDs nativos ficam acima do WebView. Ao sair da Tela do Agent, oculte
+    // imediatamente para que a sessao nunca cubra as outras areas do Studio.
+    if (!agentScreenActive) {
+      invoke("resize_native_hyperv_rdp", {
+        x: 0,
+        y: 0,
+        width: 320,
+        height: 240,
+        visible: false,
+      }).catch(() => null);
+    } else {
+      scheduleNativeHypervRdpSync();
+    }
   }
   scheduleActiveWorkspaceRender();
   releaseInactiveWorkspaceDom(previousTab);
@@ -11527,72 +11561,261 @@ function studioControlWatchAutomationId() {
   return String(internalAutomation?.id || "").trim();
 }
 
+function embeddedHypervConsoleBounds(zoomLevel = 0) {
+  if (!studioControlScreenFrameWrap) {
+    return null;
+  }
+  const rect = studioControlScreenFrameWrap.getBoundingClientRect();
+  const scale = Number(window.devicePixelRatio || 1);
+  let left = rect.left + 1;
+  let top = rect.top + 1;
+  let width = rect.width - 2;
+  let height = rect.height - 2;
+  if (zoomLevel > 0) {
+    const guestWidth = 1920 * (zoomLevel / 100);
+    const guestHeight = 1080 * (zoomLevel / 100);
+    // VMConnect mantem superficies nativas e barras internas fora da imagem do guest.
+    // Uma folga real evita o quadro preto que ocorre quando a janela fica justa demais.
+    const consoleWidth = Math.min(width, guestWidth + 36);
+    const consoleHeight = Math.min(height, guestHeight + 88);
+    left += Math.max(0, (width - consoleWidth) / 2);
+    top += Math.max(0, (height - consoleHeight) / 2);
+    width = consoleWidth;
+    height = consoleHeight;
+  }
+  return {
+    x: Math.round(left * scale),
+    y: Math.round(top * scale),
+    width: Math.max(320, Math.round(width * scale)),
+    height: Math.max(240, Math.round(height * scale)),
+  };
+}
+
+async function waitForNativeScreenBounds(timeoutMs = 2500) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const rect = studioControlScreenFrameWrap?.getBoundingClientRect();
+    if (rect && rect.width >= 320 && rect.height >= 240) {
+      return embeddedHypervConsoleBounds();
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+  }
+  return null;
+}
+
+function embeddedHypervConsoleZoom(bounds) {
+  const chromeHeight = Math.round(88 * Number(window.devicePixelRatio || 1));
+  const usableHeight = Math.max(240, bounds.height - chromeHeight);
+  const horizontalPadding = Math.round(36 * Number(window.devicePixelRatio || 1));
+  const fitPercent = Math.min((bounds.width - horizontalPadding) / 1920, usableHeight / 1080) * 100;
+  return Math.max(25, Math.min(100, Math.floor(fitPercent / 5) * 5));
+}
+
+async function syncNativeHypervRdp() {
+  const remote = state.remoteControl;
+  if (!remote.nativeRdpActive) return;
+  const bounds = embeddedHypervConsoleBounds() || { x: 0, y: 0, width: 320, height: 240 };
+  await invoke("resize_native_hyperv_rdp", {
+    ...bounds,
+    visible: state.activeTab === "agent-screen",
+  }).catch((error) => console.warn("Nao foi possivel sincronizar o RDP Hyper-V.", error));
+}
+
+function scheduleNativeHypervRdpSync() {
+  window.clearTimeout(state.remoteControl.hypervResizeTimer);
+  state.remoteControl.hypervResizeTimer = window.setTimeout(() => syncNativeHypervRdp().catch(() => null), 60);
+}
+
+async function openNativeHypervRdp(vmName = "") {
+  const name = String(vmName || "").trim();
+  if (!name || state.remoteControl.nativeRdpOpening) return false;
+  state.remoteControl.nativeRdpOpening = true;
+  state.remoteControl.nativeRdpLastError = "";
+  try {
+    await invoke("probe_native_hyperv_rdp");
+    setWorkspaceTab("agent-screen");
+    await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+    const bounds = await waitForNativeScreenBounds();
+    if (!bounds) throw new Error("A area da tela do Agent ainda nao esta pronta.");
+    stopStudioControlScreenStream({ clear: true });
+    await invoke("open_native_hyperv_rdp", { vmName: name, ...bounds });
+    state.remoteControl.nativeRdpActive = true;
+    state.remoteControl.nativeRdpVmName = name;
+    // A conexao nativa pode demorar enquanto o broker do Hyper-V autentica.
+    // Reafirme a aba depois da espera e use o retangulo definitivo do painel,
+    // evitando exibir o HWND sobre o card de Agents.
+    setWorkspaceTab("agent-screen");
+    await new Promise((resolve) => window.setTimeout(resolve, 120));
+    const finalBounds = await waitForNativeScreenBounds(2500);
+    if (finalBounds) {
+      await invoke("resize_native_hyperv_rdp", {
+        ...finalBounds,
+        visible: true,
+      });
+    }
+    studioControlScreenFrameWrap?.classList.add("has-screen", "has-native-rdp");
+    if (studioControlScreenStatus) {
+      studioControlScreenStatus.textContent = `Console nativo da ${name} conectado pelo Hyper-V...`;
+    }
+    if (studioControlHypervCloseButton) {
+      studioControlHypervCloseButton.hidden = false;
+      studioControlHypervCloseButton.textContent = "Fechar tela nativa";
+    }
+    scheduleNativeHypervRdpSync();
+    return true;
+  } catch (error) {
+    state.remoteControl.nativeRdpActive = false;
+    state.remoteControl.nativeRdpVmName = "";
+    state.remoteControl.nativeRdpLastError = String(error || "Falha desconhecida na sessao nativa.");
+    console.warn("RDP/HvSocket indisponivel.", error);
+    return false;
+  } finally {
+    state.remoteControl.nativeRdpOpening = false;
+  }
+}
+
+async function closeNativeHypervRdp() {
+  await invoke("close_native_hyperv_rdp").catch(() => null);
+  state.remoteControl.nativeRdpActive = false;
+  state.remoteControl.nativeRdpVmName = "";
+  studioControlScreenFrameWrap?.classList.remove("has-native-rdp");
+  if (studioControlHypervCloseButton) {
+    studioControlHypervCloseButton.hidden = true;
+    studioControlHypervCloseButton.textContent = "Fechar console local";
+  }
+}
+
+async function syncEmbeddedHypervConsole() {
+  const remote = state.remoteControl;
+  if (!remote.hypervConsoleActive) {
+    return;
+  }
+  const visible = state.activeTab === "agent-screen";
+  const bounds = embeddedHypervConsoleBounds(remote.hypervZoomLevel) || { x: 0, y: 0, width: 320, height: 240 };
+  await invoke("resize_embedded_hyperv_console", { ...bounds, visible }).catch((error) => {
+    console.warn("Nao foi possivel sincronizar o console local.", error);
+  });
+}
+
+async function captureEmbeddedHypervConsoleFrame() {
+  const remote = state.remoteControl;
+  if (!remote.hypervConsoleActive || remote.hypervFrameLoading || state.activeTab !== "agent-screen") {
+    return;
+  }
+  remote.hypervFrameLoading = true;
+  try {
+    const frame = await invoke("get_embedded_hyperv_console_frame");
+    if (frame?.data && studioControlScreenImage) {
+      studioControlScreenImage.src = `data:${frame.mime || "image/jpeg"};base64,${frame.data}`;
+      studioControlScreenImage.hidden = false;
+      studioControlScreenFrameWrap?.classList.add("has-screen", "has-hyperv-console");
+    }
+  } catch (error) {
+    console.warn("Aguardando quadro do console local.", error);
+  } finally {
+    remote.hypervFrameLoading = false;
+  }
+}
+
+function startEmbeddedHypervFrameStream() {
+  window.clearInterval(state.remoteControl.hypervFrameTimer);
+  state.remoteControl.hypervFrameTimer = window.setInterval(() => {
+    captureEmbeddedHypervConsoleFrame().catch(() => null);
+  }, 350);
+  captureEmbeddedHypervConsoleFrame().catch(() => null);
+}
+
+function scheduleEmbeddedHypervConsoleSync() {
+  window.clearTimeout(state.remoteControl.hypervResizeTimer);
+  state.remoteControl.hypervResizeTimer = window.setTimeout(() => {
+    syncEmbeddedHypervConsole().catch(() => null);
+  }, 80);
+}
+
+async function openEmbeddedHypervConsole(vmName = "") {
+  const name = String(vmName || "").trim();
+  if (!name || state.remoteControl.hypervConsoleOpening) {
+    return false;
+  }
+  state.remoteControl.hypervConsoleOpening = true;
+  state.remoteControl.hypervVmName = name;
+  setWorkspaceTab("agent-screen");
+  if (studioControlScreenStatus) {
+    studioControlScreenStatus.textContent = `Abrindo console local do Hyper-V: ${name}...`;
+  }
+  try {
+    await new Promise((resolve) => window.setTimeout(resolve, 180));
+    const availableBounds = embeddedHypervConsoleBounds();
+    if (!availableBounds) {
+      throw new Error("A area de tela do Agent ainda nao esta pronta.");
+    }
+    const zoomLevel = embeddedHypervConsoleZoom(availableBounds);
+    const bounds = embeddedHypervConsoleBounds(zoomLevel) || availableBounds;
+    await invoke("open_embedded_hyperv_console", { vmName: name, ...bounds, zoomLevel });
+    state.remoteControl.hypervConsoleActive = true;
+    state.remoteControl.hypervZoomLevel = zoomLevel;
+    studioControlScreenFrameWrap?.classList.add("has-hyperv-console");
+    if (studioControlScreenImage) {
+      studioControlScreenImage.removeAttribute("src");
+      studioControlScreenImage.hidden = true;
+    }
+    if (studioControlHypervCloseButton) studioControlHypervCloseButton.hidden = false;
+    if (studioControlScreenStatus) {
+      studioControlScreenStatus.textContent = `Console local ativo · ${name} · sem depender do IP do Agent.`;
+    }
+    scheduleEmbeddedHypervConsoleSync();
+    window.clearInterval(state.remoteControl.hypervKeepaliveTimer);
+    state.remoteControl.hypervKeepaliveTimer = window.setInterval(() => {
+      if (state.remoteControl.hypervConsoleActive) syncEmbeddedHypervConsole().catch(() => null);
+    }, 160);
+    return true;
+  } catch (error) {
+    state.remoteControl.hypervConsoleActive = false;
+    state.remoteControl.hypervVmName = "";
+    state.remoteControl.hypervZoomLevel = 0;
+    setMessage(String(error), "error");
+    if (studioControlScreenStatus) studioControlScreenStatus.textContent = String(error);
+    return false;
+  } finally {
+    state.remoteControl.hypervConsoleOpening = false;
+  }
+}
+
+async function closeEmbeddedHypervConsole() {
+  window.clearInterval(state.remoteControl.hypervKeepaliveTimer);
+  state.remoteControl.hypervKeepaliveTimer = null;
+  window.clearInterval(state.remoteControl.hypervFrameTimer);
+  state.remoteControl.hypervFrameTimer = null;
+  await invoke("close_embedded_hyperv_console").catch(() => null);
+  state.remoteControl.hypervConsoleActive = false;
+  state.remoteControl.hypervVmName = "";
+  state.remoteControl.hypervZoomLevel = 0;
+  studioControlScreenFrameWrap?.classList.remove("has-hyperv-console");
+  if (studioControlScreenImage && !state.remoteControl.screenSnapshotUrl) {
+    studioControlScreenImage.removeAttribute("src");
+    studioControlScreenImage.hidden = true;
+    studioControlScreenFrameWrap?.classList.remove("has-screen");
+  }
+  if (studioControlHypervCloseButton) studioControlHypervCloseButton.hidden = true;
+  renderStudioControlScreen();
+}
+
 function renderStudioControlScreen() {
   const remote = state.remoteControl;
-  if (remote.connected && !remote.meshUrl) {
-    ensureMeshCentralUrlFromAgent();
-  }
-  if (studioControlMeshUrlInput && document.activeElement !== studioControlMeshUrlInput) {
-    studioControlMeshUrlInput.value = remote.meshUrl || "";
-  }
-  if (studioControlMeshPathInput && document.activeElement !== studioControlMeshPathInput) {
-    studioControlMeshPathInput.value = remote.meshPath || "";
-  }
-  if (studioControlMeshFrame && studioControlMeshFrame.getAttribute("src") !== (remote.meshFrameUrl || "about:blank")) {
-    studioControlMeshFrame.setAttribute("src", remote.meshFrameUrl || "about:blank");
-  }
-  if (studioControlScreenImage) {
-    if (remote.screenSnapshotUrl && studioControlScreenImage.src !== remote.screenSnapshotUrl) {
-      studioControlScreenImage.src = remote.screenSnapshotUrl;
-    }
-    studioControlScreenImage.hidden = !remote.screenSnapshotUrl;
-  }
-  const hasRemoteScreen = Boolean(remote.meshFrameUrl || remote.screenSnapshotUrl || remote.webrtcActive);
-  studioControlMeshFrame?.classList.toggle("is-active", Boolean(remote.meshFrameUrl) && !remote.screenSnapshotUrl && !remote.webrtcActive);
-  studioControlMeshFrame?.closest(".studio-control-screen-frame-wrap")?.classList.toggle("has-screen", hasRemoteScreen);
+  const hasNativeScreen = Boolean(remote.nativeRdpActive || remote.hypervConsoleActive);
+  studioControlScreenFrameWrap?.classList.toggle("has-screen", hasNativeScreen);
   if (studioControlScreenStatus) {
-    if (remote.screenStreaming) {
-      studioControlScreenStatus.textContent = "Recebendo tela do Agent dentro do Studio.";
-    } else if (remote.screenSnapshotUrl) {
-      studioControlScreenStatus.textContent = "Visualizacao pausada. Clique em Assistir no Studio para continuar.";
-    } else if (remote.meshRunning) {
-      studioControlScreenStatus.textContent = "MeshCentral rodando no Agent. Use Abrir tela segura para evitar travar o Studio.";
-    } else if (remote.meshStarting) {
-      studioControlScreenStatus.textContent = "MeshCentral sendo preparado no Agent. Na primeira vez pode levar alguns minutos.";
-    } else if (remote.meshFrameUrl) {
-      studioControlScreenStatus.textContent = "Tela remota carregada. Se ficar em branco, o MeshCentral bloqueou incorporacao; use Abrir fora.";
-    } else if (remote.meshUrl) {
-      studioControlScreenStatus.textContent = remote.connected
-        ? "URL montada pelo IP do Agent. Clique em Iniciar no Agent e depois Abrir tela segura."
-        : "URL salva. Conecte no Agent ou abra a tela segura.";
+    if (remote.nativeRdpActive) {
+      studioControlScreenStatus.textContent = `Conectando a ${remote.nativeRdpVmName} pela sessao aprimorada do Hyper-V...`;
+    } else if (remote.hypervConsoleActive) {
+      studioControlScreenStatus.textContent = `Console local do Hyper-V ativo · ${remote.hypervVmName} · IP não necessário.`;
     } else {
-      studioControlScreenStatus.textContent = "Conecte no Agent para o FlowDetect montar a URL do MeshCentral automaticamente.";
+      studioControlScreenStatus.textContent = "Selecione uma VM na aba Agentes. A conexao usa o GUID do Hyper-V, sem IP.";
     }
   }
-  if (studioControlMeshStartButton) {
-    studioControlMeshStartButton.disabled = !remote.connected || remote.meshStarting;
-    studioControlMeshStartButton.textContent = remote.meshRunning
-      ? "Servidor ativo"
-      : remote.meshStarting
-        ? "Preparando..."
-        : "Iniciar no Agent";
-  }
-  if (studioControlMeshLoadButton) {
-    studioControlMeshLoadButton.disabled = !remote.connected;
-    studioControlMeshLoadButton.textContent = remote.screenStreaming ? "Pausar visualizacao" : "Assistir no Studio";
-  }
-  if (studioControlRemoteInputToggle) {
-    studioControlRemoteInputToggle.checked = Boolean(remote.remoteInputEnabled);
-    studioControlRemoteInputToggle.disabled = !remote.webrtcActive;
-  }
-  if (studioControlMeshEmbedButton) {
-    studioControlMeshEmbedButton.disabled = !remote.meshUrl;
-  }
-  if (studioControlMeshOpenButton) {
-    studioControlMeshOpenButton.disabled = !remote.meshUrl;
-  }
-  if (studioControlMeshClearButton) {
-    studioControlMeshClearButton.disabled = !remote.meshUrl && !remote.meshFrameUrl;
+  if (studioControlHypervCloseButton) {
+    studioControlHypervCloseButton.hidden = !remote.hypervConsoleActive && !remote.nativeRdpActive;
+    studioControlHypervCloseButton.textContent = "Fechar tela";
   }
 }
 
@@ -11635,6 +11858,8 @@ function normalizeAgent(agent = {}) {
     localPort: Number(agent.localPort || 0),
     status: status || (address ? "ready" : "waiting"),
     connectionStage: String(agent.connectionStage || "").trim(),
+    startupProgress: Math.max(0, Math.min(100, Number(agent.startupProgress || 0))),
+    progressMode: String(agent.progressMode || "").trim(),
     createdAt: Number(agent.createdAt || Date.now()),
     lastSeenAt: Number(agent.lastSeenAt || 0),
   };
@@ -11668,6 +11893,10 @@ function renderAgentVmOptions() {
 }
 
 function renderAgentVmList() {
+  // A biblioteca principal agora concentra VMs e Agents sem duplicar maquinas.
+  if (agentVmListPanel) agentVmListPanel.hidden = true;
+  if (agentVmList) agentVmList.innerHTML = "";
+  return;
   const vms = state.agents.vms || [];
   if (agentVmListPanel) {
     agentVmListPanel.hidden = !vms.length;
@@ -11693,6 +11922,42 @@ function renderAgentVmList() {
       </article>
     `;
   }).join("");
+}
+
+function hypervVmLauncherMarkup(vm = {}) {
+  const name = String(vm.name || "").trim() || "VM sem nome";
+  const stateName = String(vm.state || "Desconhecido").trim();
+  const normalizedState = stateName.toLowerCase();
+  const running = normalizedState === "running" || normalizedState === "executando";
+  const isBase = /(?:^|[-_\s])base(?:$|[-_\s])/i.test(name);
+  const initials = isBase
+    ? "BASE"
+    : name.split(/[-_\s]+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "VM";
+  return `
+    <article class="vm-launcher-card ${isBase ? "is-base" : ""} ${running ? "is-running" : "is-off"}">
+      <div class="vm-launcher-visual" aria-hidden="true">
+        <span class="vm-launcher-orbit"></span>
+        <strong>${escapeHtml(initials)}</strong>
+        <i></i>
+      </div>
+      <div class="vm-launcher-head">
+        <span class="vm-launcher-type">${isBase ? "VM-base" : "Maquina virtual"}</span>
+        <span class="vm-launcher-state"><i></i>${escapeHtml(running ? "Em execução" : stateName)}</span>
+      </div>
+      <div class="vm-launcher-copy">
+        <h3>${escapeHtml(name)}</h3>
+        <p>${isBase ? "Ambiente principal usado como modelo para as proximas VMs." : "VM local pronta para abrir pelo console nativo do Hyper-V."}</p>
+      </div>
+      <div class="vm-launcher-meta">
+        <span>GUID Hyper-V</span>
+        <strong>${escapeHtml(vm.uuid || "Identificador indisponivel")}</strong>
+      </div>
+      <div class="vm-launcher-actions">
+        <button class="primary-button" type="button" data-hyperv-vm-action="open" data-hyperv-vm-name="${escapeHtml(name)}">${running ? "Abrir tela" : "Iniciar e abrir"}</button>
+        <button class="ghost-button" type="button" data-hyperv-vm-action="stop" data-hyperv-vm-name="${escapeHtml(name)}" ${running ? "" : "disabled"}>Desligar</button>
+      </div>
+    </article>
+  `;
 }
 
 function useHypervVm(vmName = "") {
@@ -11955,6 +12220,7 @@ async function connectAgentFromCard(agent, options = {}) {
     return false;
   }
   try {
+    state.agents.lastConnectionError = "";
     if (!silent) {
       setBusy("Conectando Agent");
     }
@@ -11970,6 +12236,7 @@ async function connectAgentFromCard(agent, options = {}) {
     }
     return true;
   } catch (error) {
+    state.agents.lastConnectionError = String(error || "Falha de conexao desconhecida.");
     if (!silent) {
       setBusy("Erro");
       setMessage(`Nao foi possivel conectar em ${address}: ${String(error)}`, "error");
@@ -12008,51 +12275,103 @@ async function prepareAgentVmConnection(agent) {
   }) || agent;
 }
 
+async function resolveAgentVmName(agent) {
+  const configuredName = String(agent?.vmName || "").trim();
+  if (!configuredName) return "";
+
+  const result = await invoke("list_hyperv_vms");
+  state.agents.vms = Array.isArray(result?.items) ? result.items : [];
+  renderAgentVmOptions();
+  renderAgentVmList();
+  const match = state.agents.vms.find((vm) => String(vm?.name || "").trim().toLocaleLowerCase() === configuredName.toLocaleLowerCase());
+  if (!match) {
+    const available = state.agents.vms.map((vm) => String(vm?.name || "").trim()).filter(Boolean);
+    throw new Error(
+      available.length
+        ? `A VM "${configuredName}" não foi encontrada. VMs disponíveis: ${available.join(", ")}. Edite o card e selecione o nome correto.`
+        : `A VM "${configuredName}" não foi encontrada e o Hyper-V não retornou nenhuma VM.`
+    );
+  }
+  const canonicalName = String(match.name).trim();
+  if (canonicalName !== configuredName) updateAgentRuntime(agent.id, { vmName: canonicalName });
+  return canonicalName;
+}
+
 async function startAgentVm(agent) {
-  const vmName = String(agent?.vmName || "").trim();
+  let vmName = String(agent?.vmName || "").trim();
   if (!vmName) {
     setMessage("Esse agente nao tem nome de VM configurado. Edite o card e informe o nome no Hyper-V.", "error");
     return false;
   }
   try {
     setBusy("Preparando VM");
+    vmName = await resolveAgentVmName(agent);
+    agent = updateAgentRuntime(agent.id, { vmName }) || agent;
     const preparedAgent = await prepareAgentVmConnection(agent);
-    updateAgentRuntime(agent.id, { connectionStage: "Ligando maquina", status: "starting" });
+    updateAgentRuntime(agent.id, { connectionStage: "Acionando Hyper-V em segundo plano", startupProgress: 12, status: "starting" });
     await invoke("start_hyperv_vm", { vmName });
     setBusy("Pronto");
     const updated = updateAgentRuntime(agent.id, {
       address: preparedAgent.address,
       localPort: preparedAgent.localPort,
-      connectionStage: "Aguardando o Agent iniciar",
+      connectionStage: "Windows iniciando em segundo plano",
+      startupProgress: 24,
       status: "starting",
     });
     setMessage(`VM iniciada. Aguardando o FlowDetect Agent: ${vmName}`, "success");
     return updated || preparedAgent;
   } catch (error) {
     setBusy("Erro");
-    updateAgentRuntime(agent.id, { connectionStage: "Falha ao iniciar", status: "error" });
-    setMessage(String(error), "error");
+    const detail = String(error || "Falha desconhecida ao iniciar a VM.")
+      .replace(/^Falha no Hyper-V:\s*/i, "")
+      .trim();
+    updateAgentRuntime(agent.id, {
+      connectionStage: `Falha ao iniciar: ${detail}`,
+      startupProgress: 100,
+      status: "error",
+    });
+    setMessage(detail, "error");
     return false;
   }
 }
 
 async function waitAndConnectAgent(agent, attempts = 18) {
   for (let index = 0; index < attempts; index += 1) {
+    const progress = Math.min(92, 24 + Math.round(((index + 1) / attempts) * 68));
     updateAgentRuntime(agent.id, {
-      connectionStage: `Iniciando Windows e Agent (${index + 1}/${attempts})`,
+      connectionStage: index < 4
+        ? "Windows iniciando"
+        : index < 12
+          ? "Aguardando rede da maquina"
+          : "Aguardando FlowDetect Agent responder",
+      startupProgress: progress,
       status: "starting",
     });
     if (agent.vmName) {
       try {
         const connection = await invoke("get_hyperv_vm_connection", { vmName: agent.vmName });
-        if (connection?.address) agent = updateAgentRuntime(agent.id, { address: connection.address }) || agent;
+        const candidateAddresses = Array.from(new Set([
+          ...(Array.isArray(connection?.ips) ? connection.ips.map((ip) => `${ip}:18452`) : []),
+          connection?.address,
+        ].filter(Boolean)));
+        for (const candidateAddress of candidateAddresses) {
+          agent = updateAgentRuntime(agent.id, {
+            address: candidateAddress,
+            connectionStage: `Rede detectada; testando ${candidateAddress}`,
+            startupProgress: Math.max(progress, 72),
+          }) || agent;
+          if (await connectAgentFromCard(agent, { silent: true })) {
+            updateAgentRuntime(agent.id, { connectionStage: "Pronto para uso", startupProgress: 100, status: "online", lastSeenAt: Date.now() });
+            return true;
+          }
+        }
       } catch (error) {
         console.warn("Hyper-V ainda nao informou o IP da VM.", error);
       }
     }
     const connected = await connectAgentFromCard(agent, { silent: true });
     if (connected) {
-      updateAgentRuntime(agent.id, { connectionStage: "Online", status: "online", lastSeenAt: Date.now() });
+      updateAgentRuntime(agent.id, { connectionStage: "Pronto para uso", startupProgress: 100, status: "online", lastSeenAt: Date.now() });
       return true;
     }
     await new Promise((resolve) => window.setTimeout(resolve, 2000));
@@ -12064,13 +12383,63 @@ async function startAndWatchAgent(agent) {
   if (!agent) {
     return;
   }
+  if (state.agents.startingIds.has(String(agent.id))) {
+    return;
+  }
+  state.agents.startingIds.add(String(agent.id));
+  updateAgentRuntime(agent.id, { connectionStage: "Preparando inicializacao", startupProgress: 4, status: "starting" });
+  // Let the progress card paint before invoking PowerShell/Hyper-V.
+  await new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+  try {
   const previousAddress = normalizeAgentAddress(state.remoteControl.address);
+  if (state.remoteControl.screenStreaming || state.remoteControl.webrtcPeer) {
+    stopStudioControlScreenStream({ clear: true });
+  }
   if (agent.vmName) {
+    await closeNativeHypervRdp().catch(() => null);
+    await closeEmbeddedHypervConsole().catch(() => null);
     const startedAgent = await startAgentVm(agent);
     if (!startedAgent) {
       return;
     }
     agent = startedAgent;
+    // A tela da VM não pode depender do Agent: ela é justamente o caminho de
+    // recuperação quando o processo do Agent trava durante o logon do Windows.
+    setWorkspaceTab("agent-screen");
+    setBusy("Abrindo tela da VM");
+    let nativeRdpConnected = await openNativeHypervRdp(agent.vmName);
+    state.remoteControl.remoteInputEnabled = !nativeRdpConnected;
+    if (nativeRdpConnected) {
+      setMessage(`Tela da VM ${agent.vmName} aberta. Aguardando o Agent em paralelo.`, "info");
+    }
+    setBusy("Aguardando Agent");
+    const integratedConnected = await waitAndConnectAgent(agent, 75);
+    if (!integratedConnected) {
+      setBusy("Erro");
+      const connectionDetail = state.agents.lastConnectionError || "porta 18452 indisponivel";
+      updateAgentRuntime(agent.id, { connectionStage: `Agent inacessivel: ${connectionDetail}`, startupProgress: 100, status: "error" });
+      setWorkspaceTab("agent-screen");
+      setMessage(nativeRdpConnected
+        ? `O Agent ${agent.name} nao respondeu, mas a tela da VM continua disponivel para diagnostico. Detalhe: ${connectionDetail}`
+        : `A VM iniciou, mas o Agent ${agent.name} nao respondeu em ${agent.address || "nenhum IP"}. A tela nativa tambem nao ficou disponivel. Detalhe: ${connectionDetail}`,
+      "error");
+      return;
+    }
+    updateAgentRuntime(agent.id, {
+      connectionStage: "Pronto para uso",
+      startupProgress: 100,
+      status: "online",
+      lastSeenAt: Date.now(),
+    });
+    setWorkspaceTab("agent-screen");
+    if (!nativeRdpConnected) nativeRdpConnected = await openNativeHypervRdp(agent.vmName);
+    state.remoteControl.remoteInputEnabled = !nativeRdpConnected;
+    setBusy("Pronto");
+    setMessage(nativeRdpConnected
+      ? `Tela nativa Hyper-V conectada ao Agent ${agent.name}.`
+      : `A tela nativa do Hyper-V nao conectou. O WebRTC automatico foi desativado. Detalhe: ${state.remoteControl.nativeRdpLastError || "sessao nativa indisponivel"}`,
+    nativeRdpConnected ? "success" : "error");
+    return;
   }
   if (previousAddress && previousAddress !== normalizeAgentAddress(agent.address || "")) {
     stopStudioControlScreenStream({ clear: true });
@@ -12079,14 +12448,115 @@ async function startAndWatchAgent(agent) {
   const connected = agentConnected(agent) || await waitAndConnectAgent(agent, agent.vmName ? 75 : 1);
   if (!connected) {
     setBusy("Erro");
-    updateAgentRuntime(agent.id, { connectionStage: "Agent nao respondeu", status: "error" });
+    updateAgentRuntime(agent.id, { connectionStage: "Agent nao respondeu", startupProgress: 100, status: "error" });
     setMessage(`Nao consegui conectar no Agent ${agent.address}. Confira se o Agent esta aberto e na mesma rede.`, "error");
     return;
   }
   setWorkspaceTab("agent-screen");
+  state.remoteControl.remoteInputEnabled = true;
   if (!state.remoteControl.screenStreaming) {
     startStudioControlScreenStream();
   }
+  } finally {
+    state.agents.startingIds.delete(String(agent.id));
+    renderAgents();
+  }
+}
+
+async function stopAgentVm(agent) {
+  const vmName = String(agent?.vmName || "").trim();
+  if (!vmName) {
+    setMessage("Esse Agent nao possui uma VM do Hyper-V configurada.", "error");
+    return;
+  }
+  let shutdownProgress = 8;
+  let progressTimer = null;
+  try {
+    setBusy("Desligando VM");
+    updateAgentRuntime(agent.id, { connectionStage: "Solicitando desligamento do Windows", status: "starting", startupProgress: shutdownProgress, progressMode: "shutdown" });
+    progressTimer = window.setInterval(() => {
+      shutdownProgress = Math.min(90, shutdownProgress + 4);
+      updateAgentRuntime(agent.id, {
+        connectionStage: shutdownProgress < 55 ? "Encerrando o Windows" : "Aguardando confirmacao do Hyper-V",
+        status: "starting",
+        startupProgress: shutdownProgress,
+        progressMode: "shutdown",
+      });
+    }, 1000);
+    const result = await invoke("stop_hyperv_vm", { vmName });
+    if (result?.requiresForce) {
+      window.clearInterval(progressTimer);
+      progressTimer = null;
+      updateAgentRuntime(agent.id, { connectionStage: "Windows nao respondeu ao desligamento normal", status: "starting", startupProgress: 90, progressMode: "shutdown" });
+      const force = window.confirm(`A VM "${vmName}" nao respondeu ao desligamento normal. Deseja forcar o desligamento? Isso equivale a retirar a energia da maquina.`);
+      if (!force) {
+        updateAgentRuntime(agent.id, { connectionStage: "Desligamento cancelado; VM ainda ligada", status: "ready", startupProgress: 0, progressMode: "" });
+        setBusy("Pronto");
+        return;
+      }
+      setBusy("Forcando desligamento");
+      updateAgentRuntime(agent.id, { connectionStage: "Forcando desligamento da VM", status: "starting", startupProgress: 94, progressMode: "shutdown" });
+      await invoke("turn_off_hyperv_vm", { vmName });
+    }
+    if (state.remoteControl.nativeRdpVmName === vmName) await closeNativeHypervRdp().catch(() => null);
+    if (state.remoteControl.hypervVmName === vmName) await closeEmbeddedHypervConsole().catch(() => null);
+    stopStudioControlScreenStream({ clear: true });
+    state.remoteControl.connected = false;
+    updateAgentRuntime(agent.id, { connectionStage: "VM desligada", status: "starting", startupProgress: 100, progressMode: "shutdown" });
+    await new Promise((resolve) => window.setTimeout(resolve, 650));
+    updateAgentRuntime(agent.id, { connectionStage: "VM desligada", status: "waiting", startupProgress: 0, progressMode: "" });
+    await refreshAgentVmList({ silent: true });
+    setBusy("Pronto");
+    setMessage(`VM desligada: ${vmName}`, "success");
+  } catch (error) {
+    setBusy("Erro");
+    updateAgentRuntime(agent.id, { connectionStage: `Falha ao desligar: ${String(error)}`, status: "error", startupProgress: 0, progressMode: "" });
+    setMessage(String(error), "error");
+  } finally {
+    if (progressTimer) window.clearInterval(progressTimer);
+  }
+}
+
+async function openBaseVmForConfiguration(vmName = "") {
+  const name = String(vmName || "").trim();
+  if (!name) throw new Error("Nome da VM-base nao informado.");
+
+  setBusy("Iniciando VM-base");
+  await closeNativeHypervRdp().catch(() => null);
+  await closeEmbeddedHypervConsole().catch(() => null);
+  stopStudioControlScreenStream({ clear: true });
+  state.remoteControl.connected = false;
+  state.remoteControl.address = "";
+  if (studioControlAddressInput) studioControlAddressInput.value = "";
+  await invoke("start_hyperv_vm", { vmName: name });
+  setWorkspaceTab("agent-screen");
+  setBusy("Conectando tela nativa");
+  const connected = await openNativeHypervRdp(name);
+  renderStudioControl();
+  if (!connected) {
+    const detail = state.remoteControl.nativeRdpLastError || "HvSocket indisponivel";
+    if (studioControlScreenStatus) studioControlScreenStatus.textContent = `Falha ao abrir ${name}: ${detail}`;
+    throw new Error(`A VM iniciou, mas a tela nativa nao conectou: ${detail}`);
+  }
+  setBusy("Pronto");
+  setMessage(`VM aberta no Studio: ${name}. Esta conexao usa o GUID do Hyper-V e nao precisa de IP.`, "success");
+  return true;
+}
+
+async function stopHypervVmFromLibrary(vmName = "") {
+  const name = String(vmName || "").trim();
+  if (!name) throw new Error("Nome da VM nao informado.");
+  setBusy("Desligando VM");
+  const result = await invoke("stop_hyperv_vm", { vmName: name });
+  if (result?.requiresForce) {
+    const force = window.confirm(`A VM "${name}" nao respondeu ao desligamento normal. Deseja forcar?`);
+    if (!force) throw new Error("Desligamento cancelado; a VM continua ligada.");
+    await invoke("turn_off_hyperv_vm", { vmName: name });
+  }
+  if (state.remoteControl.nativeRdpVmName === name) await closeNativeHypervRdp().catch(() => null);
+  await refreshAgentVmList({ silent: true });
+  setBusy("Pronto");
+  setMessage(`VM desligada: ${name}`, "success");
 }
 
 function deleteAgentCard(id) {
@@ -12114,7 +12584,19 @@ function renderAgents() {
   if (!agentsList) {
     return;
   }
-  if (!state.agents.items.length) {
+  const hypervVms = state.agents.vms || [];
+  if (!hypervVms.length) {
+    agentsList.innerHTML = `
+      <article class="agents-empty-card">
+        <span class="panel-kicker">Hyper-V</span>
+        <h3>Nenhuma VM encontrada</h3>
+        <p>Clique em Atualizar VMs ou prepare uma nova VM-base.</p>
+      </article>`;
+    return;
+  }
+  agentsList.innerHTML = hypervVms.map(hypervVmLauncherMarkup).join("");
+  return;
+  if (false && !state.agents.items.length) {
     agentsList.innerHTML = `
       <article class="agents-empty-card">
         <span class="panel-kicker">Nenhum ambiente</span>
@@ -12125,12 +12607,22 @@ function renderAgents() {
     `;
     return;
   }
-  agentsList.innerHTML = state.agents.items.map((agent) => {
+  const representedVmNames = new Set(state.agents.items.map((agent) => String(agent.vmName || "").trim()).filter(Boolean));
+  const availableVmCards = (state.agents.vms || [])
+    .filter((vm) => {
+      const name = String(vm.name || "").trim();
+      const isBase = /(?:^|[-_\s])base(?:$|[-_\s])/i.test(name);
+      return isBase || !representedVmNames.has(name);
+    })
+    .map(hypervVmLauncherMarkup);
+  const agentCards = state.agents.items.map((agent) => {
     const connected = agentConnected(agent);
     const hasAddress = Boolean(normalizeAgentAddress(agent.address || ""));
     const waiting = !hasAddress && !connected;
     const starting = agent.status === "starting";
     const failed = agent.status === "error";
+    const startupProgress = Math.max(0, Math.min(100, Number(agent.startupProgress || 0)));
+    const progressLabel = agent.progressMode === "shutdown" ? "Desligando VM" : "Inicializacao em segundo plano";
     const statusText = connected
       ? "Online"
       : starting
@@ -12144,7 +12636,7 @@ function renderAgents() {
     const profileLabels = { fiscal: "Fiscal", dp: "Departamento Pessoal", contabil: "Contabil", ti: "TI" };
     const profileLabel = profileLabels[agent.profile] || "Fiscal";
     return `
-      <article class="agent-card ${connected ? "is-connected" : ""} ${waiting ? "is-waiting" : ""} ${isEditing ? "is-flipped" : ""}" data-agent-id="${escapeHtml(agent.id)}">
+      <article class="agent-card ${connected ? "is-connected" : ""} ${waiting ? "is-waiting" : ""} ${starting ? "is-starting" : ""} ${isEditing ? "is-flipped" : ""}" data-agent-id="${escapeHtml(agent.id)}">
         <div class="agent-card-stage">
           <section class="agent-card-face agent-card-front">
             <div class="agent-card-top">
@@ -12153,6 +12645,11 @@ function renderAgents() {
             </div>
             <h3>${escapeHtml(agent.name)}</h3>
             <p class="agent-card-description">${escapeHtml(agent.connectionStage || (hasAddress ? "Tela e automacoes remotas liberadas." : "O FlowDetect vai preparar a conexao automaticamente."))}</p>
+            ${starting ? `
+              <div class="agent-startup-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${startupProgress}">
+                <div class="agent-startup-progress-head"><span>${progressLabel}</span><strong>${startupProgress}%</strong></div>
+                <div class="agent-startup-progress-track"><i style="width:${startupProgress}%"></i></div>
+              </div>` : ""}
             <div class="agent-card-summary">
               <div class="agent-card-meta">
                 <span>Endereco</span>
@@ -12164,10 +12661,9 @@ function renderAgents() {
               </div>
             </div>
             <div class="agent-card-actions">
-              <button class="primary-button" type="button" data-agent-action="watch" data-agent-id="${escapeHtml(agent.id)}" ${hasAddress || agent.vmName ? "" : "disabled"}>${connected ? "Assistir tela" : agent.vmName ? "Iniciar e conectar" : "Conectar e assistir"}</button>
+              <button class="primary-button" type="button" data-agent-action="watch" data-agent-id="${escapeHtml(agent.id)}" ${starting || (!hasAddress && !agent.vmName) ? "disabled" : ""}>${starting ? "Iniciando em segundo plano..." : connected ? "Assistir tela" : agent.vmName ? "Iniciar agente" : "Conectar e assistir"}</button>
+              ${agent.vmName ? `<button class="ghost-button" type="button" data-agent-action="stop-vm" data-agent-id="${escapeHtml(agent.id)}" ${starting ? "disabled" : ""}>Desligar VM</button>` : ""}
               <button class="ghost-button" type="button" data-agent-action="connect" data-agent-id="${escapeHtml(agent.id)}" ${hasAddress ? "" : "disabled"}>Conectar</button>
-              <button class="ghost-button" type="button" data-agent-action="start-vm" data-agent-id="${escapeHtml(agent.id)}" ${agent.vmName ? "" : "disabled"}>Iniciar VM</button>
-              <button class="ghost-button" type="button" data-agent-action="console" data-agent-id="${escapeHtml(agent.id)}" ${agent.vmName ? "" : "disabled"}>Abrir tela da VM</button>
               <button class="ghost-button" type="button" data-agent-action="edit" data-agent-id="${escapeHtml(agent.id)}">Editar</button>
               <button class="danger-button" type="button" data-agent-action="delete" data-agent-id="${escapeHtml(agent.id)}">Excluir</button>
             </div>
@@ -12211,7 +12707,15 @@ function renderAgents() {
         </div>
       </article>
     `;
-  }).join("");
+  });
+  const addCard = `
+    <button class="agent-launcher-add" type="button" data-agent-action="new">
+      <span class="agent-launcher-add-icon">+</span>
+      <strong>Novo Agent</strong>
+      <small>Clone a VM-base ou vincule uma máquina existente.</small>
+    </button>
+  `;
+  agentsList.innerHTML = [...availableVmCards, ...agentCards, addCard].join("");
 }
 
 function renderStudioControl() {
@@ -12651,11 +13155,13 @@ async function startStudioControlWebRtc() {
       studioControlScreenImage.hidden = true;
       studioControlScreenVideo.closest(".studio-control-screen-frame-wrap")?.classList.add("has-screen", "has-webrtc");
       remote.webrtcActive = true;
+      remote.remoteInputEnabled = true;
       if (studioControlScreenStatus) {
         studioControlScreenStatus.textContent = "WebRTC ativo. Recebendo video em tempo real do Agent.";
       }
       startStudioControlPolling();
       renderStudioControlScreenOnly();
+      studioControlScreenVideo.focus?.();
     }
   };
   peer.onconnectionstatechange = () => {
@@ -12706,17 +13212,17 @@ async function startStudioControlWebRtc() {
           reject(error);
         }
       }
-    }, 500);
+    }, 200);
   });
 }
 
-function remoteVideoPointFromEvent(event) {
-  if (!studioControlScreenVideo || studioControlScreenVideo.hidden) {
+function remoteScreenPointFromEvent(event, target) {
+  if (!target || target.hidden) {
     return null;
   }
-  const rect = studioControlScreenVideo.getBoundingClientRect();
-  const videoWidth = studioControlScreenVideo.videoWidth || 16;
-  const videoHeight = studioControlScreenVideo.videoHeight || 9;
+  const rect = target.getBoundingClientRect();
+  const videoWidth = target.videoWidth || target.naturalWidth || 16;
+  const videoHeight = target.videoHeight || target.naturalHeight || 9;
   const boxRatio = rect.width / rect.height;
   const videoRatio = videoWidth / videoHeight;
   let contentWidth = rect.width;
@@ -12738,6 +13244,10 @@ function remoteVideoPointFromEvent(event) {
   return { x, y };
 }
 
+function remoteVideoPointFromEvent(event) {
+  return remoteScreenPointFromEvent(event, studioControlScreenVideo);
+}
+
 function sendStudioRemoteControlEvent(payload) {
   if (!state.remoteControl.remoteInputEnabled) {
     return;
@@ -12747,6 +13257,25 @@ function sendStudioRemoteControlEvent(payload) {
     ? state.remoteControl.webrtcPointerChannel
     : state.remoteControl.webrtcControlChannel;
   if (!channel || channel.readyState !== "open") {
+    if (isMouseMove) {
+      state.remoteControl.pendingRemotePointerMove = payload;
+      if (state.remoteControl.remotePointerMoveFrame) return;
+      state.remoteControl.remotePointerMoveFrame = window.requestAnimationFrame(() => {
+        state.remoteControl.remotePointerMoveFrame = null;
+        const nextPayload = state.remoteControl.pendingRemotePointerMove;
+        state.remoteControl.pendingRemotePointerMove = null;
+        if (!nextPayload) return;
+        invoke("remote_agent_control_event", {
+          address: state.remoteControl.address,
+          event: nextPayload,
+        }).catch(() => null);
+      });
+      return;
+    }
+    invoke("remote_agent_control_event", {
+      address: state.remoteControl.address,
+      event: payload,
+    }).catch((error) => console.warn("Falha no controle nativo local.", error));
     return;
   }
   if (isMouseMove) {
@@ -12811,18 +13340,16 @@ function startStudioControlScreenStream() {
   runSelectedAutomationWithScreenStart().catch(() => null);
   startStudioControlWebRtc()
     .then(() => {
-      setMessage("WebRTC iniciado e automacao fixa do botao Assistir enviada ao Agent.", "success");
+      setMessage("WebRTC nativo conectado ao Agent.", "success");
     })
     .catch((error) => {
       stopStudioControlWebRtc({ clearRemote: true });
+      remote.screenStreaming = false;
       if (studioControlScreenStatus) {
-        studioControlScreenStatus.textContent = `${String(error)} Usando visualizacao leve.`;
+        studioControlScreenStatus.textContent = `Transmissao H.264 nativa indisponivel: ${String(error)}`;
       }
-      refreshStudioControlScreenSnapshot({ silent: false }).catch(() => null);
-      remote.screenStreamTimer = window.setInterval(() => {
-        refreshStudioControlScreenSnapshot({ silent: true }).catch(() => null);
-      }, 280);
-      setMessage("WebRTC nao iniciou; usando visualizacao leve por snapshots.", "error");
+      renderStudioControl();
+      setMessage("O streaming JPEG foi desativado. Atualize o Agent com o transporte H.264 nativo.", "error");
     });
 }
 
@@ -17475,6 +18002,17 @@ agentsTabButton?.addEventListener("click", () => {
   refreshAgentVmList({ silent: true }).catch(() => null);
 });
 agentScreenTabButton?.addEventListener("click", () => setWorkspaceTab("agent-screen"));
+studioControlHypervCloseButton?.addEventListener("click", () => {
+  if (state.remoteControl.nativeRdpActive) {
+    closeNativeHypervRdp().catch((error) => setMessage(String(error), "error"));
+  } else {
+    closeEmbeddedHypervConsole().catch((error) => setMessage(String(error), "error"));
+  }
+});
+window.addEventListener("resize", () => {
+  if (state.remoteControl.hypervConsoleActive) scheduleEmbeddedHypervConsoleSync();
+  if (state.remoteControl.nativeRdpActive) scheduleNativeHypervRdpSync();
+});
 smartRecorderTabButton?.addEventListener("click", () => setWorkspaceTab("smart-recorder"));
 addAgentCardButton?.addEventListener("click", () => openAgentForm());
 function setHypervBaseStatus(message, variant = "info") {
@@ -17545,19 +18083,18 @@ agentVmList?.addEventListener("click", (event) => {
     const action = baseButton.dataset.hypervBaseAction;
     baseButton.disabled = true;
     if (action === "configure") {
-      setBusy("Abrindo VM-base");
-      invoke("start_hyperv_vm", { vmName })
-        .then(() => invoke("open_hyperv_vm_console", { vmName }))
-        .then(() => {
-          setBusy("Pronto");
-          setMessage("VM-base aberta. As alteracoes valerão para os próximos agentes clonados.", "success");
-        })
+      openBaseVmForConfiguration(vmName)
         .catch((error) => { setBusy("Erro"); setMessage(String(error), "error"); })
         .finally(() => { baseButton.disabled = false; refreshAgentVmList({ silent: true }).catch(() => null); });
     } else if (action === "stop") {
       setBusy("Desligando VM-base");
       invoke("stop_hyperv_vm", { vmName })
-        .then(() => {
+        .then(async (result) => {
+          if (result?.requiresForce) {
+            const force = window.confirm(`A VM-base "${vmName}" nao respondeu. Deseja forcar o desligamento?`);
+            if (!force) throw new Error("Desligamento cancelado; a VM-base continua ligada.");
+            await invoke("turn_off_hyperv_vm", { vmName });
+          }
           setBusy("Pronto");
           setMessage("VM-base desligada e pronta para gerar novos agentes.", "success");
         })
@@ -17583,6 +18120,50 @@ saveAgentCardButton?.addEventListener("click", () => {
   });
 });
 agentsList?.addEventListener("click", (event) => {
+  const vmActionButton = event.target.closest("[data-hyperv-vm-action]");
+  if (vmActionButton) {
+    const vmName = String(vmActionButton.dataset.hypervVmName || "").trim();
+    const action = vmActionButton.dataset.hypervVmAction;
+    vmActionButton.disabled = true;
+    const operation = action === "open"
+      ? openBaseVmForConfiguration(vmName)
+      : stopHypervVmFromLibrary(vmName);
+    operation
+      .catch((error) => { setBusy("Erro"); setMessage(String(error), "error"); })
+      .finally(() => { vmActionButton.disabled = false; refreshAgentVmList({ silent: true }).catch(() => null); });
+    return;
+  }
+  const baseButton = event.target.closest("[data-hyperv-base-action]");
+  if (baseButton) {
+    const vmName = String(baseButton.dataset.hypervVmName || "").trim();
+    const action = baseButton.dataset.hypervBaseAction;
+    baseButton.disabled = true;
+    if (action === "configure") {
+      openBaseVmForConfiguration(vmName)
+        .catch((error) => { setBusy("Erro"); setMessage(String(error), "error"); })
+        .finally(() => { baseButton.disabled = false; refreshAgentVmList({ silent: true }).catch(() => null); });
+    } else if (action === "stop") {
+      setBusy("Desligando VM-base");
+      invoke("stop_hyperv_vm", { vmName })
+        .then(async (result) => {
+          if (result?.requiresForce) {
+            const force = window.confirm(`A VM-base "${vmName}" nao respondeu. Deseja forcar o desligamento?`);
+            if (!force) throw new Error("Desligamento cancelado; a VM-base continua ligada.");
+            await invoke("turn_off_hyperv_vm", { vmName });
+          }
+          setBusy("Pronto");
+          setMessage("VM-base desligada e pronta para clonagem.", "success");
+        })
+        .catch((error) => { setBusy("Erro"); setMessage(String(error), "error"); })
+        .finally(() => { baseButton.disabled = false; refreshAgentVmList({ silent: true }).catch(() => null); });
+    }
+    return;
+  }
+  const vmButton = event.target.closest("[data-agent-vm-name]");
+  if (vmButton) {
+    useHypervVm(vmButton.dataset.agentVmName || "");
+    return;
+  }
   const button = event.target.closest("[data-agent-action]");
   if (!button) {
     return;
@@ -17602,9 +18183,11 @@ agentsList?.addEventListener("click", (event) => {
   } else if (action === "watch") {
     startAndWatchAgent(agent);
   } else if (action === "start-vm") {
-    startAgentVm(agent);
+    startAndWatchAgent(agent);
+  } else if (action === "stop-vm") {
+    stopAgentVm(agent);
   } else if (action === "console") {
-    invoke("open_hyperv_vm_console", { vmName: agent.vmName }).catch((error) => setMessage(String(error), "error"));
+    startAndWatchAgent(agent).catch((error) => setMessage(String(error), "error"));
   } else if (action === "edit") {
     editAgentCard(id);
   } else if (action === "cancel-edit") {
@@ -18204,26 +18787,71 @@ studioControlScreenVideo?.addEventListener("wheel", (event) => {
   });
 }, { passive: false });
 
+studioControlScreenImage?.addEventListener("mouseenter", () => {
+  state.remoteControl.remotePointerInside = true;
+});
+
+studioControlScreenImage?.addEventListener("mouseleave", () => {
+  state.remoteControl.remotePointerInside = false;
+});
+
+studioControlScreenImage?.addEventListener("mousemove", (event) => {
+  if (!state.remoteControl.remoteInputEnabled) return;
+  const point = remoteScreenPointFromEvent(event, studioControlScreenImage);
+  if (point) sendStudioRemoteControlEvent({ kind: "mouse", event: "move", x: point.x, y: point.y });
+});
+
+studioControlScreenImage?.addEventListener("mousedown", (event) => {
+  if (!state.remoteControl.remoteInputEnabled) return;
+  const point = remoteScreenPointFromEvent(event, studioControlScreenImage);
+  if (!point) return;
+  event.preventDefault();
+  studioControlScreenImage.focus?.();
+  sendStudioRemoteControlEvent({ kind: "mouse", event: "down", x: point.x, y: point.y, button: event.button });
+});
+
+studioControlScreenImage?.addEventListener("mouseup", (event) => {
+  if (!state.remoteControl.remoteInputEnabled) return;
+  const point = remoteScreenPointFromEvent(event, studioControlScreenImage);
+  if (!point) return;
+  event.preventDefault();
+  sendStudioRemoteControlEvent({ kind: "mouse", event: "up", x: point.x, y: point.y, button: event.button });
+});
+
+studioControlScreenImage?.addEventListener("contextmenu", (event) => {
+  if (state.remoteControl.remoteInputEnabled) event.preventDefault();
+});
+
+studioControlScreenImage?.addEventListener("wheel", (event) => {
+  if (!state.remoteControl.remoteInputEnabled) return;
+  const point = remoteScreenPointFromEvent(event, studioControlScreenImage);
+  if (!point) return;
+  event.preventDefault();
+  sendStudioRemoteControlEvent({
+    kind: "mouse",
+    event: "wheel",
+    x: point.x,
+    y: point.y,
+    delta: event.deltaY < 0 ? 120 : -120,
+  });
+}, { passive: false });
+
 window.addEventListener("keydown", (event) => {
-  if (!state.remoteControl.webrtcActive || !state.remoteControl.remoteInputEnabled || !state.remoteControl.remotePointerInside) {
-    return;
-  }
-  if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) {
+  if (!state.remoteControl.remoteInputEnabled || !state.remoteControl.remotePointerInside) {
     return;
   }
   event.preventDefault();
-  sendStudioRemoteControlEvent({ kind: "key", event: "down", key: event.key });
+  if (!event.repeat) {
+    sendStudioRemoteControlEvent({ kind: "key", event: "down", key: event.key, code: event.code });
+  }
 });
 
 window.addEventListener("keyup", (event) => {
-  if (!state.remoteControl.webrtcActive || !state.remoteControl.remoteInputEnabled || !state.remoteControl.remotePointerInside) {
-    return;
-  }
-  if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) {
+  if (!state.remoteControl.remoteInputEnabled || !state.remoteControl.remotePointerInside) {
     return;
   }
   event.preventDefault();
-  sendStudioRemoteControlEvent({ kind: "key", event: "up", key: event.key });
+  sendStudioRemoteControlEvent({ kind: "key", event: "up", key: event.key, code: event.code });
 });
 
 studioControlSheetRefreshButton?.addEventListener("click", () => {
@@ -20668,6 +21296,14 @@ commandMapList.addEventListener("click", async (event) => {
 
 async function boot() {
   try {
+    // No modo dev o WebView pode recarregar sem reiniciar o processo Rust.
+    // Limpe superfícies HWND da sessão anterior para elas não cobrirem a UI nova.
+    await invoke("close_native_hyperv_rdp").catch(() => null);
+    await invoke("close_embedded_hyperv_console").catch(() => null);
+    state.remoteControl.nativeRdpActive = false;
+    state.remoteControl.nativeRdpVmName = "";
+    state.remoteControl.hypervConsoleActive = false;
+    state.remoteControl.hypervVmName = "";
     setBusy("Carregando");
     updateCommandMapSaveUI();
     loadAgentsConfig();

@@ -17,6 +17,28 @@ Em **Adicionar agente**, informe um novo nome de VM e escolha a VM-base no campo
 
 O botao **Abrir tela da VM** abre o console nativo do Hyper-V. Depois que o FlowDetect Agent responder, **Assistir tela** usa a conexao remota integrada ao Studio.
 
+## Controle remoto local
+
+O modo local usa o Agent instalado dentro de cada VM e a porta `18452`; nao exige servidor externo. A tela e os comandos ficam associados ao card da VM selecionada no Studio, permitindo manter varias VMs cadastradas sem incorporar a janela do `vmconnect.exe`.
+
+A base nativa do Agent esta separada nestes componentes:
+
+- `Authentication`: token local persistente por instalacao;
+- `DeviceManager`: identidade da maquina e inicializacao automatica no usuario do Windows;
+- `SessionManager`: ciclo de vida de uma sessao por Agent;
+- `ScreenCapture`: perfil 1080p/60 FPS, Windows Graphics Capture e fallback DXGI;
+- `WebRtcClient`: canais separados para ponteiro, controle, clipboard, arquivos e comandos;
+- `InputController`: validacao dos eventos antes da injecao nativa;
+- `ClipboardManager` e `FileTransfer`: limites, revisoes e protecao de caminhos.
+
+O Agent continua sendo uma aplicacao da sessao interativa do usuario, e nao um servico isolado na sessao 0. Isso e necessario para capturar a area de trabalho e aplicar mouse/teclado no Windows. A inicializacao automatica e registrada em `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+
+### Estado da transmissao
+
+O streaming JPEG por polling foi desativado por nao oferecer a fluidez exigida. O fluxo definitivo deve usar captura continua WGC/DXGI, H.264 Annex-B e WebRTC nativo, sem `getDisplayMedia` e sem confirmacao dentro da VM. Mouse, cliques, rolagem e teclado usam transporte separado do video.
+
+O build de teste atual ja conecta WGC ao encoder OpenH264 em modo `ScreenContentRealTime` e envia Annex-B por uma track WebRTC nativa. O WebView do Agent nao consulta mais ofertas e nunca chama `getDisplayMedia`. O perfil alvo e 1920x1080, 60 FPS e 12 Mbps; o resultado efetivo deve ser medido dentro da VM. NVENC, Quick Sync e AMF ainda dependem da exposicao de GPU ao convidado e da implementacao do backend Media Foundation correspondente.
+
 ## Pastas
 
 As VMs e os discos criados pelo Studio ficam em `C:\ProgramData\FlowDetect\HyperV`.

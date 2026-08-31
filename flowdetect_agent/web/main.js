@@ -801,11 +801,16 @@ async function startAgentWebRtcSession(signal) {
   try {
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: {
-        frameRate: { ideal: 24, max: 30 },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        frameRate: { ideal: 60, max: 60 },
+        width: { ideal: 1920, max: 2560 },
+        height: { ideal: 1080, max: 1440 },
+        cursor: "always",
+        displaySurface: "monitor",
       },
       audio: false,
+      preferCurrentTab: false,
+      selfBrowserSurface: "exclude",
+      surfaceSwitching: "exclude",
     });
     state.webrtcStream = stream;
     restoreAgentWindowDuringShare();
@@ -831,7 +836,18 @@ async function startAgentWebRtcSession(signal) {
         }
       };
     };
-    stream.getVideoTracks().forEach((track) => peer.addTrack(track, stream));
+    for (const track of stream.getVideoTracks()) {
+      track.contentHint = "detail";
+      const sender = peer.addTrack(track, stream);
+      const parameters = sender.getParameters();
+      parameters.degradationPreference = "maintain-resolution";
+      parameters.encodings = parameters.encodings?.length ? parameters.encodings : [{}];
+      parameters.encodings[0].maxBitrate = 12_000_000;
+      parameters.encodings[0].maxFramerate = 60;
+      sender.setParameters(parameters).catch((error) => {
+        console.warn("O WebRTC manteve os parametros padrao do Windows.", error);
+      });
+    }
     await peer.setRemoteDescription(offer);
     const answer = await peer.createAnswer();
     await peer.setLocalDescription(answer);
@@ -872,7 +888,7 @@ function startAgentWebRtcPolling() {
   }
   state.webrtcPollTimer = window.setInterval(() => {
     pollAgentWebRtcOffer().catch(() => {});
-  }, 900);
+  }, 300);
 }
 
 async function safeListen(eventName, handler) {
@@ -2020,7 +2036,8 @@ async function boot() {
     startRemoteAgentPolling();
     await refreshMeshCentralStatus({ silent: true });
     startMeshCentralPolling();
-    startAgentWebRtcPolling();
+    // A captura e a resposta WebRTC agora pertencem ao runtime nativo Rust.
+    // Nao use getDisplayMedia aqui: ele abriria um seletor dentro da VM.
     pushLog("FlowDetect Agent pronto para uso.", "success", "Inicializacao");
   } catch (error) {
     pushLog(String(error), "error", "Inicializacao");
