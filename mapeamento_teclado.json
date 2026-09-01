@@ -1,5 +1,5 @@
 {
-  "criado_em": "2026-08-25T14:58:40",
+  "criado_em": "2026-08-28T07:58:01",
   "instrucoes": [
     "Teclas simples e atalhos sao gravados individualmente.",
     "F8 abre uma caixa de texto grande e salva o bloco como um unico comando.",
@@ -8,312 +8,134 @@
     "A aba Planilha pode adicionar uma sequencia inteira ou so linhas selecionadas ao roteiro.",
     "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura."
   ],
-  "resumo_digitado": "[JANELA:Elemento da janela | texto editavel | acao:set_text | seletor:FORTE][JANELA:ISS Saída | opcao unica | acao:select | seletor:FORTE][JANELA:Elemento da janela | combo de selecao | acao:select_option | seletor:FORTE][JANELA:526932 | combo de selecao | acao:select_option | seletor:FORTE][JANELA:&Filtrar | botao | acao:click | seletor:FORTE]",
+  "resumo_digitado": "[ABRIR URL:https://fgtsdigital.sistema.gov.br/portal/login | chrome | nova_janela | aguardar=3s][CHROME:text=Entrar com GOV.BR | acao:clicar | timeout=10000ms | sucesso:continuar][IMAGEM:logignign | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:aaaaa | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:login-2 | 2 cliques | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][CHROME:nearby_text=Meu Perfil | acao:clicar | timeout=10000ms | sucesso:continuar][DOWN][ENTER]\n[IMAGEM:login-5 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:validaae | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][PLANILHA:CNPJ x37 | apos:enter][IMAGEM:Definir | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:gestao-guias | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:emissao | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:valida__o-01 | localizar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:ir_para_bloco -> bloco 17][ESCREVER PLANILHA:Status='Não há débitos de interesse.' | linha atual][IMAGEM:Valida__o-02 | localizar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:ir_para_bloco -> bloco 19][ESCREVER PLANILHA:Status='Verificar parcelas consignad' | linha atual][IMAGEM:data-alteravel | localizar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:continuar][ESCREVER PLANILHA:Status='Não possui guia na data refe' | linha atual][IMAGEM:pesquisar | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][TAB x2][ENTER]\n[ESCREVER PLANILHA:Status='OK' | linha atual][IMAGEM:downloads | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][UP x12][IMAGEM:Sair | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:Trocar | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:abrir | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:selecionar | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][TAB]",
   "eventos": [
     {
       "ordem": 1,
       "sequencia": "principal",
-      "tipo": "uia_elemento",
+      "tipo": "abrir_url",
       "teclas": [
-        "uia"
+        "abrir_url"
       ],
-      "texto": "[JANELA:Elemento da janela | texto editavel | acao:set_text | seletor:FORTE]",
+      "texto": "[ABRIR URL:https://fgtsdigital.sistema.gov.br/portal/login | chrome | nova_janela | aguardar=3s]",
       "intervalo_antes": 0.3,
-      "comando_python": "# uia_elemento acao='set_text' qualidade='FORTE'",
+      "comando_python": "abrir_url(url='https://fgtsdigital.sistema.gov.br/portal/login', navegador='chrome', modo_abertura='nova_janela', aguardar_segundos=3.0)",
       "detalhes": {
-        "block_name": "Elemento da janela",
-        "block_type": "input_text",
-        "field_kind": "texto editavel",
-        "recommended_action": "set_text",
-        "configured_action": "set_text",
-        "acao_configurada": {
-          "tipo": "set_text",
-          "origem_valor": "texto_fixo",
-          "valor": "330",
-          "arquivo": "db.xlsx",
-          "aba": "Sheet1",
-          "coluna": "codigos",
-          "limpar_antes": true,
-          "pressionar_depois": "",
-          "salvar_em": ""
-        },
-        "selector": {
-          "match_count": 1,
-          "quality": "FORTE",
-          "query": {
-            "automation_id": "1247780",
-            "control_type": "EditControl"
-          },
-          "strategy": "automation_id_control_type",
-          "warnings": []
-        },
-        "selector_quality": "FORTE",
-        "actionable": true,
-        "editable": true,
-        "clickable": false,
-        "selectable": false,
-        "expandable": false,
-        "readable": false,
-        "visible": true,
-        "enabled": true,
-        "warnings": [],
-        "confidence": "alta",
-        "source_window": {
-          "bounding_rectangle": {
-            "bottom": 1040,
-            "height": 1048,
-            "left": 1912,
-            "right": 3848,
-            "top": -8,
-            "width": 1936
-          },
-          "class_name": "TfrmConsultaISSFatDed",
-          "handle": 265538,
-          "process_id": 1568,
-          "title": "Consulta de movimento de ISS / Faturamento e Deduções"
-        },
-        "source_tab": "Consulta de movimento de ISS / Faturamento e Deduções",
-        "context_signature": "86b03f00e246ad4a",
-        "elemento": {
-          "acao_configurada": {
-            "aba": "Sheet1",
-            "arquivo": "db.xlsx",
-            "coluna": "codigos",
-            "limpar_antes": true,
-            "origem_valor": "texto_fixo",
-            "pressionar_depois": "",
-            "salvar_em": "",
-            "tipo": "set_text",
-            "valor": "330"
-          },
-          "configured_action": "set_text",
-          "context_signature": "86b03f00e246ad4a",
-          "source_tab": "Consulta de movimento de ISS / Faturamento e Deduções",
-          "source_window": {
-            "bounding_rectangle": {
-              "bottom": 1040,
-              "height": 1048,
-              "left": 1912,
-              "right": 3848,
-              "top": -8,
-              "width": 1936
-            },
-            "class_name": "TfrmConsultaISSFatDed",
-            "handle": 265538,
-            "process_id": 1568,
-            "title": "Consulta de movimento de ISS / Faturamento e Deduções"
-          },
-          "actionable": true,
-          "block_type": "input_text",
-          "clickable": false,
-          "confidence": "alta",
-          "editable": true,
-          "enabled": true,
-          "expandable": false,
-          "field_kind": "texto editavel",
-          "name": "Elemento da janela",
-          "readable": false,
-          "recommended_action": "set_text",
-          "selectable": false,
-          "selector": {
-            "match_count": 1,
-            "quality": "FORTE",
-            "query": {
-              "automation_id": "1247780",
-              "control_type": "EditControl"
-            },
-            "strategy": "automation_id_control_type",
-            "warnings": []
-          },
-          "selector_quality": "FORTE",
-          "visible": true,
-          "warnings": [],
-          "automation_id": "1247780",
-          "bounding_rectangle": {
-            "bottom": 148,
-            "height": 15,
-            "left": 2019,
-            "right": 2054,
-            "top": 133,
-            "width": 35
-          },
-          "capabilities": [
-            "ValuePattern",
-            "RangeValuePattern"
-          ],
-          "children": [],
-          "class_name": "TcxCustomInnerTextEdit",
-          "control_type": "EditControl",
-          "depth": 4,
-          "framework_id": "Win32",
-          "handle": 1247780,
-          "id": "471cc08a1a390b6c",
-          "index": 0,
-          "is_enabled": true,
-          "is_offscreen": false,
-          "is_visible": true,
-          "parent": "PaneControl",
-          "path": "/WindowControl[0]/PaneControl[8]/PaneControl[3]/PaneControl[1]/EditControl[0]",
-          "process_id": 1568
-        },
+        "url": "https://fgtsdigital.sistema.gov.br/portal/login",
+        "navegador": "chrome",
+        "modo_abertura": "nova_janela",
+        "tela_cheia": true,
+        "aguardar_segundos": 3.0,
         "ao_sucesso": "continuar",
         "bloco_sucesso": "",
         "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0,
-        "ao_falhar": "parar",
-        "bloco_falha": "",
-        "sequencia_falha": "",
-        "atraso_antes_sequencia_falha": 0.0
+        "atraso_antes_sequencia_sucesso": 0.0
       }
     },
     {
       "ordem": 2,
       "sequencia": "principal",
-      "tipo": "uia_elemento",
+      "tipo": "chrome_elemento_html",
       "teclas": [
-        "uia"
+        "chrome"
       ],
-      "texto": "[JANELA:ISS Saída | opcao unica | acao:select | seletor:FORTE]",
+      "texto": "[CHROME:text=Entrar com GOV.BR | acao:clicar | timeout=10000ms | sucesso:continuar]",
       "intervalo_antes": 0.3,
-      "comando_python": "# uia_elemento acao='select' qualidade='FORTE'",
+      "comando_python": "# chrome_elemento_html metodo='text' valor='Entrar com GOV.BR' acao='clicar'",
       "detalhes": {
-        "block_name": "ISS Saída",
-        "block_type": "radio_select",
-        "field_kind": "opcao unica",
-        "recommended_action": "select",
-        "configured_action": "select",
-        "acao_configurada": {
-          "tipo": "select",
+        "nome": "Botao \"Entrar com GOV.BR\"",
+        "html_original": "<button _ngcontent-ng-c1271759504=\"\" type=\"button\" class=\"br-button is-primary entrar\">Entrar com GOV.BR</button>",
+        "elemento": {
+          "tag": "button",
+          "type": "button",
+          "id": "",
+          "name": "",
+          "placeholder": "",
+          "aria_label": "",
+          "aria_labelledby": "",
+          "role": "",
+          "classes": [
+            "br-button",
+            "is-primary",
+            "entrar"
+          ],
+          "text": "Entrar com GOV.BR",
+          "value": "",
+          "maxlength": "",
+          "required": false,
+          "attributes": {
+            "_ngcontent-ng-c1271759504": "",
+            "class": "br-button is-primary entrar",
+            "type": "button"
+          },
+          "contenteditable": "",
+          "css_selector": "body > app-root > app-login > div > div > form > div > div:nth-of-type(1) > div > button",
+          "texto_proximo": "Entrar com GOV.BR",
+          "texto_visivel": "Entrar com GOV.BR",
+          "url_origem": "https://fgtsdigital.sistema.gov.br/portal/login",
+          "xpath": "/html/body/app-root/app-login/div/div/form/div/div[1]/div/button"
+        },
+        "tipo_provavel": "button",
+        "seletores": [
+          {
+            "metodo": "text",
+            "valor": "Entrar com GOV.BR",
+            "codigo_playwright": "page.get_by_text('Entrar com GOV.BR')",
+            "confianca": "media",
+            "motivo": "",
+            "seletor_css": "button"
+          },
+          {
+            "metodo": "nearby_text",
+            "valor": "Entrar com GOV.BR",
+            "codigo_playwright": "page.get_by_text('Entrar com GOV.BR')",
+            "confianca": "media",
+            "motivo": "Texto perto do elemento capturado."
+          },
+          {
+            "metodo": "css",
+            "valor": "button[type=\"button\"]",
+            "codigo_playwright": "page.locator('button[type=\"button\"]')",
+            "confianca": "media",
+            "motivo": "",
+            "seletor_css": "button[type=\"button\"]"
+          },
+          {
+            "metodo": "css",
+            "valor": "body > app-root > app-login > div > div > form > div > div:nth-of-type(1) > div > button",
+            "codigo_playwright": "page.locator('body > app-root > app-login > div > div > form > div > div:nth-of-type(1) > div > button')",
+            "confianca": "media",
+            "motivo": "CSS capturado direto da pagina.",
+            "seletor_css": "body > app-root > app-login > div > div > form > div > div:nth-of-type(1) > div > button"
+          },
+          {
+            "metodo": "xpath",
+            "valor": "/html/body/app-root/app-login/div/div/form/div/div[1]/div/button",
+            "codigo_playwright": "page.locator('xpath=/html/body/app-root/app-login/div/div/form/div/div[1]/div/button')",
+            "confianca": "media",
+            "motivo": "XPath capturado direto da pagina."
+          }
+        ],
+        "alvo": {
+          "metodo": "text",
+          "valor": "Entrar com GOV.BR",
+          "codigo_playwright": "page.get_by_text('Entrar com GOV.BR')",
+          "confianca": "media",
+          "motivo": "",
+          "seletor_css": "button",
+          "role": ""
+        },
+        "acao": {
+          "tipo": "clicar",
           "origem_valor": "texto_fixo",
           "valor": "",
-          "arquivo": "",
-          "aba": "",
-          "coluna": "",
-          "limpar_antes": true,
+          "limpar_antes": false,
           "pressionar_depois": "",
           "salvar_em": ""
         },
-        "selector": {
-          "match_count": 1,
-          "quality": "FORTE",
-          "query": {
-            "automation_id": "461680",
-            "control_type": "RadioButtonControl"
-          },
-          "strategy": "automation_id_control_type",
-          "warnings": []
-        },
-        "selector_quality": "FORTE",
-        "actionable": true,
-        "editable": false,
-        "clickable": false,
-        "selectable": true,
-        "expandable": false,
-        "readable": false,
-        "visible": true,
-        "enabled": true,
-        "warnings": [],
-        "confidence": "alta",
-        "source_window": {
-          "bounding_rectangle": {
-            "bottom": 1040,
-            "height": 1048,
-            "left": 1912,
-            "right": 3848,
-            "top": -8,
-            "width": 1936
-          },
-          "class_name": "TfrmConsultaISSFatDed",
-          "handle": 265538,
-          "process_id": 1568,
-          "title": "Consulta de movimento de ISS / Faturamento e Deduções"
-        },
-        "source_tab": "Consulta de movimento de ISS / Faturamento e Deduções",
-        "context_signature": "86b03f00e246ad4a",
-        "elemento": {
-          "acao_configurada": {
-            "aba": "",
-            "arquivo": "",
-            "coluna": "",
-            "limpar_antes": true,
-            "origem_valor": "texto_fixo",
-            "pressionar_depois": "",
-            "salvar_em": "",
-            "tipo": "select",
-            "valor": ""
-          },
-          "accelerator_key": "",
-          "access_key": "",
-          "actionable": true,
-          "automation_id": "461680",
-          "block_type": "radio_select",
-          "bounding_rectangle": {
-            "bottom": 170,
-            "height": 22,
-            "left": 3322,
-            "right": 3475,
-            "top": 148,
-            "width": 153
-          },
-          "capabilities": [
-            "SelectionItemPattern"
-          ],
-          "children": [],
-          "class_name": "TcxCustomRadioGroupButton",
-          "clickable": false,
-          "confidence": "alta",
-          "configured_action": "select",
-          "context_signature": "86b03f00e246ad4a",
-          "control_type": "RadioButtonControl",
-          "depth": 5,
-          "editable": false,
-          "enabled": true,
-          "expandable": false,
-          "field_kind": "opcao unica",
-          "framework_id": "Win32",
-          "handle": 461680,
-          "help_text": "",
-          "id": "72e7277396ca5abd",
-          "index": 2,
-          "is_enabled": true,
-          "is_offscreen": false,
-          "is_visible": true,
-          "name": "ISS Saída",
-          "parent": "PaneControl",
-          "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/PaneControl[1]/PaneControl[0]/RadioButtonControl[2]",
-          "process_id": 1568,
-          "readable": false,
-          "recommended_action": "select",
-          "selectable": true,
-          "selector": {
-            "match_count": 1,
-            "quality": "FORTE",
-            "query": {
-              "automation_id": "461680",
-              "control_type": "RadioButtonControl"
-            },
-            "strategy": "automation_id_control_type",
-            "warnings": []
-          },
-          "selector_quality": "FORTE",
-          "source_tab": "Consulta de movimento de ISS / Faturamento e Deduções",
-          "source_window": {
-            "bounding_rectangle": {
-              "bottom": 1040,
-              "height": 1048,
-              "left": 1912,
-              "right": 3848,
-              "top": -8,
-              "width": 1936
-            },
-            "class_name": "TfrmConsultaISSFatDed",
-            "handle": 265538,
-            "process_id": 1568,
-            "title": "Consulta de movimento de ISS / Faturamento e Deduções"
-          },
-          "visible": true,
-          "warnings": []
-        },
+        "timeout": 10000,
+        "fallback_visual": false,
+        "fallback_imagem": "",
         "ao_sucesso": "continuar",
         "bloco_sucesso": "",
         "sequencia_sucesso": "",
@@ -321,804 +143,208 @@
         "ao_falhar": "parar",
         "bloco_falha": "",
         "sequencia_falha": "",
-        "atraso_antes_sequencia_falha": 0.0
+        "atraso_antes_sequencia_falha": 0.0,
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.5
       }
     },
     {
       "ordem": 3,
       "sequencia": "principal",
-      "tipo": "uia_elemento",
+      "tipo": "clicar_imagem",
       "teclas": [
-        "uia"
+        "imagem"
       ],
-      "texto": "[JANELA:Elemento da janela | combo de selecao | acao:select_option | seletor:FORTE]",
+      "texto": "[IMAGEM:logignign | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
       "intervalo_antes": 0.3,
-      "comando_python": "# uia_elemento acao='select_option' qualidade='FORTE'",
+      "comando_python": "clicar_por_imagem(imagem='imagens/logignign', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
       "detalhes": {
-        "block_name": "Elemento da janela",
-        "block_type": "combo_select",
-        "field_kind": "combo de selecao",
-        "recommended_action": "select_option",
-        "configured_action": "set_text",
-        "acao_configurada": {
-          "tipo": "set_text",
-          "origem_valor": "texto_fixo",
-          "valor": "01072026",
-          "arquivo": "db.xlsx",
-          "aba": "Sheet1",
-          "coluna": "codigos",
-          "limpar_antes": true,
-          "pressionar_depois": "",
-          "salvar_em": ""
-        },
-        "selector": {
-          "match_count": 1,
-          "quality": "FORTE",
-          "query": {
-            "automation_id": "721244",
-            "control_type": "ComboBoxControl"
-          },
-          "strategy": "automation_id_control_type",
-          "warnings": []
-        },
-        "selector_quality": "FORTE",
-        "actionable": true,
-        "editable": false,
-        "clickable": false,
-        "selectable": true,
-        "expandable": false,
-        "readable": false,
-        "visible": true,
-        "enabled": true,
-        "warnings": [],
-        "confidence": "alta",
-        "source_window": {
-          "bounding_rectangle": {
-            "bottom": 1040,
-            "height": 1048,
-            "left": 1912,
-            "right": 3848,
-            "top": -8,
-            "width": 1936
-          },
-          "class_name": "TfrmConsultaISSFatDed",
-          "handle": 265538,
-          "process_id": 1568,
-          "title": "Consulta de movimento de ISS / Faturamento e Deduções"
-        },
-        "source_tab": "Consulta de movimento de ISS / Faturamento e Deduções",
-        "context_signature": "86b03f00e246ad4a",
-        "elemento": {
-          "acao_configurada": {
-            "aba": "Sheet1",
-            "arquivo": "db.xlsx",
-            "coluna": "codigos",
-            "limpar_antes": true,
-            "origem_valor": "texto_fixo",
-            "pressionar_depois": "",
-            "salvar_em": "",
-            "tipo": "set_text",
-            "valor": "01072026"
-          },
-          "actionable": true,
-          "automation_id": "721244",
-          "block_type": "combo_select",
-          "bounding_rectangle": {
-            "bottom": 176,
-            "height": 25,
-            "left": 3736,
-            "right": 3821,
-            "top": 151,
-            "width": 85
-          },
-          "capabilities": [
-            "ValuePattern",
-            "ExpandCollapsePattern"
-          ],
-          "children": [
-            {
-              "accelerator_key": "",
-              "access_key": "",
-              "actionable": false,
-              "automation_id": "331118",
-              "block_type": "text_read",
-              "bounding_rectangle": {
-                "bottom": 170,
-                "height": 15,
-                "left": 3739,
-                "right": 3799,
-                "top": 155,
-                "width": 60
-              },
-              "capabilities": [],
-              "children": [],
-              "class_name": "TcxCustomDropDownInnerEdit",
-              "clickable": false,
-              "confidence": "alta",
-              "control_type": "TextControl",
-              "depth": 4,
-              "editable": false,
-              "enabled": true,
-              "expandable": false,
-              "field_kind": "texto",
-              "framework_id": "Win32",
-              "handle": 331118,
-              "help_text": "",
-              "id": "fed24779bd17956c",
-              "index": 0,
-              "is_enabled": true,
-              "is_offscreen": false,
-              "is_visible": true,
-              "name": "",
-              "parent": "ComboBoxControl",
-              "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/ComboBoxControl[3]/TextControl[0]",
-              "process_id": 1568,
-              "readable": true,
-              "recommended_action": "read_text",
-              "selectable": false,
-              "selector": {
-                "match_count": 1,
-                "quality": "FORTE",
-                "query": {
-                  "automation_id": "331118",
-                  "control_type": "TextControl"
-                },
-                "strategy": "automation_id_control_type",
-                "warnings": []
-              },
-              "selector_quality": "FORTE",
-              "visible": true,
-              "warnings": []
-            },
-            {
-              "accelerator_key": "",
-              "access_key": "",
-              "actionable": false,
-              "automation_id": "",
-              "block_type": "text_read",
-              "bounding_rectangle": {
-                "bottom": 170,
-                "height": 15,
-                "left": 3739,
-                "right": 3799,
-                "top": 155,
-                "width": 60
-              },
-              "capabilities": [],
-              "children": [],
-              "class_name": "",
-              "clickable": false,
-              "confidence": "baixa",
-              "control_type": "TextControl",
-              "depth": 4,
-              "editable": false,
-              "enabled": true,
-              "expandable": false,
-              "field_kind": "texto",
-              "framework_id": "",
-              "handle": 0,
-              "help_text": "",
-              "id": "4f871718f4b8f328",
-              "index": 1,
-              "is_enabled": true,
-              "is_offscreen": false,
-              "is_visible": true,
-              "name": "",
-              "parent": "ComboBoxControl",
-              "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/ComboBoxControl[3]/TextControl[1]",
-              "process_id": 1568,
-              "readable": true,
-              "recommended_action": "read_text",
-              "selectable": false,
-              "selector": {
-                "match_count": 1,
-                "quality": "FRAGIL",
-                "query": {
-                  "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/ComboBoxControl[3]/TextControl[1]"
-                },
-                "strategy": "hierarchy_path",
-                "warnings": []
-              },
-              "selector_quality": "FRAGIL",
-              "visible": true,
-              "warnings": []
-            },
-            {
-              "accelerator_key": "",
-              "access_key": "",
-              "actionable": true,
-              "automation_id": "",
-              "block_type": "button_click",
-              "bounding_rectangle": {
-                "bottom": 174,
-                "height": 21,
-                "left": 3799,
-                "right": 3819,
-                "top": 153,
-                "width": 20
-              },
-              "capabilities": [
-                "InvokePattern",
-                "TogglePattern",
-                "ExpandCollapsePattern"
-              ],
-              "children": [],
-              "class_name": "",
-              "clickable": true,
-              "confidence": "baixa",
-              "control_type": "ButtonControl",
-              "depth": 4,
-              "editable": false,
-              "enabled": true,
-              "expandable": false,
-              "field_kind": "botao",
-              "framework_id": "",
-              "handle": 0,
-              "help_text": "",
-              "id": "7500fd5f7d4c80a9",
-              "index": 2,
-              "is_enabled": true,
-              "is_offscreen": false,
-              "is_visible": true,
-              "name": "Open",
-              "parent": "ComboBoxControl",
-              "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/ComboBoxControl[3]/ButtonControl[2]",
-              "process_id": 1568,
-              "readable": false,
-              "recommended_action": "click",
-              "selectable": false,
-              "selector": {
-                "match_count": 1,
-                "quality": "FRAGIL",
-                "query": {
-                  "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/ComboBoxControl[3]/ButtonControl[2]"
-                },
-                "strategy": "hierarchy_path",
-                "warnings": []
-              },
-              "selector_quality": "FRAGIL",
-              "visible": true,
-              "warnings": []
-            }
-          ],
-          "class_name": "TcxDateEdit",
-          "clickable": false,
-          "confidence": "alta",
-          "configured_action": "set_text",
-          "context_signature": "86b03f00e246ad4a",
-          "control_type": "ComboBoxControl",
-          "depth": 3,
-          "editable": false,
-          "enabled": true,
-          "expandable": false,
-          "field_kind": "combo de selecao",
-          "framework_id": "Win32",
-          "handle": 721244,
-          "id": "df62d71e3cdacacc",
-          "index": 3,
-          "is_enabled": true,
-          "is_offscreen": false,
-          "is_visible": true,
-          "name": "Elemento da janela",
-          "parent": "PaneControl",
-          "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/ComboBoxControl[3]",
-          "process_id": 1568,
-          "readable": false,
-          "recommended_action": "select_option",
-          "selectable": true,
-          "selector": {
-            "match_count": 1,
-            "quality": "FORTE",
-            "query": {
-              "automation_id": "721244",
-              "control_type": "ComboBoxControl"
-            },
-            "strategy": "automation_id_control_type",
-            "warnings": []
-          },
-          "selector_quality": "FORTE",
-          "source_tab": "Consulta de movimento de ISS / Faturamento e Deduções",
-          "source_window": {
-            "bounding_rectangle": {
-              "bottom": 1040,
-              "height": 1048,
-              "left": 1912,
-              "right": 3848,
-              "top": -8,
-              "width": 1936
-            },
-            "class_name": "TfrmConsultaISSFatDed",
-            "handle": 265538,
-            "process_id": 1568,
-            "title": "Consulta de movimento de ISS / Faturamento e Deduções"
-          },
-          "visible": true,
-          "warnings": []
-        },
+        "imagem": "imagens/logignign",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "Seu certificado digital",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
         "ao_sucesso": "continuar",
         "bloco_sucesso": "",
         "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0,
-        "ao_falhar": "parar",
-        "bloco_falha": "",
-        "sequencia_falha": "",
-        "atraso_antes_sequencia_falha": 0.0
+        "atraso_antes_sequencia_sucesso": 0.0
       }
     },
     {
       "ordem": 4,
       "sequencia": "principal",
-      "tipo": "uia_elemento",
+      "tipo": "clicar_imagem",
       "teclas": [
-        "uia"
+        "imagem"
       ],
-      "texto": "[JANELA:526932 | combo de selecao | acao:select_option | seletor:FORTE]",
+      "texto": "[IMAGEM:aaaaa | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
       "intervalo_antes": 0.3,
-      "comando_python": "# uia_elemento acao='select_option' qualidade='FORTE'",
+      "comando_python": "clicar_por_imagem(imagem='imagens/aaaaa', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
       "detalhes": {
-        "block_name": "526932",
-        "block_type": "combo_select",
-        "field_kind": "combo de selecao",
-        "recommended_action": "select_option",
-        "configured_action": "set_or_select",
-        "acao_configurada": {
-          "tipo": "set_or_select",
-          "origem_valor": "texto_fixo",
-          "valor": "30072026",
-          "arquivo": "db.xlsx",
-          "aba": "Sheet1",
-          "coluna": "codigos",
-          "limpar_antes": true,
-          "pressionar_depois": "",
-          "salvar_em": ""
-        },
-        "selector": {
-          "match_count": 1,
-          "quality": "FORTE",
-          "query": {
-            "automation_id": "526932",
-            "control_type": "ComboBoxControl"
-          },
-          "strategy": "automation_id_control_type",
-          "warnings": []
-        },
-        "selector_quality": "FORTE",
-        "actionable": true,
-        "editable": false,
-        "clickable": false,
-        "selectable": true,
-        "expandable": false,
-        "readable": false,
-        "visible": true,
-        "enabled": true,
-        "warnings": [],
-        "confidence": "alta",
-        "source_window": {
-          "bounding_rectangle": {
-            "bottom": 1040,
-            "height": 1048,
-            "left": 1912,
-            "right": 3848,
-            "top": -8,
-            "width": 1936
-          },
-          "class_name": "TfrmConsultaISSFatDed",
-          "handle": 265538,
-          "process_id": 1568,
-          "title": "Consulta de movimento de ISS / Faturamento e Deduções"
-        },
-        "source_tab": "Consulta de movimento de ISS / Faturamento e Deduções",
-        "context_signature": "86b03f00e246ad4a",
-        "elemento": {
-          "acao_configurada": {
-            "aba": "Sheet1",
-            "arquivo": "db.xlsx",
-            "coluna": "codigos",
-            "limpar_antes": true,
-            "origem_valor": "texto_fixo",
-            "pressionar_depois": "",
-            "salvar_em": "",
-            "tipo": "set_or_select",
-            "valor": "30072026"
-          },
-          "accelerator_key": "",
-          "access_key": "",
-          "actionable": true,
-          "automation_id": "526932",
-          "block_type": "combo_select",
-          "bounding_rectangle": {
-            "bottom": 205,
-            "height": 25,
-            "left": 3736,
-            "right": 3821,
-            "top": 180,
-            "width": 85
-          },
-          "capabilities": [
-            "ValuePattern",
-            "ExpandCollapsePattern"
-          ],
-          "children": [
-            {
-              "accelerator_key": "",
-              "access_key": "",
-              "actionable": false,
-              "automation_id": "1378578",
-              "block_type": "text_read",
-              "bounding_rectangle": {
-                "bottom": 199,
-                "height": 15,
-                "left": 3739,
-                "right": 3799,
-                "top": 184,
-                "width": 60
-              },
-              "capabilities": [],
-              "children": [],
-              "class_name": "TcxCustomDropDownInnerEdit",
-              "clickable": false,
-              "confidence": "alta",
-              "control_type": "TextControl",
-              "depth": 4,
-              "editable": false,
-              "enabled": true,
-              "expandable": false,
-              "field_kind": "texto",
-              "framework_id": "Win32",
-              "handle": 1378578,
-              "help_text": "",
-              "id": "64d1b2eee2e7f22c",
-              "index": 0,
-              "is_enabled": true,
-              "is_offscreen": false,
-              "is_visible": true,
-              "name": "",
-              "parent": "ComboBoxControl",
-              "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/ComboBoxControl[2]/TextControl[0]",
-              "process_id": 1568,
-              "readable": true,
-              "recommended_action": "read_text",
-              "selectable": false,
-              "selector": {
-                "match_count": 1,
-                "quality": "FORTE",
-                "query": {
-                  "automation_id": "1378578",
-                  "control_type": "TextControl"
-                },
-                "strategy": "automation_id_control_type",
-                "warnings": []
-              },
-              "selector_quality": "FORTE",
-              "visible": true,
-              "warnings": []
-            },
-            {
-              "accelerator_key": "",
-              "access_key": "",
-              "actionable": false,
-              "automation_id": "",
-              "block_type": "text_read",
-              "bounding_rectangle": {
-                "bottom": 199,
-                "height": 15,
-                "left": 3739,
-                "right": 3799,
-                "top": 184,
-                "width": 60
-              },
-              "capabilities": [],
-              "children": [],
-              "class_name": "",
-              "clickable": false,
-              "confidence": "baixa",
-              "control_type": "TextControl",
-              "depth": 4,
-              "editable": false,
-              "enabled": true,
-              "expandable": false,
-              "field_kind": "texto",
-              "framework_id": "",
-              "handle": 0,
-              "help_text": "",
-              "id": "1affebcc6f67f9bf",
-              "index": 1,
-              "is_enabled": true,
-              "is_offscreen": false,
-              "is_visible": true,
-              "name": "",
-              "parent": "ComboBoxControl",
-              "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/ComboBoxControl[2]/TextControl[1]",
-              "process_id": 1568,
-              "readable": true,
-              "recommended_action": "read_text",
-              "selectable": false,
-              "selector": {
-                "match_count": 1,
-                "quality": "FRAGIL",
-                "query": {
-                  "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/ComboBoxControl[2]/TextControl[1]"
-                },
-                "strategy": "hierarchy_path",
-                "warnings": []
-              },
-              "selector_quality": "FRAGIL",
-              "visible": true,
-              "warnings": []
-            },
-            {
-              "accelerator_key": "",
-              "access_key": "",
-              "actionable": true,
-              "automation_id": "",
-              "block_type": "button_click",
-              "bounding_rectangle": {
-                "bottom": 203,
-                "height": 21,
-                "left": 3799,
-                "right": 3819,
-                "top": 182,
-                "width": 20
-              },
-              "capabilities": [
-                "InvokePattern",
-                "TogglePattern",
-                "ExpandCollapsePattern"
-              ],
-              "children": [],
-              "class_name": "",
-              "clickable": true,
-              "confidence": "baixa",
-              "control_type": "ButtonControl",
-              "depth": 4,
-              "editable": false,
-              "enabled": true,
-              "expandable": false,
-              "field_kind": "botao",
-              "framework_id": "",
-              "handle": 0,
-              "help_text": "",
-              "id": "7f2b7ebf55fe9d29",
-              "index": 2,
-              "is_enabled": true,
-              "is_offscreen": false,
-              "is_visible": true,
-              "name": "Open",
-              "parent": "ComboBoxControl",
-              "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/ComboBoxControl[2]/ButtonControl[2]",
-              "process_id": 1568,
-              "readable": false,
-              "recommended_action": "click",
-              "selectable": false,
-              "selector": {
-                "match_count": 1,
-                "quality": "FRAGIL",
-                "query": {
-                  "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/ComboBoxControl[2]/ButtonControl[2]"
-                },
-                "strategy": "hierarchy_path",
-                "warnings": []
-              },
-              "selector_quality": "FRAGIL",
-              "visible": true,
-              "warnings": []
-            }
-          ],
-          "class_name": "TcxDateEdit",
-          "clickable": false,
-          "confidence": "alta",
-          "configured_action": "set_or_select",
-          "context_signature": "86b03f00e246ad4a",
-          "control_type": "ComboBoxControl",
-          "depth": 3,
-          "editable": false,
-          "enabled": true,
-          "expandable": false,
-          "field_kind": "combo de selecao",
-          "framework_id": "Win32",
-          "handle": 526932,
-          "help_text": "",
-          "id": "d8cb13268d7bf943",
-          "index": 2,
-          "is_enabled": true,
-          "is_offscreen": false,
-          "is_visible": true,
-          "name": "526932",
-          "parent": "PaneControl",
-          "path": "/WindowControl[0]/PaneControl[8]/PaneControl[4]/ComboBoxControl[2]",
-          "process_id": 1568,
-          "readable": false,
-          "recommended_action": "select_option",
-          "selectable": true,
-          "selector": {
-            "match_count": 1,
-            "quality": "FORTE",
-            "query": {
-              "automation_id": "526932",
-              "control_type": "ComboBoxControl"
-            },
-            "strategy": "automation_id_control_type",
-            "warnings": []
-          },
-          "selector_quality": "FORTE",
-          "source_tab": "Consulta de movimento de ISS / Faturamento e Deduções",
-          "source_window": {
-            "bounding_rectangle": {
-              "bottom": 1040,
-              "height": 1048,
-              "left": 1912,
-              "right": 3848,
-              "top": -8,
-              "width": 1936
-            },
-            "class_name": "TfrmConsultaISSFatDed",
-            "handle": 265538,
-            "process_id": 1568,
-            "title": "Consulta de movimento de ISS / Faturamento e Deduções"
-          },
-          "visible": true,
-          "warnings": []
-        },
+        "imagem": "imagens/aaaaa",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
         "ao_sucesso": "continuar",
         "bloco_sucesso": "",
         "sequencia_sucesso": "",
-        "atraso_antes_sequencia_sucesso": 0.0,
-        "ao_falhar": "parar",
-        "bloco_falha": "",
-        "sequencia_falha": "",
-        "atraso_antes_sequencia_falha": 0.0
+        "atraso_antes_sequencia_sucesso": 0.0
       }
     },
     {
       "ordem": 5,
       "sequencia": "principal",
-      "tipo": "uia_elemento",
+      "tipo": "clicar_imagem",
       "teclas": [
-        "uia"
+        "imagem"
       ],
-      "texto": "[JANELA:&Filtrar | botao | acao:click | seletor:FORTE]",
+      "texto": "[IMAGEM:login-2 | 2 cliques | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
       "intervalo_antes": 0.3,
-      "comando_python": "# uia_elemento acao='click' qualidade='FORTE'",
+      "comando_python": "clicar_por_imagem(imagem='imagens/login-2', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=2, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
       "detalhes": {
-        "block_name": "&Filtrar",
-        "block_type": "button_click",
-        "field_kind": "botao",
-        "recommended_action": "click",
-        "configured_action": "click",
-        "acao_configurada": {
-          "tipo": "click",
+        "imagem": "imagens/login-2",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 2,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "5F16DA0C6142DFB1",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 6,
+      "sequencia": "principal",
+      "tipo": "chrome_elemento_html",
+      "teclas": [
+        "chrome"
+      ],
+      "texto": "[CHROME:nearby_text=Meu Perfil | acao:clicar | timeout=10000ms | sucesso:continuar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "# chrome_elemento_html metodo='nearby_text' valor='Meu Perfil' acao='clicar'",
+      "detalhes": {
+        "nome": "Texto \"Meu Perfil\"",
+        "html_original": "<div class=\"ng-input\"><input aria-autocomplete=\"list\" role=\"combobox\" type=\"text\" autocorrect=\"off\" autocapitalize=\"off\" autocomplete=\"off\" aria-expanded=\"true\" id=\"id3f73052488b244\" class=\"focus-visible\" data-focus-visible-added=\"\" aria-activedescendant=\"a120a9eab331-0\" aria-controls=\"a120a9eab331\"></div>",
+        "elemento": {
+          "tag": "div",
+          "type": "",
+          "id": "",
+          "name": "",
+          "placeholder": "",
+          "aria_label": "",
+          "aria_labelledby": "",
+          "role": "",
+          "classes": [
+            "ng-input"
+          ],
+          "text": "",
+          "value": "",
+          "maxlength": "",
+          "required": false,
+          "attributes": {
+            "class": "ng-input"
+          },
+          "contenteditable": "",
+          "css_selector": "body > modal-container > div:nth-of-type(2) > div > lib-fgtsd-modal-alterar-perfil > div:nth-of-type(2) > form > div > div > br-select > div > div > div:nth-of-type(1) > ng-select > div:nth-of-type(1) > div > div:nth-of-type(3)",
+          "texto_proximo": "Meu Perfil",
+          "url_origem": "https://fgtsdigital.sistema.gov.br/portal/escolhaPerfil",
+          "xpath": "/html/body/modal-container/div[2]/div/lib-fgtsd-modal-alterar-perfil/div[2]/form/div/div/br-select/div/div/div[1]/ng-select/div[1]/div/div[3]"
+        },
+        "tipo_provavel": "generic",
+        "seletores": [
+          {
+            "metodo": "nearby_text",
+            "valor": "Meu Perfil",
+            "codigo_playwright": "page.get_by_text('Meu Perfil')",
+            "confianca": "media",
+            "motivo": "Texto perto do elemento capturado."
+          },
+          {
+            "metodo": "css",
+            "valor": "body > modal-container > div:nth-of-type(2) > div > lib-fgtsd-modal-alterar-perfil > div:nth-of-type(2) > form > div > div > br-select > div > div > div:nth-of-type(1) > ng-select > div:nth-of-type(1) > div > div:nth-of-type(3)",
+            "codigo_playwright": "page.locator('body > modal-container > div:nth-of-type(2) > div > lib-fgtsd-modal-alterar-perfil > div:nth-of-type(2) > form > div > div > br-select > div > div > div:nth-of-type(1) > ng-select > div:nth-of-type(1) > div > div:nth-of-type(3)')",
+            "confianca": "media",
+            "motivo": "CSS capturado direto da pagina.",
+            "seletor_css": "body > modal-container > div:nth-of-type(2) > div > lib-fgtsd-modal-alterar-perfil > div:nth-of-type(2) > form > div > div > br-select > div > div > div:nth-of-type(1) > ng-select > div:nth-of-type(1) > div > div:nth-of-type(3)"
+          },
+          {
+            "metodo": "xpath",
+            "valor": "/html/body/modal-container/div[2]/div/lib-fgtsd-modal-alterar-perfil/div[2]/form/div/div/br-select/div/div/div[1]/ng-select/div[1]/div/div[3]",
+            "codigo_playwright": "page.locator('xpath=/html/body/modal-container/div[2]/div/lib-fgtsd-modal-alterar-perfil/div[2]/form/div/div/br-select/div/div/div[1]/ng-select/div[1]/div/div[3]')",
+            "confianca": "media",
+            "motivo": "XPath capturado direto da pagina."
+          }
+        ],
+        "alvo": {
+          "metodo": "nearby_text",
+          "valor": "Meu Perfil",
+          "codigo_playwright": "",
+          "confianca": "media",
+          "motivo": "Texto perto do elemento capturado.",
+          "role": "",
+          "seletor_css": ""
+        },
+        "acao": {
+          "tipo": "clicar",
           "origem_valor": "texto_fixo",
           "valor": "",
-          "arquivo": "",
-          "aba": "",
-          "coluna": "",
           "limpar_antes": true,
           "pressionar_depois": "",
           "salvar_em": ""
         },
-        "selector": {
-          "match_count": 1,
-          "quality": "FORTE",
-          "query": {
-            "automation_id": "7996872",
-            "control_type": "ButtonControl"
-          },
-          "strategy": "automation_id_control_type",
-          "warnings": []
-        },
-        "selector_quality": "FORTE",
-        "actionable": true,
-        "editable": false,
-        "clickable": true,
-        "selectable": false,
-        "expandable": false,
-        "readable": false,
-        "visible": true,
-        "enabled": true,
-        "warnings": [],
-        "confidence": "alta",
-        "source_window": {
-          "bounding_rectangle": {
-            "bottom": 1040,
-            "height": 1048,
-            "left": 1912,
-            "right": 3848,
-            "top": -8,
-            "width": 1936
-          },
-          "class_name": "TfrmConsultaISSFatDed",
-          "handle": 265538,
-          "process_id": 1568,
-          "title": "Consulta de movimento de ISS / Faturamento e Deduções"
-        },
-        "source_tab": "Consulta de movimento de ISS / Faturamento e Deduções",
-        "context_signature": "86b03f00e246ad4a",
-        "elemento": {
-          "acao_configurada": {
-            "aba": "",
-            "arquivo": "",
-            "coluna": "",
-            "limpar_antes": true,
-            "origem_valor": "texto_fixo",
-            "pressionar_depois": "",
-            "salvar_em": "",
-            "tipo": "click",
-            "valor": ""
-          },
-          "accelerator_key": "",
-          "access_key": "",
-          "actionable": true,
-          "automation_id": "7996872",
-          "block_type": "button_click",
-          "bounding_rectangle": {
-            "bottom": 259,
-            "height": 24,
-            "left": 3747,
-            "right": 3821,
-            "top": 235,
-            "width": 74
-          },
-          "capabilities": [
-            "InvokePattern",
-            "TogglePattern",
-            "ExpandCollapsePattern"
-          ],
-          "children": [],
-          "class_name": "TcxButton",
-          "clickable": true,
-          "confidence": "alta",
-          "configured_action": "click",
-          "context_signature": "86b03f00e246ad4a",
-          "control_type": "ButtonControl",
-          "depth": 1,
-          "editable": false,
-          "enabled": true,
-          "expandable": false,
-          "field_kind": "botao",
-          "framework_id": "Win32",
-          "handle": 7996872,
-          "help_text": "",
-          "id": "bd91aaa5e78cdffd",
-          "index": 3,
-          "is_enabled": true,
-          "is_offscreen": false,
-          "is_visible": true,
-          "name": "&Filtrar",
-          "parent": "Consulta de movimento de ISS / Faturamento e Deduções",
-          "path": "/WindowControl[0]/ButtonControl[3]",
-          "process_id": 1568,
-          "readable": false,
-          "recommended_action": "click",
-          "selectable": false,
-          "selector": {
-            "match_count": 1,
-            "quality": "FORTE",
-            "query": {
-              "automation_id": "7996872",
-              "control_type": "ButtonControl"
-            },
-            "strategy": "automation_id_control_type",
-            "warnings": []
-          },
-          "selector_quality": "FORTE",
-          "source_tab": "Consulta de movimento de ISS / Faturamento e Deduções",
-          "source_window": {
-            "bounding_rectangle": {
-              "bottom": 1040,
-              "height": 1048,
-              "left": 1912,
-              "right": 3848,
-              "top": -8,
-              "width": 1936
-            },
-            "class_name": "TfrmConsultaISSFatDed",
-            "handle": 265538,
-            "process_id": 1568,
-            "title": "Consulta de movimento de ISS / Faturamento e Deduções"
-          },
-          "visible": true,
-          "warnings": []
-        },
+        "timeout": 10000,
+        "fallback_visual": false,
+        "fallback_imagem": "",
         "ao_sucesso": "continuar",
         "bloco_sucesso": "",
         "sequencia_sucesso": "",
@@ -1126,10 +352,823 @@
         "ao_falhar": "parar",
         "bloco_falha": "",
         "sequencia_falha": "",
-        "atraso_antes_sequencia_falha": 0.0
+        "atraso_antes_sequencia_falha": 0.0,
+        "quantidade_tentativas": 1,
+        "intervalo_tentativas": 0.5
+      }
+    },
+    {
+      "ordem": 7,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "down"
+      ],
+      "texto": "[DOWN]",
+      "intervalo_antes": 0.3,
+      "comando_python": "executar_teclas(['down'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 8,
+      "sequencia": "principal",
+      "tipo": "tecla",
+      "teclas": [
+        "enter"
+      ],
+      "texto": "[ENTER]\n",
+      "intervalo_antes": 0.3,
+      "comando_python": "executar_teclas(['enter'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 9,
+      "sequencia": "principal",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:login-5 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/login-5', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/login-5",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "ir_para_bloco",
+        "bloco_sucesso": 10,
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 10,
+      "sequencia": "pagina_2",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:validaae | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/validaae', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/validaae",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 11,
+      "sequencia": "pagina_2",
+      "tipo": "sequencia_planilha",
+      "teclas": [
+        "planilha:CNPJ"
+      ],
+      "texto": "[PLANILHA:CNPJ x37 | apos:enter]",
+      "intervalo_antes": 0.3,
+      "comando_python": "executar_sequencia([51708970000187, '03943209000187', 23075323000140, 24811622000168, '02781318000182', '08652127000105', '07864058000122', 19502782801, 42723472000112, '03435683000106', '01325653000103', '07233515000180', '04176898000104', 95657754115, 10276992000138, 20024781000161, 35624938000167, 33130776000185, '09071300000136', '06741606149', '04225641000103', 34306882000130, 24786005000150, '01133119158', 52502068000172, 25122243000123, 30244560153, 26306114000158, 34362221000121, 26898163000127, '05566479000141', '07745154000151', 27859973000137, '06885083000120', 37401809000135, 24944681000104, 10539188000102], acao_apos_item=['enter'], intervalo_entre_itens=0.5)",
+      "detalhes": {
+        "arquivo": "planilhas/empresas_CNPJ_Validado.xlsx",
+        "aba": "Sheet1",
+        "coluna": "CNPJ",
+        "valores": [
+          51708970000187,
+          "03943209000187",
+          23075323000140,
+          24811622000168,
+          "02781318000182",
+          "08652127000105",
+          "07864058000122",
+          19502782801,
+          42723472000112,
+          "03435683000106",
+          "01325653000103",
+          "07233515000180",
+          "04176898000104",
+          95657754115,
+          10276992000138,
+          20024781000161,
+          35624938000167,
+          33130776000185,
+          "09071300000136",
+          "06741606149",
+          "04225641000103",
+          34306882000130,
+          24786005000150,
+          "01133119158",
+          52502068000172,
+          25122243000123,
+          30244560153,
+          26306114000158,
+          34362221000121,
+          26898163000127,
+          "05566479000141",
+          "07745154000151",
+          27859973000137,
+          "06885083000120",
+          37401809000135,
+          24944681000104,
+          10539188000102
+        ],
+        "origem": "coluna_inteira",
+        "linhas_selecionadas": [],
+        "acao_apos_item": [
+          "enter"
+        ],
+        "acao_apos_item_texto": "enter",
+        "intervalo_entre_itens": 0.5,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 12,
+      "sequencia": "pagina_2",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Definir | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Definir', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Definir",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "Definir",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 13,
+      "sequencia": "pagina_2",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:gestao-guias | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/gestao-guias', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/gestao-guias",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 14,
+      "sequencia": "pagina_2",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:emissao | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/emissao', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/emissao",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "ir_para_bloco",
+        "bloco_sucesso": 15,
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 15,
+      "sequencia": "pagina_3",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:valida__o-01 | localizar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:ir_para_bloco -> bloco 17]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/valida__o-01', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=17, quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/valida__o-01",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": false,
+        "cliques": 0,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "Não há débitos de interesse",
+        "ao_nao_encontrar": "ir_para_bloco",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.5,
+        "bloco_nao_encontrar": 17,
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 16,
+      "sequencia": "pagina_3",
+      "tipo": "escrever_planilha",
+      "teclas": [
+        "escrever_planilha:Status"
+      ],
+      "texto": "[ESCREVER PLANILHA:Status='Não há débitos de interesse.' | linha atual]",
+      "intervalo_antes": 0.3,
+      "comando_python": "escrever_planilha(aba='Sheet1', coluna='Status', valor='Não há débitos de interesse.', linha='loop_atual')",
+      "detalhes": {
+        "arquivo": "planilhas/empresas_CNPJ_Validado.xlsx",
+        "aba": "Sheet1",
+        "coluna": "Status",
+        "valor": "Não há débitos de interesse.",
+        "modo_linha": "loop_atual",
+        "criar_coluna": true,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 17,
+      "sequencia": "pagina_3",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Valida__o-02 | localizar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:ir_para_bloco -> bloco 19]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Valida__o-02', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='ir_para_bloco', sequencia_nao_encontrar='', bloco_nao_encontrar=19, quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Valida__o-02",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": false,
+        "cliques": 0,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "Atenção! Verifique",
+        "ao_nao_encontrar": "ir_para_bloco",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.5,
+        "bloco_nao_encontrar": 19,
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 18,
+      "sequencia": "pagina_3",
+      "tipo": "escrever_planilha",
+      "teclas": [
+        "escrever_planilha:Status"
+      ],
+      "texto": "[ESCREVER PLANILHA:Status='Verificar parcelas consignad' | linha atual]",
+      "intervalo_antes": 0.3,
+      "comando_python": "escrever_planilha(aba='Sheet1', coluna='Status', valor='Verificar parcelas consignado.', linha='loop_atual')",
+      "detalhes": {
+        "arquivo": "planilhas/empresas_CNPJ_Validado.xlsx",
+        "aba": "Sheet1",
+        "coluna": "Status",
+        "valor": "Verificar parcelas consignado.",
+        "modo_linha": "loop_atual",
+        "criar_coluna": true,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 19,
+      "sequencia": "pagina_3",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:data-alteravel | localizar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:continuar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/data-alteravel', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=False, clicks=0, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='continuar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/data-alteravel",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": false,
+        "cliques": 0,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "06/2026",
+        "ao_nao_encontrar": "continuar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "ir_para_bloco",
+        "bloco_sucesso": 21,
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.5
+      }
+    },
+    {
+      "ordem": 20,
+      "sequencia": "pagina_3",
+      "tipo": "escrever_planilha",
+      "teclas": [
+        "escrever_planilha:Status"
+      ],
+      "texto": "[ESCREVER PLANILHA:Status='Não possui guia na data refe' | linha atual]",
+      "intervalo_antes": 0.3,
+      "comando_python": "escrever_planilha(aba='Sheet1', coluna='Status', valor='Não possui guia na data referente.', linha='loop_atual')",
+      "detalhes": {
+        "arquivo": "planilhas/empresas_CNPJ_Validado.xlsx",
+        "aba": "Sheet1",
+        "coluna": "Status",
+        "valor": "Não possui guia na data referente.",
+        "modo_linha": "loop_atual",
+        "criar_coluna": true,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 21,
+      "sequencia": "pagina_3",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:pesquisar | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/pesquisar', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/pesquisar",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "Pesquisar",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 22,
+      "sequencia": "pagina_3",
+      "tipo": "tecla",
+      "teclas": [
+        "tab"
+      ],
+      "texto": "[TAB x2]",
+      "intervalo_antes": 0.3,
+      "comando_python": "executar_teclas(['tab'], repeticoes=2)",
+      "detalhes": {
+        "repeticoes": 2,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 23,
+      "sequencia": "pagina_3",
+      "tipo": "tecla",
+      "teclas": [
+        "enter"
+      ],
+      "texto": "[ENTER]\n",
+      "intervalo_antes": 0.3,
+      "comando_python": "executar_teclas(['enter'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 24,
+      "sequencia": "pagina_3",
+      "tipo": "escrever_planilha",
+      "teclas": [
+        "escrever_planilha:Status"
+      ],
+      "texto": "[ESCREVER PLANILHA:Status='OK' | linha atual]",
+      "intervalo_antes": 0.3,
+      "comando_python": "escrever_planilha(aba='Sheet1', coluna='Status', valor='OK', linha='loop_atual')",
+      "detalhes": {
+        "arquivo": "planilhas/empresas_CNPJ_Validado.xlsx",
+        "aba": "Sheet1",
+        "coluna": "Status",
+        "valor": "OK",
+        "modo_linha": "loop_atual",
+        "criar_coluna": true,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 25,
+      "sequencia": "pagina_3",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:downloads | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/downloads', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/downloads",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 26,
+      "sequencia": "pagina_3",
+      "tipo": "tecla",
+      "teclas": [
+        "up"
+      ],
+      "texto": "[UP x12]",
+      "intervalo_antes": 0.3,
+      "comando_python": "executar_teclas(['up'], repeticoes=12)",
+      "detalhes": {
+        "repeticoes": 12,
+        "ao_sucesso": "ir_para_bloco",
+        "bloco_sucesso": 26,
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 27,
+      "sequencia": "pagina_4",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Sair | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Sair', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Sair",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 28,
+      "sequencia": "pagina_4",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:Trocar | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/Trocar', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/Trocar",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "Trocar Perfil",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 29,
+      "sequencia": "pagina_4",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:abrir | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/abrir', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/abrir",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 30,
+      "sequencia": "pagina_4",
+      "tipo": "clicar_imagem",
+      "teclas": [
+        "imagem"
+      ],
+      "texto": "[IMAGEM:selecionar | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "intervalo_antes": 0.3,
+      "comando_python": "clicar_por_imagem(imagem='imagens/selecionar', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "detalhes": {
+        "imagem": "imagens/selecionar",
+        "timeout": 10.0,
+        "confianca": 0.8,
+        "perfil_busca": "balanced",
+        "modo_area_busca": "target_window",
+        "area_busca_x": 0,
+        "area_busca_y": 0,
+        "area_busca_largura": 0,
+        "area_busca_altura": 0,
+        "clicar": true,
+        "cliques": 1,
+        "offset_x": 0,
+        "offset_y": 0,
+        "janela_alvo": "",
+        "texto_ocr_esperado": "Procurador",
+        "ao_nao_encontrar": "parar",
+        "sequencia_nao_encontrar": "",
+        "atraso_antes_sequencia_nao_encontrar": 0.0,
+        "bloco_nao_encontrar": "",
+        "quantidade_tentativas": 3,
+        "intervalo_tentativas": 1.0,
+        "ao_sucesso": "continuar",
+        "bloco_sucesso": "",
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
+      }
+    },
+    {
+      "ordem": 31,
+      "sequencia": "pagina_4",
+      "tipo": "tecla",
+      "teclas": [
+        "tab"
+      ],
+      "texto": "[TAB]",
+      "intervalo_antes": 0.3,
+      "comando_python": "executar_teclas(['tab'], repeticoes=1)",
+      "detalhes": {
+        "repeticoes": 1,
+        "ao_sucesso": "ir_para_bloco",
+        "bloco_sucesso": 10,
+        "sequencia_sucesso": "",
+        "atraso_antes_sequencia_sucesso": 0.0
       }
     }
   ],
   "sequencia_inicial": "principal",
-  "configuracoes_sequencia": {}
+  "configuracoes_sequencia": {
+    "pagina_2": {
+      "modo_execucao": "loop_planilha",
+      "sequencia_apos_loop": ""
+    },
+    "pagina_3": {
+      "modo_execucao": "loop_planilha",
+      "sequencia_apos_loop": ""
+    },
+    "pagina_4": {
+      "modo_execucao": "loop_planilha",
+      "sequencia_apos_loop": ""
+    }
+  }
 }

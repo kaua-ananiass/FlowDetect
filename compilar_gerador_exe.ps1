@@ -258,6 +258,8 @@ foreach ($item in $itemsToCopy) {
     Copy-PathIfExists -Source $source -Destination $packageDir
 }
 
+Copy-PathIfExists -Source (Join-Path $root "hyperv_setup") -Destination $packageDir
+
 Copy-PathIfExists -Source (Join-Path $runtimeSeedDir "mapeamento_teclado.json") -Destination $packageDir
 Copy-PathIfExists -Source (Join-Path $runtimeSeedDir "resumo_teclado.txt") -Destination $packageDir
 Copy-PathIfExists -Source $runtimeSeedAutomationsDir -Destination $packageDir

@@ -388,24 +388,125 @@ fn create_hyperv_base_vm(vm_name: String, iso_path: String, memory_mb: Option<u6
 }
 
 #[tauri::command]
-fn clone_hyperv_vm(base_vm_name: String, vm_name: String) -> Result<Value, String> {
+fn clone_hyperv_vm(base_vm_name: String, vm_name: String, storage_path: Option<String>) -> Result<Value, String> {
     let base=base_vm_name.trim(); let name=vm_name.trim(); if base.is_empty() || name.is_empty() { return Err("Informe a VM-base e o nome da nova VM.".to_string()); }
-    let script=format!(r#"$baseName={base}; $name={name}; $base=Get-VM -Name $baseName; if ($base.State -ne 'Off') {{ throw 'Desligue a VM-base antes de clonar.' }}; if (Get-VM -Name $name -ErrorAction SilentlyContinue) {{ throw 'Ja existe uma VM com esse nome.' }}; $source=(Get-VMHardDiskDrive -VM $base | Select-Object -First 1).Path; if (-not $source) {{ throw 'A VM-base nao possui disco virtual.' }}; $root=Join-Path $env:ProgramData 'FlowDetect\HyperV'; $vmPath=Join-Path $root $name; New-Item -ItemType Directory -Path $vmPath -Force | Out-Null; $target=Join-Path $vmPath ($name+'.vhdx'); Copy-Item -LiteralPath $source -Destination $target; $adapter=Get-VMNetworkAdapter -VM $base | Select-Object -First 1; $vm=New-VM -Name $name -Generation $base.Generation -MemoryStartupBytes $base.MemoryStartup -VHDPath $target -Path $vmPath -SwitchName $adapter.SwitchName; Set-VMProcessor -VM $vm -Count $base.ProcessorCount; Set-VM -VM $vm -AutomaticStartAction Nothing -AutomaticStopAction ShutDown; Set-VMFirmware -VM $vm -EnableSecureBoot On -SecureBootTemplate MicrosoftWindows; [pscustomobject]@{{ok=$true;name=$vm.Name;base=$baseName;path=$vm.Path}} | ConvertTo-Json -Compress"#, base=powershell_literal(base), name=powershell_literal(name)); hyperv_json(&script)
+    let storage = storage_path.unwrap_or_default();
+    let storage = storage.trim();
+    let script=format!(r#"
+$baseName={base};
+$name={name};
+$customRoot={storage};
+$base=Get-VM -Name $baseName;
+if ($base.State -ne 'Off') {{ throw 'Desligue a VM-base antes de clonar.' }}
+if (Get-VM -Name $name -ErrorAction SilentlyContinue) {{ throw 'Ja existe uma VM com esse nome.' }}
+if ($name -match '[\\/:*?"<>|]') {{ throw 'O nome da VM nao pode conter barras ou caracteres invalidos para pasta.' }}
+$source=(Get-VMHardDiskDrive -VM $base | Select-Object -First 1).Path;
+if (-not $source) {{ throw 'A VM-base nao possui disco virtual.' }}
+if (-not (Test-Path -LiteralPath $source)) {{ throw 'O disco virtual da VM-base nao foi encontrado.' }}
+$root=$(if ([string]::IsNullOrWhiteSpace($customRoot)) {{ Join-Path $env:ProgramData 'FlowDetect\HyperV' }} else {{ $customRoot }});
+$root=[System.IO.Path]::GetFullPath($root);
+$vmPath=Join-Path $root $name;
+$resolvedRoot=[System.IO.Path]::GetFullPath($root);
+$resolvedVmPath=[System.IO.Path]::GetFullPath($vmPath);
+if (-not $resolvedVmPath.StartsWith($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {{ throw 'Caminho da nova VM invalido.' }}
+New-Item -ItemType Directory -Path $resolvedRoot -Force | Out-Null;
+if (Test-Path -LiteralPath $vmPath) {{
+  Remove-Item -LiteralPath $vmPath -Recurse -Force -ErrorAction Stop;
+}}
+New-Item -ItemType Directory -Path $vmPath -Force | Out-Null;
+$target=Join-Path $vmPath ($name+'.vhdx');
+$targetRoot=[System.IO.Path]::GetPathRoot($target);
+$drive=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID = '" + $targetRoot.TrimEnd('\') + "'");
+if (-not $drive) {{ throw 'Nao foi possivel verificar o espaco livre no disco de destino.' }}
+$requiredBytes=[int64](2147483648);
+if ([int64]$drive.FreeSpace -lt $requiredBytes) {{
+  $requiredGb=[math]::Round($requiredBytes / 1GB, 2);
+  $freeGb=[math]::Round(([int64]$drive.FreeSpace) / 1GB, 2);
+  throw "Espaco insuficiente para criar o clone rapido. Livre em ${{targetRoot}}: $freeGb GB. Necessario aproximado: $requiredGb GB. Escolha outro destino ou libere espaco."
+}}
+try {{
+  New-VHD -Path $target -ParentPath $source -Differencing -ErrorAction Stop | Out-Null;
+  $adapter=Get-VMNetworkAdapter -VM $base | Select-Object -First 1;
+  if (-not $adapter) {{ throw 'A VM-base nao possui adaptador de rede.' }}
+  $vm=New-VM -Name $name -Generation $base.Generation -MemoryStartupBytes $base.MemoryStartup -VHDPath $target -Path $vmPath -SwitchName $adapter.SwitchName;
+  Set-VMProcessor -VM $vm -Count $base.ProcessorCount;
+  Set-VMMemory -VM $vm -DynamicMemoryEnabled $true -MinimumBytes 2048MB -StartupBytes $base.MemoryStartup -MaximumBytes ([Math]::Max($base.MemoryStartup, 4096MB));
+  Set-VM -VM $vm -AutomaticStartAction Nothing -AutomaticStopAction ShutDown -EnhancedSessionTransportType VMBus;
+  Set-VMFirmware -VM $vm -EnableSecureBoot On -SecureBootTemplate MicrosoftWindows;
+  [pscustomobject]@{{ok=$true;name=$vm.Name;base=$baseName;path=$vm.Path;vhd=$target;parentVhd=$source;cloneMode='differencing'}} | ConvertTo-Json -Compress
+}} catch {{
+  $createdVm=Get-VM -Name $name -ErrorAction SilentlyContinue;
+  if ($createdVm) {{ Remove-VM -VM $createdVm -Force -ErrorAction SilentlyContinue }}
+  if (Test-Path -LiteralPath $vmPath) {{ Remove-Item -LiteralPath $vmPath -Recurse -Force -ErrorAction SilentlyContinue }}
+  $message=$_.Exception.Message;
+  if ($message -match 'insuficiente|not enough space|There is not enough space') {{
+    $freeGb=[math]::Round(([int64]$drive.FreeSpace) / 1GB, 2);
+    throw "Espaco insuficiente para criar o clone rapido. Livre em ${{targetRoot}}: $freeGb GB. Escolha outro destino ou libere espaco."
+  }}
+  throw $message
+}}
+"#, base=powershell_literal(base), name=powershell_literal(name), storage=powershell_literal(storage)); hyperv_json(&script)
 }
 
 #[tauri::command]
 fn start_hyperv_vm(vm_name: String) -> Result<Value, String> {
-    let name=vm_name.trim(); if name.is_empty() { return Err("Informe o nome da VM do Hyper-V.".to_string()); }
-    hyperv_json(&format!("$vm=Get-VM -Name {}; Set-VMHost -EnableEnhancedSessionMode $true; Get-VMIntegrationService -VM $vm | Where-Object {{ $_.Name -match 'Guest|Convidado' }} | Enable-VMIntegrationService; if ($vm.State -eq 'Off') {{ Set-VM -VM $vm -EnhancedSessionTransportType VMBus; Start-VM -VM $vm | Out-Null }} elseif ($vm.EnhancedSessionTransportType -ne 'VMBus') {{ throw 'Desligue completamente a VM uma vez para ativar a sessao aprimorada VMBus.' }}; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();enhancedSessionTransport=(Get-VM -Name $vm.Name).EnhancedSessionTransportType.ToString();guestServiceEnabled=$true}} | ConvertTo-Json -Compress", powershell_literal(name)))
-}
-
-#[tauri::command]
-fn stop_hyperv_vm(vm_name: String) -> Result<Value, String> {
     let name = vm_name.trim();
     if name.is_empty() {
         return Err("Informe o nome da VM do Hyper-V.".to_string());
     }
-    hyperv_json(&format!(r#"$vm=Get-VM -Name {}; if ($vm.State -eq 'Off') {{ [pscustomobject]@{{ok=$true;name=$vm.Name;state='Off';requiresForce=$false}} | ConvertTo-Json -Compress; return }}; $job=Stop-VM -VM $vm -AsJob; $finished=Wait-Job -Job $job -Timeout 25; if (-not $finished) {{ Stop-Job -Job $job -ErrorAction SilentlyContinue; Remove-Job -Job $job -Force -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$false;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();requiresForce=$true;message='O Windows da VM nao respondeu ao desligamento normal.'}} | ConvertTo-Json -Compress; return }}; Receive-Job -Job $job -ErrorAction SilentlyContinue | Out-Null; Remove-Job -Job $job -Force -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();requiresForce=$false}} | ConvertTo-Json -Compress"#, powershell_literal(name)))
+    hyperv_json(&format!(r#"
+$vm=Get-VM -Name {name};
+Set-VMHost -EnableEnhancedSessionMode $true;
+Get-VMIntegrationService -VM $vm | Where-Object {{ $_.Name -match 'Guest|Convidado' }} | Enable-VMIntegrationService -ErrorAction SilentlyContinue;
+Set-VM -VM $vm -EnhancedSessionTransportType VMBus -ErrorAction SilentlyContinue;
+if ($vm.State -eq 'Off') {{
+  $targetDisks=@(Get-VMHardDiskDrive -VM $vm | ForEach-Object {{ $_.Path }} | Where-Object {{ $_ }});
+  $targetKeys=@($targetDisks | ForEach-Object {{
+    try {{ [System.IO.Path]::GetFullPath($_).ToLowerInvariant() }} catch {{ $_.ToString().ToLowerInvariant() }}
+  }});
+  $blockers=@();
+  foreach ($other in @(Get-VM | Where-Object {{ $_.Name -ne $vm.Name -and $_.State -ne 'Off' }})) {{
+    $blocked=$false;
+    foreach ($drive in @(Get-VMHardDiskDrive -VM $other -ErrorAction SilentlyContinue)) {{
+      $path=$drive.Path;
+      $visited=@{{}};
+      while ($path) {{
+        $key=$(try {{ [System.IO.Path]::GetFullPath($path).ToLowerInvariant() }} catch {{ $path.ToString().ToLowerInvariant() }});
+        if ($visited.ContainsKey($key)) {{ break }}
+        $visited[$key]=$true;
+        try {{ $vhd=Get-VHD -Path $path -ErrorAction Stop }} catch {{ break }}
+        $parent=$vhd.ParentPath;
+        if (-not $parent) {{ break }}
+        $parentKey=$(try {{ [System.IO.Path]::GetFullPath($parent).ToLowerInvariant() }} catch {{ $parent.ToString().ToLowerInvariant() }});
+        if ($targetKeys -contains $parentKey) {{
+          $blockers += $other.Name;
+          $blocked=$true;
+          break;
+        }}
+        $path=$parent;
+      }}
+      if ($blocked) {{ break }}
+    }}
+  }}
+  $blockers=@($blockers | Select-Object -Unique);
+  if ($blockers.Count -gt 0) {{
+    throw ('A VM "' + $vm.Name + '" e base de clone rapido em execucao: ' + ($blockers -join ', ') + '. Desligue esses clones antes de abrir a VM-base para evitar conflito/corrupcao do disco.')
+  }}
+  Start-VM -VM $vm | Out-Null;
+}}
+$fresh=Get-VM -Name $vm.Name;
+[pscustomobject]@{{ok=$true;name=$fresh.Name;state=$fresh.State.ToString();enhancedSessionTransport=$fresh.EnhancedSessionTransportType.ToString();guestServiceEnabled=$true}} | ConvertTo-Json -Compress
+"#, name=powershell_literal(name)))
+}
+
+#[tauri::command]
+fn stop_hyperv_vm(vm_name: String, timeout_seconds: Option<u64>) -> Result<Value, String> {
+    let name = vm_name.trim();
+    if name.is_empty() {
+        return Err("Informe o nome da VM do Hyper-V.".to_string());
+    }
+    let timeout = timeout_seconds.unwrap_or(25).clamp(3, 120);
+    hyperv_json(&format!(r#"$vm=Get-VM -Name {}; if ($vm.State -eq 'Off') {{ [pscustomobject]@{{ok=$true;name=$vm.Name;state='Off';requiresForce=$false}} | ConvertTo-Json -Compress; return }}; $job=Stop-VM -VM $vm -AsJob; $finished=Wait-Job -Job $job -Timeout {}; if (-not $finished) {{ Stop-Job -Job $job -ErrorAction SilentlyContinue; Remove-Job -Job $job -Force -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$false;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();requiresForce=$true;message='O Windows da VM nao respondeu ao desligamento normal.'}} | ConvertTo-Json -Compress; return }}; Receive-Job -Job $job -ErrorAction SilentlyContinue | Out-Null; Remove-Job -Job $job -Force -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();requiresForce=$false}} | ConvertTo-Json -Compress"#, powershell_literal(name), timeout))
 }
 
 #[tauri::command]
@@ -415,6 +516,15 @@ fn turn_off_hyperv_vm(vm_name: String) -> Result<Value, String> {
         return Err("Informe o nome da VM do Hyper-V.".to_string());
     }
     hyperv_json(&format!("$vm=Get-VM -Name {}; if ($vm.State -ne 'Off') {{ Stop-VM -VM $vm -TurnOff -Force }}; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();forced=$true}} | ConvertTo-Json -Compress", powershell_literal(name)))
+}
+
+#[tauri::command]
+fn kill_hyperv_vm_process(vm_name: String) -> Result<Value, String> {
+    let name = vm_name.trim();
+    if name.is_empty() {
+        return Err("Informe o nome da VM do Hyper-V.".to_string());
+    }
+    hyperv_json(&format!(r#"$vm=Get-VM -Name {name}; $vmName=$vm.Name; $vmId=$vm.Id.Guid.ToString(); if ($vm.State -eq 'Off') {{ [pscustomobject]@{{ok=$true;name=$vmName;state='Off';forced=$true;method='vmwp';killed=0;workerIds=@()}} | ConvertTo-Json -Compress; return }}; $workers=@(Get-CimInstance Win32_Process -Filter "Name = 'vmwp.exe'" | Where-Object {{ $_.CommandLine -and ($_.CommandLine -like ('*'+$vmId+'*')) }}); $workerIds=@($workers | ForEach-Object {{ [int]$_.ProcessId }}); foreach ($workerProcessId in $workerIds) {{ Stop-Process -Id $workerProcessId -Force -ErrorAction SilentlyContinue }}; $deadline=(Get-Date).AddSeconds(5); do {{ Start-Sleep -Milliseconds 250; $vm=Get-VM -Name $vmName -ErrorAction SilentlyContinue; $alive=@(Get-CimInstance Win32_Process -Filter "Name = 'vmwp.exe'" | Where-Object {{ $_.CommandLine -and ($_.CommandLine -like ('*'+$vmId+'*')) }}).Count }} while ($vm -and $alive -gt 0 -and (Get-Date) -lt $deadline); $state=$(if ($vm) {{ $vm.State.ToString() }} else {{ 'Unknown' }}); [pscustomobject]@{{ok=$true;name=$vmName;state=$state;forced=$true;method='vmwp';killed=$workerIds.Count;workerIds=$workerIds;workerStillAlive=$alive}} | ConvertTo-Json -Compress"#, name=powershell_literal(name)))
 }
 
 #[tauri::command]
@@ -429,13 +539,20 @@ fn probe_native_hyperv_rdp() -> Result<Value, String> { native_rdp::probe() }
 #[tauri::command]
 async fn open_native_hyperv_rdp(app: AppHandle, vm_name: String, x: i32, y: i32, width: i32, height: i32) -> Result<Value, String> {
     let vm_name = vm_name.trim().to_string();
-    run_hyperv_powershell(&format!("$vm=Get-VM -Name {}; Set-VMHost -EnableEnhancedSessionMode $true; if($vm.State -ne 'Off' -and $vm.EnhancedSessionTransportType -ne 'VMBus'){{ throw 'A VM precisa ser desligada completamente uma vez para ativar a sessao aprimorada VMBus.' }}; if($vm.State -eq 'Off'){{ Set-VM -VM $vm -EnhancedSessionTransportType VMBus }}", powershell_literal(&vm_name)))?;
+    run_hyperv_powershell(&format!("$vm=Get-VM -Name {}; Set-VMHost -EnableEnhancedSessionMode $true; Set-VM -VM $vm -EnhancedSessionTransportType VMBus -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$true;name=$vm.Name;state=$vm.State.ToString();enhancedSessionTransport=(Get-VM -Name $vm.Name).EnhancedSessionTransportType.ToString()}} | ConvertTo-Json -Compress", powershell_literal(&vm_name)))?;
     let connection = get_hyperv_vm_connection(vm_name.clone())?;
     let vm_id = connection.get("uuid").and_then(Value::as_str).ok_or_else(|| "O Hyper-V nao informou o GUID da VM.".to_string())?.to_string();
     let owner = app.get_webview_window("main").ok_or_else(|| "Janela principal indisponivel.".to_string())?;
     let hwnd = owner.hwnd().map_err(|error| error.to_string())?;
     let owner_hwnd = hwnd.0 as isize;
-    tauri::async_runtime::spawn_blocking(move || native_rdp::open(owner_hwnd, &vm_id, &vm_name, x, y, width, height))
+    // Janelas Win32 pertencem a thread que as criou. Mantenha o painel host
+    // na thread principal do Studio para ele continuar valido apos o comando.
+    let (host_tx, host_rx) = std::sync::mpsc::sync_channel(1);
+    app.run_on_main_thread(move || {
+        let _ = host_tx.send(native_rdp::create_host(owner_hwnd, x, y, width, height));
+    }).map_err(|error| format!("Nao foi possivel preparar o painel da VM: {error}"))?;
+    let native_host = host_rx.recv().map_err(|_| "A thread principal nao criou o painel da VM.".to_string())??;
+    tauri::async_runtime::spawn_blocking(move || native_rdp::open(owner_hwnd, native_host, &vm_id, &vm_name, x, y, width, height))
         .await
         .map_err(|error| format!("A thread nativa do RDP falhou: {error}"))?
 }
@@ -1307,6 +1424,44 @@ fn export_saved_automation_zip(
         }
     }
     run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn remote_agent_send_saved_automation(app: AppHandle, address: String, id: String) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let transfer_dir = std::env::temp_dir().join("FlowDetect").join("agent-transfers");
+    fs::create_dir_all(&transfer_dir)
+        .map_err(|err| format!("Falha ao preparar transferencia da automacao: {err}"))?;
+    let requested_path = transfer_dir.join(format!("automation-{stamp}.zip"));
+    let export_result = run_helper_json(
+        &root,
+        &[
+            "automation-export-zip".into(),
+            "--id".into(),
+            id,
+            "--destino".into(),
+            requested_path.to_string_lossy().to_string(),
+        ],
+    )?;
+    let zip_path = export_result
+        .get("zip_path")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .unwrap_or(requested_path);
+    let bytes = fs::read(&zip_path)
+        .map_err(|err| format!("Falha ao ler a automacao exportada: {err}"))?;
+    let file_name = zip_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("flowdetect-automation.zip")
+        .to_string();
+    let result = remote_agent_import_automation_zip(address, file_name, bytes);
+    let _ = fs::remove_file(&zip_path);
+    result
 }
 
 #[tauri::command]
@@ -7440,6 +7595,7 @@ pub fn run() {
             start_hyperv_vm,
             stop_hyperv_vm,
             turn_off_hyperv_vm,
+            kill_hyperv_vm_process,
             get_hyperv_vm_connection,
             probe_native_hyperv_rdp,
             open_native_hyperv_rdp,
@@ -7570,6 +7726,7 @@ pub fn run() {
             remote_agent_execute,
             remote_agent_stop,
             remote_agent_import_automation_zip,
+            remote_agent_send_saved_automation,
             remote_agent_get_recognition_preview,
             remote_agent_delete_automation,
             export_automation_bundle,
