@@ -6,7 +6,7 @@ $tauriDir = Join-Path $root "tauri_gerador"
 $outputRoot = Join-Path $root "saida_exe"
 $packageDir = Join-Path $outputRoot "FlowDetect_Portatil"
 $installerDir = Join-Path $outputRoot "FlowDetect_Instalador"
-$targetRelease = Join-Path $tauriDir "src-tauri\target\release"
+$targetRelease = Join-Path $tauriDir "target\release"
 $bundleDir = Join-Path $targetRelease "bundle"
 $installerSupportDir = Join-Path $tauriDir "src-tauri\installer_support"
 $runtimeSeedDir = Join-Path $installerSupportDir "runtime_seed"
@@ -16,6 +16,8 @@ $pythonVersion = "3.12.10"
 $pythonInstallerName = "python-installer.exe"
 $pythonInstallerPath = Join-Path $installerSupportDir $pythonInstallerName
 $pythonInstallerUrl = "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-amd64.exe"
+$buildPythonDir = Join-Path $installerSupportDir "build_python_$pythonVersion"
+$buildPythonExe = Join-Path $buildPythonDir "python.exe"
 $npmCmd = "C:\Program Files\nodejs\npm.cmd"
 
 function Copy-PathIfExists {
@@ -89,6 +91,45 @@ function Invoke-AvailablePython {
     throw "Nao encontrei um Python compativel para preparar as dependencias offline do instalador."
 }
 
+function Ensure-BuildPython {
+    if (Test-Path $buildPythonExe) {
+        & $buildPythonExe --version *> $null
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+    }
+
+    if (Test-Path $buildPythonDir) {
+        Remove-Item $buildPythonDir -Recurse -Force
+    }
+
+    if (-not (Test-Path $pythonInstallerPath)) {
+        throw "Instalador do Python nao encontrado em '$pythonInstallerPath'."
+    }
+
+    Write-Host "Instalando Python $pythonVersion temporario para gerar wheels compativeis..." -ForegroundColor DarkCyan
+    & $pythonInstallerPath /quiet InstallAllUsers=0 TargetDir="$buildPythonDir" AssociateFiles=0 PrependPath=0 AppendPath=0 Shortcuts=0 Include_doc=0 Include_test=0 Include_tools=0 Include_launcher=0 InstallLauncherAllUsers=0 Include_pip=1 Include_tcltk=1 | Out-Host
+    if (-not (Test-Path $buildPythonExe)) {
+        throw "Nao foi possivel preparar o Python temporario em '$buildPythonDir'."
+    }
+}
+
+function Invoke-BuildPython {
+    param(
+        [string[]]$Arguments,
+        [string]$WorkingDirectory = $root
+    )
+
+    Ensure-BuildPython
+    Push-Location $WorkingDirectory
+    try {
+        & $buildPythonExe @Arguments 2>&1 | Out-Host
+        return $LASTEXITCODE
+    } finally {
+        Pop-Location
+    }
+}
+
 if (-not (Test-Path $npmCmd)) {
     throw "Nao encontrei o npm em '$npmCmd'. Instale o Node.js ou ajuste o caminho no script."
 }
@@ -147,7 +188,7 @@ if (Test-Path $pythonWheelDir) {
 Ensure-Directory $pythonWheelDir
 
 $requirementsPath = Join-Path $root "requirements.txt"
-$downloadExit = Invoke-AvailablePython -Arguments @(
+$downloadExit = Invoke-BuildPython -Arguments @(
     "-m",
     "pip",
     "download",
@@ -161,7 +202,7 @@ if ($downloadExit -ne 0) {
     throw "Falha ao baixar as wheels Python para o pacote offline do instalador."
 }
 
-$packagingToolsExit = Invoke-AvailablePython -Arguments @(
+$packagingToolsExit = Invoke-BuildPython -Arguments @(
     "-m",
     "pip",
     "download",
@@ -192,11 +233,14 @@ if ($sourceDistributions.Count -gt 0) {
         "--disable-pip-version-check"
     )
     $wheelBuildArguments += $sourceDistributions.FullName
-    $wheelBuildExit = Invoke-AvailablePython -Arguments $wheelBuildArguments
+    $wheelBuildArguments = $wheelBuildArguments | Where-Object { $_ -ne "--no-build-isolation" }
+    $wheelBuildExit = Invoke-BuildPython -Arguments $wheelBuildArguments
 
     if ($wheelBuildExit -ne 0) {
         throw "Falha ao converter dependencias Python offline em wheels instalaveis."
     }
+
+    Remove-Item $sourceDistributions.FullName -Force
 }
 
 Write-Host "Compilando o Gerador em modo release..." -ForegroundColor Cyan
@@ -257,6 +301,8 @@ foreach ($item in $itemsToCopy) {
     $source = Join-Path $root $item
     Copy-PathIfExists -Source $source -Destination $packageDir
 }
+
+Copy-PathIfExists -Source (Join-Path $root "hyperv_setup") -Destination $packageDir
 
 Copy-PathIfExists -Source (Join-Path $runtimeSeedDir "mapeamento_teclado.json") -Destination $packageDir
 Copy-PathIfExists -Source (Join-Path $runtimeSeedDir "resumo_teclado.txt") -Destination $packageDir
@@ -357,3 +403,7 @@ Write-Host ""
 Write-Host "Compilacao concluida com sucesso." -ForegroundColor Green
 Write-Host "Pasta final:" -ForegroundColor Green
 Write-Host $packageDir -ForegroundColor Yellow
+
+if (Test-Path $buildPythonDir) {
+    Remove-Item $buildPythonDir -Recurse -Force
+}

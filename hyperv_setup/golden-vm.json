@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "imageId": "flowdetect-agent-base",
+  "version": "1.0.0",
+  "vmName": "BASE - VM",
+  "archiveName": "FlowDetect-VM-Base-1.0.0.zip",
+  "downloadUrl": "",
+  "sha256": "",
+  "minimumFreeSpaceGB": 80,
+  "description": "Golden image do Windows com o FlowDetect Agent e os aplicativos-base."
+}

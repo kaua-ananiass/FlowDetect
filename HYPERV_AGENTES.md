@@ -11,6 +11,18 @@ O Studio agora usa somente o Hyper-V para criar e controlar as maquinas dos Agen
 5. Configure o Agent para iniciar com o Windows e execute o Sysprep antes de transformar essa maquina em modelo.
 6. Desligue completamente a VM-base. Nao deixe em estado salvo.
 
+## Instalacao em outro computador
+
+O pacote distribuivel usa uma golden image versionada da `BASE - VM`. O setup
+do Studio abre o assistente `hyperv_setup\Preparar-FlowDetectHyperV.ps1`, que
+habilita o Hyper-V, configura as permissoes e importa uma copia independente da
+VM com GUID e VHDX novos.
+
+Para publicar uma nova base, execute o Sysprep dentro da VM e use, como
+administrador, `hyperv_setup\Exportar-FlowDetectGoldenVM.ps1`. O ZIP da VM deve
+ser publicado separadamente do instalador do Studio. Consulte
+`hyperv_setup\README.md` para o fluxo completo e o manifesto de versao.
+
 ## Criar um Agent
 
 Em **Adicionar agente**, informe um novo nome de VM e escolha a VM-base no campo de clonagem. O Studio copia o VHDX, cria uma VM independente, inicia o Windows, descobre o IP pelo Hyper-V e tenta conectar na porta `18452`.

@@ -1,9 +1,10 @@
 use serde_json::Value;
-use std::{ffi::{c_void, CString}, fs, mem, ptr, process::Command, sync::Mutex, thread, time::Duration};
+use std::{collections::HashMap, ffi::{c_void, CString}, fs, mem, ptr, process::Command, sync::{LazyLock, Mutex}, thread, time::Duration};
 use windows::{
     core::{BSTR, Interface, PCSTR, PCWSTR, PWSTR, VARIANT},
     Win32::{
         Foundation::{BOOL, HWND, LPARAM, WPARAM},
+        Graphics::Gdi::{RedrawWindow, RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW},
         Security::Credentials::{CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_DOMAIN_PASSWORD, CRED_TYPE_GENERIC},
         System::{
             Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, DISPATCH_METHOD, DISPATCH_PROPERTYGET, DISPATCH_PROPERTYPUT, DISPPARAMS, IDispatch},
@@ -11,7 +12,7 @@ use windows::{
         },
         UI::{
             Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, VK_RETURN},
-            WindowsAndMessaging::{CreateWindowExW, DestroyWindow, DispatchMessageW, EnumChildWindows, EnumWindows, GetClassNameW, GetMessageW, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsWindow, IsWindowVisible, PostMessageW, SendMessageW, SetForegroundWindow, SetParent, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, BM_CLICK, GWL_STYLE, MSG, SW_HIDE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_SHOWWINDOW, WINDOW_EX_STYLE, WM_CLOSE, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, WS_VISIBLE},
+            WindowsAndMessaging::{CreateWindowExW, DestroyWindow, DispatchMessageW, EnumChildWindows, EnumWindows, GetClassNameW, GetMessageW, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsWindow, IsWindowVisible, PostMessageW, SendMessageW, SetForegroundWindow, SetParent, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, BM_CLICK, GWL_STYLE, MSG, SW_HIDE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_SHOWWINDOW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, WS_VISIBLE},
         },
     },
 };
@@ -52,8 +53,10 @@ impl IMsTscNonScriptable {
 }
 
 #[derive(Default)]
-struct NativeRdpState { hwnd: isize, parent: isize, vm_id: String, version: String }
-static STATE: Mutex<NativeRdpState> = Mutex::new(NativeRdpState { hwnd: 0, parent: 0, vm_id: String::new(), version: String::new() });
+struct NativeRdpSession { hwnd: isize, parent: isize, surface_width: i32, surface_height: i32, version: String }
+#[derive(Default)]
+struct NativeRdpState { active_vm_id: String, sessions: HashMap<String, NativeRdpSession> }
+static STATE: LazyLock<Mutex<NativeRdpState>> = LazyLock::new(|| Mutex::new(NativeRdpState::default()));
 
 struct ProcessWindowSearch { process_id: u32, hwnd: isize, dialog: isize }
 struct ClassWindowSearch { class_name: &'static str, hwnd: isize }
@@ -112,7 +115,7 @@ fn webview_host(owner: isize) -> isize {
     if search.hwnd != 0 { search.hwnd } else { owner }
 }
 
-fn has_visible_remote_surface(hwnd: HWND) -> bool {
+fn remote_surface(hwnd: HWND) -> isize {
     let mut search = ClassWindowSearch { class_name: "OPWindowClass", hwnd: 0 };
     unsafe {
         let _ = EnumChildWindows(
@@ -120,7 +123,7 @@ fn has_visible_remote_surface(hwnd: HWND) -> bool {
             Some(find_class_window),
             LPARAM((&mut search as *mut ClassWindowSearch) as isize),
         );
-        search.hwnd != 0 && IsWindowVisible(HWND(search.hwnd as *mut c_void)).as_bool()
+        search.hwnd
     }
 }
 
@@ -147,6 +150,12 @@ unsafe fn dock_native_window(hwnd: HWND, parent: HWND, x: i32, y: i32, width: i3
     SetWindowPos(hwnd, None, x, y, width.max(320), height.max(240), SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW)
         .map_err(|error| format!("Falha ao dimensionar a tela nativa: {error}"))?;
     let _ = ShowWindow(hwnd, SW_SHOW);
+    let _ = RedrawWindow(
+        hwnd,
+        None,
+        None,
+        RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
+    );
     Ok(())
 }
 
@@ -161,7 +170,9 @@ fn window_text(hwnd: HWND, class_name: bool) -> String {
 
 unsafe extern "system" fn accept_local_rdp_warning(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let accepted = &mut *(lparam.0 as *mut bool);
-    let button_text = window_text(hwnd, false);
+    // O Windows inclui '&' no texto para marcar a tecla de atalho, por
+    // exemplo `Co&nectar`. Compare a legenda visual normalizada.
+    let button_text = window_text(hwnd, false).replace('&', "");
     if window_text(hwnd, true) == "Button"
         && (button_text == "OK" || button_text == "Conectar" || button_text == "Connect")
     {
@@ -207,7 +218,7 @@ fn read_broker_credential(host: &str) -> Result<(String, String), String> {
     }
 }
 
-fn provision_mstsc_credential(host: &str) -> Result<String, String> {
+fn provision_mstsc_credential(host: &str) -> Result<(String, String), String> {
     let (username, password) = read_broker_credential(host)?;
     let mut target = wide(&format!("TERMSRV/{host}"));
     let mut user = wide(&username);
@@ -225,9 +236,14 @@ fn provision_mstsc_credential(host: &str) -> Result<String, String> {
         CredWriteW(&credential, 0)
             .map_err(|error| format!("Nao foi possivel autorizar o MSTSC no Cofre do Windows: {error}"))?;
     }
-    // A senha permanece apenas em memoria pelo tempo desta funcao.
     password_utf16.fill(0);
-    Ok(username)
+    Ok((username, password))
+}
+
+fn terminate_process(process_id: u32) {
+    let _ = Command::new("taskkill.exe")
+        .args(["/PID", &process_id.to_string(), "/T", "/F"])
+        .creation_flags(0x08000000).status();
 }
 
 unsafe fn atl_functions() -> Result<(AtlAxWinInit, AtlAxGetControl), String> {
@@ -298,34 +314,56 @@ pub fn probe() -> Result<Value, String> {
     Ok(serde_json::json!({"ok":true,"provider":"mstscax-hyperv-vmbus","version":version,"activex":format!("MsTscAx.MsTscAx.{version}")}))
 }
 
-pub fn open(owner: isize, vm_id: &str, vm_name: &str, x: i32, y: i32, width: i32, height: i32) -> Result<Value, String> {
+pub fn create_host(owner: isize, x: i32, y: i32, width: i32, height: i32) -> Result<isize, String> {
+    let native_parent = webview_host(owner);
+    let host_class = wide("STATIC");
+    let host = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0), PCWSTR(host_class.as_ptr()), PCWSTR::null(),
+            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WINDOW_STYLE(0x4),
+            x, y, width.max(320), height.max(240),
+            HWND(native_parent as *mut c_void), None, None, None,
+        ).map_err(|error| format!("Falha ao criar o painel nativo da VM: {error}"))?
+    };
+    Ok(host.0 as isize)
+}
+
+pub fn open(owner: isize, native_host: isize, vm_id: &str, vm_name: &str, x: i32, y: i32, width: i32, height: i32) -> Result<Value, String> {
     // O parser oficial do MSTSC configura o estado privado `sawvmconnect`
     // exigido pelo broker do Hyper-V. Depois da conexao, a janela do cliente
     // vira um filho real do WebView e permanece recortada dentro do painel.
-    open_vmconnect(owner, vm_id, vm_name, x, y, width, height)
+    open_vmconnect(owner, native_host, vm_id, vm_name, x, y, width, height)
 }
 
-fn open_vmconnect(owner: isize, vm_id: &str, vm_name: &str, x: i32, y: i32, width: i32, height: i32) -> Result<Value, String> {
+fn open_vmconnect(_owner: isize, native_host_handle: isize, vm_id: &str, vm_name: &str, _x: i32, _y: i32, width: i32, height: i32) -> Result<Value, String> {
+    // O MSTSC usa DirectComposition; manter varias superficies RDP ocultas em
+    // cache tende a voltar cinza ou sem repaint. Abra uma sessao visual por
+    // vez e deixe o "preparo" apenas para ligar/aquecer as VMs.
     close().ok();
     let vm_id = vm_id.trim_matches(|c| c == '{' || c == '}').to_string();
     let host = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "localhost".into());
-    let local_app_data = std::env::var_os("LOCALAPPDATA")
+    let program_data = std::env::var_os("PROGRAMDATA")
         .map(std::path::PathBuf::from)
-        .ok_or_else(|| "LOCALAPPDATA nao esta disponivel.".to_string())?;
-    let session_dir = local_app_data.join("FlowDetect Studio").join("HyperV");
+        .ok_or_else(|| "PROGRAMDATA nao esta disponivel.".to_string())?;
+    let session_dir = program_data.join("FlowDetect").join("HyperV").join("Sessions");
     fs::create_dir_all(&session_dir).map_err(|error| format!("Falha ao preparar a sessao Hyper-V: {error}"))?;
     let rdp_path = session_dir.join(format!("{}.rdp", vm_id));
-    let username = provision_mstsc_credential(&host)?;
+    // O MSTSC precisa executar no mesmo usuario do WebView para que o Windows
+    // permita SetParent. A conta atual deve pertencer a Hyper-V Administrators.
+    let user_domain = std::env::var("USERDOMAIN").unwrap_or_else(|_| host.clone());
+    let user_name = std::env::var("USERNAME").unwrap_or_default();
+    let username = format!(r"{}\{}", user_domain, user_name);
     let rdp = format!(
-        "full address:s:{host}\r\nserver port:i:2179\r\npcb:s:{vm_id};EnhancedMode=1\r\nsawvmconnect:i:1\r\nauthentication level:i:2\r\nnegotiate security layer:i:0\r\nusername:s:{username}\r\nprompt for credentials:i:0\r\npromptcredentialonce:i:0\r\nscreen mode id:i:1\r\ndesktopwidth:i:{}\r\ndesktopheight:i:{}\r\nsmart sizing:i:1\r\ndynamic resolution:i:1\r\nredirectclipboard:i:1\r\nredirectprinters:i:0\r\nredirectsmartcards:i:0\r\n", width.max(640), height.max(480)
+        "full address:s:{host}\r\nserver port:i:2179\r\npcb:s:{vm_id};EnhancedMode=1\r\nsawvmconnect:i:1\r\nauthentication level:i:2\r\nnegotiate security layer:i:0\r\nenablecredsspsupport:i:1\r\nusername:s:{username}\r\nprompt for credentials:i:0\r\npromptcredentialonce:i:0\r\nscreen mode id:i:1\r\ndesktopwidth:i:{}\r\ndesktopheight:i:{}\r\nsmart sizing:i:1\r\ndynamic resolution:i:1\r\nredirectclipboard:i:0\r\nredirectprinters:i:0\r\nredirectsmartcards:i:0\r\nredirectwebauthn:i:0\r\nredirectcomports:i:0\r\nredirectposdevices:i:0\r\nredirectdirectx:i:0\r\naudiocapturemode:i:0\r\naudiomode:i:2\r\ndevicestoredirect:s:\r\ndrivestoredirect:s:\r\nusbdevicestoredirect:s:\r\n", width.max(640), height.max(480)
     );
     fs::write(&rdp_path, rdp).map_err(|error| format!("Falha ao criar a sessao RDP da VM: {error}"))?;
-    let mut child = Command::new("mstsc.exe")
+    let child = Command::new("mstsc.exe")
         .arg(&rdp_path)
         .spawn()
         .map_err(|error| format!("Nao foi possivel iniciar o cliente nativo do Hyper-V: {error}"))?;
     let process_id = child.id();
     let mut embedded = 0isize;
+    let mut stable_shell = 0u32;
     // O primeiro acesso pode levar mais tempo enquanto o broker do Hyper-V
     // prepara a sessao e o Windows valida o arquivo RDP local.
     for _ in 0..900 {
@@ -334,6 +372,13 @@ fn open_vmconnect(owner: isize, vm_id: &str, vm_name: &str, x: i32, y: i32, widt
         if search.dialog != 0 {
             let mut accepted = false;
             let dialog = HWND(search.dialog as *mut c_void);
+            let dialog_title = window_text(dialog, false);
+            let is_security_warning = dialog_title.contains("Aviso de seguran")
+                || dialog_title.contains("Security Warning");
+            if !is_security_warning {
+                terminate_process(process_id);
+                return Err(format!("O cliente RDP interrompeu a conexao: {dialog_title}."));
+            }
             unsafe {
                 let _ = EnumChildWindows(
                     dialog,
@@ -371,8 +416,7 @@ fn open_vmconnect(owner: isize, vm_id: &str, vm_name: &str, x: i32, y: i32, widt
                 continue;
             } else if candidate_class == "TscShellContainerClass" {
                 // O aviso de seguranca pode ser hospedado dentro da propria
-                // janela do MSTSC. Clique apenas no botao de confirmacao, mas
-                // nao encaixe a janela ate o renderizador remoto existir.
+                // janela do MSTSC. Clique apenas no botao de confirmacao.
                 let mut accepted = false;
                 unsafe {
                     let _ = EnumChildWindows(
@@ -382,36 +426,59 @@ fn open_vmconnect(owner: isize, vm_id: &str, vm_name: &str, x: i32, y: i32, widt
                     );
                 }
                 if accepted {
+                    stable_shell = 0;
                     thread::sleep(Duration::from_millis(250));
                     continue;
                 }
-                if !has_visible_remote_surface(candidate) {
+                // Em versoes recentes do MSTSC o OPWindowClass pode continuar
+                // marcado como oculto mesmo com o framebuffer RDP funcionando.
+                // Algumas builds tambem mantêm a TscShell oculta ate ela ser
+                // reparentada/exibida pelo host. Isso cria um impasse se a
+                // visibilidade for requisito para incorpora-la. Considere-a
+                // pronta quando estiver visivel ou quando permanecer estavel
+                // por cinco segundos sem qualquer dialogo de seguranca.
+                stable_shell = stable_shell.saturating_add(1);
+                if !unsafe { IsWindowVisible(candidate).as_bool() } && stable_shell < 50 {
                     continue;
                 }
-                embedded = search.hwnd;
+                // Incorpore somente a superficie de renderizacao. Reparentear
+                // a TscShell completa faz o compositor do MSTSC copiar partes
+                // do framebuffer antigo, gerando faixas e imagens duplicadas.
+                let surface = remote_surface(candidate);
+                embedded = if surface != 0 { surface } else { search.hwnd };
                 break;
             }
-        }
-        if child.try_wait().map_err(|error| error.to_string())?.is_some() {
-            return Err("O cliente RDP encerrou antes de criar a tela da VM.".into());
         }
         thread::sleep(Duration::from_millis(100));
     }
     if embedded == 0 {
-        let _ = child.kill();
+        terminate_process(process_id);
         return Err("O cliente RDP nao criou a janela da VM a tempo.".into());
     }
-    let native_parent = webview_host(owner);
+    let native_host = HWND(native_host_handle as *mut c_void);
     unsafe {
         let hwnd = HWND(embedded as *mut c_void);
-        dock_native_window(hwnd, HWND(native_parent as *mut c_void), x, y, width, height)?;
+        // O host intermediario fixa o recorte no painel correto. O MSTSC pode
+        // restaurar sua propria origem, mas nao consegue cobrir o restante do Studio.
+        dock_native_window(hwnd, native_host, 0, 0, width, height)?;
     }
-    *STATE.lock().unwrap_or_else(|error| error.into_inner()) = NativeRdpState {
-        hwnd: embedded,
-        parent: native_parent,
-        vm_id: vm_id.clone(),
-        version: "mstsc-embedded".into(),
-    };
+    {
+        let mut state = STATE.lock().unwrap_or_else(|error| error.into_inner());
+        for other in state.sessions.values() {
+            unsafe {
+                let _ = ShowWindow(HWND(other.hwnd as *mut c_void), SW_HIDE);
+                let _ = ShowWindow(HWND(other.parent as *mut c_void), SW_HIDE);
+            }
+        }
+        state.active_vm_id = vm_id.clone();
+        state.sessions.insert(vm_id.clone(), NativeRdpSession {
+            hwnd: embedded,
+            parent: native_host_handle,
+            surface_width: width.max(320),
+            surface_height: height.max(240),
+            version: "mstsc-embedded".into(),
+        });
+    }
     // O VMConnect troca o HWND inicial pela janela definitiva depois que a
     // sessao abre. Acompanhe essa transicao e encaixe o novo HWND no Studio.
     let watched_vm_id = vm_id.clone();
@@ -421,17 +488,24 @@ fn open_vmconnect(owner: isize, vm_id: &str, vm_name: &str, x: i32, y: i32, widt
             let mut search = ProcessWindowSearch { process_id, hwnd: 0, dialog: 0 };
             unsafe { let _ = EnumWindows(Some(find_process_window), LPARAM((&mut search as *mut ProcessWindowSearch) as isize)); }
             if search.hwnd == 0 { continue; }
+            let shell = HWND(search.hwnd as *mut c_void);
+            let surface = remote_surface(shell);
+            let target = if surface != 0 { surface } else { search.hwnd };
             let mut state = STATE.lock().unwrap_or_else(|error| error.into_inner());
-            if state.vm_id != watched_vm_id || state.hwnd == 0 { break; }
-            if state.hwnd != search.hwnd {
+            if state.active_vm_id != watched_vm_id && !state.sessions.contains_key(&watched_vm_id) { break; }
+            // Nao redimensione repetidamente a superficie DirectComposition
+            // do MSTSC: cada SetWindowPos pode duplicar regioes do framebuffer.
+            // Reencaixe somente se o cliente realmente substituir o HWND.
+            let Some(session) = state.sessions.get_mut(&watched_vm_id) else { break };
+            if session.hwnd != target {
                 let result = unsafe {
                     dock_native_window(
-                        HWND(search.hwnd as *mut c_void),
-                        HWND(native_parent as *mut c_void),
-                        x, y, width, height,
+                        HWND(target as *mut c_void),
+                        HWND(session.parent as *mut c_void),
+                        0, 0, session.surface_width, session.surface_height,
                     )
                 };
-                if result.is_ok() { state.hwnd = search.hwnd; }
+                if result.is_ok() { session.hwnd = target; }
             }
         }
     });
@@ -530,33 +604,90 @@ fn open_activex(owner: isize, vm_id: &str, x: i32, y: i32, width: i32, height: i
         CoUninitialize();
     }).map_err(|error| format!("Falha ao iniciar thread RDP: {error}"))?;
     let hwnd = rx.recv_timeout(std::time::Duration::from_secs(15)).map_err(|_| "O ActiveX RDP nao iniciou a tempo. A criacao da janela COM ficou bloqueada.".to_string())??;
-    *STATE.lock().unwrap_or_else(|error| error.into_inner()) = NativeRdpState { hwnd, parent: owner, vm_id: vm_id.clone(), version: version.clone() };
+    {
+        let mut state = STATE.lock().unwrap_or_else(|error| error.into_inner());
+        for other in state.sessions.values() {
+            unsafe {
+                let _ = ShowWindow(HWND(other.hwnd as *mut c_void), SW_HIDE);
+                let _ = ShowWindow(HWND(other.parent as *mut c_void), SW_HIDE);
+            }
+        }
+        state.active_vm_id = vm_id.clone();
+        state.sessions.insert(vm_id.clone(), NativeRdpSession {
+            hwnd,
+            parent: owner,
+            surface_width: width.max(320),
+            surface_height: height.max(240),
+            version: version.clone(),
+        });
+    }
     Ok(serde_json::json!({"ok":true,"provider":"mstscax-hyperv-vmbus","vm_id":vm_id,"version":version}))
 }
 
 pub fn resize(x: i32, y: i32, width: i32, height: i32, visible: bool) -> Result<Value, String> {
-    let state = STATE.lock().unwrap_or_else(|error| error.into_inner());
-    if state.hwnd == 0 { return Err("Nenhuma sessao RDP nativa ativa.".into()); }
+    let mut state = STATE.lock().unwrap_or_else(|error| error.into_inner());
+    let active_vm_id = state.active_vm_id.clone();
+    if active_vm_id.is_empty() {
+        for session in state.sessions.values() {
+            unsafe {
+                let _ = ShowWindow(HWND(session.hwnd as *mut c_void), SW_HIDE);
+                let _ = ShowWindow(HWND(session.parent as *mut c_void), SW_HIDE);
+            }
+        }
+        return Err("Nenhuma sessao RDP nativa ativa.".into());
+    }
+    let Some(session) = state.sessions.get_mut(&active_vm_id) else {
+        state.active_vm_id.clear();
+        return Err("Nenhuma sessao RDP nativa ativa.".into());
+    };
     unsafe {
-        let hwnd = HWND(state.hwnd as *mut c_void);
+        let hwnd = HWND(session.hwnd as *mut c_void);
         if visible {
-            if state.version == "mstsc-embedded" {
-                dock_native_window(hwnd, HWND(state.parent as *mut c_void), x, y, width, height)?;
+            if session.version == "mstsc-embedded" {
+                let host = HWND(session.parent as *mut c_void);
+                // A superficie OPWindowClass nao suporta ser movida ou
+                // redimensionada depois de conectada. Centralize apenas o
+                // painel de recorte, preservando o framebuffer intacto.
+                let available_width = width.max(320);
+                let available_height = height.max(240);
+                let host_width = available_width.min(session.surface_width.max(320));
+                let host_height = available_height.min(session.surface_height.max(240));
+                let host_x = x + (available_width - host_width) / 2;
+                let host_y = y + (available_height - host_height) / 2;
+                SetWindowPos(host, None, host_x, host_y, host_width, host_height, SWP_NOACTIVATE | SWP_SHOWWINDOW)
+                    .map_err(|error| format!("Falha ao dimensionar o painel da VM: {error}"))?;
+                // A superficie RDP conserva a origem e o tamanho negociados
+                // na abertura; o host fornece o recorte seguro.
             } else {
                 SetWindowPos(hwnd, None, x, y, width.max(320), height.max(240), SWP_NOACTIVATE)
                     .map_err(|error| error.to_string())?;
             }
         }
         let _ = ShowWindow(hwnd, if visible { SW_SHOW } else { SW_HIDE });
+        if session.version == "mstsc-embedded" {
+            let _ = ShowWindow(HWND(session.parent as *mut c_void), if visible { SW_SHOW } else { SW_HIDE });
+        }
     }
-    Ok(serde_json::json!({"ok":true,"visible":visible,"vm_id":state.vm_id,"version":state.version}))
+    let version = session.version.clone();
+    Ok(serde_json::json!({"ok":true,"visible":visible,"vm_id":active_vm_id,"version":version}))
 }
 
 pub fn close() -> Result<Value, String> {
     let mut state = STATE.lock().unwrap_or_else(|error| error.into_inner());
-    if state.hwnd != 0 { unsafe { PostMessageW(HWND(state.hwnd as *mut c_void), WM_CLOSE, WPARAM(0), LPARAM(0)).map_err(|error| error.to_string())?; } }
-    *state = NativeRdpState::default();
-    Ok(serde_json::json!({"ok":true}))
+    let closed_ids: Vec<String> = state.sessions.keys().cloned().collect();
+    for session in state.sessions.drain().map(|(_, session)| session) {
+        unsafe {
+            if session.hwnd != 0 {
+                PostMessageW(HWND(session.hwnd as *mut c_void), WM_CLOSE, WPARAM(0), LPARAM(0))
+                    .map_err(|error| error.to_string())?;
+            }
+            if session.version == "mstsc-embedded" && session.parent != 0 {
+                let _ = PostMessageW(HWND(session.parent as *mut c_void), WM_CLOSE, WPARAM(0), LPARAM(0));
+            }
+        }
+    }
+    state.active_vm_id.clear();
+    Ok(serde_json::json!({"ok":true,"closed_vm_ids":closed_ids}))
 }
 
 #[cfg(windows)]

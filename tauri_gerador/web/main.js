@@ -78,6 +78,25 @@ const state = {
     editingId: "",
     startingIds: new Set(),
     lastConnectionError: "",
+    activeView: "machines",
+    transferTargetAddress: "",
+    transferSelectedId: "",
+    createDraft: {
+      name: "",
+      profile: "fiscal",
+      address: "",
+      vmName: "",
+      baseVmName: "",
+      storagePath: "",
+    },
+    createProgress: {
+      active: false,
+      percent: 0,
+      label: "",
+      detail: "",
+      error: "",
+    },
+    createProgressTimer: null,
   },
   activeTab: "launcher",
   remoteControl: {
@@ -453,6 +472,18 @@ const agentVmList = document.getElementById("agentVmList");
 const saveAgentCardButton = document.getElementById("saveAgentCardButton");
 const cancelAgentCardButton = document.getElementById("cancelAgentCardButton");
 const agentsList = document.getElementById("agentsList");
+const agentsMachinesTabButton = document.getElementById("agentsMachinesTabButton");
+const agentsAutomationsTabButton = document.getElementById("agentsAutomationsTabButton");
+const agentsMachineActions = document.getElementById("agentsMachineActions");
+const agentsMachinesView = document.getElementById("agentsMachinesView");
+const agentsAutomationsView = document.getElementById("agentsAutomationsView");
+const agentAutomationTargetSelect = document.getElementById("agentAutomationTargetSelect");
+const agentAutomationAddressInput = document.getElementById("agentAutomationAddressInput");
+const agentAutomationConnectButton = document.getElementById("agentAutomationConnectButton");
+const agentAutomationConnectionStatus = document.getElementById("agentAutomationConnectionStatus");
+const agentAutomationLocalList = document.getElementById("agentAutomationLocalList");
+const agentAutomationTransferStatus = document.getElementById("agentAutomationTransferStatus");
+const agentAutomationSendButton = document.getElementById("agentAutomationSendButton");
 const smartRecorderPanel = document.getElementById("smartRecorderPanel");
 const studioControlHint = document.getElementById("studioControlHint");
 const studioControlStatus = document.getElementById("studioControlStatus");
@@ -508,6 +539,11 @@ const studioControlScreenImage = document.getElementById("studioControlScreenIma
 const studioControlScreenStatus = document.getElementById("studioControlScreenStatus");
 const studioControlScreenFrameWrap = document.getElementById("studioControlScreenFrameWrap");
 const studioControlHypervCloseButton = document.getElementById("studioControlHypervCloseButton");
+const agentScreenVmSelect = document.getElementById("agentScreenVmSelect");
+const agentScreenPrepareButton = document.getElementById("agentScreenPrepareButton");
+const agentScreenOpenVmButton = document.getElementById("agentScreenOpenVmButton");
+const agentScreenAutomationSelect = document.getElementById("agentScreenAutomationSelect");
+const agentScreenExecuteButton = document.getElementById("agentScreenExecuteButton");
 const mapZoomOutButton = document.getElementById("mapZoomOutButton");
 const mapZoomInButton = document.getElementById("mapZoomInButton");
 const mapZoomRange = document.getElementById("mapZoomRange");
@@ -899,7 +935,28 @@ function releaseInactiveWorkspaceDom(previousTab = "") {
   }, 90);
 }
 
+function hideNativeHypervSurface() {
+  invoke("resize_native_hyperv_rdp", {
+    x: 0,
+    y: 0,
+    width: 320,
+    height: 240,
+    visible: false,
+  }).catch(() => null);
+  invoke("resize_embedded_hyperv_console", {
+    x: 0,
+    y: 0,
+    width: 320,
+    height: 240,
+    visible: false,
+  }).catch(() => null);
+}
+
 function setWorkspaceTab(tabName) {
+  if (tabName === "remote-control") {
+    tabName = "agents";
+    state.agents.activeView = "automations";
+  }
   if (tabName === "editor") {
     tabName = "commands";
   }
@@ -950,20 +1007,13 @@ function setWorkspaceTab(tabName) {
   if (state.remoteControl.hypervConsoleActive) {
     scheduleEmbeddedHypervConsoleSync();
   }
-  if (state.remoteControl.nativeRdpActive) {
-    // HWNDs nativos ficam acima do WebView. Ao sair da Tela do Agent, oculte
-    // imediatamente para que a sessao nunca cubra as outras areas do Studio.
-    if (!agentScreenActive) {
-      invoke("resize_native_hyperv_rdp", {
-        x: 0,
-        y: 0,
-        width: 320,
-        height: 240,
-        visible: false,
-      }).catch(() => null);
-    } else {
+  if (!agentScreenActive) {
+    // HWNDs nativos ficam acima do WebView. A flag JS pode se perder durante
+    // reconnects/reloads, entao esconda de forma defensiva sempre que a aba
+    // Tela do Agent nao estiver ativa.
+    hideNativeHypervSurface();
+  } else if (state.remoteControl.nativeRdpActive) {
       scheduleNativeHypervRdpSync();
-    }
   }
   scheduleActiveWorkspaceRender();
   releaseInactiveWorkspaceDom(previousTab);
@@ -1014,10 +1064,10 @@ const STUDIO_TUTORIAL_STEPS = Object.freeze([
     text: "Importe planilhas, confira linhas e envie celulas ou colunas para o mapa.",
   },
   {
-    tab: "remote-control",
-    target: "#remoteControlTabButton",
-    title: "Controle remoto",
-    text: "Conecte em um Agent para importar, iniciar e acompanhar automacoes em outro PC.",
+    tab: "agents",
+    target: "#agentsAutomationsTabButton",
+    title: "Automacoes dos Agents",
+    text: "Na aba Agentes, conecte pelo IP e envie suas automacoes salvas para outro computador.",
   },
   {
     tab: "agent-screen",
@@ -11621,9 +11671,23 @@ async function syncNativeHypervRdp() {
   }).catch((error) => console.warn("Nao foi possivel sincronizar o RDP Hyper-V.", error));
 }
 
-function scheduleNativeHypervRdpSync() {
+function scheduleNativeHypervRdpSync(liveResize = false) {
   window.clearTimeout(state.remoteControl.hypervResizeTimer);
-  state.remoteControl.hypervResizeTimer = window.setTimeout(() => syncNativeHypervRdp().catch(() => null), 60);
+  if (liveResize) {
+    // O framebuffer acelerado do MSTSC nao suporta dezenas de SetWindowPos
+    // durante o arraste. Oculte-o e aplique apenas a geometria final.
+    invoke("resize_native_hyperv_rdp", {
+      x: 0,
+      y: 0,
+      width: 320,
+      height: 240,
+      visible: false,
+    }).catch(() => null);
+  }
+  state.remoteControl.hypervResizeTimer = window.setTimeout(
+    () => syncNativeHypervRdp().catch(() => null),
+    liveResize ? 500 : 60,
+  );
 }
 
 async function openNativeHypervRdp(vmName = "") {
@@ -11638,7 +11702,7 @@ async function openNativeHypervRdp(vmName = "") {
     const bounds = await waitForNativeScreenBounds();
     if (!bounds) throw new Error("A area da tela do Agent ainda nao esta pronta.");
     stopStudioControlScreenStream({ clear: true });
-    await invoke("open_native_hyperv_rdp", { vmName: name, ...bounds });
+    const result = await invoke("open_native_hyperv_rdp", { vmName: name, ...bounds });
     state.remoteControl.nativeRdpActive = true;
     state.remoteControl.nativeRdpVmName = name;
     // A conexao nativa pode demorar enquanto o broker do Hyper-V autentica.
@@ -11655,7 +11719,10 @@ async function openNativeHypervRdp(vmName = "") {
     }
     studioControlScreenFrameWrap?.classList.add("has-screen", "has-native-rdp");
     if (studioControlScreenStatus) {
-      studioControlScreenStatus.textContent = `Console nativo da ${name} conectado pelo Hyper-V...`;
+      const provider = String(result?.provider || "");
+      studioControlScreenStatus.textContent = provider === "mstscax-hyperv-vmbus"
+        ? `Tela limpa da ${name} conectada pelo Hyper-V...`
+        : `Console nativo da ${name} conectado pelo Hyper-V...`;
     }
     if (studioControlHypervCloseButton) {
       studioControlHypervCloseButton.hidden = false;
@@ -11781,6 +11848,69 @@ async function openEmbeddedHypervConsole(vmName = "") {
   }
 }
 
+async function openHypervVmScreen(vmName = "") {
+  const name = String(vmName || "").trim();
+  if (!name) return false;
+  await closeEmbeddedHypervConsole().catch(() => null);
+  const nativeConnected = await openNativeHypervRdp(name);
+  state.remoteControl.remoteInputEnabled = !nativeConnected;
+  return nativeConnected;
+}
+
+function agentScreenPreparationTargets() {
+  const names = [];
+  const add = (value) => {
+    const name = String(value || "").trim();
+    if (!name || /(?:^|[-_\s])base(?:$|[-_\s])/i.test(name)) return;
+    if (!names.some((item) => item.toLowerCase() === name.toLowerCase())) names.push(name);
+  };
+  (state.agents.items || []).forEach((agent) => add(agent.vmName));
+  if (!names.length) {
+    (state.agents.vms || []).forEach((vm) => add(vm.name));
+  }
+  return names;
+}
+
+async function prepareAgentScreens() {
+  const targets = agentScreenPreparationTargets();
+  if (!targets.length) {
+    setMessage("Nenhuma VM de agente encontrada para preparar.", "error");
+    return;
+  }
+  const previousDisabled = agentScreenPrepareButton?.disabled;
+  if (agentScreenPrepareButton) {
+    agentScreenPrepareButton.disabled = true;
+    agentScreenPrepareButton.textContent = "Preparando...";
+  }
+  try {
+    setWorkspaceTab("agent-screen");
+    setBusy("Preparando telas");
+    for (let index = 0; index < targets.length; index += 1) {
+      const vmName = targets[index];
+      const step = `${index + 1}/${targets.length}`;
+      if (studioControlScreenStatus) {
+        studioControlScreenStatus.textContent = `Ligando VM ${step}: ${vmName}...`;
+      }
+      await invoke("start_hyperv_vm", { vmName });
+    }
+    await refreshAgentVmList({ silent: true }).catch(() => null);
+    if (agentScreenVmSelect && !String(agentScreenVmSelect.value || "").trim()) {
+      agentScreenVmSelect.value = targets[0] || "";
+    }
+    setBusy("Pronto");
+    setMessage(`VMs preparadas: ${targets.join(", ")}. Agora escolha uma no seletor para abrir a tela sem esperar boot.`, "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  } finally {
+    if (agentScreenPrepareButton) {
+      agentScreenPrepareButton.disabled = Boolean(previousDisabled);
+      agentScreenPrepareButton.textContent = "Preparar telas";
+    }
+    renderStudioControlScreen();
+  }
+}
+
 async function closeEmbeddedHypervConsole() {
   window.clearInterval(state.remoteControl.hypervKeepaliveTimer);
   state.remoteControl.hypervKeepaliveTimer = null;
@@ -11842,6 +11972,64 @@ function createAgentId(name = "") {
   return `${slug}-${suffix}`;
 }
 
+function createVmNameFromAgentName(name = "") {
+  const slug = String(name || "Agent")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 34) || "Agent";
+  const baseName = `FlowDetect-${slug}`;
+  const existing = new Set((state.agents.vms || [])
+    .map((vm) => String(vm.name || "").trim().toLowerCase())
+    .filter(Boolean));
+  if (!existing.has(baseName.toLowerCase())) {
+    return baseName;
+  }
+  for (let index = 2; index < 100; index += 1) {
+    const candidate = `${baseName}-${index}`;
+    if (!existing.has(candidate.toLowerCase())) {
+      return candidate;
+    }
+  }
+  return `${baseName}-${Date.now().toString(36).slice(-4)}`;
+}
+
+function findHypervVm(vmName = "") {
+  const target = String(vmName || "").trim().toLowerCase();
+  return (state.agents.vms || []).find((vm) => String(vm.name || "").trim().toLowerCase() === target) || null;
+}
+
+async function ensureHypervVmStoppedForClone(vmName = "") {
+  const name = String(vmName || "").trim();
+  if (!name) {
+    throw new Error("Selecione uma VM-base para clonar.");
+  }
+  let vm = findHypervVm(name);
+  if (!vm) {
+    await refreshAgentVmList({ silent: true });
+    vm = findHypervVm(name);
+  }
+  const stateName = String(vm?.state || "").trim().toLowerCase();
+  if (stateName === "off" || stateName === "desligado") {
+    return;
+  }
+  const shouldStop = window.confirm(`A VM-base "${name}" esta ligada. Para criar uma copia, o Studio precisa desliga-la antes de clonar. Deseja desligar agora?`);
+  if (!shouldStop) {
+    throw new Error("Clonagem cancelada. Desligue a VM-base ou autorize o Studio a desligar antes de criar a nova VM.");
+  }
+  setBusy("Desligando VM-base");
+  const result = await invoke("stop_hyperv_vm", { vmName: name, timeoutSeconds: 6 });
+  if (result?.requiresForce) {
+    const force = window.confirm(`A VM-base "${name}" nao respondeu ao desligamento normal. Deseja forcar o desligamento para continuar a clonagem?`);
+    if (!force) {
+      throw new Error("Clonagem cancelada porque a VM-base continuou ligada.");
+    }
+    await invoke("kill_hyperv_vm_process", { vmName: name });
+  }
+  await refreshAgentVmList({ silent: true });
+}
+
 function normalizeAgent(agent = {}) {
   const name = String(agent.name || "FlowDetect Agent").trim() || "FlowDetect Agent";
   const address = normalizeAgentAddress(agent.address || "");
@@ -11852,6 +12040,7 @@ function normalizeAgent(agent = {}) {
     address,
     vmName: String(agent.vmName || "").trim(),
     baseVmName: String(agent.baseVmName || "").trim(),
+    storagePath: String(agent.storagePath || "").trim(),
     profile: ["fiscal", "dp", "contabil", "ti"].includes(String(agent.profile || "").trim())
       ? String(agent.profile).trim()
       : "fiscal",
@@ -11955,8 +12144,102 @@ function hypervVmLauncherMarkup(vm = {}) {
       <div class="vm-launcher-actions">
         <button class="primary-button" type="button" data-hyperv-vm-action="open" data-hyperv-vm-name="${escapeHtml(name)}">${running ? "Abrir tela" : "Iniciar e abrir"}</button>
         <button class="ghost-button" type="button" data-hyperv-vm-action="stop" data-hyperv-vm-name="${escapeHtml(name)}" ${running ? "" : "disabled"}>Desligar</button>
+        <button class="danger-button" type="button" data-hyperv-vm-action="force-stop" data-hyperv-vm-name="${escapeHtml(name)}" ${running ? "" : "disabled"}>Forcar</button>
       </div>
     </article>
+  `;
+}
+
+function agentCreateLauncherMarkup() {
+  const draft = state.agents.createDraft || {};
+  const progress = state.agents.createProgress || {};
+  const creating = Boolean(progress.active);
+  const progressPercent = Math.max(0, Math.min(100, Number(progress.percent || 0)));
+  const progressLabel = String(progress.label || (creating ? "Preparando criacao" : "")).trim();
+  const progressDetail = String(progress.detail || "").trim();
+  const progressError = String(progress.error || "").trim();
+  const defaultBaseName = (state.agents.vms || [])
+    .map((vm) => String(vm.name || "").trim())
+    .find((name) => /(?:^|[-_\s])base(?:$|[-_\s])/i.test(name)) || "";
+  const selectedBaseName = String(draft.baseVmName || (!draft.vmName ? defaultBaseName : "") || "");
+  const baseOptions = (state.agents.vms || [])
+    .map((vm) => {
+      const name = String(vm.name || "").trim();
+      if (!name) return "";
+      const stateName = String(vm.state || "Desconhecido").trim();
+      return `<option value="${escapeHtml(name)}" ${selectedBaseName === name ? "selected" : ""}>${escapeHtml(name)} (${escapeHtml(stateName)})</option>`;
+    })
+    .filter(Boolean)
+    .join("");
+  const vmOptions = (state.agents.vms || [])
+    .map((vm) => {
+      const name = String(vm.name || "").trim();
+      if (!name) return "";
+      return `<option value="${escapeHtml(name)}">${escapeHtml(vm.uuid || "")}</option>`;
+    })
+    .filter(Boolean)
+    .join("");
+  return `
+    <article class="agent-create-card ${creating ? "is-creating" : ""} ${progressError ? "has-error" : ""}">
+      <div class="agent-create-card-head">
+        <span>Nova maquina</span>
+        <button class="micro-button" type="button" data-agent-action="create-cancel" ${creating ? "disabled" : ""}>Cancelar</button>
+      </div>
+      <label>
+        <span>Nome do ambiente</span>
+        <input id="agentNameInput" type="text" placeholder="Ex.: VM FGTS Digital" value="${escapeHtml(draft.name || "")}" ${creating ? "disabled" : ""} />
+      </label>
+      <label>
+        <span>Perfil</span>
+        <select id="agentProfileSelect" ${creating ? "disabled" : ""}>
+          <option value="fiscal" ${draft.profile === "fiscal" ? "selected" : ""}>Fiscal</option>
+          <option value="dp" ${draft.profile === "dp" ? "selected" : ""}>Departamento Pessoal</option>
+          <option value="contabil" ${draft.profile === "contabil" ? "selected" : ""}>Contabil</option>
+          <option value="ti" ${draft.profile === "ti" ? "selected" : ""}>TI</option>
+        </select>
+      </label>
+      <label>
+        <span>Maquina virtual</span>
+        <input id="agentVmNameInput" type="text" list="agentVmOptions" placeholder="Ex.: FlowDetect-FGTS" value="${escapeHtml(draft.vmName || "")}" ${creating ? "disabled" : ""} />
+      </label>
+      <label>
+        <span>Clonar da VM-base</span>
+        <select id="agentBaseVmSelect" ${creating ? "disabled" : ""}><option value="">Usar VM existente</option>${baseOptions}</select>
+      </label>
+      <label class="agent-create-path-field">
+        <span>Destino da VM</span>
+        <div class="agent-create-path-row">
+          <input id="agentStoragePathInput" type="text" placeholder="Padrao: C:\\ProgramData\\FlowDetect\\HyperV" value="${escapeHtml(draft.storagePath || "")}" ${creating ? "disabled" : ""} />
+          <button class="ghost-button" type="button" data-agent-action="pick-storage" ${creating ? "disabled" : ""}>Escolher</button>
+        </div>
+      </label>
+      <label>
+        <span>Endereco atual</span>
+        <input id="agentAddressInput" type="text" placeholder="Opcional: 192.168.1.150:18452" value="${escapeHtml(draft.address || "")}" ${creating ? "disabled" : ""} />
+      </label>
+      <datalist id="agentVmOptions">${vmOptions}</datalist>
+      <div class="agent-create-progress" data-agent-create-progress ${creating || progressError ? "" : "hidden"} role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progressPercent}">
+        <div class="agent-create-progress-head">
+          <span data-agent-create-progress-label>${escapeHtml(progressError ? "Falha na criacao" : progressLabel)}</span>
+          <strong data-agent-create-progress-percent>${progressError ? "!" : `${progressPercent}%`}</strong>
+        </div>
+        <div class="agent-create-progress-track"><i data-agent-create-progress-fill style="width:${progressPercent}%"></i></div>
+        <p data-agent-create-progress-detail>${escapeHtml(progressError || progressDetail)}</p>
+      </div>
+      <div class="agent-create-card-actions">
+        <button class="primary-button" type="button" data-agent-action="create-save" ${creating ? "disabled" : ""}>${creating ? "Criando..." : "Criar maquina"}</button>
+      </div>
+    </article>
+  `;
+}
+
+function agentAddLauncherMarkup() {
+  return `
+    <button class="agent-launcher-add" type="button" data-agent-action="new">
+      <span class="agent-launcher-add-icon">+</span>
+      <strong>Nova maquina</strong>
+      <small>Clone a VM-base ou vincule uma maquina existente.</small>
+    </button>
   `;
 }
 
@@ -12064,63 +12347,167 @@ function persistAgentsConfig() {
 }
 
 function resetAgentForm() {
+  if (state.agents.createProgressTimer) {
+    window.clearInterval(state.agents.createProgressTimer);
+    state.agents.createProgressTimer = null;
+  }
   state.agents.createOpen = false;
   state.agents.editingId = "";
-  if (agentNameInput) {
-    agentNameInput.value = "";
-  }
-  if (agentProfileSelect) {
-    agentProfileSelect.value = "fiscal";
-  }
-  if (agentAddressInput) {
-    agentAddressInput.value = "";
-  }
-  if (agentVmNameInput) {
-    agentVmNameInput.value = "";
-  }
-  if (agentBaseVmSelect) agentBaseVmSelect.value = "";
-  if (agentCreatePanel) {
-    agentCreatePanel.hidden = true;
-  }
+  state.agents.createDraft = {
+    name: "",
+    profile: "fiscal",
+    address: "",
+    vmName: "",
+    baseVmName: "",
+    storagePath: "",
+  };
+  state.agents.createProgress = {
+    active: false,
+    percent: 0,
+    label: "",
+    detail: "",
+    error: "",
+  };
 }
 
 function openAgentForm(agent = null) {
+  if (state.agents.createProgressTimer) {
+    window.clearInterval(state.agents.createProgressTimer);
+    state.agents.createProgressTimer = null;
+  }
   state.agents.createOpen = true;
   state.agents.editingId = agent?.id ? String(agent.id) : "";
-  if (agentCreatePanel) {
-    agentCreatePanel.hidden = false;
-  }
-  if (agentNameInput) {
-    agentNameInput.value = agent?.name || "";
-    window.setTimeout(() => agentNameInput.focus(), 30);
-  }
-  if (agentProfileSelect) {
-    agentProfileSelect.value = agent?.profile || "fiscal";
-  }
-  if (agentAddressInput) {
-    agentAddressInput.value = agent?.address || "";
-  }
-  if (agentVmNameInput) {
-    agentVmNameInput.value = agent?.vmName || "";
-  }
-  if (agentBaseVmSelect) agentBaseVmSelect.value = agent?.baseVmName || "";
+  state.agents.createProgress = {
+    active: false,
+    percent: 0,
+    label: "",
+    detail: "",
+    error: "",
+  };
+  state.agents.createDraft = {
+    name: String(agent?.name || "").trim(),
+    profile: String(agent?.profile || "fiscal").trim() || "fiscal",
+    address: normalizeAgentAddress(agent?.address || ""),
+    vmName: String(agent?.vmName || "").trim(),
+    baseVmName: String(agent?.baseVmName || "").trim(),
+    storagePath: String(agent?.storagePath || "").trim(),
+  };
   renderAgents();
+  window.setTimeout(() => document.getElementById("agentNameInput")?.focus(), 30);
+}
+
+function setAgentCreateProgress(update = {}) {
+  const previous = state.agents.createProgress || {};
+  const next = {
+    active: Boolean(update.active ?? previous.active),
+    percent: Math.max(0, Math.min(100, Number(update.percent ?? previous.percent ?? 0))),
+    label: String(update.label ?? previous.label ?? "").trim(),
+    detail: String(update.detail ?? previous.detail ?? "").trim(),
+    error: String(update.error ?? previous.error ?? "").trim(),
+  };
+  state.agents.createProgress = next;
+  const card = agentsList?.querySelector(".agent-create-card");
+  if (!card) return;
+  card.classList.toggle("is-creating", next.active);
+  card.classList.toggle("has-error", Boolean(next.error));
+  const progress = card.querySelector("[data-agent-create-progress]");
+  if (progress) {
+    progress.hidden = !next.active && !next.error;
+    progress.setAttribute("aria-valuenow", String(next.percent));
+  }
+  const label = card.querySelector("[data-agent-create-progress-label]");
+  if (label) label.textContent = next.error ? "Falha na criacao" : next.label;
+  const percent = card.querySelector("[data-agent-create-progress-percent]");
+  if (percent) percent.textContent = next.error ? "!" : `${next.percent}%`;
+  const fill = card.querySelector("[data-agent-create-progress-fill]");
+  if (fill) fill.style.width = `${next.percent}%`;
+  const detail = card.querySelector("[data-agent-create-progress-detail]");
+  if (detail) detail.textContent = next.error || next.detail;
+  card.querySelectorAll("input, select, button").forEach((control) => {
+    if (control.matches("[data-agent-action='create-cancel'], [data-agent-action='create-save'], input, select")) {
+      control.disabled = next.active;
+    }
+  });
+  const saveButton = card.querySelector("[data-agent-action='create-save']");
+  if (saveButton) saveButton.textContent = next.active ? "Criando..." : "Criar maquina";
+}
+
+function startAgentCreateProgressTicker(maxPercent = 88, label = "Clonando VM-base", detail = "") {
+  let current = Math.max(0, Math.min(100, Number(state.agents.createProgress?.percent || 0)));
+  setAgentCreateProgress({ active: true, percent: current, label, detail, error: "" });
+  const ticker = window.setInterval(() => {
+    current = Math.min(maxPercent, current + (current < 55 ? 3 : 1));
+    setAgentCreateProgress({ active: true, percent: current, label, detail, error: "" });
+    if (current >= maxPercent) {
+      window.clearInterval(ticker);
+      state.agents.createProgressTimer = null;
+    }
+  }, 900);
+  return ticker;
+}
+
+async function pickAgentStoragePath() {
+  const input = document.getElementById("agentStoragePathInput");
+  try {
+    const selected = await openNativeFolderDialog({
+      title: "Escolha onde salvar as VMs do FlowDetect",
+      defaultPath: input?.value || undefined,
+    });
+    const path = Array.isArray(selected) ? selected[0] : selected;
+    if (!path) return;
+    state.agents.createDraft.storagePath = String(path || "").trim();
+    if (input) {
+      input.value = state.agents.createDraft.storagePath;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  } catch (error) {
+    setMessage("Nao foi possivel abrir o seletor de pasta. Voce pode digitar o caminho manualmente.", "error");
+  }
 }
 
 async function saveAgentFromForm() {
-  const name = String(agentNameInput?.value || "").trim() || "FlowDetect Agent";
-  const profile = String(agentProfileSelect?.value || "fiscal").trim();
-  const address = normalizeAgentAddress(agentAddressInput?.value || "");
-  const vmName = String(agentVmNameInput?.value || "").trim();
-  const baseVmName = String(agentBaseVmSelect?.value || "").trim();
-  if (!name) {
-    setMessage("Informe um nome para identificar este Agent.", "error");
-    agentNameInput?.focus();
+  if (state.agents.createProgress?.active) {
     return;
   }
+  setBusy("Criando maquina");
+  const readValue = (id) => String(document.getElementById(id)?.value || "").trim();
+  const name = readValue("agentNameInput") || "FlowDetect Agent";
+  const profile = readValue("agentProfileSelect") || "fiscal";
+  const address = normalizeAgentAddress(readValue("agentAddressInput"));
+  let vmName = readValue("agentVmNameInput");
+  const baseVmName = readValue("agentBaseVmSelect");
+  const storagePath = readValue("agentStoragePathInput");
+  if (!name) {
+    setBusy("Erro");
+    setMessage("Informe um nome para identificar este Agent.", "error");
+    document.getElementById("agentNameInput")?.focus();
+    return;
+  }
+  if (baseVmName && !vmName) {
+    vmName = createVmNameFromAgentName(name);
+    const vmNameInput = document.getElementById("agentVmNameInput");
+    if (vmNameInput) vmNameInput.value = vmName;
+  }
+  if (!vmName && !address) {
+    setBusy("Erro");
+    setMessage("Informe o nome da VM ou selecione uma VM-base para clonar.", "error");
+    document.getElementById("agentVmNameInput")?.focus();
+    return;
+  }
+  state.agents.createDraft = { name, profile, address, vmName, baseVmName, storagePath };
+  setAgentCreateProgress({
+    active: true,
+    percent: 8,
+    label: "Validando dados",
+    detail: `Preparando ${vmName || name}...`,
+    error: "",
+  });
+  renderAgents();
+  await new Promise((resolve) => window.setTimeout(resolve, 80));
+  try {
   const editingId = String(state.agents.editingId || "");
   const previousAgent = state.agents.items.find((agent) => String(agent.id) === editingId);
-  const nextAgent = normalizeAgent({
+  let nextAgent = normalizeAgent({
     ...previousAgent,
     id: editingId || createAgentId(name),
     name,
@@ -12128,8 +12515,64 @@ async function saveAgentFromForm() {
     address,
     vmName,
     baseVmName,
+    storagePath,
     status: address ? "ready" : "waiting",
     createdAt: previousAgent?.createdAt || Date.now(),
+  });
+
+  if (nextAgent.vmName && nextAgent.baseVmName && !editingId) {
+    setAgentCreateProgress({
+      active: true,
+      percent: 18,
+      label: "Preparando VM-base",
+      detail: `Verificando se "${nextAgent.baseVmName}" esta desligada...`,
+      error: "",
+    });
+    await ensureHypervVmStoppedForClone(nextAgent.baseVmName);
+    setBusy("Clonando VM-base");
+    setMessage(`Criando VM "${nextAgent.vmName}" a partir de "${nextAgent.baseVmName}"...`, "info");
+    setAgentCreateProgress({
+      active: true,
+      percent: 34,
+      label: "Criando clone rapido",
+      detail: "Gerando um disco diferencial a partir da VM-base. Deve levar poucos segundos.",
+      error: "",
+    });
+    if (state.agents.createProgressTimer) {
+      window.clearInterval(state.agents.createProgressTimer);
+    }
+    state.agents.createProgressTimer = startAgentCreateProgressTicker(
+      88,
+      "Criando clone rapido",
+      "Gerando um disco diferencial a partir da VM-base. Deve levar poucos segundos."
+    );
+    await invoke("clone_hyperv_vm", { baseVmName: nextAgent.baseVmName, vmName: nextAgent.vmName, storagePath: nextAgent.storagePath || "" });
+    if (state.agents.createProgressTimer) {
+      window.clearInterval(state.agents.createProgressTimer);
+      state.agents.createProgressTimer = null;
+    }
+    setAgentCreateProgress({
+      active: true,
+      percent: 90,
+      label: "VM clonada",
+      detail: "Atualizando lista de maquinas virtuais...",
+      error: "",
+    });
+    nextAgent = normalizeAgent({
+      ...nextAgent,
+      baseVmName: "",
+      connectionStage: "VM clonada",
+      status: "waiting",
+    });
+    await refreshAgentVmList({ silent: true });
+  }
+
+  setAgentCreateProgress({
+    active: true,
+    percent: 96,
+    label: "Salvando agente",
+    detail: "Registrando a nova maquina no Studio...",
+    error: "",
   });
   if (editingId) {
     state.agents.items = state.agents.items.map((agent) => (
@@ -12148,16 +12591,27 @@ async function saveAgentFromForm() {
   persistAgentsConfig();
   resetAgentForm();
   renderAgents();
-  setMessage(`Agente salvo: ${name}`, "success");
+  setMessage(nextAgent.vmName ? `Maquina criada: ${nextAgent.vmName}` : `Agente salvo: ${name}`, "success");
   if (nextAgent.vmName && !editingId) {
-    if (nextAgent.baseVmName) {
-      setBusy("Clonando VM-base");
-      await invoke("clone_hyperv_vm", { baseVmName: nextAgent.baseVmName, vmName: nextAgent.vmName });
-      nextAgent.baseVmName = "";
-      updateAgentRuntime(nextAgent.id, { baseVmName: "", connectionStage: "VM clonada" });
-      await refreshAgentVmList({ silent: true });
-    }
     await startAndWatchAgent(nextAgent);
+  } else {
+    setBusy("Pronto");
+  }
+  } catch (error) {
+    if (state.agents.createProgressTimer) {
+      window.clearInterval(state.agents.createProgressTimer);
+      state.agents.createProgressTimer = null;
+    }
+    const detail = String(error?.message || error || "Falha desconhecida ao criar a maquina.");
+    setBusy("Erro");
+    setAgentCreateProgress({
+      active: false,
+      percent: Math.max(8, Number(state.agents.createProgress?.percent || 0)),
+      label: "Falha na criacao",
+      detail: "",
+      error: detail,
+    });
+    setMessage(detail, "error");
   }
 }
 
@@ -12396,7 +12850,6 @@ async function startAndWatchAgent(agent) {
     stopStudioControlScreenStream({ clear: true });
   }
   if (agent.vmName) {
-    await closeNativeHypervRdp().catch(() => null);
     await closeEmbeddedHypervConsole().catch(() => null);
     const startedAgent = await startAgentVm(agent);
     if (!startedAgent) {
@@ -12407,9 +12860,8 @@ async function startAndWatchAgent(agent) {
     // recuperação quando o processo do Agent trava durante o logon do Windows.
     setWorkspaceTab("agent-screen");
     setBusy("Abrindo tela da VM");
-    let nativeRdpConnected = await openNativeHypervRdp(agent.vmName);
-    state.remoteControl.remoteInputEnabled = !nativeRdpConnected;
-    if (nativeRdpConnected) {
+    let screenConnected = await openHypervVmScreen(agent.vmName);
+    if (screenConnected) {
       setMessage(`Tela da VM ${agent.vmName} aberta. Aguardando o Agent em paralelo.`, "info");
     }
     setBusy("Aguardando Agent");
@@ -12419,9 +12871,9 @@ async function startAndWatchAgent(agent) {
       const connectionDetail = state.agents.lastConnectionError || "porta 18452 indisponivel";
       updateAgentRuntime(agent.id, { connectionStage: `Agent inacessivel: ${connectionDetail}`, startupProgress: 100, status: "error" });
       setWorkspaceTab("agent-screen");
-      setMessage(nativeRdpConnected
+      setMessage(screenConnected
         ? `O Agent ${agent.name} nao respondeu, mas a tela da VM continua disponivel para diagnostico. Detalhe: ${connectionDetail}`
-        : `A VM iniciou, mas o Agent ${agent.name} nao respondeu em ${agent.address || "nenhum IP"}. A tela nativa tambem nao ficou disponivel. Detalhe: ${connectionDetail}`,
+        : `A VM iniciou, mas o Agent ${agent.name} nao respondeu em ${agent.address || "nenhum IP"}. A tela da VM tambem nao ficou disponivel. Detalhe: ${connectionDetail}`,
       "error");
       return;
     }
@@ -12432,13 +12884,12 @@ async function startAndWatchAgent(agent) {
       lastSeenAt: Date.now(),
     });
     setWorkspaceTab("agent-screen");
-    if (!nativeRdpConnected) nativeRdpConnected = await openNativeHypervRdp(agent.vmName);
-    state.remoteControl.remoteInputEnabled = !nativeRdpConnected;
+    if (!screenConnected) screenConnected = await openHypervVmScreen(agent.vmName);
     setBusy("Pronto");
-    setMessage(nativeRdpConnected
-      ? `Tela nativa Hyper-V conectada ao Agent ${agent.name}.`
-      : `A tela nativa do Hyper-V nao conectou. O WebRTC automatico foi desativado. Detalhe: ${state.remoteControl.nativeRdpLastError || "sessao nativa indisponivel"}`,
-    nativeRdpConnected ? "success" : "error");
+    setMessage(screenConnected
+      ? `Tela Hyper-V conectada ao Agent ${agent.name}.`
+      : `A tela do Hyper-V nao conectou. Detalhe: ${state.remoteControl.nativeRdpLastError || "console indisponivel"}`,
+    screenConnected ? "success" : "error");
     return;
   }
   if (previousAddress && previousAddress !== normalizeAgentAddress(agent.address || "")) {
@@ -12496,7 +12947,7 @@ async function stopAgentVm(agent) {
       }
       setBusy("Forcando desligamento");
       updateAgentRuntime(agent.id, { connectionStage: "Forcando desligamento da VM", status: "starting", startupProgress: 94, progressMode: "shutdown" });
-      await invoke("turn_off_hyperv_vm", { vmName });
+      await invoke("kill_hyperv_vm_process", { vmName });
     }
     if (state.remoteControl.nativeRdpVmName === vmName) await closeNativeHypervRdp().catch(() => null);
     if (state.remoteControl.hypervVmName === vmName) await closeEmbeddedHypervConsole().catch(() => null);
@@ -12522,7 +12973,6 @@ async function openBaseVmForConfiguration(vmName = "") {
   if (!name) throw new Error("Nome da VM-base nao informado.");
 
   setBusy("Iniciando VM-base");
-  await closeNativeHypervRdp().catch(() => null);
   await closeEmbeddedHypervConsole().catch(() => null);
   stopStudioControlScreenStream({ clear: true });
   state.remoteControl.connected = false;
@@ -12530,16 +12980,16 @@ async function openBaseVmForConfiguration(vmName = "") {
   if (studioControlAddressInput) studioControlAddressInput.value = "";
   await invoke("start_hyperv_vm", { vmName: name });
   setWorkspaceTab("agent-screen");
-  setBusy("Conectando tela nativa");
-  const connected = await openNativeHypervRdp(name);
+  setBusy("Conectando tela Hyper-V");
+  const connected = await openHypervVmScreen(name);
   renderStudioControl();
   if (!connected) {
-    const detail = state.remoteControl.nativeRdpLastError || "HvSocket indisponivel";
+    const detail = state.remoteControl.nativeRdpLastError || "console indisponivel";
     if (studioControlScreenStatus) studioControlScreenStatus.textContent = `Falha ao abrir ${name}: ${detail}`;
-    throw new Error(`A VM iniciou, mas a tela nativa nao conectou: ${detail}`);
+    throw new Error(`A VM iniciou, mas a tela do Hyper-V nao conectou: ${detail}`);
   }
   setBusy("Pronto");
-  setMessage(`VM aberta no Studio: ${name}. Esta conexao usa o GUID do Hyper-V e nao precisa de IP.`, "success");
+  setMessage(`VM aberta no Studio: ${name}. Esta conexao usa o console local do Hyper-V e nao precisa de IP.`, "success");
   return true;
 }
 
@@ -12551,12 +13001,28 @@ async function stopHypervVmFromLibrary(vmName = "") {
   if (result?.requiresForce) {
     const force = window.confirm(`A VM "${name}" nao respondeu ao desligamento normal. Deseja forcar?`);
     if (!force) throw new Error("Desligamento cancelado; a VM continua ligada.");
-    await invoke("turn_off_hyperv_vm", { vmName: name });
+    await invoke("kill_hyperv_vm_process", { vmName: name });
   }
   if (state.remoteControl.nativeRdpVmName === name) await closeNativeHypervRdp().catch(() => null);
   await refreshAgentVmList({ silent: true });
   setBusy("Pronto");
   setMessage(`VM desligada: ${name}`, "success");
+}
+
+async function forceStopHypervVmFromLibrary(vmName = "") {
+  const name = String(vmName || "").trim();
+  if (!name) throw new Error("Nome da VM nao informado.");
+  const confirmForce = window.confirm(`Forcar o desligamento da VM "${name}" agora? Isso corta a energia virtual imediatamente e pode perder dados nao salvos dentro da VM.`);
+  if (!confirmForce) {
+    throw new Error("Desligamento forcado cancelado.");
+  }
+  setBusy("Forcando desligamento");
+  await invoke("kill_hyperv_vm_process", { vmName: name });
+  if (state.remoteControl.nativeRdpVmName === name) await closeNativeHypervRdp().catch(() => null);
+  if (state.remoteControl.hypervVmName === name) await closeEmbeddedHypervConsole().catch(() => null);
+  await refreshAgentVmList({ silent: true });
+  setBusy("Pronto");
+  setMessage(`VM forcada a desligar: ${name}`, "success");
 }
 
 function deleteAgentCard(id) {
@@ -12572,10 +13038,75 @@ function deleteAgentCard(id) {
   renderAgents();
 }
 
-function renderAgents() {
-  if (agentCreatePanel) {
-    agentCreatePanel.hidden = !state.agents.createOpen;
+function automationStepCount(item = {}) {
+  const candidates = [item.eventos, item.events, item.comandos, item.commands, item.passos, item.steps];
+  const list = candidates.find((value) => Array.isArray(value));
+  return Array.isArray(list) ? list.length : 0;
+}
+
+function renderAgentAutomationViews() {
+  const automationActive = state.agents.activeView === "automations";
+  agentsMachinesTabButton?.classList.toggle("is-active", !automationActive);
+  agentsAutomationsTabButton?.classList.toggle("is-active", automationActive);
+  if (agentsMachineActions) agentsMachineActions.hidden = automationActive;
+  if (agentsMachinesView) agentsMachinesView.hidden = automationActive;
+  if (agentsAutomationsView) agentsAutomationsView.hidden = !automationActive;
+
+  if (agentAutomationTargetSelect) {
+    const current = normalizeAgentAddress(state.agents.transferTargetAddress || agentAutomationTargetSelect.value || "");
+    const agents = (state.agents.items || [])
+      .map((agent) => ({ label: agent.name, address: normalizeAgentAddress(agent.address || "") }))
+      .filter((agent) => agent.address);
+    const vmTargets = (state.agents.vms || [])
+      .map((vm) => ({ label: vm.name, address: normalizeAgentAddress(vm.ip ? `${vm.ip}:18452` : "") }))
+      .filter((vm) => vm.address && !agents.some((agent) => agent.address === vm.address));
+    const targets = [...agents, ...vmTargets];
+    agentAutomationTargetSelect.innerHTML = [
+      '<option value="">Informar endereco manualmente</option>',
+      ...targets.map((target) => `<option value="${escapeHtml(target.address)}">${escapeHtml(target.label)} - ${escapeHtml(target.address)}</option>`),
+    ].join("");
+    agentAutomationTargetSelect.value = targets.some((target) => target.address === current) ? current : "";
   }
+
+  const items = state.library.items || [];
+  const selectedId = String(state.agents.transferSelectedId || "");
+  if (agentAutomationLocalList) {
+    agentAutomationLocalList.innerHTML = items.length
+      ? items.map((item) => {
+          const title = item.nome || item.name || "Automacao sem nome";
+          const category = item.categoria || item.category || "Automacao";
+          const description = item.descricao || item.description || "Pronta para enviar ao Agent.";
+          const steps = automationStepCount(item);
+          const selected = String(item.id) === selectedId;
+          return `
+          <article class="agent-automation-card ${selected ? "is-selected" : ""}" data-agent-transfer-id="${escapeHtml(item.id)}" tabindex="0">
+            <div class="agent-automation-card-head">
+              <span>${escapeHtml(category)}</span>
+              <small>${steps ? `${steps} passo${steps === 1 ? "" : "s"}` : "Salva"}</small>
+            </div>
+            <h3>${escapeHtml(title)}</h3>
+            <p>${escapeHtml(description)}</p>
+            <div class="agent-automation-card-foot">
+              <span>${selected ? "Selecionada para envio" : "Clique para selecionar"}</span>
+            </div>
+          </article>`;
+        }).join("")
+      : '<div class="empty-state">Nenhuma automacao salva neste Studio.</div>';
+  }
+  if (agentAutomationAddressInput && document.activeElement !== agentAutomationAddressInput) {
+    agentAutomationAddressInput.value = state.remoteControl.address || "127.0.0.1:18452";
+  }
+  if (agentAutomationConnectionStatus) {
+    agentAutomationConnectionStatus.textContent = state.remoteControl.connected ? "Conectado" : "Desconectado";
+    agentAutomationConnectionStatus.className = `studio-control-status ${state.remoteControl.connected ? "is-online" : "is-offline"}`;
+  }
+  if (agentAutomationSendButton) {
+    agentAutomationSendButton.disabled = !state.remoteControl.connected || !selectedId;
+  }
+}
+
+function renderAgents() {
+  renderAgentAutomationViews();
   renderAgentVmOptions();
   renderAgentVmList();
   if (saveAgentCardButton) {
@@ -12585,16 +13116,18 @@ function renderAgents() {
     return;
   }
   const hypervVms = state.agents.vms || [];
+  const createCard = state.agents.createOpen ? agentCreateLauncherMarkup() : agentAddLauncherMarkup();
   if (!hypervVms.length) {
     agentsList.innerHTML = `
+      ${createCard}
       <article class="agents-empty-card">
         <span class="panel-kicker">Hyper-V</span>
         <h3>Nenhuma VM encontrada</h3>
-        <p>Clique em Atualizar VMs ou prepare uma nova VM-base.</p>
+        <p>Atualize a lista ou prepare uma VM-base para comecar.</p>
       </article>`;
     return;
   }
-  agentsList.innerHTML = hypervVms.map(hypervVmLauncherMarkup).join("");
+  agentsList.innerHTML = [createCard, ...hypervVms.map(hypervVmLauncherMarkup)].join("");
   return;
   if (false && !state.agents.items.length) {
     agentsList.innerHTML = `
@@ -12723,6 +13256,36 @@ function renderStudioControl() {
   const visibleLibrary = studioControlVisibleLibrary();
   const selected = studioControlSelectedAutomation();
   const percent = Math.max(0, Math.min(100, Number(remote.progress.percent || 0)));
+  if (agentScreenVmSelect) {
+    const currentVm = String(remote.nativeRdpVmName || remote.hypervVmName || agentScreenVmSelect.value || "").trim();
+    const vms = state.agents.vms || [];
+    agentScreenVmSelect.innerHTML = [
+      '<option value="">Selecionar VM</option>',
+      ...vms.map((vm) => {
+        const name = String(vm.name || "").trim();
+        const stateName = String(vm.state || "Desconhecido").trim();
+        return `<option value="${escapeHtml(name)}">${escapeHtml(name)} - ${escapeHtml(stateName)}</option>`;
+      }),
+    ].join("");
+    if (vms.some((vm) => String(vm.name || "").trim() === currentVm)) {
+      agentScreenVmSelect.value = currentVm;
+    }
+  }
+  if (agentScreenOpenVmButton) {
+    agentScreenOpenVmButton.disabled = !String(agentScreenVmSelect?.value || "").trim();
+  }
+  if (agentScreenAutomationSelect) {
+    const current = String(remote.selectedId || agentScreenAutomationSelect.value || "");
+    agentScreenAutomationSelect.innerHTML = [
+      '<option value="">Selecionar automacao</option>',
+      ...visibleLibrary.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.nome || item.name || "Automacao sem nome")}</option>`),
+    ].join("");
+    if (visibleLibrary.some((item) => String(item.id) === current)) agentScreenAutomationSelect.value = current;
+  }
+  if (agentScreenExecuteButton) {
+    agentScreenExecuteButton.disabled = !remote.connected || !String(agentScreenAutomationSelect?.value || remote.selectedId || "") || remote.running;
+  }
+  renderAgentAutomationViews();
   studioControlViewButtons.forEach((button) => {
     const active = button.dataset.studioControlView === remote.activeView;
     button.classList.toggle("is-active", active);
@@ -13369,8 +13932,8 @@ function startStudioControlPolling() {
   }, state.remoteControl.webrtcActive ? 3000 : 1800);
 }
 
-async function connectStudioControl() {
-  const address = String(studioControlAddressInput?.value || "").trim() || "127.0.0.1:18452";
+async function connectStudioControl(addressOverride = "") {
+  const address = String(addressOverride || studioControlAddressInput?.value || state.remoteControl.address || "").trim() || "127.0.0.1:18452";
   state.remoteControl.address = address;
   const ping = await invoke("remote_agent_ping", { address });
   state.remoteControl.connected = true;
@@ -13382,6 +13945,22 @@ async function connectStudioControl() {
   renderStudioControl();
   refreshStudioControlLibrary({ silent: true }).catch(() => null);
   refreshStudioControlStatus({ silent: true }).catch(() => null);
+}
+
+async function sendSavedAutomationToAgent(id = "") {
+  const automationId = String(id || state.agents.transferSelectedId || "").trim();
+  const address = normalizeAgentAddress(state.agents.transferTargetAddress || agentAutomationTargetSelect?.value || agentAutomationAddressInput?.value || state.remoteControl.address || "");
+  if (!automationId) throw new Error("Escolha uma automacao para enviar.");
+  if (!address) throw new Error("Informe o IP e a porta do Agent.");
+  if (!state.remoteControl.connected || normalizeAgentAddress(state.remoteControl.address) !== address) {
+    await connectStudioControl(address);
+  }
+  const result = await invoke("remote_agent_send_saved_automation", { address, id: automationId });
+  const importedId = String(result?.imported_id || result?.importedId || "").trim();
+  await refreshStudioControlLibrary({ preferredId: importedId });
+  if (agentAutomationTransferStatus) agentAutomationTransferStatus.textContent = "Automacao enviada com sucesso.";
+  setMessage("Automacao enviada ao Agent.", "success");
+  renderAgentAutomationViews();
 }
 
 async function openStudioControlAutomation(id) {
@@ -17996,12 +18575,15 @@ assistTabButton.addEventListener("click", () => setWorkspaceTab("assist"));
 commandTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
 workbookTabButton.addEventListener("click", () => setWorkspaceTab("workbook"));
 launcherTabButton.addEventListener("click", () => setWorkspaceTab("launcher"));
-remoteControlTabButton?.addEventListener("click", () => setWorkspaceTab("remote-control"));
 agentsTabButton?.addEventListener("click", () => {
   setWorkspaceTab("agents");
   refreshAgentVmList({ silent: true }).catch(() => null);
 });
-agentScreenTabButton?.addEventListener("click", () => setWorkspaceTab("agent-screen"));
+agentScreenTabButton?.addEventListener("click", () => {
+  setWorkspaceTab("agent-screen");
+  refreshAgentVmList({ silent: true }).catch(() => null);
+  if (state.remoteControl.connected) refreshStudioControlLibrary({ silent: true }).catch(() => null);
+});
 studioControlHypervCloseButton?.addEventListener("click", () => {
   if (state.remoteControl.nativeRdpActive) {
     closeNativeHypervRdp().catch((error) => setMessage(String(error), "error"));
@@ -18011,7 +18593,7 @@ studioControlHypervCloseButton?.addEventListener("click", () => {
 });
 window.addEventListener("resize", () => {
   if (state.remoteControl.hypervConsoleActive) scheduleEmbeddedHypervConsoleSync();
-  if (state.remoteControl.nativeRdpActive) scheduleNativeHypervRdpSync();
+  if (state.remoteControl.nativeRdpActive) scheduleNativeHypervRdpSync(true);
 });
 smartRecorderTabButton?.addEventListener("click", () => setWorkspaceTab("smart-recorder"));
 addAgentCardButton?.addEventListener("click", () => openAgentForm());
@@ -18093,7 +18675,7 @@ agentVmList?.addEventListener("click", (event) => {
           if (result?.requiresForce) {
             const force = window.confirm(`A VM-base "${vmName}" nao respondeu. Deseja forcar o desligamento?`);
             if (!force) throw new Error("Desligamento cancelado; a VM-base continua ligada.");
-            await invoke("turn_off_hyperv_vm", { vmName });
+            await invoke("kill_hyperv_vm_process", { vmName });
           }
           setBusy("Pronto");
           setMessage("VM-base desligada e pronta para gerar novos agentes.", "success");
@@ -18127,7 +18709,9 @@ agentsList?.addEventListener("click", (event) => {
     vmActionButton.disabled = true;
     const operation = action === "open"
       ? openBaseVmForConfiguration(vmName)
-      : stopHypervVmFromLibrary(vmName);
+      : action === "force-stop"
+        ? forceStopHypervVmFromLibrary(vmName)
+        : stopHypervVmFromLibrary(vmName);
     operation
       .catch((error) => { setBusy("Erro"); setMessage(String(error), "error"); })
       .finally(() => { vmActionButton.disabled = false; refreshAgentVmList({ silent: true }).catch(() => null); });
@@ -18149,7 +18733,7 @@ agentsList?.addEventListener("click", (event) => {
           if (result?.requiresForce) {
             const force = window.confirm(`A VM-base "${vmName}" nao respondeu. Deseja forcar o desligamento?`);
             if (!force) throw new Error("Desligamento cancelado; a VM-base continua ligada.");
-            await invoke("turn_off_hyperv_vm", { vmName });
+            await invoke("kill_hyperv_vm_process", { vmName });
           }
           setBusy("Pronto");
           setMessage("VM-base desligada e pronta para clonagem.", "success");
@@ -18175,6 +18759,25 @@ agentsList?.addEventListener("click", (event) => {
     openAgentForm();
     return;
   }
+  if (action === "create-save") {
+    button.disabled = true;
+    saveAgentFromForm()
+      .catch((error) => {
+        setBusy("Erro");
+        setMessage(String(error), "error");
+      })
+      .finally(() => { button.disabled = false; });
+    return;
+  }
+  if (action === "create-cancel") {
+    resetAgentForm();
+    renderAgents();
+    return;
+  }
+  if (action === "pick-storage") {
+    pickAgentStoragePath().catch((error) => setMessage(String(error), "error"));
+    return;
+  }
   if (!agent) {
     return;
   }
@@ -18196,6 +18799,141 @@ agentsList?.addEventListener("click", (event) => {
     saveAgentCardEdit(id);
   } else if (action === "delete") {
     deleteAgentCard(id);
+  }
+});
+agentsList?.addEventListener("input", (event) => {
+  const field = event.target.closest("#agentNameInput, #agentProfileSelect, #agentAddressInput, #agentVmNameInput, #agentBaseVmSelect, #agentStoragePathInput");
+  if (!field) return;
+  const keyById = {
+    agentNameInput: "name",
+    agentProfileSelect: "profile",
+    agentAddressInput: "address",
+    agentVmNameInput: "vmName",
+    agentBaseVmSelect: "baseVmName",
+    agentStoragePathInput: "storagePath",
+  };
+  const key = keyById[field.id];
+  if (!key) return;
+  state.agents.createDraft[key] = String(field.value || "").trim();
+});
+agentsMachinesTabButton?.addEventListener("click", () => {
+  state.agents.activeView = "machines";
+  renderAgentAutomationViews();
+});
+agentsAutomationsTabButton?.addEventListener("click", async () => {
+  state.agents.activeView = "automations";
+  renderAgentAutomationViews();
+  try {
+    await refreshAutomationLibrary();
+    renderAgentAutomationViews();
+  } catch (error) {
+    setMessage(`Falha ao carregar automacoes: ${String(error)}`, "error");
+  }
+});
+agentAutomationTargetSelect?.addEventListener("change", () => {
+  const address = normalizeAgentAddress(agentAutomationTargetSelect.value || "");
+  state.agents.transferTargetAddress = address;
+  if (address) {
+    if (normalizeAgentAddress(state.remoteControl.address) !== address) {
+      state.remoteControl.connected = false;
+    }
+    state.remoteControl.address = address;
+    if (agentAutomationAddressInput) agentAutomationAddressInput.value = address;
+  }
+  renderAgentAutomationViews();
+});
+agentAutomationAddressInput?.addEventListener("input", () => {
+  const address = String(agentAutomationAddressInput.value || "").trim();
+  state.agents.transferTargetAddress = "";
+  if (normalizeAgentAddress(address) !== normalizeAgentAddress(state.remoteControl.address)) state.remoteControl.connected = false;
+  state.remoteControl.address = address;
+  renderAgentAutomationViews();
+});
+agentAutomationConnectButton?.addEventListener("click", async () => {
+  try {
+    setBusy("Conectando Agent");
+    const address = normalizeAgentAddress(state.agents.transferTargetAddress || agentAutomationTargetSelect?.value || agentAutomationAddressInput?.value || "");
+    await connectStudioControl(address);
+    refreshStudioControlLibrary({ silent: true }).catch((error) => {
+      console.warn("Agent conectado, mas a biblioteca remota nao carregou.", error);
+      renderAgentAutomationViews();
+    });
+    setBusy("Pronto");
+  } catch (error) {
+    state.remoteControl.connected = false;
+    setBusy("Erro");
+    setMessage(String(error), "error");
+    renderAgentAutomationViews();
+  }
+});
+agentAutomationLocalList?.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-agent-transfer-id]");
+  if (!card) return;
+  state.agents.transferSelectedId = String(card.dataset.agentTransferId || "");
+  const selected = state.library.items.find((item) => String(item.id) === state.agents.transferSelectedId);
+  if (agentAutomationTransferStatus) agentAutomationTransferStatus.textContent = `Selecionada: ${selected?.nome || selected?.name || "automacao"}`;
+  renderAgentAutomationViews();
+});
+agentAutomationSendButton?.addEventListener("click", async () => {
+  try {
+    setBusy("Enviando automacao");
+    await sendSavedAutomationToAgent();
+    setBusy("Pronto");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+});
+agentScreenAutomationSelect?.addEventListener("change", () => {
+  state.remoteControl.selectedId = String(agentScreenAutomationSelect.value || "");
+  renderStudioControl();
+});
+agentScreenVmSelect?.addEventListener("change", async () => {
+  const vmName = String(agentScreenVmSelect.value || "").trim();
+  if (agentScreenOpenVmButton) {
+    agentScreenOpenVmButton.disabled = !vmName;
+  }
+  if (!vmName || !state.remoteControl.nativeRdpActive) {
+    return;
+  }
+  try {
+    setBusy("Trocando tela");
+    await openBaseVmForConfiguration(vmName);
+    setBusy("Pronto");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+});
+agentScreenPrepareButton?.addEventListener("click", () => {
+  prepareAgentScreens().catch((error) => {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  });
+});
+agentScreenOpenVmButton?.addEventListener("click", async () => {
+  const vmName = String(agentScreenVmSelect?.value || "").trim();
+  if (!vmName) {
+    setMessage("Selecione uma VM para abrir a tela.", "error");
+    return;
+  }
+  try {
+    setBusy("Abrindo tela da VM");
+    await openBaseVmForConfiguration(vmName);
+    setBusy("Pronto");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+});
+agentScreenExecuteButton?.addEventListener("click", async () => {
+  try {
+    setBusy("Executando no Agent");
+    await runStudioControlAutomation(agentScreenAutomationSelect?.value || "", { minimizeAgent: true });
+    setBusy("Pronto");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
   }
 });
 smartRecorderStartButton?.addEventListener("click", () => {

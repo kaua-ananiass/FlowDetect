@@ -1099,7 +1099,7 @@
         </section>
       </section>
 
-      <section id="remoteControlPanel" class="workspace-panel">
+      <section id="remoteControlPanel" class="workspace-panel" hidden aria-hidden="true">
         <section class="studio-control-shell">
           <header class="studio-control-header">
             <div>
@@ -1239,18 +1239,17 @@
 
       <section id="agentsPanel" class="workspace-panel">
         <section class="agents-shell">
-          <header class="agents-header">
-            <div>
-              <p class="panel-kicker">Ambientes</p>
-              <h2>Maquinas virtuais</h2>
-              <p>Abra e controle diretamente as VMs locais do Hyper-V.</p>
-            </div>
-            <div class="agents-header-actions">
+          <div class="agents-topbar">
+            <nav class="agents-subtabs" aria-label="Areas dos agentes">
+              <button id="agentsMachinesTabButton" class="is-active" type="button">Maquinas virtuais</button>
+              <button id="agentsAutomationsTabButton" type="button">Automacoes</button>
+            </nav>
+            <div id="agentsMachineActions" class="agents-header-actions agents-topbar-actions">
               <button id="setupHypervBaseButton" class="ghost-button" type="button">Preparar VM-base</button>
               <button id="refreshAgentVmsButton" class="ghost-button" type="button">Atualizar VMs</button>
             </div>
-          </header>
-
+          </div>
+          <section id="agentsMachinesView">
           <section id="hypervBasePanel" class="agents-create-panel" hidden>
             <div id="hypervBaseStatus" class="hyperv-base-status" role="status">Verificando o Hyper-V...</div>
             <label><span>Nome da VM-base</span><input id="hypervBaseNameInput" type="text" value="FlowDetect-Windows10-Base" /></label>
@@ -1265,45 +1264,27 @@
             </div>
           </section>
 
-          <section id="agentCreatePanel" class="agents-create-panel" hidden>
-            <label>
-              <span>Nome do ambiente</span>
-              <input id="agentNameInput" type="text" placeholder="Ex.: VM FGTS Digital" />
-            </label>
-            <label>
-              <span>Perfil da maquina</span>
-              <select id="agentProfileSelect">
-                <option value="fiscal">Fiscal</option>
-                <option value="dp">Departamento Pessoal</option>
-                <option value="contabil">Contabil</option>
-                <option value="ti">TI</option>
-              </select>
-            </label>
-            <label>
-              <span>Endereco atual</span>
-              <input id="agentAddressInput" type="text" placeholder="Aparece depois que o Agent iniciar. Ex.: 192.168.1.150:18452" />
-            </label>
-            <label>
-              <span>Maquina virtual</span>
-              <input id="agentVmNameInput" type="text" list="agentVmOptions" placeholder="Ex.: FlowDetect-FGTS" />
-            </label>
-            <label>
-              <span>Clonar a partir da VM-base (opcional)</span>
-              <select id="agentBaseVmSelect"><option value="">Usar VM existente</option></select>
-            </label>
-            <datalist id="agentVmOptions"></datalist>
-            <div class="agents-create-actions">
-              <button id="saveAgentCardButton" class="primary-button" type="button">Salvar agente</button>
-              <button id="cancelAgentCardButton" class="ghost-button" type="button">Cancelar</button>
-            </div>
+          <div id="agentsList" class="agents-grid"></div>
           </section>
 
-          <div id="agentsList" class="agents-grid"></div>
-
-          <section class="agents-help-card">
-            <p class="panel-kicker">Fluxo recomendado</p>
-            <strong>Uma base, varios agentes independentes</strong>
-            <span>Configure o Windows e os aplicativos uma vez na VM-base, desligue-a e clone uma copia para Fiscal, DP ou qualquer outro perfil.</span>
+          <section id="agentsAutomationsView" class="agents-automations-view" hidden>
+            <section class="agent-transfer-connect">
+              <label>
+                <span>Agent salvo</span>
+                <select id="agentAutomationTargetSelect"><option value="">Informar endereco manualmente</option></select>
+              </label>
+              <label>
+                <span>IP e porta do Agent</span>
+                <input id="agentAutomationAddressInput" type="text" placeholder="192.168.1.150:18452" value="127.0.0.1:18452" />
+              </label>
+              <button id="agentAutomationConnectButton" class="ghost-button" type="button">Conectar</button>
+              <span id="agentAutomationConnectionStatus" class="studio-control-status is-offline">Desconectado</span>
+            </section>
+            <div id="agentAutomationLocalList" class="agent-automation-grid"></div>
+            <div class="agent-transfer-footer">
+              <span id="agentAutomationTransferStatus">Escolha uma automacao para enviar.</span>
+              <button id="agentAutomationSendButton" class="primary-button" type="button" disabled>Enviar ao Agent</button>
+            </div>
           </section>
         </section>
       </section>
@@ -1317,6 +1298,21 @@
               <span id="studioControlScreenStatus">Selecione uma VM na aba Agentes. A conexao usa o GUID do Hyper-V, sem IP.</span>
             </div>
             <div class="studio-control-screen-actions">
+              <section class="agent-screen-vm-bar" aria-label="Tela da maquina virtual">
+                <label>
+                  <span>Tela</span>
+                  <select id="agentScreenVmSelect"><option value="">Selecionar VM</option></select>
+                </label>
+                <button id="agentScreenPrepareButton" class="ghost-button" type="button">Preparar telas</button>
+                <button id="agentScreenOpenVmButton" class="ghost-button" type="button" disabled>Abrir tela</button>
+              </section>
+              <section class="agent-screen-execution-bar" aria-label="Automacao do Agent">
+                <label>
+                  <span class="agent-screen-execution-label">Automacao</span>
+                  <select id="agentScreenAutomationSelect"><option value="">Selecionar automacao</option></select>
+                </label>
+                <button id="agentScreenExecuteButton" class="primary-button" type="button" disabled>Executar</button>
+              </section>
               <button id="studioControlHypervCloseButton" class="ghost-button" type="button" hidden>Fechar tela</button>
             </div>
           </div>
