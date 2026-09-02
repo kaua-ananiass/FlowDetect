@@ -609,6 +609,27 @@ async function invoke(command, payload) {
   return tauriCore.invoke(command, payload);
 }
 
+async function syncAgentCompactWindow(reason = "sync") {
+  if (!document.body.classList.contains("agent-compact-mode")) {
+    return null;
+  }
+  try {
+    return await invoke("set_agent_compact_mode", { compact: true });
+  } catch (error) {
+    console.warn(`Nao foi possivel alinhar a janela do Agent (${reason}).`, error);
+    return null;
+  }
+}
+
+function scheduleAgentCompactWindowSync(reason = "sync") {
+  void syncAgentCompactWindow(reason);
+  [250, 900, 1800].forEach((delay) => {
+    window.setTimeout(() => {
+      void syncAgentCompactWindow(`${reason}:${delay}`);
+    }, delay);
+  });
+}
+
 async function loadAgentConnectionInfo() {
   if (!elements.agentConnectionAddress) {
     return;
@@ -1866,7 +1887,8 @@ function handleAssistMapKeydown(event) {
 
 async function boot() {
   document.body.classList.add("agent-compact-mode");
-  await invoke("set_agent_compact_mode", { compact: true }).catch((error) => console.warn("Modo compacto indisponivel.", error));
+  await syncAgentCompactWindow("boot");
+  scheduleAgentCompactWindowSync("boot-stabilize");
   await loadAgentConnectionInfo();
   renderLogs();
   renderSelection();
@@ -1883,6 +1905,9 @@ async function boot() {
     document.body.classList.toggle("agent-compact-mode", compact);
     elements.toggleAgentPanelButton.textContent = compact ? "Detalhes" : "Recolher";
     await invoke("set_agent_compact_mode", { compact }).catch((error) => pushLog(String(error), "error", "Janela"));
+    if (compact) {
+      scheduleAgentCompactWindowSync("toggle-compact");
+    }
   };
   await safeListen("agent-overlay-toggle-request", () => { void toggleOverlayMode(); });
   await safeListen("agent-identity-updated", (event) => {
@@ -1978,6 +2003,20 @@ async function boot() {
 
   window.addEventListener("beforeunload", () => {
     invoke("hide_target_window_overlay", { clearTarget: true }).catch(() => {});
+  });
+
+  let compactResizeTimer = null;
+  window.addEventListener("resize", () => {
+    if (!document.body.classList.contains("agent-compact-mode")) {
+      return;
+    }
+    if (compactResizeTimer) {
+      window.clearTimeout(compactResizeTimer);
+    }
+    compactResizeTimer = window.setTimeout(() => {
+      compactResizeTimer = null;
+      void syncAgentCompactWindow("window-resize");
+    }, 120);
   });
 
   await safeListen("test-execution-state", (event) => {

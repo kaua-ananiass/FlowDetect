@@ -1316,11 +1316,99 @@
               <button id="studioControlHypervCloseButton" class="ghost-button" type="button" hidden>Fechar tela</button>
             </div>
           </div>
-          <div id="studioControlScreenFrameWrap" class="studio-control-screen-frame-wrap">
-            <div class="studio-control-screen-placeholder">
-              <strong>Nenhuma VM selecionada</strong>
-              <span>Abra a aba Agentes e clique em uma maquina virtual para iniciar a sessao nativa.</span>
+          <div class="agent-screen-workspace">
+            <div class="agent-screen-console-column">
+              <div id="studioControlScreenFrameWrap" class="studio-control-screen-frame-wrap">
+                <div class="studio-control-screen-placeholder">
+                  <strong>Nenhuma VM selecionada</strong>
+                  <span>Abra a aba Agentes e clique em uma maquina virtual para iniciar a sessao nativa.</span>
+                </div>
+              </div>
+
+              <section class="agent-screen-task-queue" aria-label="Tasks agendadas do Agent">
+                <div class="agent-screen-task-queue-head">
+                  <strong id="agentScreenLiveCurrentBlock">Agent em espera</strong>
+                  <p id="agentSchedulerStatus" class="agent-screen-scheduler-status">Nenhum agendamento criado.</p>
+                </div>
+                <div id="agentScreenLiveBlocks" class="agent-screen-live-blocks" aria-label="Tempo real do Agent">
+                  <div class="agent-screen-live-head">
+                    <div class="agent-screen-live-progress">
+                      <span id="agentScreenLivePercent">0%</span>
+                      <i><b id="agentScreenLiveProgressFill"></b></i>
+                    </div>
+                  </div>
+                  <div id="agentScreenLiveBlockList" class="agent-screen-live-block-list"></div>
+                </div>
+                <div id="agentSchedulerList" class="agent-screen-scheduler-list"></div>
+              </section>
             </div>
+
+            <aside class="agent-screen-scheduler-panel" aria-label="Agendador de automacoes">
+              <div class="agent-screen-scheduler-topbar">
+                <div class="agent-screen-scheduler-header">
+                  <span>Agendador</span>
+                  <strong>Automacoes programadas</strong>
+                </div>
+
+                <label class="agent-screen-scheduler-agent">
+                  <span>Agent</span>
+                  <select id="agentSchedulerAgentSelect">
+                    <option value="">Selecionar Agent</option>
+                  </select>
+                </label>
+                <button id="agentSchedulerConnectButton" class="ghost-button agent-screen-scheduler-connect" type="button">Conectar</button>
+              </div>
+
+              <div id="agentSchedulerAutomationCards" class="agent-screen-scheduler-automation-cards"></div>
+
+              <button id="agentSchedulerAddButton" class="agent-screen-scheduler-add-card" type="button" hidden>
+                <span class="agent-screen-scheduler-icon">+</span>
+                <strong>Novo agendamento</strong>
+                <small>Escolha uma automacao e marque no calendario.</small>
+              </button>
+
+              <div id="agentSchedulerForm" class="agent-screen-scheduler-form" hidden>
+                <div class="agent-screen-scheduler-form-head">
+                  <strong>Novo agendamento</strong>
+                  <button id="agentSchedulerCancelButton" class="micro-button" type="button">Cancelar</button>
+                </div>
+                <label>
+                  <span>Automacao</span>
+                  <select id="agentSchedulerAutomationSelect">
+                    <option value="">Selecionar automacao</option>
+                  </select>
+                </label>
+                <div class="agent-screen-calendar">
+                  <div class="agent-screen-calendar-head">
+                    <button id="agentSchedulerPrevMonthButton" class="micro-button" type="button">‹</button>
+                    <strong id="agentSchedulerMonthLabel">Calendario</strong>
+                    <button id="agentSchedulerNextMonthButton" class="micro-button" type="button">›</button>
+                  </div>
+                  <div class="agent-screen-calendar-week">
+                    <span>Dom</span><span>Seg</span><span>Ter</span><span>Qua</span><span>Qui</span><span>Sex</span><span>Sab</span>
+                  </div>
+                  <div id="agentSchedulerCalendarGrid" class="agent-screen-calendar-grid"></div>
+                </div>
+                <div class="agent-screen-scheduler-row">
+                  <label>
+                    <span>Hora</span>
+                    <input id="agentSchedulerTimeInput" type="time" />
+                  </label>
+                  <label>
+                    <span>Repetir</span>
+                    <select id="agentSchedulerRepeatSelect">
+                      <option value="once">Uma vez</option>
+                      <option value="daily">Todo dia</option>
+                      <option value="weekly">Toda semana</option>
+                    </select>
+                  </label>
+                </div>
+                <button id="agentSchedulerCreateButton" class="ghost-button agent-screen-scheduler-button" type="button">
+                  + Agendar automacao
+                </button>
+              </div>
+
+            </aside>
           </div>
         </section>
       </section>

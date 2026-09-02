@@ -1,45 +1,48 @@
-﻿use serde::Serialize;
 use base64::{engine::general_purpose, Engine as _};
+use serde::Serialize;
 #[cfg(windows)]
 mod native_rdp;
 #[cfg(windows)]
 use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, ImageBuffer, Rgba};
 use serde_json::Value;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
-    sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock,
+    },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 #[cfg(windows)]
-use std::os::windows::process::CommandExt;
-#[cfg(windows)]
 use windows::Win32::{
     Foundation::{BOOL, HWND, LPARAM, POINT, RECT},
     Graphics::Gdi::{
-        BitBlt, ClientToScreen, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC,
-        GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
-        HBITMAP, HGDIOBJ, RGBQUAD, SRCCOPY,
+        BitBlt, ClientToScreen, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+        GetDC, GetDIBits, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        DIB_RGB_COLORS, HBITMAP, HGDIOBJ, RGBQUAD, SRCCOPY,
     },
     Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
     UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-        KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-        MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
-        MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, VIRTUAL_KEY, VK_CONTROL, VK_F12, VK_SHIFT,
+        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
+        KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
+        MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
+        MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, VIRTUAL_KEY,
+        VK_CONTROL, VK_F12, VK_SHIFT,
     },
     UI::WindowsAndMessaging::{
-        EnumWindows, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW,
-        GetWindowRect, GetWindowThreadProcessId, IsWindow, IsWindowVisible, IsZoomed,
-        SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_HWNDPARENT, GWL_STYLE, SM_CXSCREEN,
-        SM_CYSCREEN, SWP_FRAMECHANGED, SWP_NOZORDER, SWP_SHOWWINDOW,
-        SW_HIDE, SW_RESTORE, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP,
-        WS_SYSMENU, WS_THICKFRAME,
+        EnumWindows, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
+        GetWindowThreadProcessId, IsWindow, IsWindowVisible, IsZoomed, SetWindowLongPtrW,
+        SetWindowPos, ShowWindow, GWLP_HWNDPARENT, GWL_STYLE, SM_CXSCREEN, SM_CYSCREEN,
+        SWP_FRAMECHANGED, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_RESTORE, WS_CAPTION,
+        WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
     },
 };
 
@@ -99,6 +102,8 @@ static MESHCENTRAL_STARTING: OnceLock<Arc<Mutex<bool>>> = OnceLock::new();
 static MESHCENTRAL_LAST_MESSAGE: OnceLock<Arc<Mutex<String>>> = OnceLock::new();
 static WEBRTC_SIGNAL_STATE: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
 static NATIVE_REMOTE_STATUS: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
+static PYTHON_BOOTSTRAP_ATTEMPTED: AtomicBool = AtomicBool::new(false);
+static PYTHON_DEPS_READY: AtomicBool = AtomicBool::new(false);
 
 static TARGET_OVERLAY_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 static SMART_RECORDER_CHILD: Mutex<Option<Child>> = Mutex::new(None);
@@ -108,8 +113,8 @@ static AGENT_WORK_AREA_GUARD_ENABLED: AtomicBool = AtomicBool::new(false);
 
 const AGENT_SAFE_MARGIN_LEFT: i32 = 25;
 const AGENT_SAFE_MARGIN_RIGHT: i32 = 25;
-const AGENT_SAFE_MARGIN_TOP: i32 = 76;
-const AGENT_SAFE_MARGIN_BOTTOM: i32 = 166;
+const AGENT_SAFE_MARGIN_TOP: i32 = 50;
+const AGENT_SAFE_MARGIN_BOTTOM: i32 = 28;
 
 struct EmbeddedHypervConsole {
     child: Child,
@@ -181,7 +186,11 @@ fn workspace_root(app: &AppHandle) -> PathBuf {
 fn is_flowdetect_agent_runtime(app: &AppHandle) -> bool {
     let exe_name = std::env::current_exe()
         .ok()
-        .and_then(|path| path.file_stem().and_then(|name| name.to_str()).map(str::to_string))
+        .and_then(|path| {
+            path.file_stem()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+        })
         .unwrap_or_default()
         .to_ascii_lowercase();
     if exe_name.contains("agent") {
@@ -199,7 +208,12 @@ fn is_flowdetect_agent_runtime(app: &AppHandle) -> bool {
     app.path()
         .resource_dir()
         .ok()
-        .map(|path| path.display().to_string().to_ascii_lowercase().contains("flowdetect_agent"))
+        .map(|path| {
+            path.display()
+                .to_string()
+                .to_ascii_lowercase()
+                .contains("flowdetect_agent")
+        })
         .unwrap_or(false)
 }
 
@@ -265,7 +279,13 @@ fn image_mime_from_bytes(path: &Path, bytes: &[u8]) -> &'static str {
         return "image/webp";
     }
 
-    match path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
         "webp" => "image/webp",
@@ -316,22 +336,41 @@ fn powershell_literal(value: &str) -> String {
 }
 
 fn run_hyperv_powershell(script: &str) -> Result<String, String> {
-    let wrapped = format!("$ErrorActionPreference='Stop'; Import-Module Hyper-V -ErrorAction Stop; {script}");
+    let wrapped =
+        format!("$ErrorActionPreference='Stop'; Import-Module Hyper-V -ErrorAction Stop; {script}");
     let mut command = Command::new("powershell.exe");
-    command.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", &wrapped]);
+    command.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        &wrapped,
+    ]);
     configure_no_window(&mut command);
-    let output = command.output().map_err(|err| format!("Nao foi possivel abrir o PowerShell do Hyper-V: {err}"))?;
+    let output = command
+        .output()
+        .map_err(|err| format!("Nao foi possivel abrir o PowerShell do Hyper-V: {err}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if output.status.success() { Ok(stdout) } else {
+    if output.status.success() {
+        Ok(stdout)
+    } else {
         let detail = if stderr.is_empty() { stdout } else { stderr };
         let log_dir = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir)
             .join("FlowDetect Studio");
         let _ = fs::create_dir_all(&log_dir);
-        if let Ok(mut log) = fs::OpenOptions::new().create(true).append(true).open(log_dir.join("hyperv.log")) {
-            let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|value| value.as_secs()).unwrap_or_default();
+        if let Ok(mut log) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_dir.join("hyperv.log"))
+        {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|value| value.as_secs())
+                .unwrap_or_default();
             let _ = writeln!(log, "[{timestamp}] PowerShell: {detail}\n");
         }
         let normalized = detail.to_lowercase();
@@ -347,7 +386,9 @@ fn run_hyperv_powershell(script: &str) -> Result<String, String> {
             || normalized.contains("cannot find a virtual machine")
             || normalized.contains("was not found")
         {
-            Err(format!("A VM configurada não foi encontrada no Hyper-V. Detalhe: {detail}"))
+            Err(format!(
+                "A VM configurada não foi encontrada no Hyper-V. Detalhe: {detail}"
+            ))
         } else {
             Err(format!("Falha no Hyper-V: {detail}"))
         }
@@ -356,8 +397,11 @@ fn run_hyperv_powershell(script: &str) -> Result<String, String> {
 
 fn hyperv_json(script: &str) -> Result<Value, String> {
     let output = run_hyperv_powershell(script)?;
-    if output.is_empty() { return Ok(Value::Null); }
-    serde_json::from_str(&output).map_err(|err| format!("Resposta invalida do Hyper-V: {err}. Saida: {output}"))
+    if output.is_empty() {
+        return Ok(Value::Null);
+    }
+    serde_json::from_str(&output)
+        .map_err(|err| format!("Resposta invalida do Hyper-V: {err}. Saida: {output}"))
 }
 
 #[tauri::command]
@@ -366,33 +410,74 @@ fn get_hyperv_status() -> Result<Value, String> {
     let mut command = Command::new("powershell.exe");
     command.args(["-NoProfile", "-NonInteractive", "-Command", script]);
     configure_no_window(&mut command);
-    let output = command.output().map_err(|err| format!("Falha ao verificar o Hyper-V: {err}"))?;
+    let output = command
+        .output()
+        .map_err(|err| format!("Falha ao verificar o Hyper-V: {err}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    serde_json::from_str(&stdout).map_err(|err| format!("Falha ao interpretar o estado do Hyper-V: {err}"))
+    serde_json::from_str(&stdout)
+        .map_err(|err| format!("Falha ao interpretar o estado do Hyper-V: {err}"))
 }
 
 #[tauri::command]
 fn list_hyperv_vms() -> Result<Value, String> {
     let items = hyperv_json("[array]$items=@(Get-VM | ForEach-Object { $vm=$_; $ips=@(Get-VMNetworkAdapter -VM $vm -ErrorAction SilentlyContinue | ForEach-Object IPAddresses | Where-Object { $_ -match '^\\d+\\.' -and $_ -notmatch '^169\\.254\\.' }); [pscustomobject]@{ name=$vm.Name; uuid=$vm.Id.Guid; state=$vm.State.ToString(); generation=$vm.Generation; path=$vm.Path; ip=($ips | Select-Object -First 1) } }); ConvertTo-Json -InputObject $items -Compress")?;
-    Ok(serde_json::json!({ "ok": true, "provider": "hyper-v", "items": items.as_array().cloned().unwrap_or_default() }))
+    Ok(
+        serde_json::json!({ "ok": true, "provider": "hyper-v", "items": items.as_array().cloned().unwrap_or_default() }),
+    )
 }
 
 #[tauri::command]
-fn create_hyperv_base_vm(vm_name: String, iso_path: String, memory_mb: Option<u64>, processors: Option<u32>, disk_size_gb: Option<u64>) -> Result<Value, String> {
-    let name = vm_name.trim(); let iso = PathBuf::from(iso_path.trim());
-    if name.is_empty() { return Err("Informe o nome da VM-base.".to_string()); }
-    if !iso.is_file() || iso.extension().and_then(|v| v.to_str()).map(|v| !v.eq_ignore_ascii_case("iso")).unwrap_or(true) { return Err("Selecione uma ISO valida do Windows 10.".to_string()); }
-    let memory = memory_mb.unwrap_or(4096).clamp(2048, 16384); let cpu = processors.unwrap_or(2).clamp(1, 8); let disk = disk_size_gb.unwrap_or(64).clamp(40, 512);
-    let script = format!(r#"$name={name}; $iso={iso}; if (Get-VM -Name $name -ErrorAction SilentlyContinue) {{ throw 'Ja existe uma VM com esse nome.' }}; $switch=Get-VMSwitch -Name 'Default Switch' -ErrorAction SilentlyContinue; if (-not $switch) {{ throw 'O Default Switch do Hyper-V nao foi encontrado.' }}; $root=Join-Path $env:ProgramData 'FlowDetect\HyperV'; $vmPath=Join-Path $root $name; New-Item -ItemType Directory -Path $vmPath -Force | Out-Null; $vhd=Join-Path $vmPath ($name+'.vhdx'); New-VHD -Path $vhd -Dynamic -SizeBytes {disk}GB | Out-Null; $vm=New-VM -Name $name -Generation 2 -MemoryStartupBytes {memory}MB -VHDPath $vhd -Path $vmPath -SwitchName $switch.Name; Set-VMProcessor -VM $vm -Count {cpu}; Set-VMMemory -VM $vm -DynamicMemoryEnabled $true -MinimumBytes 2048MB -StartupBytes {memory}MB -MaximumBytes {max_memory}MB; Set-VM -VM $vm -AutomaticStartAction Nothing -AutomaticStopAction ShutDown; Set-VMFirmware -VM $vm -EnableSecureBoot On -SecureBootTemplate MicrosoftWindows; $dvd=Add-VMDvdDrive -VM $vm -Path $iso -Passthru; Set-VMFirmware -VM $vm -FirstBootDevice $dvd; [pscustomobject]@{{ok=$true;name=$vm.Name;path=$vm.Path;vhd=$vhd;switch=$switch.Name}} | ConvertTo-Json -Compress"#, name=powershell_literal(name), iso=powershell_literal(&iso.to_string_lossy()), disk=disk, memory=memory, max_memory=(memory*2).min(16384), cpu=cpu);
+fn create_hyperv_base_vm(
+    vm_name: String,
+    iso_path: String,
+    memory_mb: Option<u64>,
+    processors: Option<u32>,
+    disk_size_gb: Option<u64>,
+) -> Result<Value, String> {
+    let name = vm_name.trim();
+    let iso = PathBuf::from(iso_path.trim());
+    if name.is_empty() {
+        return Err("Informe o nome da VM-base.".to_string());
+    }
+    if !iso.is_file()
+        || iso
+            .extension()
+            .and_then(|v| v.to_str())
+            .map(|v| !v.eq_ignore_ascii_case("iso"))
+            .unwrap_or(true)
+    {
+        return Err("Selecione uma ISO valida do Windows 10.".to_string());
+    }
+    let memory = memory_mb.unwrap_or(4096).clamp(2048, 16384);
+    let cpu = processors.unwrap_or(2).clamp(1, 8);
+    let disk = disk_size_gb.unwrap_or(64).clamp(40, 512);
+    let script = format!(
+        r#"$name={name}; $iso={iso}; if (Get-VM -Name $name -ErrorAction SilentlyContinue) {{ throw 'Ja existe uma VM com esse nome.' }}; $switch=Get-VMSwitch -Name 'Default Switch' -ErrorAction SilentlyContinue; if (-not $switch) {{ throw 'O Default Switch do Hyper-V nao foi encontrado.' }}; $root=Join-Path $env:ProgramData 'FlowDetect\HyperV'; $vmPath=Join-Path $root $name; New-Item -ItemType Directory -Path $vmPath -Force | Out-Null; $vhd=Join-Path $vmPath ($name+'.vhdx'); New-VHD -Path $vhd -Dynamic -SizeBytes {disk}GB | Out-Null; $vm=New-VM -Name $name -Generation 2 -MemoryStartupBytes {memory}MB -VHDPath $vhd -Path $vmPath -SwitchName $switch.Name; Set-VMProcessor -VM $vm -Count {cpu}; Set-VMMemory -VM $vm -DynamicMemoryEnabled $true -MinimumBytes 2048MB -StartupBytes {memory}MB -MaximumBytes {max_memory}MB; Set-VM -VM $vm -AutomaticStartAction Nothing -AutomaticStopAction ShutDown; Set-VMFirmware -VM $vm -EnableSecureBoot On -SecureBootTemplate MicrosoftWindows; $dvd=Add-VMDvdDrive -VM $vm -Path $iso -Passthru; Set-VMFirmware -VM $vm -FirstBootDevice $dvd; [pscustomobject]@{{ok=$true;name=$vm.Name;path=$vm.Path;vhd=$vhd;switch=$switch.Name}} | ConvertTo-Json -Compress"#,
+        name = powershell_literal(name),
+        iso = powershell_literal(&iso.to_string_lossy()),
+        disk = disk,
+        memory = memory,
+        max_memory = (memory * 2).min(16384),
+        cpu = cpu
+    );
     hyperv_json(&script)
 }
 
 #[tauri::command]
-fn clone_hyperv_vm(base_vm_name: String, vm_name: String, storage_path: Option<String>) -> Result<Value, String> {
-    let base=base_vm_name.trim(); let name=vm_name.trim(); if base.is_empty() || name.is_empty() { return Err("Informe a VM-base e o nome da nova VM.".to_string()); }
+fn clone_hyperv_vm(
+    base_vm_name: String,
+    vm_name: String,
+    storage_path: Option<String>,
+) -> Result<Value, String> {
+    let base = base_vm_name.trim();
+    let name = vm_name.trim();
+    if base.is_empty() || name.is_empty() {
+        return Err("Informe a VM-base e o nome da nova VM.".to_string());
+    }
     let storage = storage_path.unwrap_or_default();
     let storage = storage.trim();
-    let script=format!(r#"
+    let script = format!(
+        r#"
 $baseName={base};
 $name={name};
 $customRoot={storage};
@@ -445,7 +530,12 @@ try {{
   }}
   throw $message
 }}
-"#, base=powershell_literal(base), name=powershell_literal(name), storage=powershell_literal(storage)); hyperv_json(&script)
+"#,
+        base = powershell_literal(base),
+        name = powershell_literal(name),
+        storage = powershell_literal(storage)
+    );
+    hyperv_json(&script)
 }
 
 #[tauri::command]
@@ -454,7 +544,8 @@ fn start_hyperv_vm(vm_name: String) -> Result<Value, String> {
     if name.is_empty() {
         return Err("Informe o nome da VM do Hyper-V.".to_string());
     }
-    hyperv_json(&format!(r#"
+    hyperv_json(&format!(
+        r#"
 $vm=Get-VM -Name {name};
 Set-VMHost -EnableEnhancedSessionMode $true;
 Get-VMIntegrationService -VM $vm | Where-Object {{ $_.Name -match 'Guest|Convidado' }} | Enable-VMIntegrationService -ErrorAction SilentlyContinue;
@@ -496,7 +587,9 @@ if ($vm.State -eq 'Off') {{
 }}
 $fresh=Get-VM -Name $vm.Name;
 [pscustomobject]@{{ok=$true;name=$fresh.Name;state=$fresh.State.ToString();enhancedSessionTransport=$fresh.EnhancedSessionTransportType.ToString();guestServiceEnabled=$true}} | ConvertTo-Json -Compress
-"#, name=powershell_literal(name)))
+"#,
+        name = powershell_literal(name)
+    ))
 }
 
 #[tauri::command]
@@ -506,7 +599,11 @@ fn stop_hyperv_vm(vm_name: String, timeout_seconds: Option<u64>) -> Result<Value
         return Err("Informe o nome da VM do Hyper-V.".to_string());
     }
     let timeout = timeout_seconds.unwrap_or(25).clamp(3, 120);
-    hyperv_json(&format!(r#"$vm=Get-VM -Name {}; if ($vm.State -eq 'Off') {{ [pscustomobject]@{{ok=$true;name=$vm.Name;state='Off';requiresForce=$false}} | ConvertTo-Json -Compress; return }}; $job=Stop-VM -VM $vm -AsJob; $finished=Wait-Job -Job $job -Timeout {}; if (-not $finished) {{ Stop-Job -Job $job -ErrorAction SilentlyContinue; Remove-Job -Job $job -Force -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$false;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();requiresForce=$true;message='O Windows da VM nao respondeu ao desligamento normal.'}} | ConvertTo-Json -Compress; return }}; Receive-Job -Job $job -ErrorAction SilentlyContinue | Out-Null; Remove-Job -Job $job -Force -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();requiresForce=$false}} | ConvertTo-Json -Compress"#, powershell_literal(name), timeout))
+    hyperv_json(&format!(
+        r#"$vm=Get-VM -Name {}; if ($vm.State -eq 'Off') {{ [pscustomobject]@{{ok=$true;name=$vm.Name;state='Off';requiresForce=$false}} | ConvertTo-Json -Compress; return }}; $job=Stop-VM -VM $vm -AsJob; $finished=Wait-Job -Job $job -Timeout {}; if (-not $finished) {{ Stop-Job -Job $job -ErrorAction SilentlyContinue; Remove-Job -Job $job -Force -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$false;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();requiresForce=$true;message='O Windows da VM nao respondeu ao desligamento normal.'}} | ConvertTo-Json -Compress; return }}; Receive-Job -Job $job -ErrorAction SilentlyContinue | Out-Null; Remove-Job -Job $job -Force -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$true;name=$vm.Name;state=(Get-VM -Name $vm.Name).State.ToString();requiresForce=$false}} | ConvertTo-Json -Compress"#,
+        powershell_literal(name),
+        timeout
+    ))
 }
 
 #[tauri::command]
@@ -524,25 +621,46 @@ fn kill_hyperv_vm_process(vm_name: String) -> Result<Value, String> {
     if name.is_empty() {
         return Err("Informe o nome da VM do Hyper-V.".to_string());
     }
-    hyperv_json(&format!(r#"$vm=Get-VM -Name {name}; $vmName=$vm.Name; $vmId=$vm.Id.Guid.ToString(); if ($vm.State -eq 'Off') {{ [pscustomobject]@{{ok=$true;name=$vmName;state='Off';forced=$true;method='vmwp';killed=0;workerIds=@()}} | ConvertTo-Json -Compress; return }}; $workers=@(Get-CimInstance Win32_Process -Filter "Name = 'vmwp.exe'" | Where-Object {{ $_.CommandLine -and ($_.CommandLine -like ('*'+$vmId+'*')) }}); $workerIds=@($workers | ForEach-Object {{ [int]$_.ProcessId }}); foreach ($workerProcessId in $workerIds) {{ Stop-Process -Id $workerProcessId -Force -ErrorAction SilentlyContinue }}; $deadline=(Get-Date).AddSeconds(5); do {{ Start-Sleep -Milliseconds 250; $vm=Get-VM -Name $vmName -ErrorAction SilentlyContinue; $alive=@(Get-CimInstance Win32_Process -Filter "Name = 'vmwp.exe'" | Where-Object {{ $_.CommandLine -and ($_.CommandLine -like ('*'+$vmId+'*')) }}).Count }} while ($vm -and $alive -gt 0 -and (Get-Date) -lt $deadline); $state=$(if ($vm) {{ $vm.State.ToString() }} else {{ 'Unknown' }}); [pscustomobject]@{{ok=$true;name=$vmName;state=$state;forced=$true;method='vmwp';killed=$workerIds.Count;workerIds=$workerIds;workerStillAlive=$alive}} | ConvertTo-Json -Compress"#, name=powershell_literal(name)))
+    hyperv_json(&format!(
+        r#"$vm=Get-VM -Name {name}; $vmName=$vm.Name; $vmId=$vm.Id.Guid.ToString(); if ($vm.State -eq 'Off') {{ [pscustomobject]@{{ok=$true;name=$vmName;state='Off';forced=$true;method='vmwp';killed=0;workerIds=@()}} | ConvertTo-Json -Compress; return }}; $workers=@(Get-CimInstance Win32_Process -Filter "Name = 'vmwp.exe'" | Where-Object {{ $_.CommandLine -and ($_.CommandLine -like ('*'+$vmId+'*')) }}); $workerIds=@($workers | ForEach-Object {{ [int]$_.ProcessId }}); foreach ($workerProcessId in $workerIds) {{ Stop-Process -Id $workerProcessId -Force -ErrorAction SilentlyContinue }}; $deadline=(Get-Date).AddSeconds(5); do {{ Start-Sleep -Milliseconds 250; $vm=Get-VM -Name $vmName -ErrorAction SilentlyContinue; $alive=@(Get-CimInstance Win32_Process -Filter "Name = 'vmwp.exe'" | Where-Object {{ $_.CommandLine -and ($_.CommandLine -like ('*'+$vmId+'*')) }}).Count }} while ($vm -and $alive -gt 0 -and (Get-Date) -lt $deadline); $state=$(if ($vm) {{ $vm.State.ToString() }} else {{ 'Unknown' }}); [pscustomobject]@{{ok=$true;name=$vmName;state=$state;forced=$true;method='vmwp';killed=$workerIds.Count;workerIds=$workerIds;workerStillAlive=$alive}} | ConvertTo-Json -Compress"#,
+        name = powershell_literal(name)
+    ))
 }
 
 #[tauri::command]
 fn get_hyperv_vm_connection(vm_name: String) -> Result<Value, String> {
-    let name=vm_name.trim(); if name.is_empty() { return Err("Informe o nome da VM do Hyper-V.".to_string()); }
+    let name = vm_name.trim();
+    if name.is_empty() {
+        return Err("Informe o nome da VM do Hyper-V.".to_string());
+    }
     hyperv_json(&format!("$vm=Get-VM -Name {}; $ips=@(Get-VMNetworkAdapter -VM $vm | ForEach-Object IPAddresses | Where-Object {{ $_ -match '^\\d+\\.' -and $_ -notmatch '^169\\.254\\.' }} | Select-Object -Unique); [pscustomobject]@{{ok=$true;name=$vm.Name;uuid=$vm.Id.Guid;state=$vm.State.ToString();ips=$ips;ip=($ips | Select-Object -First 1);address=$(if($ips.Count -gt 0){{$ips[0]+':18452'}}else{{$null}})}} | ConvertTo-Json -Compress", powershell_literal(name)))
 }
 
 #[tauri::command]
-fn probe_native_hyperv_rdp() -> Result<Value, String> { native_rdp::probe() }
+fn probe_native_hyperv_rdp() -> Result<Value, String> {
+    native_rdp::probe()
+}
 
 #[tauri::command]
-async fn open_native_hyperv_rdp(app: AppHandle, vm_name: String, x: i32, y: i32, width: i32, height: i32) -> Result<Value, String> {
+async fn open_native_hyperv_rdp(
+    app: AppHandle,
+    vm_name: String,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> Result<Value, String> {
     let vm_name = vm_name.trim().to_string();
     run_hyperv_powershell(&format!("$vm=Get-VM -Name {}; Set-VMHost -EnableEnhancedSessionMode $true; Set-VM -VM $vm -EnhancedSessionTransportType VMBus -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$true;name=$vm.Name;state=$vm.State.ToString();enhancedSessionTransport=(Get-VM -Name $vm.Name).EnhancedSessionTransportType.ToString()}} | ConvertTo-Json -Compress", powershell_literal(&vm_name)))?;
     let connection = get_hyperv_vm_connection(vm_name.clone())?;
-    let vm_id = connection.get("uuid").and_then(Value::as_str).ok_or_else(|| "O Hyper-V nao informou o GUID da VM.".to_string())?.to_string();
-    let owner = app.get_webview_window("main").ok_or_else(|| "Janela principal indisponivel.".to_string())?;
+    let vm_id = connection
+        .get("uuid")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "O Hyper-V nao informou o GUID da VM.".to_string())?
+        .to_string();
+    let owner = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Janela principal indisponivel.".to_string())?;
     let hwnd = owner.hwnd().map_err(|error| error.to_string())?;
     let owner_hwnd = hwnd.0 as isize;
     // Janelas Win32 pertencem a thread que as criou. Mantenha o painel host
@@ -550,25 +668,72 @@ async fn open_native_hyperv_rdp(app: AppHandle, vm_name: String, x: i32, y: i32,
     let (host_tx, host_rx) = std::sync::mpsc::sync_channel(1);
     app.run_on_main_thread(move || {
         let _ = host_tx.send(native_rdp::create_host(owner_hwnd, x, y, width, height));
-    }).map_err(|error| format!("Nao foi possivel preparar o painel da VM: {error}"))?;
-    let native_host = host_rx.recv().map_err(|_| "A thread principal nao criou o painel da VM.".to_string())??;
-    tauri::async_runtime::spawn_blocking(move || native_rdp::open(owner_hwnd, native_host, &vm_id, &vm_name, x, y, width, height))
-        .await
-        .map_err(|error| format!("A thread nativa do RDP falhou: {error}"))?
+    })
+    .map_err(|error| format!("Nao foi possivel preparar o painel da VM: {error}"))?;
+    let native_host = host_rx
+        .recv()
+        .map_err(|_| "A thread principal nao criou o painel da VM.".to_string())??;
+    tauri::async_runtime::spawn_blocking(move || {
+        native_rdp::open(
+            owner_hwnd,
+            native_host,
+            &vm_id,
+            &vm_name,
+            x,
+            y,
+            width,
+            height,
+        )
+    })
+    .await
+    .map_err(|error| format!("A thread nativa do RDP falhou: {error}"))?
 }
 
 #[tauri::command]
-fn resize_native_hyperv_rdp(x: i32, y: i32, width: i32, height: i32, visible: bool) -> Result<Value, String> {
+fn resize_native_hyperv_rdp(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    visible: bool,
+) -> Result<Value, String> {
     native_rdp::resize(x, y, width, height, visible)
 }
 
 #[tauri::command]
-fn close_native_hyperv_rdp() -> Result<Value, String> { native_rdp::close() }
+fn activate_native_hyperv_rdp(
+    vm_name: String,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    visible: bool,
+) -> Result<Value, String> {
+    let vm_name = vm_name.trim().to_string();
+    let connection = get_hyperv_vm_connection(vm_name)?;
+    let vm_id = connection
+        .get("uuid")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "O Hyper-V nao informou o GUID da VM.".to_string())?;
+    native_rdp::activate(vm_id, x, y, width, height, visible)
+}
+
+#[tauri::command]
+fn close_native_hyperv_rdp() -> Result<Value, String> {
+    native_rdp::close()
+}
 
 #[tauri::command]
 fn open_hyperv_vm_console(vm_name: String) -> Result<Value, String> {
-    let name=vm_name.trim(); if name.is_empty() { return Err("Informe o nome da VM do Hyper-V.".to_string()); }
-    Command::new("vmconnect.exe").args(["localhost", name]).spawn().map_err(|err| format!("Nao foi possivel abrir a tela da VM: {err}"))?; Ok(serde_json::json!({"ok":true,"name":name}))
+    let name = vm_name.trim();
+    if name.is_empty() {
+        return Err("Informe o nome da VM do Hyper-V.".to_string());
+    }
+    Command::new("vmconnect.exe")
+        .args(["localhost", name])
+        .spawn()
+        .map_err(|err| format!("Nao foi possivel abrir a tela da VM: {err}"))?;
+    Ok(serde_json::json!({"ok":true,"name":name}))
 }
 
 #[cfg(windows)]
@@ -606,7 +771,14 @@ fn close_embedded_hyperv_console_native() {
 }
 
 #[cfg(windows)]
-fn dock_hyperv_console_window(window: HWND, owner: HWND, x: i32, y: i32, width: i32, height: i32) -> Result<(), String> {
+fn dock_hyperv_console_window(
+    window: HWND,
+    owner: HWND,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> Result<(), String> {
     unsafe {
         if !IsWindow(window).as_bool() || !IsWindow(owner).as_bool() {
             return Err("A janela do Studio ou do console nao esta mais disponivel.".to_string());
@@ -617,7 +789,11 @@ fn dock_hyperv_console_window(window: HWND, owner: HWND, x: i32, y: i32, width: 
         }
         let current_style = GetWindowLongPtrW(window, GWL_STYLE) as u32;
         let docked_style = (current_style
-            & !(WS_CAPTION.0 | WS_THICKFRAME.0 | WS_SYSMENU.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0))
+            & !(WS_CAPTION.0
+                | WS_THICKFRAME.0
+                | WS_SYSMENU.0
+                | WS_MINIMIZEBOX.0
+                | WS_MAXIMIZEBOX.0))
             | WS_POPUP.0;
         SetWindowLongPtrW(window, GWL_STYLE, docked_style as isize);
         SetWindowLongPtrW(window, GWLP_HWNDPARENT, owner.0 as isize);
@@ -660,12 +836,22 @@ fn configure_vmconnect_zoom(zoom_level: u32) -> Result<u32, String> {
         let current = fs::read_to_string(&config_path)
             .map_err(|err| format!("Nao foi possivel ler a configuracao do VMConnect: {err}"))?;
         if let Some(setting_start) = current.find("<setting name=\"ZoomLevel\"") {
-            let line_start = current[..setting_start].rfind('\n').map(|index| index + 1).unwrap_or(setting_start);
+            let line_start = current[..setting_start]
+                .rfind('\n')
+                .map(|index| index + 1)
+                .unwrap_or(setting_start);
             let setting_end = current[setting_start..]
                 .find("</setting>")
                 .map(|index| setting_start + index + "</setting>".len())
-                .ok_or_else(|| "A configuracao de zoom do VMConnect esta incompleta.".to_string())?;
-            format!("{}{}{}", &current[..line_start], zoom_setting, &current[setting_end..])
+                .ok_or_else(|| {
+                    "A configuracao de zoom do VMConnect esta incompleta.".to_string()
+                })?;
+            format!(
+                "{}{}{}",
+                &current[..line_start],
+                zoom_setting,
+                &current[setting_end..]
+            )
         } else {
             current.replace(
                 "<Microsoft.Virtualization.Client.InteractiveSession.InteractiveSessionConfigurationOptions>",
@@ -685,7 +871,15 @@ fn configure_vmconnect_zoom(zoom_level: u32) -> Result<u32, String> {
 }
 
 #[tauri::command]
-fn open_embedded_hyperv_console(app: AppHandle, vm_name: String, x: i32, y: i32, width: i32, height: i32, zoom_level: u32) -> Result<Value, String> {
+fn open_embedded_hyperv_console(
+    app: AppHandle,
+    vm_name: String,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    zoom_level: u32,
+) -> Result<Value, String> {
     let name = vm_name.trim();
     if name.is_empty() {
         return Err("Informe o nome da VM do Hyper-V.".to_string());
@@ -702,9 +896,15 @@ fn open_embedded_hyperv_console(app: AppHandle, vm_name: String, x: i32, y: i32,
         let process_id = child.id();
         let mut embedded_hwnd = 0isize;
         for _ in 0..120 {
-            let mut search = WindowSearchData { process_id, hwnd: 0 };
+            let mut search = WindowSearchData {
+                process_id,
+                hwnd: 0,
+            };
             unsafe {
-                let _ = EnumWindows(Some(find_process_window), LPARAM((&mut search as *mut WindowSearchData) as isize));
+                let _ = EnumWindows(
+                    Some(find_process_window),
+                    LPARAM((&mut search as *mut WindowSearchData) as isize),
+                );
             }
             if search.hwnd != 0 {
                 embedded_hwnd = search.hwnd;
@@ -720,7 +920,9 @@ fn open_embedded_hyperv_console(app: AppHandle, vm_name: String, x: i32, y: i32,
             return Err("A janela do console do Hyper-V nao apareceu a tempo.".to_string());
         }
 
-        let studio_window = app.get_webview_window("main").ok_or_else(|| "Janela principal do Studio nao encontrada.".to_string())?;
+        let studio_window = app
+            .get_webview_window("main")
+            .ok_or_else(|| "Janela principal do Studio nao encontrada.".to_string())?;
         let tauri_owner = studio_window.hwnd().map_err(|err| err.to_string())?;
         let owner_hwnd = HWND(tauri_owner.0);
         let console_hwnd = HWND(embedded_hwnd as *mut std::ffi::c_void);
@@ -733,7 +935,9 @@ fn open_embedded_hyperv_console(app: AppHandle, vm_name: String, x: i32, y: i32,
                 vm_name: name.to_string(),
             });
         }
-        return Ok(serde_json::json!({"ok":true,"embedded":true,"mode":"native_dock","vm_name":name,"hwnd":embedded_hwnd,"zoom":applied_zoom}));
+        return Ok(
+            serde_json::json!({"ok":true,"embedded":true,"mode":"native_dock","vm_name":name,"hwnd":embedded_hwnd,"zoom":applied_zoom}),
+        );
     }
 
     #[cfg(not(windows))]
@@ -741,10 +945,18 @@ fn open_embedded_hyperv_console(app: AppHandle, vm_name: String, x: i32, y: i32,
 }
 
 #[tauri::command]
-fn resize_embedded_hyperv_console(x: i32, y: i32, width: i32, height: i32, visible: bool) -> Result<Value, String> {
+fn resize_embedded_hyperv_console(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    visible: bool,
+) -> Result<Value, String> {
     #[cfg(windows)]
     {
-        let guard = EMBEDDED_HYPERV_CONSOLE.lock().map_err(|_| "Console local indisponivel.".to_string())?;
+        let guard = EMBEDDED_HYPERV_CONSOLE
+            .lock()
+            .map_err(|_| "Console local indisponivel.".to_string())?;
         let Some(console) = guard.as_ref() else {
             return Ok(serde_json::json!({"ok":true,"active":false}));
         };
@@ -760,7 +972,9 @@ fn resize_embedded_hyperv_console(x: i32, y: i32, width: i32, height: i32, visib
                 let _ = ShowWindow(window, SW_HIDE);
             }
         }
-        return Ok(serde_json::json!({"ok":true,"active":true,"visible":visible,"vm_name":console.vm_name}));
+        return Ok(
+            serde_json::json!({"ok":true,"active":true,"visible":visible,"vm_name":console.vm_name}),
+        );
     }
     #[cfg(not(windows))]
     Ok(serde_json::json!({"ok":true,"active":false}))
@@ -770,7 +984,9 @@ fn resize_embedded_hyperv_console(x: i32, y: i32, width: i32, height: i32, visib
 fn get_embedded_hyperv_console_frame() -> Result<Value, String> {
     #[cfg(windows)]
     {
-        let guard = EMBEDDED_HYPERV_CONSOLE.lock().map_err(|_| "Console local indisponivel.".to_string())?;
+        let guard = EMBEDDED_HYPERV_CONSOLE
+            .lock()
+            .map_err(|_| "Console local indisponivel.".to_string())?;
         let Some(console) = guard.as_ref() else {
             return Err("Nenhum console local do Hyper-V esta ativo.".to_string());
         };
@@ -780,10 +996,13 @@ fn get_embedded_hyperv_console_frame() -> Result<Value, String> {
                 return Err("A janela do console local foi encerrada.".to_string());
             }
             let mut rect = RECT::default();
-            GetWindowRect(window, &mut rect).map_err(|err| format!("Nao foi possivel medir o console: {err}"))?;
+            GetWindowRect(window, &mut rect)
+                .map_err(|err| format!("Nao foi possivel medir o console: {err}"))?;
             let width = (rect.right - rect.left).max(1);
             let height = (rect.bottom - rect.top).max(1);
-            let pixel_count = (width as usize).checked_mul(height as usize).ok_or_else(|| "Console grande demais para captura.".to_string())?;
+            let pixel_count = (width as usize)
+                .checked_mul(height as usize)
+                .ok_or_else(|| "Console grande demais para captura.".to_string())?;
             let mut bgra = vec![0u8; pixel_count * 4];
 
             let window_dc = GetDC(window);
@@ -793,8 +1012,12 @@ fn get_embedded_hyperv_console_frame() -> Result<Value, String> {
             let memory_dc = CreateCompatibleDC(window_dc);
             let bitmap = CreateCompatibleBitmap(window_dc, width, height);
             if memory_dc.0.is_null() || bitmap.0.is_null() {
-                if !bitmap.0.is_null() { let _ = DeleteObject(HGDIOBJ(bitmap.0)); }
-                if !memory_dc.0.is_null() { let _ = DeleteDC(memory_dc); }
+                if !bitmap.0.is_null() {
+                    let _ = DeleteObject(HGDIOBJ(bitmap.0));
+                }
+                if !memory_dc.0.is_null() {
+                    let _ = DeleteDC(memory_dc);
+                }
                 let _ = ReleaseDC(window, window_dc);
                 return Err("Nao foi possivel preparar a captura do console.".to_string());
             }
@@ -813,8 +1036,18 @@ fn get_embedded_hyperv_console_frame() -> Result<Value, String> {
                 bmiColors: [RGBQUAD::default(); 1],
             };
             let lines = if printed {
-                GetDIBits(memory_dc, HBITMAP(bitmap.0), 0, height as u32, Some(bgra.as_mut_ptr() as *mut _), &mut bitmap_info, DIB_RGB_COLORS)
-            } else { 0 };
+                GetDIBits(
+                    memory_dc,
+                    HBITMAP(bitmap.0),
+                    0,
+                    height as u32,
+                    Some(bgra.as_mut_ptr() as *mut _),
+                    &mut bitmap_info,
+                    DIB_RGB_COLORS,
+                )
+            } else {
+                0
+            };
             let _ = SelectObject(memory_dc, old_object);
             let _ = DeleteObject(HGDIOBJ(bitmap.0));
             let _ = DeleteDC(memory_dc);
@@ -831,9 +1064,14 @@ fn get_embedded_hyperv_console_frame() -> Result<Value, String> {
                 .ok_or_else(|| "Nao foi possivel montar o quadro do console.".to_string())?;
             let max_width = 1280u32;
             let scaled = if image.width() > max_width {
-                let target_height = ((image.height() as f64) * (max_width as f64 / image.width() as f64)).round().max(1.0) as u32;
+                let target_height = ((image.height() as f64)
+                    * (max_width as f64 / image.width() as f64))
+                    .round()
+                    .max(1.0) as u32;
                 image::imageops::resize(&image, max_width, target_height, FilterType::Triangle)
-            } else { image };
+            } else {
+                image
+            };
             let mut bytes = Vec::new();
             JpegEncoder::new_with_quality(&mut bytes, 60)
                 .encode_image(&scaled)
@@ -924,24 +1162,35 @@ fn available_agent_host_port(preferred_port: Option<u16>) -> Result<u16, String>
 
 #[cfg(any())]
 #[tauri::command]
-fn configure_virtualbox_agent_network(vm_name: String, preferred_port: Option<u16>) -> Result<Value, String> {
+fn configure_virtualbox_agent_network(
+    vm_name: String,
+    preferred_port: Option<u16>,
+) -> Result<Value, String> {
     let trimmed_name = vm_name.trim();
     if trimmed_name.is_empty() {
         return Err("Informe o nome da VM do VirtualBox.".to_string());
     }
     let (machine_info, _) = run_virtualbox_manage(&[
-        "showvminfo".into(), trimmed_name.into(), "--machinereadable".into(),
+        "showvminfo".into(),
+        trimmed_name.into(),
+        "--machinereadable".into(),
     ])?;
     let existing_port = flowdetect_nat_port(&machine_info);
     let host_port = existing_port.unwrap_or(available_agent_host_port(preferred_port)?);
     if existing_port.is_none() {
         let rule = format!("flowdetect-agent,tcp,127.0.0.1,{host_port},,18452");
         let modify_result = run_virtualbox_manage(&[
-            "modifyvm".into(), trimmed_name.into(), "--natpf1".into(), rule.clone(),
+            "modifyvm".into(),
+            trimmed_name.into(),
+            "--natpf1".into(),
+            rule.clone(),
         ]);
         if modify_result.is_err() {
             run_virtualbox_manage(&[
-                "controlvm".into(), trimmed_name.into(), "natpf1".into(), rule,
+                "controlvm".into(),
+                trimmed_name.into(),
+                "natpf1".into(),
+                rule,
             ])?;
         }
     }
@@ -1064,9 +1313,351 @@ fn list_virtualbox_vms() -> Result<Value, String> {
     }))
 }
 
+fn local_python_candidates(root: &Path) -> Vec<PathBuf> {
+    let mut local_candidates = Vec::<PathBuf>::new();
+    local_candidates.push(root.join("python_runtime").join("python.exe"));
+    local_candidates.push(
+        root.join("resources")
+            .join("python_runtime")
+            .join("python.exe"),
+    );
+    if let Some(parent) = root.parent() {
+        local_candidates.push(
+            parent
+                .join("resources")
+                .join("python_runtime")
+                .join("python.exe"),
+        );
+        local_candidates.push(parent.join("python_runtime").join("python.exe"));
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            local_candidates.push(
+                exe_dir
+                    .join("resources")
+                    .join("python_runtime")
+                    .join("python.exe"),
+            );
+            local_candidates.push(exe_dir.join("python_runtime").join("python.exe"));
+            if let Some(parent) = exe_dir.parent() {
+                local_candidates.push(
+                    parent
+                        .join("resources")
+                        .join("python_runtime")
+                        .join("python.exe"),
+                );
+                local_candidates.push(parent.join("python_runtime").join("python.exe"));
+            }
+        }
+    }
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let base = PathBuf::from(local_app_data)
+            .join("Programs")
+            .join("Python");
+        for version in ["Python312", "Python313", "Python311", "Python310"] {
+            local_candidates.push(base.join(version).join("python.exe"));
+        }
+    }
+    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+        let base = PathBuf::from(program_files);
+        for version in ["Python312", "Python313", "Python311", "Python310"] {
+            local_candidates.push(base.join(version).join("python.exe"));
+        }
+    }
+    if let Some(program_files_x86) = std::env::var_os("ProgramFiles(x86)") {
+        let base = PathBuf::from(program_files_x86);
+        for version in [
+            "Python312-32",
+            "Python313-32",
+            "Python311-32",
+            "Python310-32",
+        ] {
+            local_candidates.push(base.join(version).join("python.exe"));
+        }
+    }
+    local_candidates
+}
+
+fn probe_local_python(root: &Path) -> Option<(String, Vec<String>)> {
+    for python_path in local_python_candidates(root) {
+        if !python_path.exists() {
+            continue;
+        }
+        let mut command = Command::new(&python_path);
+        command.arg("--version").current_dir(root);
+        configure_no_window(&mut command);
+        let probe = command.output();
+        if probe.map(|out| out.status.success()).unwrap_or(false) {
+            return Some((
+                python_path.to_string_lossy().to_string(),
+                Vec::<String>::new(),
+            ));
+        }
+    }
+    None
+}
+
+fn python_installer_candidates(root: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::<PathBuf>::new();
+    candidates.push(root.join("python-installer.exe"));
+    candidates.push(root.join("resources").join("python-installer.exe"));
+    candidates.push(
+        root.join("tauri_gerador")
+            .join("src-tauri")
+            .join("installer_support")
+            .join("python-installer.exe"),
+    );
+    if let Some(parent) = root.parent() {
+        candidates.push(parent.join("resources").join("python-installer.exe"));
+        candidates.push(
+            parent
+                .join("tauri_gerador")
+                .join("src-tauri")
+                .join("installer_support")
+                .join("python-installer.exe"),
+        );
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join("resources").join("python-installer.exe"));
+            candidates.push(exe_dir.join("python-installer.exe"));
+            if let Some(parent) = exe_dir.parent() {
+                candidates.push(parent.join("resources").join("python-installer.exe"));
+                candidates.push(parent.join("python-installer.exe"));
+            }
+        }
+    }
+    candidates
+}
+
+fn python_wheels_candidates(root: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::<PathBuf>::new();
+    candidates.push(root.join("python-wheels"));
+    candidates.push(root.join("resources").join("python-wheels"));
+    candidates.push(
+        root.join("tauri_gerador")
+            .join("src-tauri")
+            .join("installer_support")
+            .join("python-wheels"),
+    );
+    if let Some(parent) = root.parent() {
+        candidates.push(parent.join("resources").join("python-wheels"));
+        candidates.push(
+            parent
+                .join("tauri_gerador")
+                .join("src-tauri")
+                .join("installer_support")
+                .join("python-wheels"),
+        );
+    }
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            candidates.push(exe_dir.join("resources").join("python-wheels"));
+            candidates.push(exe_dir.join("python-wheels"));
+            if let Some(parent) = exe_dir.parent() {
+                candidates.push(parent.join("resources").join("python-wheels"));
+                candidates.push(parent.join("python-wheels"));
+            }
+        }
+    }
+    candidates
+}
+
+fn command_output_detail(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stderr.is_empty() {
+        stderr
+    } else {
+        stdout
+    }
+}
+
+fn python_module_available(root: &Path, program: &str, args: &[String], module_name: &str) -> bool {
+    let mut command = Command::new(program);
+    command
+        .current_dir(root)
+        .args(args)
+        .args(["-c", &format!("import {module_name}")]);
+    configure_no_window(&mut command);
+    command
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn run_pip_install(
+    root: &Path,
+    program: &str,
+    args: &[String],
+    requirements: &Path,
+    wheels_dir: Option<&Path>,
+) -> Result<(), String> {
+    let mut pip = Command::new(program);
+    pip.current_dir(root)
+        .args(args)
+        .args(["-m", "pip", "install", "-r"])
+        .arg(requirements)
+        .args(["--prefer-binary", "--disable-pip-version-check"]);
+    if let Some(dir) = wheels_dir {
+        pip.args(["--no-index", "--find-links"]).arg(dir);
+    }
+    configure_no_window(&mut pip);
+    let output = pip
+        .output()
+        .map_err(|err| format!("Falha ao instalar dependencias Python: {err}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let detail = command_output_detail(&output);
+        Err(if detail.is_empty() {
+            "Falha ao instalar dependencias Python.".to_string()
+        } else {
+            format!("Falha ao instalar dependencias Python: {detail}")
+        })
+    }
+}
+
+fn install_requirements_with_command(
+    root: &Path,
+    program: &str,
+    args: &[String],
+) -> Result<(), String> {
+    let requirements = root.join("requirements.txt");
+    if !requirements.exists() {
+        return Err(format!(
+            "requirements.txt nao encontrado em {}.",
+            root.display()
+        ));
+    }
+
+    let wheels = python_wheels_candidates(root)
+        .into_iter()
+        .find(|path| path.exists());
+
+    let mut ensurepip = Command::new(program);
+    ensurepip
+        .current_dir(root)
+        .args(args)
+        .args(["-m", "ensurepip", "--upgrade"]);
+    configure_no_window(&mut ensurepip);
+    let _ = ensurepip.output();
+
+    if let Some(wheels_dir) = wheels.as_deref() {
+        match run_pip_install(root, program, args, &requirements, Some(wheels_dir)) {
+            Ok(()) => return Ok(()),
+            Err(offline_err) => {
+                if let Err(online_err) = run_pip_install(root, program, args, &requirements, None) {
+                    return Err(format!(
+                        "{online_err}\nTentativa offline tambem falhou: {offline_err}"
+                    ));
+                }
+                return Ok(());
+            }
+        }
+    }
+
+    run_pip_install(root, program, args, &requirements, None)
+}
+
+fn install_requirements_with_python(root: &Path, python_path: &Path) -> Result<(), String> {
+    install_requirements_with_command(root, &python_path.to_string_lossy(), &[])
+}
+
+fn ensure_python_dependencies(root: &Path, program: &str, args: &[String]) -> Result<(), String> {
+    if PYTHON_DEPS_READY.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+
+    if python_module_available(root, program, args, "openpyxl") {
+        PYTHON_DEPS_READY.store(true, Ordering::SeqCst);
+        return Ok(());
+    }
+
+    install_requirements_with_command(root, program, args)?;
+
+    if python_module_available(root, program, args, "openpyxl") {
+        PYTHON_DEPS_READY.store(true, Ordering::SeqCst);
+        Ok(())
+    } else {
+        Err("Python encontrado, mas o pacote openpyxl nao ficou disponivel apos instalar as dependencias.".to_string())
+    }
+}
+
+fn try_bootstrap_local_python(root: &Path) -> Result<(), String> {
+    if PYTHON_BOOTSTRAP_ATTEMPTED.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+    let installer_script = root.join("instalar_dependencias_silencioso.bat");
+    if !installer_script.exists() {
+        // Em builds instalados o .bat fica em resources. Em dev, caia no instalador direto abaixo.
+    } else {
+        let mut command = Command::new("cmd");
+        command.current_dir(root).arg("/C").arg(&installer_script);
+        configure_no_window(&mut command);
+        if command
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+    }
+
+    let installer = python_installer_candidates(root)
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| "Nenhum interpretador Python compativel foi encontrado.".to_string())?;
+    let python_dir = root.join("python_runtime");
+    fs::create_dir_all(&python_dir)
+        .map_err(|err| format!("Falha ao criar runtime Python local: {err}"))?;
+
+    let target_dir_arg = format!("TargetDir={}", python_dir.to_string_lossy());
+    let mut command = Command::new(&installer);
+    command
+        .current_dir(root)
+        .args([
+            "/quiet",
+            "InstallAllUsers=0",
+            "AssociateFiles=0",
+            "PrependPath=0",
+            "AppendPath=0",
+            "Shortcuts=0",
+            "Include_doc=0",
+            "Include_test=0",
+            "Include_tools=0",
+            "Include_launcher=0",
+            "InstallLauncherAllUsers=0",
+            "Include_pip=1",
+            "Include_tcltk=1",
+        ])
+        .arg(target_dir_arg);
+    configure_no_window(&mut command);
+    let output = command
+        .output()
+        .map_err(|err| format!("Falha ao instalar Python local do FlowDetect: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        return Err(if detail.is_empty() {
+            "Falha ao instalar Python local do FlowDetect.".to_string()
+        } else {
+            format!("Falha ao instalar Python local do FlowDetect: {detail}")
+        });
+    }
+    install_requirements_with_python(root, &python_dir.join("python.exe"))?;
+    Ok(())
+}
+
 fn python_command(root: &PathBuf) -> Result<(String, Vec<String>), String> {
     if let Some((program, args)) = PYTHON_COMMAND_CACHE.get() {
         return Ok((program.clone(), args.clone()));
+    }
+
+    if let Some(detected) = probe_local_python(root) {
+        let _ = PYTHON_COMMAND_CACHE.set(detected.clone());
+        return Ok(detected);
     }
 
     let candidates = [
@@ -1086,16 +1677,42 @@ fn python_command(root: &PathBuf) -> Result<(String, Vec<String>), String> {
         }
     }
 
+    try_bootstrap_local_python(root)?;
+    if let Some(detected) = probe_local_python(root) {
+        let _ = PYTHON_COMMAND_CACHE.set(detected.clone());
+        return Ok(detected);
+    }
+
     Err("Nenhum interpretador Python compativel foi encontrado.".to_string())
 }
 
-fn run_python_script(root: &PathBuf, script_name: &str, extra_args: &[String]) -> Result<String, String> {
+fn run_python_script(
+    root: &PathBuf,
+    script_name: &str,
+    extra_args: &[String],
+) -> Result<String, String> {
     let script_path = root.join(script_name);
     if !script_path.exists() {
         return Err(format!("Arquivo nao encontrado: {}", script_path.display()));
     }
 
-    let (python_program, python_args) = python_command(root)?;
+    let (mut python_program, mut python_args) = python_command(root)?;
+    if let Err(first_error) = ensure_python_dependencies(root, &python_program, &python_args) {
+        try_bootstrap_local_python(root)?;
+        if let Some((fallback_program, fallback_args)) = probe_local_python(root) {
+            ensure_python_dependencies(root, &fallback_program, &fallback_args).map_err(
+                |fallback_error| {
+                    format!(
+                        "{fallback_error}\nFalha anterior usando o Python detectado: {first_error}"
+                    )
+                },
+            )?;
+            python_program = fallback_program;
+            python_args = fallback_args;
+        } else {
+            return Err(first_error);
+        }
+    }
     let mut command = Command::new(&python_program);
     command
         .current_dir(root)
@@ -1123,17 +1740,20 @@ fn run_python_script(root: &PathBuf, script_name: &str, extra_args: &[String]) -
 
 fn run_helper_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
     let raw = run_python_script(root, "gerenciar_roteiro.py", args)?;
-    serde_json::from_str(&raw).map_err(|err| format!("Falha ao interpretar retorno do gerador: {err}"))
+    serde_json::from_str(&raw)
+        .map_err(|err| format!("Falha ao interpretar retorno do gerador: {err}"))
 }
 
 fn run_chrome_bridge_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
     let raw = run_python_script(root, "chrome_web_bridge.py", args)?;
-    serde_json::from_str(&raw).map_err(|err| format!("Falha ao interpretar retorno do Chrome/Web: {err}"))
+    serde_json::from_str(&raw)
+        .map_err(|err| format!("Falha ao interpretar retorno do Chrome/Web: {err}"))
 }
 
 fn run_uia_mapper_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
     let raw = run_python_script(root, "mapear_elementos_janela.py", args)?;
-    serde_json::from_str(&raw).map_err(|err| format!("Falha ao interpretar retorno do mapeador de janela: {err}"))
+    serde_json::from_str(&raw)
+        .map_err(|err| format!("Falha ao interpretar retorno do mapeador de janela: {err}"))
 }
 
 fn launch_executor_for_current_root(
@@ -1147,7 +1767,10 @@ fn launch_executor_for_current_root(
     let root = workspace_root(app);
     let script_path = root.join("executar_automacao.py");
     if !script_path.exists() {
-        append_launcher_log(&root, format!("ERRO: executor nao encontrado em {}", script_path.display()));
+        append_launcher_log(
+            &root,
+            format!("ERRO: executor nao encontrado em {}", script_path.display()),
+        );
         return Err(format!(
             "Nenhum executor de automacao foi encontrado. Esperado: {}",
             script_path.display()
@@ -1157,7 +1780,11 @@ fn launch_executor_for_current_root(
     let (python_program, python_args) = python_command(&root)?;
     append_launcher_log(
         &root,
-        format!("Python detectado: {} {}", python_program, python_args.join(" ")),
+        format!(
+            "Python detectado: {} {}",
+            python_program,
+            python_args.join(" ")
+        ),
     );
 
     let mut command = Command::new(&python_program);
@@ -1176,12 +1803,18 @@ fn launch_executor_for_current_root(
         .arg("--cancelamento-arquivo")
         .arg(root.join(".parar_automacao.flag"));
 
-    if let Some(title) = window_title.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(title) = window_title
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         command.arg("--janela-alvo").arg(title);
     }
 
     if mode == "loop" {
-        command.arg("--loop-start").arg(loop_start.max(1).to_string());
+        command
+            .arg("--loop-start")
+            .arg(loop_start.max(1).to_string());
     }
 
     let message = if mode == "loop" {
@@ -1208,8 +1841,8 @@ fn launch_executor_for_current_root(
 
 fn run_script_json(root: &PathBuf, script_name: &str, args: &[String]) -> Result<Value, String> {
     let raw = run_python_script(root, script_name, args)?;
-    let parsed: Value =
-        serde_json::from_str(&raw).map_err(|err| format!("Falha ao interpretar retorno de {script_name}: {err}"))?;
+    let parsed: Value = serde_json::from_str(&raw)
+        .map_err(|err| format!("Falha ao interpretar retorno de {script_name}: {err}"))?;
 
     if let Some(message) = parsed.get("erro").and_then(Value::as_str) {
         return Err(message.to_string());
@@ -1357,7 +1990,8 @@ finally:
     }
 
     let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    serde_json::from_str(&raw).map_err(|err| format!("Falha ao interpretar previa da planilha remota: {err}"))
+    serde_json::from_str(&raw)
+        .map_err(|err| format!("Falha ao interpretar previa da planilha remota: {err}"))
 }
 
 #[tauri::command]
@@ -1367,9 +2001,10 @@ fn get_login_session(app: AppHandle) -> Result<Value, String> {
     if !path.exists() {
         return Ok(serde_json::json!({"exists": false, "session": null}));
     }
-    let text = fs::read_to_string(&path)
-        .map_err(|err| format!("Falha ao ler sessao local: {err}"))?;
-    let session: Value = serde_json::from_str(&text).map_err(|err| format!("Sessao local invalida: {err}"))?;
+    let text =
+        fs::read_to_string(&path).map_err(|err| format!("Falha ao ler sessao local: {err}"))?;
+    let session: Value =
+        serde_json::from_str(&text).map_err(|err| format!("Sessao local invalida: {err}"))?;
     Ok(serde_json::json!({"exists": true, "session": session}))
 }
 
@@ -1427,13 +2062,19 @@ fn export_saved_automation_zip(
 }
 
 #[tauri::command]
-fn remote_agent_send_saved_automation(app: AppHandle, address: String, id: String) -> Result<Value, String> {
+fn remote_agent_send_saved_automation(
+    app: AppHandle,
+    address: String,
+    id: String,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let transfer_dir = std::env::temp_dir().join("FlowDetect").join("agent-transfers");
+    let transfer_dir = std::env::temp_dir()
+        .join("FlowDetect")
+        .join("agent-transfers");
     fs::create_dir_all(&transfer_dir)
         .map_err(|err| format!("Falha ao preparar transferencia da automacao: {err}"))?;
     let requested_path = transfer_dir.join(format!("automation-{stamp}.zip"));
@@ -1446,20 +2087,22 @@ fn remote_agent_send_saved_automation(app: AppHandle, address: String, id: Strin
             "--destino".into(),
             requested_path.to_string_lossy().to_string(),
         ],
-    )?;
+    )
+    .map_err(|err| format!("Falha ao preparar o pacote no Studio: {err}"))?;
     let zip_path = export_result
         .get("zip_path")
         .and_then(Value::as_str)
         .map(PathBuf::from)
         .unwrap_or(requested_path);
-    let bytes = fs::read(&zip_path)
-        .map_err(|err| format!("Falha ao ler a automacao exportada: {err}"))?;
+    let bytes =
+        fs::read(&zip_path).map_err(|err| format!("Falha ao ler a automacao exportada: {err}"))?;
     let file_name = zip_path
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("flowdetect-automation.zip")
         .to_string();
-    let result = remote_agent_import_automation_zip(address, file_name, bytes);
+    let result = remote_agent_import_automation_zip(address, file_name, bytes)
+        .map_err(|err| format!("Falha ao importar no Agent remoto: {err}"));
     let _ = fs::remove_file(&zip_path);
     result
 }
@@ -1467,7 +2110,10 @@ fn remote_agent_send_saved_automation(app: AppHandle, address: String, id: Strin
 #[tauri::command]
 fn import_saved_automation_zip(app: AppHandle, arquivo: String) -> Result<Value, String> {
     let root = workspace_root(&app);
-    run_helper_json(&root, &["automation-import-zip".into(), "--arquivo".into(), arquivo])
+    run_helper_json(
+        &root,
+        &["automation-import-zip".into(), "--arquivo".into(), arquivo],
+    )
 }
 
 #[tauri::command]
@@ -1476,7 +2122,10 @@ fn import_saved_automation_zip_from_path(app: AppHandle, path: String) -> Result
 }
 
 #[tauri::command]
-fn import_saved_automation_zip_from_file_path(app: AppHandle, file_path: String) -> Result<Value, String> {
+fn import_saved_automation_zip_from_file_path(
+    app: AppHandle,
+    file_path: String,
+) -> Result<Value, String> {
     import_saved_automation_zip(app, file_path)
 }
 
@@ -1496,7 +2145,10 @@ fn export_runtime_update_zip(app: AppHandle, destino: Option<String>) -> Result<
 #[tauri::command]
 fn import_runtime_update_zip(app: AppHandle, arquivo: String) -> Result<Value, String> {
     let root = workspace_root(&app);
-    run_helper_json(&root, &["runtime-import-zip".into(), "--arquivo".into(), arquivo])
+    run_helper_json(
+        &root,
+        &["runtime-import-zip".into(), "--arquivo".into(), arquivo],
+    )
 }
 
 #[tauri::command]
@@ -1564,7 +2216,10 @@ fn rename_image_asset(app: AppHandle, image_id: String, new_name: String) -> Res
         return Err(format!("Imagem nao encontrada: {image_id}"));
     }
     let sanitized = sanitize_asset_filename(&new_name, "referencia.png");
-    let destination = source.parent().unwrap_or(&root.join("Imagens")).join(&sanitized);
+    let destination = source
+        .parent()
+        .unwrap_or(&root.join("Imagens"))
+        .join(&sanitized);
     fs::rename(&source, &destination).map_err(|err| format!("Falha ao renomear imagem: {err}"))?;
     Ok(serde_json::json!({
         "image_id": format!("imagens/{}", sanitized),
@@ -1577,7 +2232,10 @@ fn open_images_folder(app: AppHandle) -> Result<String, String> {
     let root = workspace_root(&app);
     let path = root.join("Imagens");
     fs::create_dir_all(&path).map_err(|err| format!("Falha ao criar pasta de imagens: {err}"))?;
-    Command::new("explorer").arg(&path).spawn().map_err(|err| format!("Falha ao abrir pasta: {err}"))?;
+    Command::new("explorer")
+        .arg(&path)
+        .spawn()
+        .map_err(|err| format!("Falha ao abrir pasta: {err}"))?;
     Ok(path.display().to_string())
 }
 
@@ -1585,13 +2243,22 @@ fn open_images_folder(app: AppHandle) -> Result<String, String> {
 fn open_recognition_diagnostics_folder(app: AppHandle) -> Result<String, String> {
     let root = workspace_root(&app);
     let path = root.join("diagnosticos_reconhecimento");
-    fs::create_dir_all(&path).map_err(|err| format!("Falha ao criar pasta de diagnosticos: {err}"))?;
-    Command::new("explorer").arg(&path).spawn().map_err(|err| format!("Falha ao abrir pasta: {err}"))?;
+    fs::create_dir_all(&path)
+        .map_err(|err| format!("Falha ao criar pasta de diagnosticos: {err}"))?;
+    Command::new("explorer")
+        .arg(&path)
+        .spawn()
+        .map_err(|err| format!("Falha ao abrir pasta: {err}"))?;
     Ok(path.display().to_string())
 }
 
 #[tauri::command]
-fn remove_workbook_preview_row(app: AppHandle, workbook: Option<String>, sheet: String, row_number: i32) -> Result<Value, String> {
+fn remove_workbook_preview_row(
+    app: AppHandle,
+    workbook: Option<String>,
+    sheet: String,
+    row_number: i32,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     let workbook_path = workbook.unwrap_or_else(|| "db.xlsx".to_string());
     let removal_result = run_script_json(
@@ -1615,7 +2282,12 @@ fn remove_workbook_preview_row(app: AppHandle, workbook: Option<String>, sheet: 
     }))
 }
 
-fn clear_workbook_column_in_root(root: &PathBuf, workbook: String, sheet: String, column: String) -> Result<Value, String> {
+fn clear_workbook_column_in_root(
+    root: &PathBuf,
+    workbook: String,
+    sheet: String,
+    column: String,
+) -> Result<Value, String> {
     let workbook_path = resolve_safe_workbook_path(root, &workbook)?;
     let (python_program, python_args) = python_command(root)?;
     let script = r#"
@@ -1691,7 +2363,12 @@ finally:
 }
 
 #[tauri::command]
-fn clear_workbook_column(app: AppHandle, workbook: String, sheet: String, column: String) -> Result<Value, String> {
+fn clear_workbook_column(
+    app: AppHandle,
+    workbook: String,
+    sheet: String,
+    column: String,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     clear_workbook_column_in_root(&root, workbook, sheet, column)
 }
@@ -1720,7 +2397,11 @@ fn url_decode_component(value: &str) -> String {
                 }
             }
         }
-        output.push(if bytes[index] == b'+' { ' ' } else { bytes[index] as char });
+        output.push(if bytes[index] == b'+' {
+            ' '
+        } else {
+            bytes[index] as char
+        });
         index += 1;
     }
     output
@@ -1751,7 +2432,10 @@ fn local_agent_address() -> String {
 
 fn local_meshcentral_url() -> String {
     let address = local_agent_address();
-    let host = address.rsplit_once(':').map(|(host, _)| host).unwrap_or("127.0.0.1");
+    let host = address
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or("127.0.0.1");
     format!("http://{host}:8080")
 }
 
@@ -1759,7 +2443,12 @@ fn agent_identity_name(root: &PathBuf) -> String {
     fs::read_to_string(root.join("agent_identity.json"))
         .ok()
         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-        .and_then(|value| value.get("name").and_then(Value::as_str).map(str::to_string))
+        .and_then(|value| {
+            value
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| "Agente principal".to_string())
 }
@@ -1795,7 +2484,10 @@ fn read_http_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), String
         }
         data.extend_from_slice(&buffer[..read]);
         if header_end.is_none() {
-            header_end = data.windows(4).position(|window| window == b"\r\n\r\n").map(|index| index + 4);
+            header_end = data
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|index| index + 4);
         }
         if let Some(end) = header_end {
             let header_text = String::from_utf8_lossy(&data[..end]).to_string();
@@ -1818,7 +2510,10 @@ fn read_http_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), String
     }
 
     if let Some(end) = header_end {
-        Ok((String::from_utf8_lossy(&data[..end]).to_string(), data[end..].to_vec()))
+        Ok((
+            String::from_utf8_lossy(&data[..end]).to_string(),
+            data[end..].to_vec(),
+        ))
     } else {
         Ok((String::from_utf8_lossy(&data).to_string(), Vec::new()))
     }
@@ -1841,11 +2536,21 @@ fn read_recent_launcher_logs(root: &PathBuf) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn remote_status_payload(root: &PathBuf, running: bool, automation_id: Option<String>, progress: Option<Value>) -> Value {
+fn remote_status_payload(
+    root: &PathBuf,
+    running: bool,
+    automation_id: Option<String>,
+    progress: Option<Value>,
+) -> Value {
     let active_name = fs::read_to_string(root.join("automacoes").join("automacao_atual.json"))
         .ok()
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .and_then(|value| value.get("nome").and_then(Value::as_str).map(str::to_string))
+        .and_then(|value| {
+            value
+                .get("nome")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| "Automacao atual".to_string());
 
     serde_json::json!({
@@ -1882,34 +2587,47 @@ fn now_millis() -> u128 {
 
 fn webrtc_signal_store() -> Arc<Mutex<Value>> {
     WEBRTC_SIGNAL_STATE
-        .get_or_init(|| Arc::new(Mutex::new(serde_json::json!({
-            "session_id": "",
-            "offer": null,
-            "answer": null,
-            "created_at": 0u128,
-            "updated_at": 0u128
-        }))))
+        .get_or_init(|| {
+            Arc::new(Mutex::new(serde_json::json!({
+                "session_id": "",
+                "offer": null,
+                "answer": null,
+                "created_at": 0u128,
+                "updated_at": 0u128
+            })))
+        })
         .clone()
 }
 
 fn native_remote_status_store() -> Arc<Mutex<Value>> {
-    NATIVE_REMOTE_STATUS.get_or_init(|| Arc::new(Mutex::new(serde_json::json!({
-        "capture_frames": 0, "encoded_frames": 0, "sent_frames": 0,
-        "capture_resolution": "", "stage": "idle", "last_error": ""
-    })))).clone()
+    NATIVE_REMOTE_STATUS
+        .get_or_init(|| {
+            Arc::new(Mutex::new(serde_json::json!({
+                "capture_frames": 0, "encoded_frames": 0, "sent_frames": 0,
+                "capture_resolution": "", "stage": "idle", "last_error": ""
+            })))
+        })
+        .clone()
 }
 
 pub(crate) fn update_native_remote_status(update: Value) {
-    if let (Ok(mut status), Some(fields)) = (native_remote_status_store().lock(), update.as_object()) {
+    if let (Ok(mut status), Some(fields)) =
+        (native_remote_status_store().lock(), update.as_object())
+    {
         if let Some(target) = status.as_object_mut() {
-            for (key, value) in fields { target.insert(key.clone(), value.clone()); }
+            for (key, value) in fields {
+                target.insert(key.clone(), value.clone());
+            }
             target.insert("updated_at".into(), serde_json::json!(now_millis()));
         }
     }
 }
 
 fn get_native_remote_status() -> Value {
-    native_remote_status_store().lock().map(|status| status.clone()).unwrap_or_else(|_| serde_json::json!({}))
+    native_remote_status_store()
+        .lock()
+        .map(|status| status.clone())
+        .unwrap_or_else(|_| serde_json::json!({}))
 }
 
 fn set_webrtc_offer(offer: Value) -> Value {
@@ -1994,7 +2712,10 @@ fn browser_key_to_vk(key: &str) -> Option<u16> {
                     return Some(byte as u16);
                 }
             }
-            if let Some(number) = upper.strip_prefix('F').and_then(|value| value.parse::<u16>().ok()) {
+            if let Some(number) = upper
+                .strip_prefix('F')
+                .and_then(|value| value.parse::<u16>().ok())
+            {
                 if (1..=24).contains(&number) {
                     return Some(0x70 + number - 1);
                 }
@@ -2008,8 +2729,16 @@ fn browser_key_to_vk(key: &str) -> Option<u16> {
 fn send_remote_mouse_event(event: &Value) -> Result<(), String> {
     let width = unsafe { GetSystemMetrics(SM_CXSCREEN) }.max(1) as f64;
     let height = unsafe { GetSystemMetrics(SM_CYSCREEN) }.max(1) as f64;
-    let x = event.get("x").and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, 1.0);
-    let y = event.get("y").and_then(Value::as_f64).unwrap_or(0.0).clamp(0.0, 1.0);
+    let x = event
+        .get("x")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
+    let y = event
+        .get("y")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
     let absolute_x = ((x * (width - 1.0)) * 65535.0 / (width - 1.0)).round() as i32;
     let absolute_y = ((y * (height - 1.0)) * 65535.0 / (height - 1.0)).round() as i32;
     let event_type = event.get("event").and_then(Value::as_str).unwrap_or("move");
@@ -2033,7 +2762,11 @@ fn send_remote_mouse_event(event: &Value) -> Result<(), String> {
         }
         "wheel" => {
             flags |= MOUSEEVENTF_WHEEL;
-            mouse_data = event.get("delta").and_then(Value::as_i64).unwrap_or(0).clamp(-120, 120) as u32;
+            mouse_data = event
+                .get("delta")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                .clamp(-120, 120) as u32;
         }
         _ => {}
     }
@@ -2071,7 +2804,11 @@ fn send_remote_key_event(event: &Value) -> Result<(), String> {
             ki: KEYBDINPUT {
                 wVk: VIRTUAL_KEY(vk),
                 wScan: 0,
-                dwFlags: if is_up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
+                dwFlags: if is_up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    KEYBD_EVENT_FLAGS(0)
+                },
                 time: 0,
                 dwExtraInfo: 0,
             },
@@ -2089,7 +2826,9 @@ pub(crate) fn handle_agent_remote_control_event(event: Value) -> Result<Value, S
     #[cfg(not(windows))]
     {
         let _ = event;
-        return Err("Controle remoto por mouse/teclado esta disponivel apenas no Windows.".to_string());
+        return Err(
+            "Controle remoto por mouse/teclado esta disponivel apenas no Windows.".to_string(),
+        );
     }
     #[cfg(windows)]
     {
@@ -2139,7 +2878,11 @@ fn get_remote_agent_snapshot(root: &PathBuf) -> Value {
         .lock()
         .ok()
         .and_then(|guard| {
-            if guard.as_object().map(|object| object.is_empty()).unwrap_or(true) {
+            if guard
+                .as_object()
+                .map(|object| object.is_empty())
+                .unwrap_or(true)
+            {
                 None
             } else {
                 Some(guard.clone())
@@ -2147,13 +2890,23 @@ fn get_remote_agent_snapshot(root: &PathBuf) -> Value {
         })
         .unwrap_or_else(|| remote_status_payload(root, false, None, None));
     if let Some(snapshot) = payload.get_mut("snapshot").and_then(Value::as_object_mut) {
-        snapshot.insert("remote_connection".to_string(), remote_agent_connection_payload());
+        snapshot.insert(
+            "remote_connection".to_string(),
+            remote_agent_connection_payload(),
+        );
     }
     payload
 }
 
 fn open_remote_automation(root: &PathBuf, automation_id: &str) -> Result<Value, String> {
-    let result = run_helper_json(root, &["automation-open".into(), "--id".into(), automation_id.to_string()])?;
+    let result = run_helper_json(
+        root,
+        &[
+            "automation-open".into(),
+            "--id".into(),
+            automation_id.to_string(),
+        ],
+    )?;
     set_remote_agent_snapshot(remote_status_payload(
         root,
         false,
@@ -2169,17 +2922,34 @@ fn open_remote_automation(root: &PathBuf, automation_id: &str) -> Result<Value, 
     Ok(result)
 }
 
-fn import_remote_automation_zip(root: &PathBuf, file_name: &str, body: &[u8]) -> Result<Value, String> {
+fn import_remote_automation_zip(
+    root: &PathBuf,
+    file_name: &str,
+    body: &[u8],
+) -> Result<Value, String> {
     let import_dir = root.join("automacoes").join("_imports_remotos");
-    fs::create_dir_all(&import_dir).map_err(|err| format!("Falha ao criar pasta de importacao remota: {err}"))?;
+    fs::create_dir_all(&import_dir)
+        .map_err(|err| format!("Falha ao criar pasta de importacao remota: {err}"))?;
     let safe_name = sanitize_asset_filename(file_name, "automacao.zip");
     let zip_path = import_dir.join(safe_name);
-    fs::write(&zip_path, body).map_err(|err| format!("Falha ao salvar ZIP recebido pelo Agent: {err}"))?;
-    let result = run_helper_json(root, &["automation-import-zip".into(), "--arquivo".into(), zip_path.display().to_string()])?;
+    fs::write(&zip_path, body)
+        .map_err(|err| format!("Falha ao salvar ZIP recebido pelo Agent: {err}"))?;
+    let result = run_helper_json(
+        root,
+        &[
+            "automation-import-zip".into(),
+            "--arquivo".into(),
+            zip_path.display().to_string(),
+        ],
+    )?;
     let imported_id = result
         .get("imported_id")
         .or_else(|| result.get("importedId"))
-        .or_else(|| result.get("active_automation").and_then(|item| item.get("id")))
+        .or_else(|| {
+            result
+                .get("active_automation")
+                .and_then(|item| item.get("id"))
+        })
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
@@ -2207,7 +2977,8 @@ fn remote_recognition_preview(root: &PathBuf, image_id: &str) -> Result<Value, S
     if !final_path.exists() {
         return Err(format!("Imagem nao encontrada: {image_id}"));
     }
-    let bytes = fs::read(&final_path).map_err(|err| format!("Falha ao ler preview remoto: {err}"))?;
+    let bytes =
+        fs::read(&final_path).map_err(|err| format!("Falha ao ler preview remoto: {err}"))?;
     let extension = final_path
         .extension()
         .and_then(|value| value.to_str())
@@ -2242,13 +3013,22 @@ fn update_remote_progress_from_stdout(root: &PathBuf, automation_id: &str, raw_l
             ));
         }
         Err(err) => {
-            append_launcher_log(root, format!("REMOTE PROGRESS_JSON invalido: {err} | {json_text}"));
+            append_launcher_log(
+                root,
+                format!("REMOTE PROGRESS_JSON invalido: {err} | {json_text}"),
+            );
         }
     }
 }
 
-fn resolve_remote_loop_start(root: &PathBuf, requested_line: i32, start_company: Option<&str>) -> Result<i32, String> {
-    let company_query = start_company.map(str::trim).filter(|value| !value.is_empty());
+fn resolve_remote_loop_start(
+    root: &PathBuf,
+    requested_line: i32,
+    start_company: Option<&str>,
+) -> Result<i32, String> {
+    let company_query = start_company
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let Some(query) = company_query else {
         return Ok(requested_line.max(1));
     };
@@ -2283,7 +3063,8 @@ fn execute_remote_automation(
     minimize_agent: bool,
     text_overrides: Option<String>,
 ) -> Result<Value, String> {
-    let resolved_loop_start = resolve_remote_loop_start(root, loop_start, start_company.as_deref())?;
+    let resolved_loop_start =
+        resolve_remote_loop_start(root, loop_start, start_company.as_deref())?;
     append_launcher_log(
         root,
         format!(
@@ -2292,7 +3073,14 @@ fn execute_remote_automation(
         ),
     );
     let opened = open_remote_automation(root, automation_id)?;
-    let _ = run_helper_json(root, &["automation-mark-run".into(), "--id".into(), automation_id.to_string()]);
+    let _ = run_helper_json(
+        root,
+        &[
+            "automation-mark-run".into(),
+            "--id".into(),
+            automation_id.to_string(),
+        ],
+    );
     let _ = fs::remove_file(root.join(".parar_automacao.flag"));
     if minimize_agent {
         if let Some(window) = app.get_webview_window("main") {
@@ -2309,12 +3097,28 @@ fn execute_remote_automation(
 
     let script_path = root.join("executar_automacao.py");
     if !script_path.exists() {
-        append_launcher_log(root, format!("ERRO remoto: executor nao encontrado em {}", script_path.display()));
-        return Err(format!("Executor nao encontrado no Agent: {}", script_path.display()));
+        append_launcher_log(
+            root,
+            format!(
+                "ERRO remoto: executor nao encontrado em {}",
+                script_path.display()
+            ),
+        );
+        return Err(format!(
+            "Executor nao encontrado no Agent: {}",
+            script_path.display()
+        ));
     }
 
     let (python_program, python_args) = python_command(root)?;
-    append_launcher_log(root, format!("Execucao remota usando Python: {} {}", python_program, python_args.join(" ")));
+    append_launcher_log(
+        root,
+        format!(
+            "Execucao remota usando Python: {} {}",
+            python_program,
+            python_args.join(" ")
+        ),
+    );
     let mut command = Command::new(&python_program);
     command
         .current_dir(root)
@@ -2331,9 +3135,15 @@ fn execute_remote_automation(
         .arg("--cancelamento-arquivo")
         .arg(root.join(".parar_automacao.flag"));
     if has_spreadsheet {
-        command.arg("--loop-start").arg(resolved_loop_start.max(1).to_string());
+        command
+            .arg("--loop-start")
+            .arg(resolved_loop_start.max(1).to_string());
     }
-    if let Some(value) = text_overrides.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(value) = text_overrides
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         command.arg("--text-overrides").arg(value);
     }
     configure_no_window(&mut command);
@@ -2393,7 +3203,10 @@ fn execute_remote_automation(
         if let Some(handle) = stderr_thread {
             let _ = handle.join();
         }
-        append_launcher_log(&root_clone, format!("Processo remoto finalizado | sucesso={success}"));
+        append_launcher_log(
+            &root_clone,
+            format!("Processo remoto finalizado | sucesso={success}"),
+        );
         set_remote_agent_snapshot(remote_status_payload(
             &root_clone,
             false,
@@ -2419,7 +3232,10 @@ fn normalize_internal_automation_name(value: &str) -> String {
         .replace('-', "_")
 }
 
-fn find_remote_automation_id_by_name(root: &PathBuf, automation_name: &str) -> Result<String, String> {
+fn find_remote_automation_id_by_name(
+    root: &PathBuf,
+    automation_name: &str,
+) -> Result<String, String> {
     let wanted = normalize_internal_automation_name(automation_name);
     let library = run_helper_json(root, &["automation-library-list".into()])?;
     let items = library
@@ -2440,14 +3256,19 @@ fn find_remote_automation_id_by_name(root: &PathBuf, automation_name: &str) -> R
                 .ok_or_else(|| format!("Automacao interna sem ID: {automation_name}"));
         }
     }
-    Err(format!("Automacao fixa do botao Assistir nao encontrada no Agent: {automation_name}"))
+    Err(format!(
+        "Automacao fixa do botao Assistir nao encontrada no Agent: {automation_name}"
+    ))
 }
 
 fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf) {
     let (request, body) = match read_http_request(&mut stream) {
         Ok(value) => value,
         Err(error) => {
-            let _ = stream.write_all(&http_json_response("400 Bad Request", serde_json::json!({"error": error})));
+            let _ = stream.write_all(&http_json_response(
+                "400 Bad Request",
+                serde_json::json!({"error": error}),
+            ));
             return;
         }
     };
@@ -2464,30 +3285,53 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
     let response = if method == "OPTIONS" {
         http_json_response("204 No Content", serde_json::json!({}))
     } else if method == "GET" && clean_path == "/api/ping" {
-        http_json_response("200 OK", serde_json::json!({
-            "agent": agent_identity_name(&root),
-            "port": 18452,
-            "address": local_agent_address()
-        }))
+        http_json_response(
+            "200 OK",
+            serde_json::json!({
+                "agent": agent_identity_name(&root),
+                "port": 18452,
+                "address": local_agent_address()
+            }),
+        )
     } else if method == "POST" && clean_path == "/api/identity" {
-        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
-        let name = payload.get("name").and_then(Value::as_str).unwrap_or("").trim();
+        let payload =
+            serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let name = payload
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
         if name.is_empty() {
-            http_json_response("400 Bad Request", serde_json::json!({"error":"Informe o nome do Agent."}))
+            http_json_response(
+                "400 Bad Request",
+                serde_json::json!({"error":"Informe o nome do Agent."}),
+            )
         } else {
             let safe_name: String = name.chars().take(80).collect();
-            match fs::write(root.join("agent_identity.json"), serde_json::json!({"name":safe_name}).to_string()) {
+            match fs::write(
+                root.join("agent_identity.json"),
+                serde_json::json!({"name":safe_name}).to_string(),
+            ) {
                 Ok(()) => {
-                    let _ = app.emit("agent-identity-updated", serde_json::json!({"name":safe_name}));
+                    let _ = app.emit(
+                        "agent-identity-updated",
+                        serde_json::json!({"name":safe_name}),
+                    );
                     http_json_response("200 OK", serde_json::json!({"ok":true,"name":safe_name}))
                 }
-                Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error":format!("Falha ao salvar o nome do Agent: {error}")})),
+                Err(error) => http_json_response(
+                    "500 Internal Server Error",
+                    serde_json::json!({"error":format!("Falha ao salvar o nome do Agent: {error}")}),
+                ),
             }
         }
     } else if method == "GET" && clean_path == "/api/automations" {
         match run_helper_json(&root, &["automation-library-list".into()]) {
             Ok(value) => http_json_response("200 OK", value),
-            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+            Err(error) => http_json_response(
+                "500 Internal Server Error",
+                serde_json::json!({"error": error}),
+            ),
         }
     } else if method == "GET" && clean_path == "/api/status" {
         http_json_response("200 OK", get_remote_agent_snapshot(&root))
@@ -2496,18 +3340,25 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
     } else if method == "GET" && clean_path == "/api/screen/snapshot" {
         match capture_screen_snapshot(&root) {
             Ok(value) => http_json_response("200 OK", value),
-            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+            Err(error) => http_json_response(
+                "500 Internal Server Error",
+                serde_json::json!({"error": error}),
+            ),
         }
     } else if method == "GET" && clean_path == "/api/native-remote/status" {
         http_json_response("200 OK", get_native_remote_status())
     } else if method == "POST" && clean_path == "/api/control/event" {
-        let event = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let event =
+            serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
         match handle_agent_remote_control_event(event) {
             Ok(value) => http_json_response("200 OK", value),
-            Err(error) => http_json_response("400 Bad Request", serde_json::json!({"error": error})),
+            Err(error) => {
+                http_json_response("400 Bad Request", serde_json::json!({"error": error}))
+            }
         }
     } else if method == "POST" && clean_path == "/api/webrtc/offer" {
-        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let payload =
+            serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
         let offer = payload.get("offer").cloned().unwrap_or(payload);
         http_json_response("200 OK", set_webrtc_offer(offer))
     } else if method == "GET" && clean_path == "/api/webrtc/answer" {
@@ -2515,7 +3366,8 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
     } else if method == "DELETE" && clean_path == "/api/webrtc" {
         http_json_response("200 OK", clear_webrtc_signal())
     } else if method == "POST" && clean_path == "/api/meshcentral/start" {
-        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let payload =
+            serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
         let mesh_path = payload
             .get("mesh_path")
             .or_else(|| payload.get("meshPath"))
@@ -2525,7 +3377,10 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             .get("url")
             .and_then(Value::as_str)
             .map(str::to_string);
-        http_json_response("200 OK", start_meshcentral_server_async(root.clone(), mesh_path.to_string(), url))
+        http_json_response(
+            "200 OK",
+            start_meshcentral_server_async(root.clone(), mesh_path.to_string(), url),
+        )
     } else if method == "GET" && clean_path == "/api/spreadsheet-preview" {
         let limit = path
             .split_once('?')
@@ -2542,10 +3397,14 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             .unwrap_or(80);
         match read_remote_spreadsheet_preview(&root, limit) {
             Ok(value) => http_json_response("200 OK", value),
-            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+            Err(error) => http_json_response(
+                "500 Internal Server Error",
+                serde_json::json!({"error": error}),
+            ),
         }
     } else if method == "POST" && clean_path == "/api/spreadsheet-column/clear" {
-        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let payload =
+            serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
         let workbook = payload
             .get("workbook")
             .or_else(|| payload.get("workbook_id"))
@@ -2565,17 +3424,25 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             .to_string();
         match clear_workbook_column_in_root(&root, workbook, sheet, column) {
             Ok(value) => http_json_response("200 OK", value),
-            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+            Err(error) => http_json_response(
+                "500 Internal Server Error",
+                serde_json::json!({"error": error}),
+            ),
         }
     } else if method == "POST" && clean_path == "/api/stop" {
         let _ = fs::write(root.join(".parar_automacao.flag"), b"stop");
-        let snapshot = remote_status_payload(&root, false, None, Some(serde_json::json!({
-            "percent": 0,
-            "description": "Parada solicitada no Agent.",
-            "sequence": "principal",
-            "order": 1,
-            "company": ""
-        })));
+        let snapshot = remote_status_payload(
+            &root,
+            false,
+            None,
+            Some(serde_json::json!({
+                "percent": 0,
+                "description": "Parada solicitada no Agent.",
+                "sequence": "principal",
+                "order": 1,
+                "company": ""
+            })),
+        );
         set_remote_agent_snapshot(snapshot.clone());
         http_json_response("200 OK", snapshot)
     } else if method == "POST" && clean_path == "/api/automation-import-zip" {
@@ -2594,7 +3461,10 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             .unwrap_or_else(|| "automacao.zip".to_string());
         match import_remote_automation_zip(&root, &file_name, &body) {
             Ok(value) => http_json_response("200 OK", value),
-            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+            Err(error) => http_json_response(
+                "500 Internal Server Error",
+                serde_json::json!({"error": error}),
+            ),
         }
     } else if method == "GET" && clean_path == "/api/recognition-preview" {
         let image_id = path
@@ -2614,7 +3484,10 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             Ok(value) => http_json_response("200 OK", value),
             Err(error) => http_json_response("404 Not Found", serde_json::json!({"error": error})),
         }
-    } else if method == "POST" && clean_path.starts_with("/api/automations/") && clean_path.ends_with("/open") {
+    } else if method == "POST"
+        && clean_path.starts_with("/api/automations/")
+        && clean_path.ends_with("/open")
+    {
         let encoded_id = clean_path
             .trim_start_matches("/api/automations/")
             .trim_end_matches("/open")
@@ -2622,28 +3495,39 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
         let automation_id = url_decode_component(encoded_id);
         match open_remote_automation(&root, &automation_id) {
             Ok(value) => http_json_response("200 OK", value),
-            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+            Err(error) => http_json_response(
+                "500 Internal Server Error",
+                serde_json::json!({"error": error}),
+            ),
         }
     } else if method == "POST" && clean_path == "/api/watch-automation/execute" {
-        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let payload =
+            serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
         let automation_name = payload
             .get("automation_name")
             .or_else(|| payload.get("automationName"))
             .and_then(Value::as_str)
             .unwrap_or("Aceito_Compartilhamento");
-        match find_remote_automation_id_by_name(&root, automation_name)
-            .and_then(|automation_id| execute_remote_automation(&app, &root, &automation_id, 0.0, 1, None, false, None))
-        {
+        match find_remote_automation_id_by_name(&root, automation_name).and_then(|automation_id| {
+            execute_remote_automation(&app, &root, &automation_id, 0.0, 1, None, false, None)
+        }) {
             Ok(value) => http_json_response("200 OK", value),
-            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+            Err(error) => http_json_response(
+                "500 Internal Server Error",
+                serde_json::json!({"error": error}),
+            ),
         }
-    } else if method == "POST" && clean_path.starts_with("/api/automations/") && clean_path.ends_with("/execute") {
+    } else if method == "POST"
+        && clean_path.starts_with("/api/automations/")
+        && clean_path.ends_with("/execute")
+    {
         let encoded_id = clean_path
             .trim_start_matches("/api/automations/")
             .trim_end_matches("/execute")
             .trim_end_matches('/');
         let automation_id = url_decode_component(encoded_id);
-        let payload = serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
+        let payload =
+            serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
         let delay = payload.get("delay").and_then(Value::as_f64).unwrap_or(3.0);
         let loop_start = payload
             .get("loop_start")
@@ -2672,19 +3556,40 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
                     None
                 }
             });
-        match execute_remote_automation(&app, &root, &automation_id, delay, loop_start, start_company, minimize_agent, text_overrides) {
+        match execute_remote_automation(
+            &app,
+            &root,
+            &automation_id,
+            delay,
+            loop_start,
+            start_company,
+            minimize_agent,
+            text_overrides,
+        ) {
             Ok(value) => http_json_response("200 OK", value),
-            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+            Err(error) => http_json_response(
+                "500 Internal Server Error",
+                serde_json::json!({"error": error}),
+            ),
         }
     } else if method == "DELETE" && clean_path.starts_with("/api/automations/") {
         let encoded_id = clean_path.trim_start_matches("/api/automations/");
         let automation_id = url_decode_component(encoded_id);
-        match run_helper_json(&root, &["automation-delete".into(), "--id".into(), automation_id]) {
+        match run_helper_json(
+            &root,
+            &["automation-delete".into(), "--id".into(), automation_id],
+        ) {
             Ok(value) => http_json_response("200 OK", value),
-            Err(error) => http_json_response("500 Internal Server Error", serde_json::json!({"error": error})),
+            Err(error) => http_json_response(
+                "500 Internal Server Error",
+                serde_json::json!({"error": error}),
+            ),
         }
     } else {
-        http_json_response("404 Not Found", serde_json::json!({"error": "Endpoint nao encontrado"}))
+        http_json_response(
+            "404 Not Found",
+            serde_json::json!({"error": "Endpoint nao encontrado"}),
+        )
     };
 
     let _ = stream.write_all(&response);
@@ -2822,7 +3727,9 @@ fn capture_screen_snapshot(root: &Path) -> Result<Value, String> {
     #[cfg(not(windows))]
     {
         let _ = root;
-        return Err("A visualizacao remota por snapshot esta disponivel apenas no Windows.".to_string());
+        return Err(
+            "A visualizacao remota por snapshot esta disponivel apenas no Windows.".to_string(),
+        );
     }
 
     #[cfg(windows)]
@@ -2904,7 +3811,10 @@ fn capture_screen_snapshot(root: &Path) -> Result<Value, String> {
             .ok_or_else(|| "Nao foi possivel montar a imagem da tela.".to_string())?;
         let max_width = 1600u32;
         let scaled = if image.width() > max_width {
-            let target_height = ((image.height() as f64) * (max_width as f64 / image.width() as f64)).round().max(1.0) as u32;
+            let target_height = ((image.height() as f64)
+                * (max_width as f64 / image.width() as f64))
+                .round()
+                .max(1.0) as u32;
             image::imageops::resize(&image, max_width, target_height, FilterType::Nearest)
         } else {
             image
@@ -2914,7 +3824,13 @@ fn capture_screen_snapshot(root: &Path) -> Result<Value, String> {
         encoder
             .encode_image(&scaled)
             .map_err(|err| format!("Nao foi possivel compactar a tela do Agent: {err}"))?;
-        let resolution = format!("{}x{} -> {}x{}", width, height, scaled.width(), scaled.height());
+        let resolution = format!(
+            "{}x{} -> {}x{}",
+            width,
+            height,
+            scaled.width(),
+            scaled.height()
+        );
         Ok(serde_json::json!({
             "ok": true,
             "mime": "image/jpeg",
@@ -2929,7 +3845,10 @@ fn find_meshcentral_entry(mesh_dir: &Path) -> Option<PathBuf> {
     [
         mesh_dir.join("meshcentral.js"),
         mesh_dir.join("meshcentral"),
-        mesh_dir.join("node_modules").join("meshcentral").join("meshcentral.js"),
+        mesh_dir
+            .join("node_modules")
+            .join("meshcentral")
+            .join("meshcentral.js"),
     ]
     .into_iter()
     .find(|path| path.exists() && path.is_file())
@@ -2938,17 +3857,29 @@ fn find_meshcentral_entry(mesh_dir: &Path) -> Option<PathBuf> {
 fn bundled_node_program(root: &Path) -> Option<PathBuf> {
     [
         root.join("nodejs"),
-        root.join("flowdetect_agent").join("src-tauri").join("installer_support").join("nodejs"),
+        root.join("flowdetect_agent")
+            .join("src-tauri")
+            .join("installer_support")
+            .join("nodejs"),
     ]
     .into_iter()
-    .map(|base| base.join(if cfg!(windows) { "node.exe" } else { "bin/node" }))
+    .map(|base| {
+        base.join(if cfg!(windows) {
+            "node.exe"
+        } else {
+            "bin/node"
+        })
+    })
     .find(|candidate| candidate.exists())
 }
 
 fn bundled_npm_program(root: &Path) -> Option<PathBuf> {
     [
         root.join("nodejs"),
-        root.join("flowdetect_agent").join("src-tauri").join("installer_support").join("nodejs"),
+        root.join("flowdetect_agent")
+            .join("src-tauri")
+            .join("installer_support")
+            .join("nodejs"),
     ]
     .into_iter()
     .map(|base| base.join(if cfg!(windows) { "npm.cmd" } else { "bin/npm" }))
@@ -2958,10 +3889,18 @@ fn bundled_npm_program(root: &Path) -> Option<PathBuf> {
 fn bundled_npm_cli(root: &Path) -> Option<PathBuf> {
     [
         root.join("nodejs"),
-        root.join("flowdetect_agent").join("src-tauri").join("installer_support").join("nodejs"),
+        root.join("flowdetect_agent")
+            .join("src-tauri")
+            .join("installer_support")
+            .join("nodejs"),
     ]
     .into_iter()
-    .map(|base| base.join("node_modules").join("npm").join("bin").join("npm-cli.js"))
+    .map(|base| {
+        base.join("node_modules")
+            .join("npm")
+            .join("bin")
+            .join("npm-cli.js")
+    })
     .find(|candidate| candidate.exists())
 }
 
@@ -2991,7 +3930,9 @@ fn ensure_meshcentral_dependencies(root: &Path, mesh_dir: &Path) -> Result<(), S
         command.arg(npm_cli);
         command
     } else {
-        Command::new(bundled_npm_program(root).unwrap_or_else(|| PathBuf::from(system_npm_program())))
+        Command::new(
+            bundled_npm_program(root).unwrap_or_else(|| PathBuf::from(system_npm_program())),
+        )
     };
     command
         .arg("install")
@@ -3007,7 +3948,10 @@ fn ensure_meshcentral_dependencies(root: &Path, mesh_dir: &Path) -> Result<(), S
     if status.success() {
         Ok(())
     } else {
-        Err(format!("npm install do MeshCentral falhou com codigo {:?}.", status.code()))
+        Err(format!(
+            "npm install do MeshCentral falhou com codigo {:?}.",
+            status.code()
+        ))
     }
 }
 
@@ -3027,7 +3971,11 @@ fn default_meshcentral_dir(root: &Path) -> PathBuf {
     installed
 }
 
-fn start_meshcentral_server(root: &Path, mesh_path: &str, url: Option<String>) -> Result<Value, String> {
+fn start_meshcentral_server(
+    root: &Path,
+    mesh_path: &str,
+    url: Option<String>,
+) -> Result<Value, String> {
     let trimmed_path = mesh_path.trim().trim_matches('"');
     let mesh_dir = if trimmed_path.is_empty() {
         default_meshcentral_dir(root)
@@ -3035,14 +3983,23 @@ fn start_meshcentral_server(root: &Path, mesh_path: &str, url: Option<String>) -
         PathBuf::from(trimmed_path)
     };
     if !mesh_dir.exists() || !mesh_dir.is_dir() {
-        return Err(format!("Pasta do MeshCentral nao encontrada: {}", mesh_dir.display()));
+        return Err(format!(
+            "Pasta do MeshCentral nao encontrada: {}",
+            mesh_dir.display()
+        ));
     }
 
     let cell = meshcentral_process_cell();
     {
-        let mut guard = cell.lock().map_err(|_| "Falha ao acessar processo do MeshCentral.".to_string())?;
+        let mut guard = cell
+            .lock()
+            .map_err(|_| "Falha ao acessar processo do MeshCentral.".to_string())?;
         if let Some(child) = guard.as_mut() {
-            if child.try_wait().map_err(|err| format!("Falha ao consultar MeshCentral: {err}"))?.is_none() {
+            if child
+                .try_wait()
+                .map_err(|err| format!("Falha ao consultar MeshCentral: {err}"))?
+                .is_none()
+            {
                 return Ok(meshcentral_status_payload(root));
             }
             *guard = None;
@@ -3054,9 +4011,8 @@ fn start_meshcentral_server(root: &Path, mesh_path: &str, url: Option<String>) -
 
     ensure_meshcentral_dependencies(root, &mesh_dir)?;
 
-    let mut command = Command::new(
-        bundled_node_program(root).unwrap_or_else(|| PathBuf::from("node"))
-    );
+    let mut command =
+        Command::new(bundled_node_program(root).unwrap_or_else(|| PathBuf::from("node")));
     command
         .arg(&entry)
         .current_dir(&mesh_dir)
@@ -3065,17 +4021,22 @@ fn start_meshcentral_server(root: &Path, mesh_path: &str, url: Option<String>) -
         .stderr(Stdio::null());
     configure_no_window(&mut command);
 
-    let child = command
-        .spawn()
-        .map_err(|err| format!("Nao foi possivel iniciar o MeshCentral com o Node embutido do Agent. Erro: {err}"))?;
+    let child = command.spawn().map_err(|err| {
+        format!("Nao foi possivel iniciar o MeshCentral com o Node embutido do Agent. Erro: {err}")
+    })?;
 
-    if let Some(url_value) = url.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) {
+    if let Some(url_value) = url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
         let _ = fs::write(root.join("meshcentral_url.txt"), url_value);
     } else {
         let _ = fs::write(root.join("meshcentral_url.txt"), local_meshcentral_url());
     }
 
-    let mut guard = cell.lock().map_err(|_| "Falha ao registrar processo do MeshCentral.".to_string())?;
+    let mut guard = cell
+        .lock()
+        .map_err(|_| "Falha ao registrar processo do MeshCentral.".to_string())?;
     *guard = Some(child);
     Ok(meshcentral_status_payload(root))
 }
@@ -3123,15 +4084,26 @@ fn normalize_agent_address(address: &str) -> String {
     if trimmed.is_empty() {
         "127.0.0.1:18452".to_string()
     } else if trimmed.starts_with("http://") {
-        trimmed.trim_start_matches("http://").trim_end_matches('/').to_string()
+        trimmed
+            .trim_start_matches("http://")
+            .trim_end_matches('/')
+            .to_string()
     } else if trimmed.starts_with("https://") {
-        trimmed.trim_start_matches("https://").trim_end_matches('/').to_string()
+        trimmed
+            .trim_start_matches("https://")
+            .trim_end_matches('/')
+            .to_string()
     } else {
         trimmed.trim_end_matches('/').to_string()
     }
 }
 
-fn remote_agent_request(address: &str, method: &str, path: &str, body: Option<&[u8]>) -> Result<Value, String> {
+fn remote_agent_request(
+    address: &str,
+    method: &str,
+    path: &str,
+    body: Option<&[u8]>,
+) -> Result<Value, String> {
     let normalized = normalize_agent_address(address);
     let socket_addr: SocketAddr = normalized
         .to_socket_addrs()
@@ -3157,11 +4129,16 @@ fn remote_agent_request(address: &str, method: &str, path: &str, body: Option<&[
         .map_err(|err| format!("Falha ao ler resposta do Agent: {err}"))?;
     let status_ok = response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.1 204");
     let body_text = response.split("\r\n\r\n").nth(1).unwrap_or("{}");
-    let parsed: Value = serde_json::from_str(body_text).unwrap_or_else(|_| serde_json::json!({ "raw": body_text }));
+    let parsed: Value =
+        serde_json::from_str(body_text).unwrap_or_else(|_| serde_json::json!({ "raw": body_text }));
     if status_ok {
         Ok(parsed)
     } else {
-        Err(parsed.get("error").and_then(Value::as_str).unwrap_or("Falha remota no Agent.").to_string())
+        Err(parsed
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("Falha remota no Agent.")
+            .to_string())
     }
 }
 
@@ -3172,7 +4149,8 @@ fn remote_agent_ping(address: String) -> Result<Value, String> {
 
 #[tauri::command]
 fn remote_agent_set_identity(address: String, name: String) -> Result<Value, String> {
-    let body = serde_json::to_vec(&serde_json::json!({"name":name})).map_err(|err| err.to_string())?;
+    let body =
+        serde_json::to_vec(&serde_json::json!({"name":name})).map_err(|err| err.to_string())?;
     remote_agent_request(&address, "POST", "/api/identity", Some(&body))
 }
 
@@ -3184,7 +4162,12 @@ fn remote_agent_list_automations(address: String) -> Result<Value, String> {
 #[tauri::command]
 fn remote_agent_open_automation(address: String, id: String) -> Result<Value, String> {
     let encoded = url_encode_component(&id);
-    remote_agent_request(&address, "POST", &format!("/api/automations/{encoded}/open"), None)
+    remote_agent_request(
+        &address,
+        "POST",
+        &format!("/api/automations/{encoded}/open"),
+        None,
+    )
 }
 
 #[tauri::command]
@@ -3197,29 +4180,50 @@ fn remote_agent_spreadsheet_preview(address: String, limit: Option<i64>) -> Resu
     remote_agent_request(
         &address,
         "GET",
-        &format!("/api/spreadsheet-preview?limit={}", limit.unwrap_or(80).max(1).min(200)),
+        &format!(
+            "/api/spreadsheet-preview?limit={}",
+            limit.unwrap_or(80).max(1).min(200)
+        ),
         None,
     )
 }
 
 #[tauri::command]
-fn remote_agent_clear_spreadsheet_column(address: String, workbook: String, sheet: String, column: String) -> Result<Value, String> {
+fn remote_agent_clear_spreadsheet_column(
+    address: String,
+    workbook: String,
+    sheet: String,
+    column: String,
+) -> Result<Value, String> {
     let body = serde_json::to_vec(&serde_json::json!({
         "workbook": workbook,
         "sheet": sheet,
         "column": column,
     }))
     .map_err(|err| format!("Falha ao preparar limpeza remota da planilha: {err}"))?;
-    remote_agent_request(&address, "POST", "/api/spreadsheet-column/clear", Some(&body))
+    remote_agent_request(
+        &address,
+        "POST",
+        "/api/spreadsheet-column/clear",
+        Some(&body),
+    )
 }
 
 #[tauri::command]
-fn remote_agent_execute_watch_automation(address: String, automation_name: String) -> Result<Value, String> {
+fn remote_agent_execute_watch_automation(
+    address: String,
+    automation_name: String,
+) -> Result<Value, String> {
     let body = serde_json::to_vec(&serde_json::json!({
         "automation_name": automation_name,
     }))
     .map_err(|err| format!("Falha ao preparar automacao fixa do botao Assistir: {err}"))?;
-    remote_agent_request(&address, "POST", "/api/watch-automation/execute", Some(&body))
+    remote_agent_request(
+        &address,
+        "POST",
+        "/api/watch-automation/execute",
+        Some(&body),
+    )
 }
 
 #[tauri::command]
@@ -3257,7 +4261,11 @@ fn remote_agent_webrtc_clear(address: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn remote_agent_meshcentral_start(address: String, mesh_path: String, url: Option<String>) -> Result<Value, String> {
+fn remote_agent_meshcentral_start(
+    address: String,
+    mesh_path: String,
+    url: Option<String>,
+) -> Result<Value, String> {
     let body = serde_json::to_vec(&serde_json::json!({
         "mesh_path": mesh_path,
         "url": url.unwrap_or_default(),
@@ -3273,7 +4281,11 @@ fn agent_meshcentral_status(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn agent_meshcentral_start(app: AppHandle, mesh_path: String, url: Option<String>) -> Result<Value, String> {
+fn agent_meshcentral_start(
+    app: AppHandle,
+    mesh_path: String,
+    url: Option<String>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     Ok(start_meshcentral_server_async(root, mesh_path, url))
 }
@@ -3317,7 +4329,12 @@ fn remote_agent_execute(
         "text_overrides": text_overrides.unwrap_or_default(),
     }))
     .map_err(|err| format!("Falha ao preparar execucao remota: {err}"))?;
-    remote_agent_request(&address, "POST", &format!("/api/automations/{encoded}/execute"), Some(&body))
+    remote_agent_request(
+        &address,
+        "POST",
+        &format!("/api/automations/{encoded}/execute"),
+        Some(&body),
+    )
 }
 
 #[tauri::command]
@@ -3326,7 +4343,11 @@ fn remote_agent_stop(address: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn remote_agent_import_automation_zip(address: String, file_name: String, bytes: Vec<u8>) -> Result<Value, String> {
+fn remote_agent_import_automation_zip(
+    address: String,
+    file_name: String,
+    bytes: Vec<u8>,
+) -> Result<Value, String> {
     let encoded_name = url_encode_component(&file_name);
     remote_agent_request(
         &address,
@@ -3337,19 +4358,36 @@ fn remote_agent_import_automation_zip(address: String, file_name: String, bytes:
 }
 
 #[tauri::command]
-fn remote_agent_get_recognition_preview(address: String, image_id: String) -> Result<Value, String> {
+fn remote_agent_get_recognition_preview(
+    address: String,
+    image_id: String,
+) -> Result<Value, String> {
     let encoded = url_encode_component(&image_id);
-    remote_agent_request(&address, "GET", &format!("/api/recognition-preview?image_id={encoded}"), None)
+    remote_agent_request(
+        &address,
+        "GET",
+        &format!("/api/recognition-preview?image_id={encoded}"),
+        None,
+    )
 }
 
 #[tauri::command]
 fn remote_agent_delete_automation(address: String, id: String) -> Result<Value, String> {
     let encoded = url_encode_component(&id);
-    remote_agent_request(&address, "DELETE", &format!("/api/automations/{encoded}"), None)
+    remote_agent_request(
+        &address,
+        "DELETE",
+        &format!("/api/automations/{encoded}"),
+        None,
+    )
 }
 
 #[tauri::command]
-fn show_target_window_overlay(app: AppHandle, hwnd: i64, title: Option<String>) -> Result<Value, String> {
+fn show_target_window_overlay(
+    app: AppHandle,
+    hwnd: i64,
+    title: Option<String>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     hide_target_window_overlay(app.clone(), false).ok();
     let script_path = root.join("overlay_janela_alvo.py");
@@ -3364,11 +4402,17 @@ fn show_target_window_overlay(app: AppHandle, hwnd: i64, title: Option<String>) 
         .arg(&script_path)
         .arg("--hwnd")
         .arg(hwnd.to_string());
-    if let Some(value) = title.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(value) = title
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         command.arg("--title").arg(value);
     }
     configure_no_window(&mut command);
-    let child = command.spawn().map_err(|err| format!("Falha ao iniciar overlay: {err}"))?;
+    let child = command
+        .spawn()
+        .map_err(|err| format!("Falha ao iniciar overlay: {err}"))?;
     if let Ok(mut guard) = TARGET_OVERLAY_CHILD.lock() {
         *guard = Some(child);
     }
@@ -3424,7 +4468,11 @@ fn fit_active_window_to_agent_area(_app: AppHandle) -> Result<Value, String> {
 }
 
 #[cfg(windows)]
-fn fit_window_to_agent_safe_area(window: HWND, hwnd_value: i64, label: &str) -> Result<Value, String> {
+fn fit_window_to_agent_safe_area(
+    window: HWND,
+    hwnd_value: i64,
+    label: &str,
+) -> Result<Value, String> {
     unsafe {
         if !IsWindow(window).as_bool() {
             return Err(format!("{label} nao existe mais."));
@@ -3555,14 +4603,22 @@ fn protect_agent_fullscreen_area() {
             || rect.right > target_right + 12
             || rect.bottom > target_bottom + 12;
         if outside_safe_area {
-            let _ = fit_window_to_agent_safe_area(window, window.0 as isize as i64, "Janela em tela cheia");
+            let _ = fit_window_to_agent_safe_area(
+                window,
+                window.0 as isize as i64,
+                "Janela em tela cheia",
+            );
         }
     }
 }
 
 #[cfg(windows)]
 unsafe extern "system" fn protect_maximized_window_callback(window: HWND, _lparam: LPARAM) -> BOOL {
-    if window.0.is_null() || !IsWindow(window).as_bool() || !IsWindowVisible(window).as_bool() || !IsZoomed(window).as_bool() {
+    if window.0.is_null()
+        || !IsWindow(window).as_bool()
+        || !IsWindowVisible(window).as_bool()
+        || !IsZoomed(window).as_bool()
+    {
         return BOOL(1);
     }
 
@@ -3585,13 +4641,19 @@ unsafe extern "system" fn protect_maximized_window_callback(window: HWND, _lpara
         || rect.right > target_right + 12
         || rect.bottom > target_bottom + 12;
     if outside_safe_area {
-        let _ = fit_window_to_agent_safe_area(window, window.0 as isize as i64, "Janela maximizada");
+        let _ =
+            fit_window_to_agent_safe_area(window, window.0 as isize as i64, "Janela maximizada");
     }
     BOOL(1)
 }
 
 #[tauri::command]
-fn update_sequence_settings(app: AppHandle, sequence: String, execution_mode: String, after_loop_sequence: Option<String>) -> Result<Value, String> {
+fn update_sequence_settings(
+    app: AppHandle,
+    sequence: String,
+    execution_mode: String,
+    after_loop_sequence: Option<String>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
         "update-sequence-settings".into(),
@@ -3612,19 +4674,43 @@ fn update_sequence_settings(app: AppHandle, sequence: String, execution_mode: St
 #[tauri::command]
 fn update_initial_sequence(app: AppHandle, sequence: String) -> Result<Value, String> {
     let root = workspace_root(&app);
-    run_helper_json(&root, &["update-initial-sequence".into(), "--sequencia".into(), sequence])
+    run_helper_json(
+        &root,
+        &[
+            "update-initial-sequence".into(),
+            "--sequencia".into(),
+            sequence,
+        ],
+    )
 }
 
-fn copy_if_exists(source: &Path, destination: &Path, copied: &mut Vec<String>, missing: &mut Vec<String>) {
+fn copy_if_exists(
+    source: &Path,
+    destination: &Path,
+    copied: &mut Vec<String>,
+    missing: &mut Vec<String>,
+) {
     if source.exists() {
         if let Some(parent) = destination.parent() {
             let _ = fs::create_dir_all(parent);
         }
         if fs::copy(source, destination).is_ok() {
-            copied.push(destination.file_name().unwrap_or_default().to_string_lossy().to_string());
+            copied.push(
+                destination
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
+            );
         }
     } else {
-        missing.push(source.file_name().unwrap_or_default().to_string_lossy().to_string());
+        missing.push(
+            source
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        );
     }
 }
 
@@ -3744,9 +4830,18 @@ fn parse_progress_line(line: &str) -> Option<TestProgressPayload> {
     }
 
     Some(TestProgressPayload {
-        current: parts.next().and_then(|value| value.parse().ok()).unwrap_or(0),
-        total: parts.next().and_then(|value| value.parse().ok()).unwrap_or(0),
-        percent: parts.next().and_then(|value| value.parse().ok()).unwrap_or(0.0),
+        current: parts
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0),
+        total: parts
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0),
+        percent: parts
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0.0),
         description: parts.next().unwrap_or_default().to_string(),
         company: parts.next().unwrap_or_default().to_string(),
     })
@@ -3765,13 +4860,18 @@ fn spawn_test_process(
         .map_err(|_| "Falha ao consultar o estado da execucao.".to_string())?
         .to_owned();
     if already_running {
-        return Err("Ja existe uma automacao em execucao. Pare a atual antes de iniciar outra.".into());
+        return Err(
+            "Ja existe uma automacao em execucao. Pare a atual antes de iniciar outra.".into(),
+        );
     }
 
     let root = workspace_root(app);
     let _ = std::fs::remove_file(root.join(".parar_automacao.flag"));
     let _ = std::fs::remove_file(root.join("ultimo_log_launcher.txt"));
-    append_launcher_log(&root, format!("Iniciando processo de teste: {error_context}"));
+    append_launcher_log(
+        &root,
+        format!("Iniciando processo de teste: {error_context}"),
+    );
 
     configure_background_process(&mut command);
 
@@ -3793,7 +4893,10 @@ fn spawn_test_process(
     set_pid_state(state, Some(child_pid));
     emit_running_state(app, true);
 
-    append_launcher_log(&root, format!("Processo iniciado com sucesso: {error_context}"));
+    append_launcher_log(
+        &root,
+        format!("Processo iniciado com sucesso: {error_context}"),
+    );
     emit_log(app, format!("Processo iniciado: {error_context}."));
 
     let app_handle = app.clone();
@@ -3875,7 +4978,11 @@ fn spawn_test_process(
                 return;
             };
 
-            child.wait().ok().and_then(|status| status.code()).unwrap_or(-1)
+            child
+                .wait()
+                .ok()
+                .and_then(|status| status.code())
+                .unwrap_or(-1)
         };
 
         if let Some(handle) = stdout_thread {
@@ -3916,7 +5023,9 @@ fn spawn_test_process(
 }
 
 #[tauri::command]
-fn get_test_execution_state(state: State<'_, RuntimeState>) -> Result<TestExecutionPayload, String> {
+fn get_test_execution_state(
+    state: State<'_, RuntimeState>,
+) -> Result<TestExecutionPayload, String> {
     let running = state
         .running
         .lock()
@@ -3978,7 +5087,11 @@ fn list_open_windows(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
-async fn map_window_elements(app: AppHandle, title: Option<String>, hwnd: Option<i64>) -> Result<Value, String> {
+async fn map_window_elements(
+    app: AppHandle,
+    title: Option<String>,
+    hwnd: Option<i64>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
         "scan".into(),
@@ -4007,13 +5120,18 @@ async fn map_window_elements(app: AppHandle, title: Option<String>, hwnd: Option
 #[tauri::command]
 async fn capture_uia_element_from_cursor(app: AppHandle) -> Result<Value, String> {
     let root = workspace_root(&app);
-    tauri::async_runtime::spawn_blocking(move || run_uia_mapper_json(&root, &["capture-cursor".into()]))
-        .await
-        .map_err(|err| format!("Falha ao capturar elemento: {err}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        run_uia_mapper_json(&root, &["capture-cursor".into()])
+    })
+    .await
+    .map_err(|err| format!("Falha ao capturar elemento: {err}"))?
 }
 
 #[tauri::command]
-async fn capture_uia_element_from_click(app: AppHandle, timeout: Option<f64>) -> Result<Value, String> {
+async fn capture_uia_element_from_click(
+    app: AppHandle,
+    timeout: Option<f64>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     let args = vec![
         "capture-click".into(),
@@ -4061,7 +5179,8 @@ async fn highlight_uia_element(app: AppHandle, element: Value) -> Result<Value, 
     let args = vec![
         "highlight".into(),
         "--element-json".into(),
-        serde_json::to_string(&element).map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
+        serde_json::to_string(&element)
+            .map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
         "--seconds".into(),
         "1.4".into(),
     ];
@@ -4146,7 +5265,10 @@ fn execute_saved_automation(
     loop_start: i32,
 ) -> Result<String, String> {
     let root = workspace_root(&app);
-    let opened = run_helper_json(&root, &["automation-open".into(), "--id".into(), id.clone()])?;
+    let opened = run_helper_json(
+        &root,
+        &["automation-open".into(), "--id".into(), id.clone()],
+    )?;
     let _ = run_helper_json(&root, &["automation-mark-run".into(), "--id".into(), id]);
 
     let has_spreadsheet = opened
@@ -4170,11 +5292,13 @@ fn execute_saved_automation(
 fn import_workbook(app: AppHandle, file_name: String, bytes: Vec<u8>) -> Result<Value, String> {
     let root = workspace_root(&app);
     let planilhas_dir = root.join("planilhas");
-    fs::create_dir_all(&planilhas_dir).map_err(|err| format!("Falha ao criar pasta planilhas: {err}"))?;
+    fs::create_dir_all(&planilhas_dir)
+        .map_err(|err| format!("Falha ao criar pasta planilhas: {err}"))?;
 
     let sanitized_name = sanitize_workbook_filename(&file_name);
     let destino = planilhas_dir.join(&sanitized_name);
-    fs::write(&destino, bytes).map_err(|err| format!("Falha ao salvar planilha importada: {err}"))?;
+    fs::write(&destino, bytes)
+        .map_err(|err| format!("Falha ao salvar planilha importada: {err}"))?;
 
     Ok(serde_json::json!({
         "saved": destino.display().to_string(),
@@ -4248,7 +5372,8 @@ fn delete_workbook(app: AppHandle, workbook: String) -> Result<Value, String> {
 fn import_image_asset(app: AppHandle, file_name: String, bytes: Vec<u8>) -> Result<Value, String> {
     let root = workspace_root(&app);
     let imagens_dir = root.join("imagens");
-    fs::create_dir_all(&imagens_dir).map_err(|err| format!("Falha ao criar pasta imagens: {err}"))?;
+    fs::create_dir_all(&imagens_dir)
+        .map_err(|err| format!("Falha ao criar pasta imagens: {err}"))?;
 
     let sanitized_name = sanitize_asset_filename(&file_name, "imagem.png");
     let destino = imagens_dir.join(&sanitized_name);
@@ -4353,7 +5478,10 @@ fn read_smart_recorder_events(path: &Path) -> Vec<Value> {
 fn write_smart_recorder_events(path: &Path, events: &[Value]) -> Result<(), String> {
     let mut content = String::new();
     for event in events {
-        content.push_str(&serde_json::to_string(event).map_err(|err| format!("Falha ao serializar evento: {err}"))?);
+        content.push_str(
+            &serde_json::to_string(event)
+                .map_err(|err| format!("Falha ao serializar evento: {err}"))?,
+        );
         content.push('\n');
     }
     fs::write(path, content).map_err(|err| format!("Falha ao atualizar eventos do gravador: {err}"))
@@ -4372,7 +5500,11 @@ fn start_smart_recorder(app: AppHandle) -> Result<Value, String> {
             .lock()
             .map_err(|_| "Falha ao acessar estado do gravador.".to_string())?;
         if let Some(child) = guard.as_mut() {
-            if child.try_wait().map_err(|err| format!("Falha ao verificar gravador: {err}"))?.is_none() {
+            if child
+                .try_wait()
+                .map_err(|err| format!("Falha ao verificar gravador: {err}"))?
+                .is_none()
+            {
                 return Err("O Gravador inteligente ja esta em execucao.".to_string());
             }
         }
@@ -4381,8 +5513,10 @@ fn start_smart_recorder(app: AppHandle) -> Result<Value, String> {
 
     let recorder_dir = smart_recorder_dir(&root);
     let images_dir = root.join("Imagens").join("gravador");
-    fs::create_dir_all(&recorder_dir).map_err(|err| format!("Falha ao preparar gravador: {err}"))?;
-    fs::create_dir_all(&images_dir).map_err(|err| format!("Falha ao preparar imagens do gravador: {err}"))?;
+    fs::create_dir_all(&recorder_dir)
+        .map_err(|err| format!("Falha ao preparar gravador: {err}"))?;
+    fs::create_dir_all(&images_dir)
+        .map_err(|err| format!("Falha ao preparar imagens do gravador: {err}"))?;
     let events_path = smart_recorder_events_path(&root);
     let stop_path = smart_recorder_stop_path(&root);
     let _ = fs::remove_file(&events_path);
@@ -4423,8 +5557,10 @@ fn start_smart_recorder(app: AppHandle) -> Result<Value, String> {
 #[tauri::command]
 fn stop_smart_recorder(app: AppHandle) -> Result<Value, String> {
     let root = workspace_root(&app);
-    fs::create_dir_all(smart_recorder_dir(&root)).map_err(|err| format!("Falha ao parar gravador: {err}"))?;
-    fs::write(smart_recorder_stop_path(&root), "stop").map_err(|err| format!("Falha ao sinalizar parada: {err}"))?;
+    fs::create_dir_all(smart_recorder_dir(&root))
+        .map_err(|err| format!("Falha ao parar gravador: {err}"))?;
+    fs::write(smart_recorder_stop_path(&root), "stop")
+        .map_err(|err| format!("Falha ao sinalizar parada: {err}"))?;
     thread::sleep(Duration::from_millis(250));
     {
         let mut guard = SMART_RECORDER_CHILD
@@ -4455,7 +5591,11 @@ fn get_smart_recorder_status(app: AppHandle) -> Result<Value, String> {
             .lock()
             .map_err(|_| "Falha ao acessar estado do gravador.".to_string())?;
         if let Some(child) = guard.as_mut() {
-            if child.try_wait().map_err(|err| format!("Falha ao verificar gravador: {err}"))?.is_some() {
+            if child
+                .try_wait()
+                .map_err(|err| format!("Falha ao verificar gravador: {err}"))?
+                .is_some()
+            {
                 *guard = None;
                 finished_now = true;
                 false
@@ -4493,7 +5633,9 @@ fn update_smart_recorder_click_area(
     let mut events = read_smart_recorder_events(&events_path);
     let index = events
         .iter()
-        .position(|event| event.get("id").and_then(Value::as_i64).unwrap_or(0) == i64::from(event_id))
+        .position(|event| {
+            event.get("id").and_then(Value::as_i64).unwrap_or(0) == i64::from(event_id)
+        })
         .ok_or_else(|| "Evento do clique nao encontrado.".to_string())?;
     let event_json = serde_json::to_string(&events[index])
         .map_err(|err| format!("Falha ao preparar evento do clique: {err}"))?;
@@ -4502,7 +5644,8 @@ fn update_smart_recorder_click_area(
         return Err(format!("Arquivo nao encontrado: {}", script_path.display()));
     }
     let images_dir = root.join("Imagens").join("gravador");
-    fs::create_dir_all(&images_dir).map_err(|err| format!("Falha ao preparar imagens do gravador: {err}"))?;
+    fs::create_dir_all(&images_dir)
+        .map_err(|err| format!("Falha ao preparar imagens do gravador: {err}"))?;
     let mut args = vec![
         "--recrop".into(),
         "--event-json".into(),
@@ -4540,7 +5683,9 @@ fn delete_smart_recorder_event(app: AppHandle, event_id: i32) -> Result<Value, S
     let mut events = read_smart_recorder_events(&events_path);
     let removed = events
         .iter()
-        .position(|event| event.get("id").and_then(Value::as_i64).unwrap_or(0) == i64::from(event_id))
+        .position(|event| {
+            event.get("id").and_then(Value::as_i64).unwrap_or(0) == i64::from(event_id)
+        })
         .map(|index| events.remove(index))
         .ok_or_else(|| "Bloco gravado nao encontrado.".to_string())?;
 
@@ -4566,7 +5711,8 @@ fn clear_smart_recorder_events(app: AppHandle) -> Result<Value, String> {
     let root = workspace_root(&app);
     let events_path = smart_recorder_events_path(&root);
     if events_path.exists() {
-        fs::write(&events_path, "").map_err(|err| format!("Falha ao limpar blocos do gravador: {err}"))?;
+        fs::write(&events_path, "")
+            .map_err(|err| format!("Falha ao limpar blocos do gravador: {err}"))?;
     }
     Ok(serde_json::json!({
         "events": [],
@@ -4574,13 +5720,19 @@ fn clear_smart_recorder_events(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn update_smart_recorder_event_delay(app: AppHandle, event_id: i32, delay: f64) -> Result<Value, String> {
+fn update_smart_recorder_event_delay(
+    app: AppHandle,
+    event_id: i32,
+    delay: f64,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     let events_path = smart_recorder_events_path(&root);
     let mut events = read_smart_recorder_events(&events_path);
     let index = events
         .iter()
-        .position(|event| event.get("id").and_then(Value::as_i64).unwrap_or(0) == i64::from(event_id))
+        .position(|event| {
+            event.get("id").and_then(Value::as_i64).unwrap_or(0) == i64::from(event_id)
+        })
         .ok_or_else(|| "Bloco gravado nao encontrado.".to_string())?;
     events[index]["delay"] = serde_json::json!(delay.max(0.0));
     let updated = events[index].clone();
@@ -4592,9 +5744,26 @@ fn update_smart_recorder_event_delay(app: AppHandle, event_id: i32, delay: f64) 
 }
 
 #[tauri::command]
-fn add_text_block(app: AppHandle, text: String, delay: f64, sequencia: Option<String>, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>, editavel_execucao: Option<bool>, rotulo_execucao: Option<String>) -> Result<Value, String> {
+fn add_text_block(
+    app: AppHandle,
+    text: String,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+    editavel_execucao: Option<bool>,
+    rotulo_execucao: Option<String>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
-    let mut args = vec!["add-text".into(), "--text".into(), text, "--delay".into(), delay.to_string()];
+    let mut args = vec![
+        "add-text".into(),
+        "--text".into(),
+        text,
+        "--delay".into(),
+        delay.to_string(),
+    ];
     if let Some(sequence_name) = sequencia {
         args.push("--sequencia".into());
         args.push(sequence_name);
@@ -4603,16 +5772,36 @@ fn add_text_block(app: AppHandle, text: String, delay: f64, sequencia: Option<St
         args.push("--editavel-execucao".into());
         args.push(if value { "true" } else { "false" }.into());
     }
-    if let Some(value) = rotulo_execucao.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+    if let Some(value) = rotulo_execucao
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
         args.push("--rotulo-execucao".into());
         args.push(value.to_string());
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
 #[tauri::command]
-fn add_key_block(app: AppHandle, keys: String, repeat: i32, delay: f64, sequencia: Option<String>, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>) -> Result<Value, String> {
+fn add_key_block(
+    app: AppHandle,
+    keys: String,
+    repeat: i32,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
         "add-key".into(),
@@ -4627,12 +5816,22 @@ fn add_key_block(app: AppHandle, keys: String, repeat: i32, delay: f64, sequenci
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
 #[tauri::command]
-fn add_loop_start_block(app: AppHandle, delay: f64, sequencia: Option<String>) -> Result<Value, String> {
+fn add_loop_start_block(
+    app: AppHandle,
+    delay: f64,
+    sequencia: Option<String>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec!["add-loop-start".into(), "--delay".into(), delay.to_string()];
     if let Some(sequence_name) = sequencia {
@@ -4662,12 +5861,30 @@ fn add_loop_end_block(
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
 #[tauri::command]
-fn add_mouse_block(app: AppHandle, x: i32, y: i32, button: String, clicks: i32, delay: f64, sequencia: Option<String>, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>) -> Result<Value, String> {
+fn add_mouse_block(
+    app: AppHandle,
+    x: i32,
+    y: i32,
+    button: String,
+    clicks: i32,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
         "add-mouse".into(),
@@ -4686,7 +5903,13 @@ fn add_mouse_block(app: AppHandle, x: i32, y: i32, button: String, clicks: i32, 
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -4791,7 +6014,13 @@ fn add_image_click_block(
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -4834,7 +6063,13 @@ fn add_spreadsheet_block(
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -4874,7 +6109,13 @@ fn add_write_spreadsheet_block(
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -4927,8 +6168,20 @@ fn add_compare_spreadsheet_block(
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
-    append_compare_diverge_args(&mut args, ao_divergir, bloco_divergir, sequencia_divergir, atraso_sequencia_divergir);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
+    append_compare_diverge_args(
+        &mut args,
+        ao_divergir,
+        bloco_divergir,
+        sequencia_divergir,
+        atraso_sequencia_divergir,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5022,7 +6275,8 @@ fn add_chrome_html_block(
         "--html-original".into(),
         html_original,
         "--elemento-json".into(),
-        serde_json::to_string(&elemento).map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
+        serde_json::to_string(&elemento)
+            .map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
         "--alvo-json".into(),
         serde_json::to_string(&alvo).map_err(|err| format!("Falha ao serializar alvo: {err}"))?,
         "--acao-json".into(),
@@ -5102,7 +6356,8 @@ fn add_uia_element_block(
     let mut args = vec![
         "add-uia-element".into(),
         "--elemento-json".into(),
-        serde_json::to_string(&element).map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
+        serde_json::to_string(&element)
+            .map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
         "--ao-sucesso".into(),
         ao_sucesso.unwrap_or_else(|| "continuar".into()),
         "--ao-falhar".into(),
@@ -5185,7 +6440,13 @@ fn add_open_url_block(
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5218,7 +6479,13 @@ fn add_open_program_block(
         args.push("--sequencia".into());
         args.push(sequence_name);
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5259,7 +6526,13 @@ fn add_save_download_block(
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5280,16 +6553,16 @@ fn insert_text_block(
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
-            "insert-text".into(),
-            "--target-order".into(),
-            target_order.to_string(),
-            "--position".into(),
-            position,
-            "--text".into(),
-            text,
-            "--delay".into(),
-            delay.to_string(),
-        ];
+        "insert-text".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+        "--text".into(),
+        text,
+        "--delay".into(),
+        delay.to_string(),
+    ];
     if let Some(sequence_name) = sequencia {
         if !sequence_name.trim().is_empty() {
             args.push("--sequencia".into());
@@ -5300,11 +6573,21 @@ fn insert_text_block(
         args.push("--editavel-execucao".into());
         args.push(if value { "true" } else { "false" }.into());
     }
-    if let Some(value) = rotulo_execucao.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+    if let Some(value) = rotulo_execucao
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
         args.push("--rotulo-execucao".into());
         args.push(value.to_string());
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5324,25 +6607,31 @@ fn insert_key_block(
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
-            "insert-key".into(),
-            "--target-order".into(),
-            target_order.to_string(),
-            "--position".into(),
-            position,
-            "--keys".into(),
-            keys,
-            "--repeat".into(),
-            repeat.max(1).to_string(),
-            "--delay".into(),
-            delay.to_string(),
-        ];
+        "insert-key".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+        "--keys".into(),
+        keys,
+        "--repeat".into(),
+        repeat.max(1).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
     if let Some(sequence_name) = sequencia {
         if !sequence_name.trim().is_empty() {
             args.push("--sequencia".into());
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5401,7 +6690,13 @@ fn insert_loop_end_block(
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5423,29 +6718,35 @@ fn insert_mouse_block(
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
-            "insert-mouse".into(),
-            "--target-order".into(),
-            target_order.to_string(),
-            "--position".into(),
-            position,
-            "--x".into(),
-            x.to_string(),
-            "--y".into(),
-            y.to_string(),
-            "--button".into(),
-            button,
-            "--clicks".into(),
-            clicks.max(1).to_string(),
-            "--delay".into(),
-            delay.to_string(),
-        ];
+        "insert-mouse".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+        "--x".into(),
+        x.to_string(),
+        "--y".into(),
+        y.to_string(),
+        "--button".into(),
+        button,
+        "--clicks".into(),
+        clicks.max(1).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
     if let Some(sequence_name) = sequencia {
         if !sequence_name.trim().is_empty() {
             args.push("--sequencia".into());
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5486,47 +6787,47 @@ fn insert_image_click_block(
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
-            "insert-image-click".into(),
-            "--target-order".into(),
-            target_order.to_string(),
-            "--position".into(),
-            position,
-            "--imagem".into(),
-            imagem,
-            "--timeout".into(),
-            timeout.max(0.1).to_string(),
-            "--confianca".into(),
-            confianca.to_string(),
-            "--perfil-busca".into(),
-            perfil_busca.unwrap_or_else(|| "balanced".to_string()),
-            "--clicar".into(),
-            clicar.to_string(),
-            "--clicks".into(),
-            clicks.max(0).to_string(),
-            "--offset-x".into(),
-            offset_x.to_string(),
-            "--offset-y".into(),
-            offset_y.to_string(),
-            "--janela-alvo".into(),
-            janela_alvo.unwrap_or_default(),
-            "--texto-ocr-esperado".into(),
-            texto_ocr_esperado.unwrap_or_default(),
-            "--leitura-relativa-ativa".into(),
-            leitura_relativa_ativa.unwrap_or(false).to_string(),
-            "--leitura-relativa-lado".into(),
-            leitura_relativa_lado.unwrap_or_else(|| "direita".to_string()),
-            "--leitura-relativa-largura".into(),
-            leitura_relativa_largura.unwrap_or(140).max(16).to_string(),
-            "--leitura-relativa-altura".into(),
-            leitura_relativa_altura.unwrap_or(40).max(12).to_string(),
-            "--leitura-relativa-offset-x".into(),
-            leitura_relativa_offset_x.unwrap_or(0).to_string(),
-            "--leitura-relativa-offset-y".into(),
-            leitura_relativa_offset_y.unwrap_or(0).to_string(),
-            "--leitura-relativa-salvar-em".into(),
-            leitura_relativa_salvar_em.unwrap_or_default(),
-            "--ao-nao-encontrar".into(),
-            ao_nao_encontrar,
+        "insert-image-click".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+        "--imagem".into(),
+        imagem,
+        "--timeout".into(),
+        timeout.max(0.1).to_string(),
+        "--confianca".into(),
+        confianca.to_string(),
+        "--perfil-busca".into(),
+        perfil_busca.unwrap_or_else(|| "balanced".to_string()),
+        "--clicar".into(),
+        clicar.to_string(),
+        "--clicks".into(),
+        clicks.max(0).to_string(),
+        "--offset-x".into(),
+        offset_x.to_string(),
+        "--offset-y".into(),
+        offset_y.to_string(),
+        "--janela-alvo".into(),
+        janela_alvo.unwrap_or_default(),
+        "--texto-ocr-esperado".into(),
+        texto_ocr_esperado.unwrap_or_default(),
+        "--leitura-relativa-ativa".into(),
+        leitura_relativa_ativa.unwrap_or(false).to_string(),
+        "--leitura-relativa-lado".into(),
+        leitura_relativa_lado.unwrap_or_else(|| "direita".to_string()),
+        "--leitura-relativa-largura".into(),
+        leitura_relativa_largura.unwrap_or(140).max(16).to_string(),
+        "--leitura-relativa-altura".into(),
+        leitura_relativa_altura.unwrap_or(40).max(12).to_string(),
+        "--leitura-relativa-offset-x".into(),
+        leitura_relativa_offset_x.unwrap_or(0).to_string(),
+        "--leitura-relativa-offset-y".into(),
+        leitura_relativa_offset_y.unwrap_or(0).to_string(),
+        "--leitura-relativa-salvar-em".into(),
+        leitura_relativa_salvar_em.unwrap_or_default(),
+        "--ao-nao-encontrar".into(),
+        ao_nao_encontrar,
     ];
     if let Some(value) = sequencia_nao_encontrar {
         if !value.trim().is_empty() {
@@ -5558,7 +6859,13 @@ fn insert_image_click_block(
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5611,7 +6918,13 @@ fn insert_spreadsheet_block(
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5661,7 +6974,13 @@ fn insert_write_spreadsheet_block(
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5724,8 +7043,20 @@ fn insert_compare_spreadsheet_block(
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
-    append_compare_diverge_args(&mut args, ao_divergir, bloco_divergir, sequencia_divergir, atraso_sequencia_divergir);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
+    append_compare_diverge_args(
+        &mut args,
+        ao_divergir,
+        bloco_divergir,
+        sequencia_divergir,
+        atraso_sequencia_divergir,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5767,7 +7098,8 @@ fn insert_chrome_html_block(
         "--html-original".into(),
         html_original,
         "--elemento-json".into(),
-        serde_json::to_string(&elemento).map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
+        serde_json::to_string(&elemento)
+            .map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
         "--alvo-json".into(),
         serde_json::to_string(&alvo).map_err(|err| format!("Falha ao serializar alvo: {err}"))?,
         "--acao-json".into(),
@@ -5855,7 +7187,8 @@ fn insert_uia_element_block(
         "--position".into(),
         position,
         "--elemento-json".into(),
-        serde_json::to_string(&element).map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
+        serde_json::to_string(&element)
+            .map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
         "--ao-sucesso".into(),
         ao_sucesso.unwrap_or_else(|| "continuar".into()),
         "--ao-falhar".into(),
@@ -5946,7 +7279,13 @@ fn insert_open_url_block(
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -5987,7 +7326,13 @@ fn insert_open_program_block(
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -6034,28 +7379,55 @@ fn insert_save_download_block(
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
 #[tauri::command]
-fn update_text_block(app: AppHandle, order: i32, text: String, delay: f64, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>, editavel_execucao: Option<bool>, rotulo_execucao: Option<String>) -> Result<Value, String> {
+fn update_text_block(
+    app: AppHandle,
+    order: i32,
+    text: String,
+    delay: f64,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+    editavel_execucao: Option<bool>,
+    rotulo_execucao: Option<String>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
-            "update-text".into(),
-            "--order".into(),
-            order.to_string(),
-            "--text".into(),
-            text,
-            "--delay".into(),
-            delay.to_string(),
-        ];
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+        "update-text".into(),
+        "--order".into(),
+        order.to_string(),
+        "--text".into(),
+        text,
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     if let Some(value) = editavel_execucao {
         args.push("--editavel-execucao".into());
         args.push(if value { "true" } else { "false" }.into());
     }
-    if let Some(value) = rotulo_execucao.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+    if let Some(value) = rotulo_execucao
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
         args.push("--rotulo-execucao".into());
         args.push(value.to_string());
     }
@@ -6063,20 +7435,36 @@ fn update_text_block(app: AppHandle, order: i32, text: String, delay: f64, ao_su
 }
 
 #[tauri::command]
-fn update_key_block(app: AppHandle, order: i32, keys: String, repeat: i32, delay: f64, ao_sucesso: Option<String>, bloco_sucesso: Option<i32>, sequencia_sucesso: Option<String>, atraso_sequencia_sucesso: Option<f64>) -> Result<Value, String> {
+fn update_key_block(
+    app: AppHandle,
+    order: i32,
+    keys: String,
+    repeat: i32,
+    delay: f64,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
-            "update-key".into(),
-            "--order".into(),
-            order.to_string(),
-            "--keys".into(),
-            keys,
-            "--repeat".into(),
-            repeat.max(1).to_string(),
-            "--delay".into(),
-            delay.to_string(),
-        ];
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+        "update-key".into(),
+        "--order".into(),
+        order.to_string(),
+        "--keys".into(),
+        keys,
+        "--repeat".into(),
+        repeat.max(1).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -6096,21 +7484,27 @@ fn update_mouse_block(
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
-            "update-mouse".into(),
-            "--order".into(),
-            order.to_string(),
-            "--x".into(),
-            x.to_string(),
-            "--y".into(),
-            y.to_string(),
-            "--button".into(),
-            button,
-            "--clicks".into(),
-            clicks.max(1).to_string(),
-            "--delay".into(),
-            delay.to_string(),
-        ];
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+        "update-mouse".into(),
+        "--order".into(),
+        order.to_string(),
+        "--x".into(),
+        x.to_string(),
+        "--y".into(),
+        y.to_string(),
+        "--button".into(),
+        button,
+        "--clicks".into(),
+        clicks.max(1).to_string(),
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -6149,45 +7543,45 @@ fn update_image_click_block(
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
-            "update-image-click".into(),
-            "--order".into(),
-            order.to_string(),
-            "--imagem".into(),
-            imagem,
-            "--timeout".into(),
-            timeout.max(0.1).to_string(),
-            "--confianca".into(),
-            confianca.to_string(),
-            "--perfil-busca".into(),
-            perfil_busca.unwrap_or_else(|| "balanced".to_string()),
-            "--clicar".into(),
-            clicar.to_string(),
-            "--clicks".into(),
-            clicks.max(0).to_string(),
-            "--offset-x".into(),
-            offset_x.to_string(),
-            "--offset-y".into(),
-            offset_y.to_string(),
-            "--janela-alvo".into(),
-            janela_alvo.unwrap_or_default(),
-            "--texto-ocr-esperado".into(),
-            texto_ocr_esperado.unwrap_or_default(),
-            "--leitura-relativa-ativa".into(),
-            leitura_relativa_ativa.unwrap_or(false).to_string(),
-            "--leitura-relativa-lado".into(),
-            leitura_relativa_lado.unwrap_or_else(|| "direita".to_string()),
-            "--leitura-relativa-largura".into(),
-            leitura_relativa_largura.unwrap_or(140).max(16).to_string(),
-            "--leitura-relativa-altura".into(),
-            leitura_relativa_altura.unwrap_or(40).max(12).to_string(),
-            "--leitura-relativa-offset-x".into(),
-            leitura_relativa_offset_x.unwrap_or(0).to_string(),
-            "--leitura-relativa-offset-y".into(),
-            leitura_relativa_offset_y.unwrap_or(0).to_string(),
-            "--leitura-relativa-salvar-em".into(),
-            leitura_relativa_salvar_em.unwrap_or_default(),
-            "--ao-nao-encontrar".into(),
-            ao_nao_encontrar,
+        "update-image-click".into(),
+        "--order".into(),
+        order.to_string(),
+        "--imagem".into(),
+        imagem,
+        "--timeout".into(),
+        timeout.max(0.1).to_string(),
+        "--confianca".into(),
+        confianca.to_string(),
+        "--perfil-busca".into(),
+        perfil_busca.unwrap_or_else(|| "balanced".to_string()),
+        "--clicar".into(),
+        clicar.to_string(),
+        "--clicks".into(),
+        clicks.max(0).to_string(),
+        "--offset-x".into(),
+        offset_x.to_string(),
+        "--offset-y".into(),
+        offset_y.to_string(),
+        "--janela-alvo".into(),
+        janela_alvo.unwrap_or_default(),
+        "--texto-ocr-esperado".into(),
+        texto_ocr_esperado.unwrap_or_default(),
+        "--leitura-relativa-ativa".into(),
+        leitura_relativa_ativa.unwrap_or(false).to_string(),
+        "--leitura-relativa-lado".into(),
+        leitura_relativa_lado.unwrap_or_else(|| "direita".to_string()),
+        "--leitura-relativa-largura".into(),
+        leitura_relativa_largura.unwrap_or(140).max(16).to_string(),
+        "--leitura-relativa-altura".into(),
+        leitura_relativa_altura.unwrap_or(40).max(12).to_string(),
+        "--leitura-relativa-offset-x".into(),
+        leitura_relativa_offset_x.unwrap_or(0).to_string(),
+        "--leitura-relativa-offset-y".into(),
+        leitura_relativa_offset_y.unwrap_or(0).to_string(),
+        "--leitura-relativa-salvar-em".into(),
+        leitura_relativa_salvar_em.unwrap_or_default(),
+        "--ao-nao-encontrar".into(),
+        ao_nao_encontrar,
     ];
     if let Some(value) = sequencia_nao_encontrar {
         if !value.trim().is_empty() {
@@ -6213,7 +7607,13 @@ fn update_image_click_block(
         "--delay".into(),
         delay.to_string(),
     ]);
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -6256,7 +7656,13 @@ fn update_spreadsheet_block(
         "--delay".into(),
         delay.to_string(),
     ]);
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -6296,7 +7702,13 @@ fn update_write_spreadsheet_block(
         "--delay".into(),
         delay.to_string(),
     ]);
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -6349,8 +7761,20 @@ fn update_compare_spreadsheet_block(
         "--delay".into(),
         delay.to_string(),
     ]);
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
-    append_compare_diverge_args(&mut args, ao_divergir, bloco_divergir, sequencia_divergir, atraso_sequencia_divergir);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
+    append_compare_diverge_args(
+        &mut args,
+        ao_divergir,
+        bloco_divergir,
+        sequencia_divergir,
+        atraso_sequencia_divergir,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -6444,7 +7868,8 @@ fn update_chrome_html_block(
         "--html-original".into(),
         html_original,
         "--elemento-json".into(),
-        serde_json::to_string(&elemento).map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
+        serde_json::to_string(&elemento)
+            .map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
         "--alvo-json".into(),
         serde_json::to_string(&alvo).map_err(|err| format!("Falha ao serializar alvo: {err}"))?,
         "--acao-json".into(),
@@ -6522,7 +7947,8 @@ fn update_uia_element_block(
         "--order".into(),
         order.to_string(),
         "--elemento-json".into(),
-        serde_json::to_string(&element).map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
+        serde_json::to_string(&element)
+            .map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
         "--ao-sucesso".into(),
         ao_sucesso.unwrap_or_else(|| "continuar".into()),
         "--ao-falhar".into(),
@@ -6599,7 +8025,13 @@ fn update_open_url_block(
     if tela_cheia {
         args.push("--tela-cheia".into());
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -6628,7 +8060,13 @@ fn update_loop_marker_block(
             args.push(sequence_name);
         }
     }
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -6659,7 +8097,13 @@ fn update_open_program_block(
         "--delay".into(),
         delay.to_string(),
     ];
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -6696,7 +8140,13 @@ fn update_save_download_block(
         "--delay".into(),
         delay.to_string(),
     ];
-    append_success_flow_args(&mut args, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
     run_helper_json(&root, &args)
 }
 
@@ -6763,11 +8213,7 @@ fn remove_block(app: AppHandle, order: i32) -> Result<Value, String> {
     let root = workspace_root(&app);
     run_helper_json(
         &root,
-        &[
-            "remove".into(),
-            "--order".into(),
-            order.to_string(),
-        ],
+        &["remove".into(), "--order".into(), order.to_string()],
     )
 }
 
@@ -6814,7 +8260,10 @@ fn recognition_worker_matches(
 fn start_recognition_worker(root: &PathBuf) -> Result<RecognitionWorker, String> {
     let script_path = root.join("reconhecimento_worker.py");
     if !script_path.exists() {
-        return Err(format!("Worker de reconhecimento nao encontrado: {}", script_path.display()));
+        return Err(format!(
+            "Worker de reconhecimento nao encontrado: {}",
+            script_path.display()
+        ));
     }
 
     let (python_program_path, python_args) = python_command(root)?;
@@ -6851,7 +8300,10 @@ fn start_recognition_worker(root: &PathBuf) -> Result<RecognitionWorker, String>
     })
 }
 
-fn test_image_recognition_worker(root: &PathBuf, payload: Value) -> Result<(bool, String, String), String> {
+fn test_image_recognition_worker(
+    root: &PathBuf,
+    payload: Value,
+) -> Result<(bool, String, String), String> {
     let (python_program_path, python_args) = python_command(root)?;
     let python_program = python_program_path.clone();
     let mut guard = RECOGNITION_WORKER
@@ -6893,22 +8345,35 @@ fn test_image_recognition_worker(root: &PathBuf, payload: Value) -> Result<(bool
 
     let resposta: Value = serde_json::from_str(linha.trim())
         .map_err(|err| format!("Resposta invalida do worker de reconhecimento: {err}"))?;
-    if resposta.get("restart").and_then(Value::as_bool).unwrap_or(false) {
+    if resposta
+        .get("restart")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         if let Some(mut worker_antigo) = guard.take() {
             let _ = worker_antigo.child.kill();
         }
-        return Err(
-            resposta
-                .get("stderr")
-                .and_then(Value::as_str)
-                .unwrap_or("Worker de reconhecimento reiniciado.")
-                .to_string(),
-        );
+        return Err(resposta
+            .get("stderr")
+            .and_then(Value::as_str)
+            .unwrap_or("Worker de reconhecimento reiniciado.")
+            .to_string());
     }
     Ok((
-        resposta.get("success").and_then(Value::as_bool).unwrap_or(false),
-        resposta.get("stdout").and_then(Value::as_str).unwrap_or("").to_string(),
-        resposta.get("stderr").and_then(Value::as_str).unwrap_or("").to_string(),
+        resposta
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        resposta
+            .get("stdout")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        resposta
+            .get("stderr")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
     ))
 }
 
@@ -6948,7 +8413,9 @@ fn test_image_recognition(
     );
     let _ = std::fs::remove_file(root.join(".parar_automacao.flag"));
 
-    let perfil_busca_resolvido = perfil_busca.clone().unwrap_or_else(|| "balanced".to_string());
+    let perfil_busca_resolvido = perfil_busca
+        .clone()
+        .unwrap_or_else(|| "balanced".to_string());
     let leitura_relativa_payload = serde_json::json!({
         "ativa": leitura_relativa_ativa.unwrap_or(false),
         "lado": leitura_relativa_lado.clone().unwrap_or_else(|| "livre".to_string()),
@@ -6984,10 +8451,16 @@ fn test_image_recognition(
                 let _ = window.set_focus();
             }
             if !stdout.trim().is_empty() {
-                append_launcher_log(&root, format!("RECONHECIMENTO WORKER STDOUT: {}", stdout.trim()));
+                append_launcher_log(
+                    &root,
+                    format!("RECONHECIMENTO WORKER STDOUT: {}", stdout.trim()),
+                );
             }
             if !stderr.trim().is_empty() {
-                append_launcher_log(&root, format!("RECONHECIMENTO WORKER STDERR: {}", stderr.trim()));
+                append_launcher_log(
+                    &root,
+                    format!("RECONHECIMENTO WORKER STDERR: {}", stderr.trim()),
+                );
             }
             append_launcher_log(
                 &root,
@@ -7003,7 +8476,11 @@ fn test_image_recognition(
                     stdout
                 });
             }
-            let message = if !stderr.trim().is_empty() { stderr } else { stdout };
+            let message = if !stderr.trim().is_empty() {
+                stderr
+            } else {
+                stdout
+            };
             return Err(if message.trim().is_empty() {
                 "Falha ao testar o reconhecimento.".into()
             } else {
@@ -7016,7 +8493,10 @@ fn test_image_recognition(
                 let _ = window.show();
                 let _ = window.set_focus();
             }
-            append_launcher_log(&root, format!("Worker de reconhecimento indisponivel. Usando modo antigo: {err}"));
+            append_launcher_log(
+                &root,
+                format!("Worker de reconhecimento indisponivel. Usando modo antigo: {err}"),
+            );
         }
     }
 
@@ -7045,15 +8525,27 @@ fn test_image_recognition(
         .arg("--perfil-busca-imagem")
         .arg(perfil_busca.unwrap_or_else(|| "balanced".to_string()));
 
-    if let Some(title) = janela_alvo.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(title) = janela_alvo
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         command.arg("--janela-alvo").arg(title);
     }
-    if let Some(text) = texto_ocr_esperado.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(text) = texto_ocr_esperado
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         command.arg("--texto-ocr-esperado").arg(text);
     }
     command
         .arg("--leitura-relativa-ativa")
-        .arg(if leitura_relativa_ativa.unwrap_or(false) { "true" } else { "false" })
+        .arg(if leitura_relativa_ativa.unwrap_or(false) {
+            "true"
+        } else {
+            "false"
+        })
         .arg("--leitura-relativa-lado")
         .arg(leitura_relativa_lado.unwrap_or_else(|| "livre".to_string()))
         .arg("--leitura-relativa-largura")
@@ -7064,7 +8556,11 @@ fn test_image_recognition(
         .arg(leitura_relativa_offset_x.unwrap_or(0).to_string())
         .arg("--leitura-relativa-offset-y")
         .arg(leitura_relativa_offset_y.unwrap_or(0).to_string());
-    if let Some(name) = leitura_relativa_salvar_em.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(name) = leitura_relativa_salvar_em
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         command.arg("--leitura-relativa-salvar-em").arg(name);
     }
     configure_no_window(&mut command);
@@ -7121,16 +8617,16 @@ fn analyze_html_element(app: AppHandle, html: String) -> Result<Value, String> {
     let root = workspace_root(&app);
     run_helper_json(
         &root,
-        &[
-            "analyze-html-element".into(),
-            "--html".into(),
-            html,
-        ],
+        &["analyze-html-element".into(), "--html".into(), html],
     )
 }
 
 #[tauri::command]
-fn chrome_web_capture_element(app: AppHandle, url: Option<String>, timeout: Option<i32>) -> Result<Value, String> {
+fn chrome_web_capture_element(
+    app: AppHandle,
+    url: Option<String>,
+    timeout: Option<i32>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
         "capture-element".into(),
@@ -7147,14 +8643,19 @@ fn chrome_web_capture_element(app: AppHandle, url: Option<String>, timeout: Opti
 }
 
 #[tauri::command]
-fn chrome_web_test_element(app: AppHandle, details: Value, timeout: Option<i32>) -> Result<Value, String> {
+fn chrome_web_test_element(
+    app: AppHandle,
+    details: Value,
+    timeout: Option<i32>,
+) -> Result<Value, String> {
     let root = workspace_root(&app);
     run_chrome_bridge_json(
         &root,
         &[
             "test-element".into(),
             "--details-json".into(),
-            serde_json::to_string(&details).map_err(|err| format!("Falha ao serializar ficha Chrome/Web: {err}"))?,
+            serde_json::to_string(&details)
+                .map_err(|err| format!("Falha ao serializar ficha Chrome/Web: {err}"))?,
             "--timeout".into(),
             timeout.unwrap_or(10000).max(500).to_string(),
         ],
@@ -7164,21 +8665,19 @@ fn chrome_web_test_element(app: AppHandle, details: Value, timeout: Option<i32>)
 #[tauri::command]
 fn chrome_web_open_site(app: AppHandle, url: String) -> Result<Value, String> {
     let root = workspace_root(&app);
-    run_chrome_bridge_json(
-        &root,
-        &[
-            "open-site".into(),
-            "--url".into(),
-            url,
-        ],
-    )
+    run_chrome_bridge_json(&root, &["open-site".into(), "--url".into(), url])
 }
 
 #[tauri::command]
 fn get_test_loop_data(app: AppHandle) -> Result<Value, String> {
     let root = workspace_root(&app);
-    let raw = run_python_script(&root, "gerenciar_dados_planilha.py", &[String::from("listar")])?;
-    serde_json::from_str(&raw).map_err(|err| format!("Falha ao interpretar os dados do loop: {err}"))
+    let raw = run_python_script(
+        &root,
+        "gerenciar_dados_planilha.py",
+        &[String::from("listar")],
+    )?;
+    serde_json::from_str(&raw)
+        .map_err(|err| format!("Falha ao interpretar os dados do loop: {err}"))
 }
 
 #[tauri::command]
@@ -7192,11 +8691,17 @@ fn launch_quick_test(
 ) -> Result<String, String> {
     let root = workspace_root(&app);
     let _ = std::fs::remove_file(root.join("ultimo_log_launcher.txt"));
-    append_launcher_log(&root, format!("launch_quick_test chamado | delay={}", delay.max(0.0)));
+    append_launcher_log(
+        &root,
+        format!("launch_quick_test chamado | delay={}", delay.max(0.0)),
+    );
 
     let script_path = root.join("executar_automacao.py");
     if !script_path.exists() {
-        append_launcher_log(&root, format!("ERRO: executor nao encontrado em {}", script_path.display()));
+        append_launcher_log(
+            &root,
+            format!("ERRO: executor nao encontrado em {}", script_path.display()),
+        );
         return Err(format!(
             "Nenhum executor de automacao foi encontrado. Esperado: {}",
             script_path.display()
@@ -7228,10 +8733,18 @@ fn launch_quick_test(
         .arg("--cancelamento-arquivo")
         .arg(root.join(".parar_automacao.flag"));
 
-    if let Some(title) = window_title.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(title) = window_title
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         command.arg("--janela-alvo").arg(title);
     }
-    if let Some(value) = text_overrides.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(value) = text_overrides
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         command.arg("--text-overrides").arg(value);
     }
 
@@ -7281,7 +8794,10 @@ fn launch_test_automation(
 
     let script_path = root.join("executar_automacao.py");
     if !script_path.exists() {
-        append_launcher_log(&root, format!("ERRO: executor nao encontrado em {}", script_path.display()));
+        append_launcher_log(
+            &root,
+            format!("ERRO: executor nao encontrado em {}", script_path.display()),
+        );
         return Err(format!(
             "Nenhum executor de automacao foi encontrado. Esperado: {}",
             script_path.display()
@@ -7315,10 +8831,18 @@ fn launch_test_automation(
         .arg("--cancelamento-arquivo")
         .arg(root.join(".parar_automacao.flag"));
 
-    if let Some(title) = window_title.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(title) = window_title
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         command.arg("--janela-alvo").arg(title);
     }
-    if let Some(value) = text_overrides.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(value) = text_overrides
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         command.arg("--text-overrides").arg(value);
     }
 
@@ -7344,7 +8868,15 @@ fn launch_assisted_loop_test(
     window_title: Option<String>,
     text_overrides: Option<String>,
 ) -> Result<String, String> {
-    launch_test_automation(app, state, delay, loop_start, window_title, Some(false), text_overrides)
+    launch_test_automation(
+        app,
+        state,
+        delay,
+        loop_start,
+        window_title,
+        Some(false),
+        text_overrides,
+    )
 }
 
 #[tauri::command]
@@ -7393,7 +8925,10 @@ fn stop_test_execution(app: AppHandle, state: State<'_, RuntimeState>) -> Result
                 code: -9,
             },
         );
-        append_launcher_log(&root, "Parada solicitada pelo launcher com encerramento forcado do processo.");
+        append_launcher_log(
+            &root,
+            "Parada solicitada pelo launcher com encerramento forcado do processo.",
+        );
         return Ok("Parada forcada enviada. A automacao foi interrompida imediatamente.".into());
     }
 
@@ -7402,13 +8937,17 @@ fn stop_test_execution(app: AppHandle, state: State<'_, RuntimeState>) -> Result
 }
 
 #[tauri::command]
-fn export_automation_bundle(app: AppHandle, automation_name: String) -> Result<ExportResult, String> {
+fn export_automation_bundle(
+    app: AppHandle,
+    automation_name: String,
+) -> Result<ExportResult, String> {
     let root = workspace_root(&app);
     let normalized_name = normalize_automation_name(&automation_name);
     let export_folder_name = sanitize_export_folder_name(&normalized_name);
     let build_dir = root.join("build_automacao");
     let export_dir = root.join(&export_folder_name);
-    fs::create_dir_all(&build_dir).map_err(|err| format!("Falha ao criar build_automacao: {err}"))?;
+    fs::create_dir_all(&build_dir)
+        .map_err(|err| format!("Falha ao criar build_automacao: {err}"))?;
     fs::create_dir_all(&export_dir)
         .map_err(|err| format!("Falha ao criar pasta da automacao {export_folder_name}: {err}"))?;
 
@@ -7436,8 +8975,11 @@ fn export_automation_bundle(app: AppHandle, automation_name: String) -> Result<E
 
     let planilhas_dir = root.join("planilhas");
     if planilhas_dir.exists() {
-        for entry in fs::read_dir(&planilhas_dir).map_err(|err| format!("Falha ao ler pasta planilhas: {err}"))? {
-            let entry = entry.map_err(|err| format!("Falha ao ler item da pasta planilhas: {err}"))?;
+        for entry in fs::read_dir(&planilhas_dir)
+            .map_err(|err| format!("Falha ao ler pasta planilhas: {err}"))?
+        {
+            let entry =
+                entry.map_err(|err| format!("Falha ao ler item da pasta planilhas: {err}"))?;
             let source = entry.path();
             if source.is_file() {
                 let file_name = source.file_name().unwrap_or_default();
@@ -7459,8 +9001,11 @@ fn export_automation_bundle(app: AppHandle, automation_name: String) -> Result<E
 
     let imagens_dir = root.join("imagens");
     if imagens_dir.exists() {
-        for entry in fs::read_dir(&imagens_dir).map_err(|err| format!("Falha ao ler pasta imagens: {err}"))? {
-            let entry = entry.map_err(|err| format!("Falha ao ler item da pasta imagens: {err}"))?;
+        for entry in fs::read_dir(&imagens_dir)
+            .map_err(|err| format!("Falha ao ler pasta imagens: {err}"))?
+        {
+            let entry =
+                entry.map_err(|err| format!("Falha ao ler item da pasta imagens: {err}"))?;
             let source = entry.path();
             if source.is_file() {
                 let file_name = source.file_name().unwrap_or_default();
@@ -7495,8 +9040,11 @@ fn export_automation_bundle(app: AppHandle, automation_name: String) -> Result<E
         .map_err(|err| format!("Falha ao gravar guia da build: {err}"))?;
     fs::write(export_dir.join("iniciar.bat"), automation_launcher())
         .map_err(|err| format!("Falha ao gravar iniciar.bat: {err}"))?;
-    fs::write(export_dir.join("COMO_EXECUTAR.txt"), export_guide(&normalized_name))
-        .map_err(|err| format!("Falha ao gravar guia da exportacao: {err}"))?;
+    fs::write(
+        export_dir.join("COMO_EXECUTAR.txt"),
+        export_guide(&normalized_name),
+    )
+    .map_err(|err| format!("Falha ao gravar guia da exportacao: {err}"))?;
 
     Ok(ExportResult {
         build_dir: build_dir.display().to_string(),
@@ -7511,24 +9059,77 @@ fn set_agent_compact_mode(app: AppHandle, compact: bool) -> Result<Value, String
     if !is_flowdetect_agent_runtime(&app) {
         return Err("Este modo esta disponivel apenas no FlowDetect Agent.".to_string());
     }
-    let window = app.get_webview_window("main").ok_or_else(|| "Janela principal do Agent nao encontrada.".to_string())?;
-    let monitor = window.current_monitor().map_err(|err| err.to_string())?.ok_or_else(|| "Monitor atual nao encontrado.".to_string())?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Janela principal do Agent nao encontrada.".to_string())?;
+    let monitor = window
+        .current_monitor()
+        .map_err(|err| err.to_string())?
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .ok_or_else(|| "Monitor atual nao encontrado.".to_string())?;
     let screen = monitor.size();
     let monitor_position = monitor.position();
     let (width, height, x, y) = if compact {
-        (screen.width, screen.height, monitor_position.x, monitor_position.y)
+        (
+            screen.width,
+            screen.height,
+            monitor_position.x,
+            monitor_position.y,
+        )
     } else {
         let width = screen.width.saturating_sub(48).min(1240);
         let height = screen.height.saturating_sub(96).min(820);
-        (width, height, (screen.width.saturating_sub(width) / 2) as i32, 24)
+        (
+            width,
+            height,
+            monitor_position.x + (screen.width.saturating_sub(width) / 2) as i32,
+            monitor_position.y + 24,
+        )
     };
-    window.set_size(tauri::PhysicalSize::new(width, height)).map_err(|err| err.to_string())?;
-    window.set_position(tauri::PhysicalPosition::new(x, y)).map_err(|err| err.to_string())?;
-    window.set_always_on_top(compact).map_err(|err| err.to_string())?;
-    window.set_resizable(!compact).map_err(|err| err.to_string())?;
-    window.set_ignore_cursor_events(compact).map_err(|err| err.to_string())?;
+    let _ = window.unminimize();
+    let _ = window.unmaximize();
+    let _ = window.show();
+    let _ = window.set_focus();
+    window.set_resizable(true).map_err(|err| err.to_string())?;
+    window
+        .set_decorations(!compact)
+        .map_err(|err| err.to_string())?;
+    window
+        .set_size(tauri::PhysicalSize::new(width, height))
+        .map_err(|err| err.to_string())?;
+    window
+        .set_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|err| err.to_string())?;
+    window
+        .set_always_on_top(compact)
+        .map_err(|err| err.to_string())?;
+    window
+        .set_resizable(!compact)
+        .map_err(|err| err.to_string())?;
+    window
+        .set_ignore_cursor_events(compact)
+        .map_err(|err| err.to_string())?;
+    #[cfg(windows)]
+    {
+        let hwnd = window.hwnd().map_err(|err| err.to_string())?;
+        unsafe {
+            let _ = ShowWindow(HWND(hwnd.0), SW_RESTORE);
+            SetWindowPos(
+                HWND(hwnd.0),
+                None,
+                x,
+                y,
+                width as i32,
+                height as i32,
+                SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+            )
+            .map_err(|err| format!("Falha ao alinhar janela do Agent: {err}"))?;
+        }
+    }
     let work_area = set_agent_windows_work_area(compact)?;
-    Ok(serde_json::json!({"ok":true,"compact":compact,"width":width,"height":height,"work_area":work_area}))
+    Ok(
+        serde_json::json!({"ok":true,"compact":compact,"width":width,"height":height,"work_area":work_area}),
+    )
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -7600,6 +9201,7 @@ pub fn run() {
             probe_native_hyperv_rdp,
             open_native_hyperv_rdp,
             resize_native_hyperv_rdp,
+            activate_native_hyperv_rdp,
             close_native_hyperv_rdp,
             open_hyperv_vm_console,
             open_embedded_hyperv_console,
