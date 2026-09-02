@@ -2077,14 +2077,39 @@ def criar_bloco_chrome_elemento_html(
     delay=0,
     sequencia="principal",
 ):
-    html_analisado = parse_html_elemento(html_original)
-    elemento_base = dict(html_analisado.get("elemento") or {})
+    html_original_normalizado = str(html_original or "").strip()
     elemento_informado = elemento if isinstance(elemento, dict) else {}
+    alvo_informado = alvo if isinstance(alvo, dict) else {}
+    alvo_manual_valor = str(alvo_informado.get("valor", "") or "").strip()
+    alvo_manual_metodo = str(alvo_informado.get("metodo") or "css")
+    if html_original_normalizado:
+        html_analisado = parse_html_elemento(html_original_normalizado)
+    else:
+        html_analisado = {
+            "html_original": "",
+            "elemento": {},
+            "tipo_provavel": "elemento",
+            "nome_sugerido": str(nome or "Chrome: capturar elemento").strip() or "Chrome: capturar elemento",
+            "alvo_recomendado": {
+                "metodo": alvo_manual_metodo,
+                "valor": alvo_manual_valor or "__capturar_elemento__",
+                "confianca": "manual",
+                "seletor_css": alvo_manual_valor if alvo_manual_metodo == "css" else "",
+            },
+            "acao_sugerida": {
+                "tipo": "clicar",
+                "origem_valor": "texto_fixo",
+                "valor": "",
+                "limpar_antes": True,
+                "pressionar_depois": "",
+                "salvar_em": "",
+            },
+        }
+    elemento_base = dict(html_analisado.get("elemento") or {})
     elemento_base.update({chave: valor for chave, valor in elemento_informado.items() if valor not in (None, "")})
 
     seletores = gerar_seletores(elemento_base)
     seletores_por_metodo = {str(item.get("metodo")): item for item in seletores}
-    alvo_informado = alvo if isinstance(alvo, dict) else {}
     metodo_alvo = str(alvo_informado.get("metodo") or (html_analisado.get("alvo_recomendado") or {}).get("metodo") or "css")
     alvo_recomendado = dict(seletores_por_metodo.get(metodo_alvo) or html_analisado.get("alvo_recomendado") or {})
     alvo_final = {**alvo_recomendado, **alvo_informado}
@@ -2095,6 +2120,16 @@ def criar_bloco_chrome_elemento_html(
         alvo_final["confianca"] = alvo_recomendado.get("confianca", "media")
     if not alvo_final.get("seletor_css"):
         alvo_final["seletor_css"] = alvo_recomendado.get("seletor_css", "")
+    if str(alvo_final.get("valor", "")).strip() and not any(
+        str(item.get("metodo")) == metodo_alvo and str(item.get("valor", "")).strip() == str(alvo_final.get("valor", "")).strip()
+        for item in seletores
+    ):
+        seletores.insert(0, {
+            "metodo": metodo_alvo,
+            "valor": str(alvo_final.get("valor", "")).strip(),
+            "confianca": alvo_final.get("confianca", "manual"),
+            "seletor_css": alvo_final.get("seletor_css", "") if metodo_alvo == "css" else "",
+        })
 
     acao_sugerida = dict(html_analisado.get("acao_sugerida") or {})
     acao_informada = acao if isinstance(acao, dict) else {}
@@ -2108,7 +2143,7 @@ def criar_bloco_chrome_elemento_html(
 
     detalhes = {
         "nome": str(nome or html_analisado.get("nome_sugerido") or "Chrome: Elemento HTML").strip() or "Chrome: Elemento HTML",
-        "html_original": str(html_original or html_analisado.get("html_original") or "").strip(),
+        "html_original": html_original_normalizado or str(html_analisado.get("html_original") or "").strip(),
         "elemento": elemento_base,
         "tipo_provavel": str(html_analisado.get("tipo_provavel") or classificar_tipo_elemento_html(elemento_base)),
         "seletores": seletores,
@@ -2238,6 +2273,7 @@ def criar_bloco_abrir_url(
     url,
     navegador="padrao",
     modo_abertura="nova_janela",
+    tela_cheia=False,
     aguardar_segundos=3,
     delay=0,
     sequencia="principal",
@@ -2253,6 +2289,7 @@ def criar_bloco_abrir_url(
         "url": url_normalizada,
         "navegador": normalizar_navegador_url(navegador),
         "modo_abertura": normalizar_modo_abertura_url(modo_abertura),
+        "tela_cheia": bool(tela_cheia),
         "aguardar_segundos": max(0.0, float(aguardar_segundos or 0)),
     }, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
     return {
@@ -3056,6 +3093,7 @@ def comando_adicionar_abrir_url(args):
             args.url,
             args.navegador,
             args.modo_abertura,
+            args.tela_cheia,
             args.aguardar_segundos,
             args.delay,
             args.sequencia,
@@ -3292,6 +3330,7 @@ def comando_inserir_abrir_url(args):
             args.url,
             args.navegador,
             args.modo_abertura,
+            args.tela_cheia,
             args.aguardar_segundos,
             args.delay,
             args.sequencia,
@@ -3560,6 +3599,7 @@ def comando_atualizar_abrir_url(args):
         args.url,
         args.navegador,
         args.modo_abertura,
+        args.tela_cheia,
         args.aguardar_segundos,
         args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
         args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
@@ -3740,6 +3780,7 @@ def build_parser():
         parser_destino.add_argument("--url", required=True)
         parser_destino.add_argument("--navegador", choices=["padrao", "chrome", "edge"], default="padrao")
         parser_destino.add_argument("--modo-abertura", choices=["nova_janela", "nova_aba"], default="nova_janela")
+        parser_destino.add_argument("--tela-cheia", action="store_true")
         parser_destino.add_argument("--aguardar-segundos", type=float, default=3)
 
     def adicionar_argumentos_abrir_programa(parser_destino):

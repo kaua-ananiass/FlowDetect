@@ -47,6 +47,7 @@ async function saveNativeFileDialog(options = {}) {
 
 if (!window.__FLOWDETECT_DESIGN_SYSTEM__) {
 const AGENTS_STORAGE_KEY = "flowdetect_agents_vms_v1";
+const AGENT_SCHEDULER_STORAGE_KEY = "flowdetect_agent_scheduler_v1";
 
 const state = {
   roadmap: null,
@@ -81,6 +82,9 @@ const state = {
     activeView: "machines",
     transferTargetAddress: "",
     transferSelectedId: "",
+    transferConnecting: false,
+    transferSending: false,
+    transferProgressLabel: "",
     createDraft: {
       name: "",
       profile: "fiscal",
@@ -97,6 +101,18 @@ const state = {
       error: "",
     },
     createProgressTimer: null,
+  },
+  agentScheduler: {
+    items: [],
+    runningIds: new Set(),
+    timer: null,
+    selectedAgentId: "",
+    createOpen: false,
+    selectedAutomationId: "",
+    selectedDate: "",
+    visibleMonth: "",
+    repeat: "once",
+    suppressFlipAnimation: false,
   },
   activeTab: "launcher",
   remoteControl: {
@@ -544,6 +560,27 @@ const agentScreenPrepareButton = document.getElementById("agentScreenPrepareButt
 const agentScreenOpenVmButton = document.getElementById("agentScreenOpenVmButton");
 const agentScreenAutomationSelect = document.getElementById("agentScreenAutomationSelect");
 const agentScreenExecuteButton = document.getElementById("agentScreenExecuteButton");
+const agentScreenLiveBlocks = document.getElementById("agentScreenLiveBlocks");
+const agentScreenLiveCurrentBlock = document.getElementById("agentScreenLiveCurrentBlock");
+const agentScreenLivePercent = document.getElementById("agentScreenLivePercent");
+const agentScreenLiveProgressFill = document.getElementById("agentScreenLiveProgressFill");
+const agentScreenLiveBlockList = document.getElementById("agentScreenLiveBlockList");
+const agentSchedulerAgentSelect = document.getElementById("agentSchedulerAgentSelect");
+const agentSchedulerAutomationCards = document.getElementById("agentSchedulerAutomationCards");
+const agentSchedulerConnectButton = document.getElementById("agentSchedulerConnectButton");
+const agentSchedulerAddButton = document.getElementById("agentSchedulerAddButton");
+const agentSchedulerForm = document.getElementById("agentSchedulerForm");
+const agentSchedulerCancelButton = document.getElementById("agentSchedulerCancelButton");
+const agentSchedulerAutomationSelect = document.getElementById("agentSchedulerAutomationSelect");
+const agentSchedulerCalendarGrid = document.getElementById("agentSchedulerCalendarGrid");
+const agentSchedulerMonthLabel = document.getElementById("agentSchedulerMonthLabel");
+const agentSchedulerPrevMonthButton = document.getElementById("agentSchedulerPrevMonthButton");
+const agentSchedulerNextMonthButton = document.getElementById("agentSchedulerNextMonthButton");
+const agentSchedulerTimeInput = document.getElementById("agentSchedulerTimeInput");
+const agentSchedulerRepeatSelect = document.getElementById("agentSchedulerRepeatSelect");
+const agentSchedulerCreateButton = document.getElementById("agentSchedulerCreateButton");
+const agentSchedulerList = document.getElementById("agentSchedulerList");
+const agentSchedulerStatus = document.getElementById("agentSchedulerStatus");
 const mapZoomOutButton = document.getElementById("mapZoomOutButton");
 const mapZoomInButton = document.getElementById("mapZoomInButton");
 const mapZoomRange = document.getElementById("mapZoomRange");
@@ -11611,6 +11648,21 @@ function studioControlWatchAutomationId() {
   return String(internalAutomation?.id || "").trim();
 }
 
+function agentScreenNativeFrameVisible() {
+  if (state.activeTab !== "agent-screen" || !studioControlScreenFrameWrap) {
+    return false;
+  }
+  const rect = studioControlScreenFrameWrap.getBoundingClientRect();
+  const panelRect = agentScreenPanel?.getBoundingClientRect();
+  const viewportTop = Math.max(0, panelRect?.top ?? 0);
+  const viewportBottom = Math.min(window.innerHeight || document.documentElement.clientHeight || 0, panelRect?.bottom ?? window.innerHeight);
+  const tolerance = 3;
+  return rect.width >= 320
+    && rect.height >= 240
+    && rect.top >= viewportTop - tolerance
+    && rect.bottom <= viewportBottom + tolerance;
+}
+
 function embeddedHypervConsoleBounds(zoomLevel = 0) {
   if (!studioControlScreenFrameWrap) {
     return null;
@@ -11667,7 +11719,7 @@ async function syncNativeHypervRdp() {
   const bounds = embeddedHypervConsoleBounds() || { x: 0, y: 0, width: 320, height: 240 };
   await invoke("resize_native_hyperv_rdp", {
     ...bounds,
-    visible: state.activeTab === "agent-screen",
+    visible: agentScreenNativeFrameVisible(),
   }).catch((error) => console.warn("Nao foi possivel sincronizar o RDP Hyper-V.", error));
 }
 
@@ -11701,6 +11753,31 @@ async function openNativeHypervRdp(vmName = "") {
     await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
     const bounds = await waitForNativeScreenBounds();
     if (!bounds) throw new Error("A area da tela do Agent ainda nao esta pronta.");
+
+    const currentNativeVm = String(state.remoteControl.nativeRdpVmName || "").trim();
+    if (currentNativeVm.toLowerCase() === name.toLowerCase()) {
+      await invoke("activate_native_hyperv_rdp", { vmName: name, ...bounds, visible: true });
+      state.remoteControl.nativeRdpActive = true;
+      state.remoteControl.nativeRdpVmName = name;
+      studioControlScreenFrameWrap?.classList.add("has-screen", "has-native-rdp");
+      scheduleNativeHypervRdpSync();
+      return true;
+    }
+
+    try {
+      await invoke("activate_native_hyperv_rdp", { vmName: name, ...bounds, visible: true });
+      state.remoteControl.nativeRdpActive = true;
+      state.remoteControl.nativeRdpVmName = name;
+      studioControlScreenFrameWrap?.classList.add("has-screen", "has-native-rdp");
+      if (studioControlScreenStatus) {
+        studioControlScreenStatus.textContent = `Tela da ${name} reativada sem reconectar.`;
+      }
+      scheduleNativeHypervRdpSync();
+      return true;
+    } catch (_missingSession) {
+      // Primeira abertura desta VM nesta execucao do Studio: crie a sessao.
+    }
+
     stopStudioControlScreenStream({ clear: true });
     const result = await invoke("open_native_hyperv_rdp", { vmName: name, ...bounds });
     state.remoteControl.nativeRdpActive = true;
@@ -11757,7 +11834,7 @@ async function syncEmbeddedHypervConsole() {
   if (!remote.hypervConsoleActive) {
     return;
   }
-  const visible = state.activeTab === "agent-screen";
+  const visible = agentScreenNativeFrameVisible();
   const bounds = embeddedHypervConsoleBounds(remote.hypervZoomLevel) || { x: 0, y: 0, width: 320, height: 240 };
   await invoke("resize_embedded_hyperv_console", { ...bounds, visible }).catch((error) => {
     console.warn("Nao foi possivel sincronizar o console local.", error);
@@ -11951,6 +12028,774 @@ function renderStudioControlScreen() {
 
 function renderStudioControlScreenOnly() {
   renderStudioControlScreen();
+}
+
+function schedulerAutomationItems(agent = null) {
+  const selectedAddress = normalizeAgentAddress(agent?.address || "");
+  const remoteAddress = normalizeAgentAddress(state.remoteControl.address || "");
+  const remoteItems = agent && selectedAddress && state.remoteControl.connected && selectedAddress === remoteAddress
+    ? studioControlVisibleLibrary()
+    : [];
+  const seen = new Set();
+  return remoteItems.filter((item) => {
+    const id = String(item?.id || "").trim();
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function agentConnectionTargets() {
+  const byAddress = new Map();
+  const remember = (target = {}) => {
+    const address = normalizeAgentAddress(target.address || "");
+    if (!address) return;
+    const vmName = String(target.vmName || "").trim();
+    const label = String(target.label || target.name || vmName || address || "Agent").trim();
+    const key = address.toLowerCase();
+    const current = byAddress.get(key);
+    const score = (target.connected ? 8 : 0)
+      + (vmName ? 4 : 0)
+      + (String(target.source || "") === "agent" ? 2 : 0)
+      + (label ? 1 : 0);
+    if (!current || score > current.score) {
+      byAddress.set(key, {
+        id: String(target.id || `addr:${address}`),
+        label,
+        name: String(target.name || label || "Agent"),
+        vmName,
+        address,
+        status: String(target.status || "").trim(),
+        score,
+      });
+    }
+  };
+  (state.agents.items || []).forEach((agent) => {
+    const vmName = String(agent.vmName || "").trim();
+    const vm = findHypervVm(vmName);
+    const vmAddress = normalizeAgentAddress(vm?.ip ? `${vm.ip}:18452` : "");
+    const address = normalizeAgentAddress(agent.address || vmAddress || "");
+    remember({
+      id: String(agent.id || `agent:${address}`),
+      label: vmName || agent.name || address,
+      name: agent.name,
+      vmName,
+      address,
+      status: agent.status,
+      source: "agent",
+      connected: agentConnected({ address }),
+    });
+  });
+  (state.agents.vms || []).forEach((vm) => {
+    const vmName = String(vm.name || "").trim();
+    const address = normalizeAgentAddress(vm.ip ? `${vm.ip}:18452` : "");
+    remember({
+      id: `vm:${vmName || address}`,
+      label: vmName || address,
+      name: vmName || "VM",
+      vmName,
+      address,
+      status: vm.state,
+      source: "vm",
+      connected: agentConnected({ address }),
+    });
+  });
+  return Array.from(byAddress.values())
+    .sort((a, b) => String(a.label || "").localeCompare(String(b.label || ""), "pt-BR", { sensitivity: "base" }))
+    .map(({ score, ...target }) => target);
+}
+
+function selectSchedulerAgentByAddress(address = "") {
+  const normalizedAddress = normalizeAgentAddress(address);
+  if (!normalizedAddress) return false;
+  const target = schedulerAgentItems().find((agent) => normalizeAgentAddress(agent.address || "") === normalizedAddress);
+  if (!target) return false;
+  state.agentScheduler.selectedAgentId = String(target.id || "");
+  state.agentScheduler.selectedAutomationId = "";
+  state.agentScheduler.createOpen = false;
+  return true;
+}
+
+function schedulerAgentItems() {
+  return agentConnectionTargets();
+}
+
+function loadAgentScheduler() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(AGENT_SCHEDULER_STORAGE_KEY) || "[]");
+    state.agentScheduler.items = Array.isArray(parsed)
+      ? parsed
+          .map((item) => ({
+            id: String(item.id || createAgentId("agenda")),
+            agentId: String(item.agentId || "").trim(),
+            agentName: String(item.agentName || "").trim(),
+            vmName: String(item.vmName || "").trim(),
+            address: normalizeAgentAddress(item.address || ""),
+            automationId: String(item.automationId || "").trim(),
+            automationName: String(item.automationName || "Automacao").trim(),
+            runAt: String(item.runAt || "").trim(),
+            repeat: ["daily", "weekly", "monthly"].includes(String(item.repeat || "")) ? String(item.repeat) : "once",
+            status: ["scheduled", "running", "done", "error"].includes(String(item.status || "")) ? String(item.status) : "scheduled",
+            lastRunAt: String(item.lastRunAt || ""),
+            error: String(item.error || ""),
+          }))
+          .filter((item) => (item.agentId || item.vmName) && item.automationId && item.runAt)
+      : [];
+  } catch (error) {
+    console.warn("Nao foi possivel carregar agendamentos do Agent.", error);
+    state.agentScheduler.items = [];
+  }
+}
+
+function persistAgentScheduler() {
+  try {
+    const items = state.agentScheduler.items.map((item) => ({
+      id: item.id,
+      agentId: item.agentId,
+      agentName: item.agentName,
+      vmName: item.vmName,
+      address: item.address,
+      automationId: item.automationId,
+      automationName: item.automationName,
+      runAt: item.runAt,
+      repeat: item.repeat,
+      status: item.status,
+      lastRunAt: item.lastRunAt,
+      error: item.error,
+    }));
+    localStorage.setItem(AGENT_SCHEDULER_STORAGE_KEY, JSON.stringify(items));
+  } catch (error) {
+    console.warn("Nao foi possivel salvar agendamentos do Agent.", error);
+  }
+}
+
+function formatScheduleDate(value = "") {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Horario invalido";
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function scheduleRepeatLabel(repeat = "once") {
+  if (repeat === "daily") return "Diario";
+  if (repeat === "weekly") return "Semanal";
+  if (repeat === "monthly") return "Mensal";
+  return "Uma vez";
+}
+
+function scheduleStatusLabel(item = {}) {
+  if (state.agentScheduler.runningIds.has(String(item.id))) return "Executando";
+  if (item.status === "done") return "Concluido";
+  if (item.status === "error") return "Erro";
+  const dueAt = new Date(item.runAt).getTime();
+  if (!Number.isNaN(dueAt) && dueAt <= Date.now()) return "Na fila";
+  return "Agendado";
+}
+
+function schedulerItemsForAutomation(agent, automationId = "") {
+  const normalizedId = String(automationId || "").trim();
+  if (!normalizedId) return [];
+  return state.agentScheduler.items
+    .filter((item) => {
+      if (String(item.automationId || "") !== normalizedId) return false;
+      if (!agent) return true;
+      return String(item.agentId || "") === String(agent.id || "")
+        || (!item.agentId && String(item.vmName || "").trim().toLowerCase() === String(agent.vmName || "").trim().toLowerCase());
+    })
+    .sort((a, b) => new Date(a.runAt).getTime() - new Date(b.runAt).getTime());
+}
+
+function schedulerAutomationRuntime(automationId = "") {
+  const normalizedId = String(automationId || "").trim();
+  const selectedRemoteId = String(state.remoteControl.selectedId || "").trim();
+  const active = Boolean(state.remoteControl.running && normalizedId && selectedRemoteId === normalizedId);
+  const percent = active ? Math.max(0, Math.min(100, Number(state.remoteControl.progress?.percent || 0))) : 0;
+  return { active, percent };
+}
+
+function schedulerScheduleSummary(agent, automationId = "") {
+  const schedules = schedulerItemsForAutomation(agent, automationId);
+  const running = schedules.find((item) => state.agentScheduler.runningIds.has(String(item.id)));
+  const next = schedules.find((item) => item.status === "scheduled") || schedules[0] || null;
+  return { schedules, running, next };
+}
+
+function nextDateTimeLocalValue(minutesAhead = 5) {
+  const date = new Date(Date.now() + minutesAhead * 60 * 1000);
+  date.setSeconds(0, 0);
+  const offset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - offset * 60 * 1000);
+  return localDate.toISOString().slice(0, 16);
+}
+
+function schedulerDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function schedulerMonthKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
+function selectedSchedulerAgent() {
+  const id = String(state.agentScheduler.selectedAgentId || agentSchedulerAgentSelect?.value || "").trim();
+  return schedulerAgentItems().find((agent) => String(agent.id) === id) || null;
+}
+
+function ensureSchedulerDefaults() {
+  const agents = schedulerAgentItems();
+  if (state.agentScheduler.selectedAgentId && !agents.some((agent) => String(agent.id) === String(state.agentScheduler.selectedAgentId))) {
+    state.agentScheduler.selectedAgentId = "";
+    state.agentScheduler.selectedAutomationId = "";
+  }
+  if (!state.agentScheduler.selectedAgentId && agents.length) {
+    const activeVmName = String(state.remoteControl.nativeRdpVmName || state.remoteControl.hypervVmName || "").trim().toLowerCase();
+    const activeAgent = agents.find((agent) => String(agent.vmName || "").trim().toLowerCase() === activeVmName);
+    state.agentScheduler.selectedAgentId = String(activeAgent?.id || agents[0].id || "");
+  }
+  const defaultDateTime = nextDateTimeLocalValue();
+  if (!state.agentScheduler.selectedDate) state.agentScheduler.selectedDate = defaultDateTime.slice(0, 10);
+  if (!state.agentScheduler.visibleMonth) state.agentScheduler.visibleMonth = defaultDateTime.slice(0, 7);
+  if (agentSchedulerTimeInput && !agentSchedulerTimeInput.value) agentSchedulerTimeInput.value = defaultDateTime.slice(11, 16);
+}
+
+function renderAgentSchedulerCalendar() {
+  if (!agentSchedulerCalendarGrid) return;
+  ensureSchedulerDefaults();
+  const [yearValue, monthValue] = String(state.agentScheduler.visibleMonth || schedulerMonthKey()).split("-").map(Number);
+  const year = Number.isFinite(yearValue) ? yearValue : new Date().getFullYear();
+  const monthIndex = Number.isFinite(monthValue) ? monthValue - 1 : new Date().getMonth();
+  const monthStart = new Date(year, monthIndex, 1);
+  const gridStart = new Date(year, monthIndex, 1 - monthStart.getDay());
+  const selected = String(state.agentScheduler.selectedDate || "");
+  const today = schedulerDateKey();
+  if (agentSchedulerMonthLabel) {
+    agentSchedulerMonthLabel.textContent = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(monthStart);
+  }
+  const cells = [];
+  for (let index = 0; index < 42; index += 1) {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + index);
+    const key = schedulerDateKey(date);
+    const outside = date.getMonth() !== monthIndex;
+    cells.push(`
+      <button class="${outside ? "is-outside" : ""} ${key === selected ? "is-selected" : ""} ${key === today ? "is-today" : ""}"
+        type="button"
+        data-agent-scheduler-date="${escapeHtml(key)}">
+        ${date.getDate()}
+      </button>`);
+  }
+  agentSchedulerCalendarGrid.innerHTML = cells.join("");
+}
+
+function agentSchedulerCalendarMarkup() {
+  ensureSchedulerDefaults();
+  const [yearValue, monthValue] = String(state.agentScheduler.visibleMonth || schedulerMonthKey()).split("-").map(Number);
+  const year = Number.isFinite(yearValue) ? yearValue : new Date().getFullYear();
+  const monthIndex = Number.isFinite(monthValue) ? monthValue - 1 : new Date().getMonth();
+  const monthStart = new Date(year, monthIndex, 1);
+  const gridStart = new Date(year, monthIndex, 1 - monthStart.getDay());
+  const selected = String(state.agentScheduler.selectedDate || "");
+  const today = schedulerDateKey();
+  const repeat = String(state.agentScheduler.repeat || agentSchedulerRepeatSelect?.value || "once");
+  const selectedTime = new Date(`${selected}T00:00`).getTime();
+  const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(monthStart);
+  const cells = [];
+  for (let index = 0; index < 42; index += 1) {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + index);
+    const key = schedulerDateKey(date);
+    const outside = date.getMonth() !== monthIndex;
+    const diffDays = Math.round((new Date(`${key}T00:00`).getTime() - selectedTime) / 86400000);
+    const sameMonthlyDay = date.getDate() === new Date(`${selected}T00:00`).getDate();
+    const willRun = key !== selected
+      && diffDays > 0
+      && (repeat === "daily"
+        || (repeat === "weekly" && diffDays % 7 === 0)
+        || (repeat === "monthly" && sameMonthlyDay));
+    cells.push(`
+      <button class="${outside ? "is-outside" : ""} ${key === selected ? "is-selected" : ""} ${key === today ? "is-today" : ""} ${willRun ? "is-repeat-run" : ""}"
+        type="button"
+        data-agent-scheduler-date="${escapeHtml(key)}">
+        ${date.getDate()}
+      </button>`);
+  }
+  return `
+    <div class="agent-screen-calendar is-inline">
+      <div class="agent-screen-calendar-head">
+        <button class="micro-button" type="button" data-agent-scheduler-month="-1" aria-label="Mes anterior">‹</button>
+        <strong>${escapeHtml(monthLabel)}</strong>
+        <button class="micro-button" type="button" data-agent-scheduler-month="1" aria-label="Proximo mes">›</button>
+      </div>
+      <div class="agent-screen-calendar-week">
+        <span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span>
+      </div>
+      <div class="agent-screen-calendar-grid">${cells.join("")}</div>
+    </div>`;
+}
+
+function schedulerTimeParts() {
+  const fallback = nextDateTimeLocalValue().slice(11, 16);
+  const [hourRaw, minuteRaw] = String(agentSchedulerTimeInput?.value || fallback).split(":");
+  const hour = Math.max(0, Math.min(23, Number(hourRaw || 0)));
+  const minute = Math.max(0, Math.min(59, Number(minuteRaw || 0)));
+  return { hour, minute };
+}
+
+function schedulerTimeValue(hour, minute) {
+  return `${String((Number(hour) + 24) % 24).padStart(2, "0")}:${String((Number(minute) + 60) % 60).padStart(2, "0")}`;
+}
+
+function agentSchedulerTimeWheelMarkup() {
+  const { hour, minute } = schedulerTimeParts();
+  return `
+    <div class="agent-screen-time-wheel" aria-label="Horario do agendamento">
+      <div>
+        <span>Hora</span>
+        <button type="button" data-agent-scheduler-hour-delta="1">▲</button>
+        <strong>${String(hour).padStart(2, "0")}</strong>
+        <button type="button" data-agent-scheduler-hour-delta="-1">▼</button>
+      </div>
+      <em>:</em>
+      <div>
+        <span>Min</span>
+        <button type="button" data-agent-scheduler-minute-delta="1">▲</button>
+        <strong>${String(minute).padStart(2, "0")}</strong>
+        <button type="button" data-agent-scheduler-minute-delta="-1">▼</button>
+      </div>
+    </div>`;
+}
+
+function agentSchedulerRepeatChipsMarkup() {
+  const current = String(state.agentScheduler.repeat || agentSchedulerRepeatSelect?.value || "once");
+  const items = [
+    ["once", "Uma vez"],
+    ["daily", "Diario"],
+    ["weekly", "Semanal"],
+    ["monthly", "Mensal"],
+  ];
+  return `
+    <div class="agent-screen-repeat-chips" aria-label="Repeticao do agendamento">
+      ${items.map(([value, label]) => `<button class="${current === value ? "is-active" : ""}" type="button" data-agent-scheduler-repeat-chip="${value}">${label}</button>`).join("")}
+    </div>`;
+}
+
+function renderAgentScheduler() {
+  ensureSchedulerDefaults();
+  const agents = schedulerAgentItems();
+  const selectedAgent = selectedSchedulerAgent();
+  const automations = schedulerAutomationItems(selectedAgent);
+  const selectedAddress = normalizeAgentAddress(selectedAgent?.address || "");
+  const schedulerConnected = Boolean(
+    selectedAgent
+    && selectedAddress
+    && state.remoteControl.connected
+    && normalizeAgentAddress(state.remoteControl.address || "") === selectedAddress
+  );
+  if (state.agentScheduler.selectedAutomationId && !automations.some((item) => String(item.id) === String(state.agentScheduler.selectedAutomationId))) {
+    state.agentScheduler.selectedAutomationId = "";
+  }
+  if (agentSchedulerAgentSelect) {
+    const current = String(state.agentScheduler.selectedAgentId || "");
+    agentSchedulerAgentSelect.innerHTML = [
+      '<option value="">Selecionar Agent</option>',
+      ...agents.map((agent) => {
+        const label = agent.vmName || agent.name || agent.address || "Agent";
+        const address = normalizeAgentAddress(agent.address || "");
+        return `<option value="${escapeHtml(agent.id)}">${escapeHtml(`${label}${address ? ` - ${address}` : " - aguardando IP"}`)}</option>`;
+      }),
+    ].join("");
+    if (agents.some((agent) => String(agent.id) === current)) agentSchedulerAgentSelect.value = current;
+  }
+  if (agentSchedulerConnectButton) {
+    agentSchedulerConnectButton.hidden = !selectedAgent;
+    agentSchedulerConnectButton.disabled = !selectedAgent || !selectedAddress || schedulerConnected;
+    agentSchedulerConnectButton.textContent = schedulerConnected
+      ? "Conectado"
+      : selectedAddress
+        ? "Conectar"
+        : "Sem IP";
+  }
+  if (agentSchedulerAutomationSelect) {
+    const current = String(state.agentScheduler.selectedAutomationId || agentSchedulerAutomationSelect.value || agentScreenAutomationSelect?.value || "");
+    agentSchedulerAutomationSelect.innerHTML = [
+      '<option value="">Selecionar automacao</option>',
+      ...automations.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.nome || item.name || "Automacao sem nome")}</option>`),
+    ].join("");
+    if (automations.some((item) => String(item.id) === current)) agentSchedulerAutomationSelect.value = current;
+  }
+  if (agentSchedulerForm) agentSchedulerForm.hidden = true;
+  if (agentSchedulerAddButton) agentSchedulerAddButton.hidden = true;
+  renderAgentSchedulerCalendar();
+  if (agentSchedulerAutomationCards) {
+    const selectedAutomationId = String(state.agentScheduler.selectedAutomationId || agentSchedulerAutomationSelect?.value || "");
+    agentSchedulerAutomationCards.innerHTML = automations.length
+      ? automations.map((item) => {
+          const selected = String(item.id) === selectedAutomationId;
+          const title = item.nome || item.name || "Automacao sem nome";
+          const category = item.categoria || item.category || "Automacao";
+          const description = item.descricao || item.description || "Pronta para agendar.";
+          const commands = Number(item.command_count ?? item.commands ?? item.total_blocos ?? 0);
+          const sequences = Number(item.sequence_count ?? item.sequences ?? 1);
+          const scheduling = selected && state.agentScheduler.createOpen;
+          const settled = scheduling && state.agentScheduler.suppressFlipAnimation;
+          const runtime = schedulerAutomationRuntime(item.id);
+          const scheduleSummary = schedulerScheduleSummary(selectedAgent, item.id);
+          const nextSchedule = scheduleSummary.next;
+          const progress = runtime.active ? runtime.percent : scheduleSummary.running ? 100 : 0;
+          const hasSchedule = Boolean(nextSchedule);
+          return `
+            <article class="agent-screen-automation-card ${selected ? "is-selected" : ""} ${scheduling ? "is-flipped" : ""} ${settled ? "is-flip-settled" : ""}">
+              <div class="agent-screen-automation-stage">
+                <section class="agent-screen-automation-face agent-screen-automation-front">
+                  <div class="agent-screen-automation-card-head">
+                    <div>
+                      <p>${escapeHtml(category)}</p>
+                      <h4>${escapeHtml(title)}</h4>
+                    </div>
+                    <button class="launcher-flip-trigger" type="button" data-agent-scheduler-automation="${escapeHtml(item.id)}">${hasSchedule ? "Agenda" : "Agendar"}</button>
+                  </div>
+                  <p class="agent-screen-automation-description">${escapeHtml(description)}</p>
+                  <div class="agent-screen-automation-meta">
+                    <span><small>Comandos</small><strong>${escapeHtml(commands || 0)}</strong></span>
+                    <span><small>Sequencias</small><strong>${escapeHtml(sequences || 1)}</strong></span>
+                  </div>
+                  <div class="agent-screen-automation-runtime">
+                    <div>
+                      <span>${runtime.active ? "Executando agora" : hasSchedule ? "Proxima task" : "Sem task"}</span>
+                      <strong>${escapeHtml(runtime.active ? `${Math.round(progress)}% em andamento` : nextSchedule ? `${formatScheduleDate(nextSchedule.runAt)} - ${scheduleRepeatLabel(nextSchedule.repeat)}` : "Pronta para executar")}</strong>
+                    </div>
+                    <i><b style="width: ${Math.round(progress)}%"></b></i>
+                  </div>
+                  <div class="agent-screen-automation-actions">
+                    <button class="ghost-button" type="button" data-agent-scheduler-run-now="${escapeHtml(item.id)}" ${runtime.active ? "disabled" : ""}>Executar agora</button>
+                    <button class="danger-button" type="button" data-agent-scheduler-stop-now="${escapeHtml(item.id)}" ${runtime.active ? "" : "disabled"}>Parar</button>
+                  </div>
+                </section>
+                <section class="agent-screen-automation-face agent-screen-automation-back">
+                  <div class="agent-screen-automation-card-head">
+                    <div>
+                      <p>Agendar</p>
+                      <h4>${escapeHtml(title)}</h4>
+                    </div>
+                    <div class="agent-screen-card-actions">
+                      <button class="primary-button" type="button" data-agent-scheduler-create-inline>Agendar</button>
+                      <button class="launcher-flip-trigger" type="button" data-agent-scheduler-close-card>Voltar</button>
+                    </div>
+                  </div>
+                  <div class="agent-screen-card-scheduler">
+                    ${agentSchedulerCalendarMarkup()}
+                    <div class="agent-screen-card-scheduler-side">
+                      ${agentSchedulerTimeWheelMarkup()}
+                      ${agentSchedulerRepeatChipsMarkup()}
+                    </div>
+                  </div>
+                </section>
+              </div>
+          </article>`;
+        }).join("")
+      : `<div class="agent-screen-scheduler-empty is-compact">
+          <span class="agent-screen-scheduler-icon">${schedulerConnected ? "!" : "+"}</span>
+          <strong>${schedulerConnected ? "Nenhuma automacao no Agent" : "Conecte um Agent"}</strong>
+          <p>${schedulerConnected ? "Use a aba Agentes > Automacoes para enviar automacoes para este Agent." : "Escolha uma VM/Agent com IP e clique em Conectar para carregar as automacoes remotas."}</p>
+        </div>`;
+  }
+  if (agentSchedulerCreateButton) {
+    agentSchedulerCreateButton.disabled = !selectedAgent
+      || !String(agentSchedulerAutomationSelect?.value || state.agentScheduler.selectedAutomationId || "").trim()
+      || !String(state.agentScheduler.selectedDate || "").trim()
+      || !String(agentSchedulerTimeInput?.value || "").trim();
+  }
+  if (agentSchedulerList) {
+    const visibleSchedules = state.agentScheduler.items.filter((item) => {
+      if (!selectedAgent) return true;
+      return String(item.agentId || "") === String(selectedAgent.id)
+        || (!item.agentId && String(item.vmName || "").trim().toLowerCase() === String(selectedAgent.vmName || "").trim().toLowerCase());
+    });
+    agentSchedulerList.innerHTML = visibleSchedules.length
+      ? visibleSchedules
+          .slice()
+          .sort((a, b) => new Date(a.runAt).getTime() - new Date(b.runAt).getTime())
+          .slice(0, 2)
+          .map((item) => {
+            const running = state.agentScheduler.runningIds.has(String(item.id));
+            return `
+              <article class="agent-screen-schedule-card ${running ? "is-running" : ""} ${item.status === "done" ? "is-done" : ""}" data-agent-schedule-id="${escapeHtml(item.id)}">
+                <div class="agent-screen-schedule-top">
+                  <strong>${escapeHtml(item.automationName || "Automacao")}</strong>
+                  <span class="agent-screen-schedule-badge">${escapeHtml(scheduleStatusLabel(item))}</span>
+                </div>
+                <div class="agent-screen-schedule-meta">
+                  ${escapeHtml(formatScheduleDate(item.runAt))} · ${escapeHtml(scheduleRepeatLabel(item.repeat))}
+                  ${item.error ? `<br>Erro: ${escapeHtml(item.error)}` : ""}
+                </div>
+                <div class="agent-screen-schedule-actions">
+                  <span>${item.lastRunAt ? `Rodou: ${escapeHtml(formatScheduleDate(item.lastRunAt))}` : "Aguardando"}</span>
+                  <button class="ghost-button" type="button" data-agent-schedule-remove="${escapeHtml(item.id)}">Remover</button>
+                </div>
+              </article>`;
+          })
+          .join("")
+      : "";
+  }
+  if (agentSchedulerStatus) {
+    const scheduledCount = state.agentScheduler.items.filter((item) => {
+      if (item.status !== "scheduled") return false;
+      if (!selectedAgent) return true;
+      return String(item.agentId || "") === String(selectedAgent.id)
+        || (!item.agentId && String(item.vmName || "").trim().toLowerCase() === String(selectedAgent.vmName || "").trim().toLowerCase());
+    }).length;
+    const runningCount = state.agentScheduler.runningIds.size;
+    agentSchedulerStatus.textContent = runningCount
+      ? `${runningCount} agendamento em execucao.`
+      : scheduledCount
+        ? `${scheduledCount} task(s) aguardando horario.`
+        : "Fila vazia.";
+  }
+}
+
+function findAgentByVmName(vmName = "") {
+  const normalizedVm = String(vmName || "").trim().toLowerCase();
+  if (!normalizedVm) return null;
+  return (state.agents.items || []).find((agent) => String(agent.vmName || "").trim().toLowerCase() === normalizedVm) || null;
+}
+
+function findAgentForSchedule(item = {}) {
+  const byId = (state.agents.items || []).find((agent) => String(agent.id) === String(item.agentId || ""));
+  return byId || findAgentByVmName(item.vmName || "");
+}
+
+function advanceScheduleAfterRun(item) {
+  if (item.repeat === "daily" || item.repeat === "weekly" || item.repeat === "monthly") {
+    if (item.repeat === "monthly") {
+      let nextDate = new Date(item.runAt);
+      if (Number.isNaN(nextDate.getTime())) nextDate = new Date();
+      do {
+        nextDate = new Date(nextDate.getFullYear(), nextDate.getMonth() + 1, nextDate.getDate(), nextDate.getHours(), nextDate.getMinutes(), 0, 0);
+      } while (nextDate.getTime() <= Date.now() + 5000);
+      return { ...item, runAt: nextDate.toISOString(), status: "scheduled", error: "" };
+    }
+    const stepDays = item.repeat === "weekly" ? 7 : 1;
+    let next = new Date(item.runAt).getTime();
+    const stepMs = stepDays * 24 * 60 * 60 * 1000;
+    if (Number.isNaN(next)) next = Date.now();
+    do {
+      next += stepMs;
+    } while (next <= Date.now() + 5000);
+    return { ...item, runAt: new Date(next).toISOString(), status: "scheduled", error: "" };
+  }
+  return { ...item, status: "done" };
+}
+
+async function connectScheduledVmAgent(vmName = "") {
+  const name = String(vmName || "").trim();
+  if (!name) throw new Error("VM nao informada no agendamento.");
+  await openBaseVmForConfiguration(name);
+  let agent = findAgentByVmName(name);
+  if (agent && agentConnected(agent)) return agent;
+  if (agent && await waitAndConnectAgent(agent, 75)) return agent;
+
+  for (let index = 0; index < 45; index += 1) {
+    try {
+      const connection = await invoke("get_hyperv_vm_connection", { vmName: name });
+      const candidateAddresses = Array.from(new Set([
+        ...(Array.isArray(connection?.ips) ? connection.ips.map((ip) => `${ip}:18452`) : []),
+        connection?.address,
+      ].filter(Boolean)));
+      for (const address of candidateAddresses) {
+        try {
+          await connectStudioControl(address);
+          return { id: `vm-${name}`, name, vmName: name, address };
+        } catch (error) {
+          state.agents.lastConnectionError = String(error || "");
+        }
+      }
+    } catch (error) {
+      state.agents.lastConnectionError = String(error || "");
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 2000));
+  }
+  throw new Error(`Nao consegui conectar no Agent da VM ${name}.`);
+}
+
+async function connectScheduledAgent(item = {}) {
+  const scheduledAgent = findAgentForSchedule(item);
+  const vmName = String(scheduledAgent?.vmName || item.vmName || "").trim();
+  if (vmName) {
+    return connectScheduledVmAgent(vmName);
+  }
+  const address = normalizeAgentAddress(scheduledAgent?.address || item.address || "");
+  if (!address) throw new Error("Agent sem VM ou endereco configurado.");
+  await connectStudioControl(address);
+  return scheduledAgent || { id: `agent-${address}`, name: item.agentName || "Agent", address };
+}
+
+async function connectSelectedSchedulerAgent() {
+  const agent = selectedSchedulerAgent();
+  if (!agent) throw new Error("Selecione uma VM/Agent no agendador.");
+  const vmName = String(agent.vmName || "").trim();
+  const address = normalizeAgentAddress(agent.address || "");
+  setBusy("Conectando Agent do agendador");
+  let connectedAgent = agent;
+  if (vmName) {
+    connectedAgent = await connectScheduledVmAgent(vmName);
+  } else if (address) {
+    await connectStudioControl(address);
+  } else {
+    throw new Error("Este Agent ainda nao possui IP para conexao.");
+  }
+  const connectedAddress = normalizeAgentAddress(connectedAgent?.address || state.remoteControl.address || "");
+  if (vmName && connectedAddress) {
+    state.agents.items = (state.agents.items || []).map((item) => (
+      String(item.vmName || "").trim().toLowerCase() === vmName.toLowerCase()
+        ? { ...item, address: connectedAddress, status: "online", lastSeenAt: Date.now() }
+        : item
+    ));
+    state.agents.vms = (state.agents.vms || []).map((vm) => (
+      String(vm.name || "").trim().toLowerCase() === vmName.toLowerCase()
+        ? { ...vm, ip: connectedAddress.replace(/:\d+$/, "") }
+        : vm
+    ));
+    persistAgentsConfig();
+  }
+  await refreshStudioControlLibrary({ silent: true });
+  state.agentScheduler.selectedAutomationId = "";
+  renderAgentScheduler();
+  setBusy("Pronto");
+  setMessage("Agendador conectado ao Agent selecionado.", "success");
+}
+
+async function executeAgentSchedule(item) {
+  const id = String(item.id || "");
+  if (!id || state.agentScheduler.runningIds.has(id)) return;
+  state.agentScheduler.runningIds.add(id);
+  state.agentScheduler.items = state.agentScheduler.items.map((entry) => String(entry.id) === id ? { ...entry, status: "running", error: "" } : entry);
+  persistAgentScheduler();
+  renderAgentScheduler();
+  try {
+    setWorkspaceTab("agent-screen");
+    setBusy("Executando agenda");
+    await connectScheduledAgent(item);
+    await refreshStudioControlLibrary({ silent: true });
+    const remoteAutomation = studioControlVisibleLibrary().find((automation) => String(automation.id) === String(item.automationId));
+    if (!remoteAutomation) {
+      throw new Error(`A automacao "${item.automationName}" nao existe neste Agent. Envie pela aba Agentes > Automacoes antes de agendar.`);
+    }
+    state.remoteControl.selectedId = String(item.automationId);
+    if (agentScreenAutomationSelect) agentScreenAutomationSelect.value = state.remoteControl.selectedId;
+    await runStudioControlAutomation(state.remoteControl.selectedId, { minimizeAgent: true });
+    state.agentScheduler.items = state.agentScheduler.items.map((entry) => (
+      String(entry.id) === id
+        ? advanceScheduleAfterRun({ ...entry, lastRunAt: new Date().toISOString(), error: "" })
+        : entry
+    ));
+    setBusy("Pronto");
+    setMessage(`Agendamento executado: ${item.automationName}.`, "success");
+  } catch (error) {
+    const message = String(error || "Falha desconhecida.");
+    state.agentScheduler.items = state.agentScheduler.items.map((entry) => (
+      String(entry.id) === id
+        ? { ...entry, status: "error", error: message, lastRunAt: new Date().toISOString() }
+        : entry
+    ));
+    setBusy("Erro");
+    setMessage(`Falha no agendamento: ${message}`, "error");
+  } finally {
+    state.agentScheduler.runningIds.delete(id);
+    persistAgentScheduler();
+    renderAgentScheduler();
+    renderStudioControl();
+  }
+}
+
+async function executeSchedulerAutomationNow(automationId = "") {
+  const agent = selectedSchedulerAgent();
+  const automation = schedulerAutomationItems(agent).find((item) => String(item.id) === String(automationId || ""));
+  if (!agent) throw new Error("Selecione uma VM/Agent no agendador.");
+  if (!automation) throw new Error("Esta automacao nao esta carregada no Agent selecionado.");
+  state.agentScheduler.selectedAutomationId = String(automation.id);
+  renderAgentScheduler();
+  setWorkspaceTab("agent-screen");
+  setBusy("Executando agora");
+  await connectScheduledAgent({
+    agentId: String(agent.id || ""),
+    agentName: String(agent.name || "Agent"),
+    vmName: String(agent.vmName || ""),
+    address: normalizeAgentAddress(agent.address || ""),
+    automationId: String(automation.id),
+    automationName: automation.nome || automation.name || "Automacao",
+  });
+  await refreshStudioControlLibrary({ silent: true });
+  const remoteAutomation = studioControlVisibleLibrary().find((item) => String(item.id) === String(automation.id));
+  if (!remoteAutomation) {
+    throw new Error(`A automacao "${automation.nome || automation.name || "selecionada"}" nao existe neste Agent.`);
+  }
+  state.remoteControl.selectedId = String(automation.id);
+  if (agentScreenAutomationSelect) agentScreenAutomationSelect.value = state.remoteControl.selectedId;
+  renderAgentScheduler();
+  await runStudioControlAutomation(state.remoteControl.selectedId, { minimizeAgent: true });
+  setBusy("Pronto");
+}
+
+function checkDueAgentSchedules() {
+  const now = Date.now();
+  const dueItems = state.agentScheduler.items.filter((item) => {
+    if (item.status !== "scheduled") return false;
+    if (state.agentScheduler.runningIds.has(String(item.id))) return false;
+    const runAt = new Date(item.runAt).getTime();
+    return !Number.isNaN(runAt) && runAt <= now;
+  });
+  dueItems.forEach((item) => executeAgentSchedule(item).catch((error) => {
+    console.warn("Falha ao executar agendamento.", error);
+  }));
+}
+
+function startAgentSchedulerTimer() {
+  window.clearInterval(state.agentScheduler.timer);
+  state.agentScheduler.timer = window.setInterval(checkDueAgentSchedules, 15000);
+  checkDueAgentSchedules();
+}
+
+function createAgentScheduleFromForm() {
+  const agent = selectedSchedulerAgent();
+  const automationId = String(agentSchedulerAutomationSelect?.value || state.agentScheduler.selectedAutomationId || "").trim();
+  const datePart = String(state.agentScheduler.selectedDate || "").trim();
+  const timePart = String(agentSchedulerTimeInput?.value || "").trim();
+  const repeat = String(state.agentScheduler.repeat || agentSchedulerRepeatSelect?.value || "once");
+  const automation = schedulerAutomationItems(agent).find((item) => String(item.id) === automationId);
+  const runAt = new Date(`${datePart}T${timePart || "00:00"}`);
+  if (!agent) throw new Error("Selecione o Agent do agendamento.");
+  if (!normalizeAgentAddress(agent.address || "")) throw new Error("Este Agent ainda nao possui IP. Abra/inicie a VM e conecte antes de agendar.");
+  if (!agentConnected(agent)) throw new Error("Conecte no Agent selecionado antes de criar o agendamento.");
+  if (!automationId) throw new Error("Selecione a automacao do agendamento.");
+  if (!automation) throw new Error("Esta automacao nao esta carregada no Agent selecionado.");
+  if (Number.isNaN(runAt.getTime())) throw new Error("Informe um horario valido.");
+  state.agentScheduler.items.push({
+    id: createAgentId("agenda"),
+    agentId: String(agent.id || ""),
+    agentName: String(agent.name || "Agent"),
+    vmName: String(agent.vmName || ""),
+    address: normalizeAgentAddress(agent.address || ""),
+    automationId,
+    automationName: automation?.nome || automation?.name || "Automacao",
+    runAt: runAt.toISOString(),
+    repeat: ["daily", "weekly", "monthly"].includes(repeat) ? repeat : "once",
+    status: "scheduled",
+    lastRunAt: "",
+    error: "",
+  });
+  persistAgentScheduler();
+  state.agentScheduler.createOpen = false;
+  renderAgentScheduler();
+  setMessage("Agendamento criado.", "success");
 }
 
 function normalizeAgentAddress(address = "") {
@@ -13046,6 +13891,17 @@ function automationStepCount(item = {}) {
 
 function renderAgentAutomationViews() {
   const automationActive = state.agents.activeView === "automations";
+  const selectedTransferAddress = normalizeAgentAddress(
+    state.agents.transferTargetAddress
+    || agentAutomationTargetSelect?.value
+    || agentAutomationAddressInput?.value
+    || ""
+  );
+  const connectedToSelectedTransfer = Boolean(
+    state.remoteControl.connected
+    && selectedTransferAddress
+    && normalizeAgentAddress(state.remoteControl.address || "") === selectedTransferAddress
+  );
   agentsMachinesTabButton?.classList.toggle("is-active", !automationActive);
   agentsAutomationsTabButton?.classList.toggle("is-active", automationActive);
   if (agentsMachineActions) agentsMachineActions.hidden = automationActive;
@@ -13054,13 +13910,7 @@ function renderAgentAutomationViews() {
 
   if (agentAutomationTargetSelect) {
     const current = normalizeAgentAddress(state.agents.transferTargetAddress || agentAutomationTargetSelect.value || "");
-    const agents = (state.agents.items || [])
-      .map((agent) => ({ label: agent.name, address: normalizeAgentAddress(agent.address || "") }))
-      .filter((agent) => agent.address);
-    const vmTargets = (state.agents.vms || [])
-      .map((vm) => ({ label: vm.name, address: normalizeAgentAddress(vm.ip ? `${vm.ip}:18452` : "") }))
-      .filter((vm) => vm.address && !agents.some((agent) => agent.address === vm.address));
-    const targets = [...agents, ...vmTargets];
+    const targets = agentConnectionTargets();
     agentAutomationTargetSelect.innerHTML = [
       '<option value="">Informar endereco manualmente</option>',
       ...targets.map((target) => `<option value="${escapeHtml(target.address)}">${escapeHtml(target.label)} - ${escapeHtml(target.address)}</option>`),
@@ -13097,12 +13947,34 @@ function renderAgentAutomationViews() {
     agentAutomationAddressInput.value = state.remoteControl.address || "127.0.0.1:18452";
   }
   if (agentAutomationConnectionStatus) {
-    agentAutomationConnectionStatus.textContent = state.remoteControl.connected ? "Conectado" : "Desconectado";
-    agentAutomationConnectionStatus.className = `studio-control-status ${state.remoteControl.connected ? "is-online" : "is-offline"}`;
+    agentAutomationConnectionStatus.textContent = state.agents.transferConnecting
+      ? "Conectando..."
+      : connectedToSelectedTransfer
+        ? "Conectado"
+        : "Desconectado";
+    agentAutomationConnectionStatus.className = `studio-control-status ${connectedToSelectedTransfer ? "is-online" : "is-offline"}`;
+  }
+  if (agentAutomationConnectButton) {
+    agentAutomationConnectButton.disabled = state.agents.transferConnecting || state.agents.transferSending || !selectedTransferAddress;
+    agentAutomationConnectButton.classList.toggle("is-loading", state.agents.transferConnecting);
+    agentAutomationConnectButton.textContent = state.agents.transferConnecting
+      ? "Conectando..."
+      : connectedToSelectedTransfer
+        ? "Reconectar"
+        : "Conectar";
   }
   if (agentAutomationSendButton) {
-    agentAutomationSendButton.disabled = !state.remoteControl.connected || !selectedId;
+    agentAutomationSendButton.disabled = state.agents.transferSending || !connectedToSelectedTransfer || !selectedId;
+    agentAutomationSendButton.classList.toggle("is-loading", state.agents.transferSending);
+    agentAutomationSendButton.textContent = state.agents.transferSending ? "Enviando..." : "Enviar ao Agent";
   }
+  if (agentAutomationTransferStatus && state.agents.transferProgressLabel) {
+    agentAutomationTransferStatus.textContent = state.agents.transferProgressLabel;
+  }
+  agentAutomationTransferStatus?.classList.toggle(
+    "is-loading",
+    Boolean(state.agents.transferConnecting || state.agents.transferSending)
+  );
 }
 
 function renderAgents() {
@@ -13251,6 +14123,132 @@ function renderAgents() {
   agentsList.innerHTML = [...availableVmCards, ...agentCards, addCard].join("");
 }
 
+function renderAgentScreenLiveBlocks() {
+  const remote = state.remoteControl;
+  const percent = Math.max(0, Math.min(100, Number(remote.progress.percent || 0)));
+  const currentOrder = Number(remote.currentOrder || remote.progress.order || 0);
+  const current = studioControlCurrentEvent();
+  const sequence = normalizeSequenceName(remote.progress.sequence || remote.currentSequence || "principal");
+  const events = studioControlSequenceEvents(sequence);
+  const currentIndex = events.findIndex((event) => Number(event.order) === currentOrder);
+  const running = Boolean(remote.running);
+
+  agentScreenLiveBlocks?.classList.toggle("is-running", running);
+  agentScreenLiveBlocks?.classList.toggle("is-idle", !running);
+  if (agentScreenLiveCurrentBlock) {
+    agentScreenLiveCurrentBlock.textContent = running
+      ? `Bloco ${currentOrder || currentIndex + 1 || 1}`
+      : "Agent em espera";
+  }
+  if (agentScreenLivePercent) {
+    agentScreenLivePercent.textContent = `${Math.round(percent)}%`;
+  }
+  if (agentScreenLiveProgressFill) {
+    agentScreenLiveProgressFill.style.width = `${percent}%`;
+  }
+  if (!agentScreenLiveBlockList) return;
+  {
+    if (!events.length) {
+      agentScreenLiveBlockList.innerHTML = `
+        <p class="agent-screen-live-line is-muted">Agent em espera.</p>
+        <p class="agent-screen-live-line">Quando uma automacao rodar, eu narro os passos aqui em tempo real.</p>`;
+      return;
+    }
+
+    const next = currentIndex >= 0 ? events[currentIndex + 1] : null;
+    const doneCount = Math.max(0, currentIndex);
+    const total = events.length;
+    const currentTitle = current ? studioControlEventTitle(current) : currentOrder ? `Bloco ${currentOrder}` : "Automacao";
+    const currentSubtitle = current ? studioControlEventSubtitle(current) : remote.progress.description || "Preparando execucao.";
+    const recognitionTypes = new Set(["clicar_imagem", "comparar_planilha_tela"]);
+    const lines = [];
+
+    if (running) {
+      lines.push({
+        tone: "is-active",
+        text: `Executando bloco ${currentOrder || currentIndex + 1 || 1}: ${currentTitle}.`,
+      });
+      lines.push({
+        tone: "is-thinking",
+        text: recognitionTypes.has(current?.type)
+          ? `Aguardando reconhecimento ${Math.min(doneCount + 1, total)}/${total} - ${currentSubtitle}.`
+          : `Pensando no proximo passo - ${currentSubtitle}.`,
+      });
+      lines.push({
+        tone: "is-confirmed",
+        text: `Confirmado: ${doneCount}/${total} blocos ja processados.`,
+      });
+      if (next) {
+        lines.push({
+          tone: "is-muted",
+          text: `Proximo: bloco ${next.order || currentOrder + 1} - ${studioControlEventTitle(next)}.`,
+        });
+      }
+    } else {
+      lines.push({
+        tone: "is-muted",
+        text: remote.progress.description || "Agent em espera.",
+      });
+      lines.push({
+        tone: "is-confirmed",
+        text: total ? `Roteiro carregado com ${total} blocos. Pronto para executar.` : "Nenhum roteiro carregado.",
+      });
+    }
+
+    agentScreenLiveBlockList.innerHTML = lines
+      .slice(0, 4)
+      .map((line) => `<p class="agent-screen-live-line ${line.tone}">${escapeHtml(line.text)}</p>`)
+      .join("");
+    return;
+  }
+  if (!events.length) {
+    agentScreenLiveBlockList.innerHTML = `
+      <article class="agent-screen-live-empty">
+        <strong>Agent em espera</strong>
+        <span>Quando uma automacao rodar, eu descrevo aqui o que esta acontecendo.</span>
+      </article>`;
+    return;
+  }
+  const next = currentIndex >= 0 ? events[currentIndex + 1] : null;
+  const doneCount = currentIndex >= 0 ? currentIndex : 0;
+  const messages = [
+    current
+      ? {
+          tone: "is-current",
+          icon: "•",
+          title: "Executando agora",
+          text: `${studioControlEventTitle(current)} - ${studioControlEventSubtitle(current)}`,
+        }
+      : {
+          tone: running ? "is-current" : "is-upcoming",
+          icon: "•",
+          title: running ? "Executando" : "Aguardando",
+          text: remote.progress.description || "Nenhuma automacao em execucao no momento.",
+        },
+    next
+      ? {
+          tone: "is-upcoming",
+          icon: "↳",
+          title: "Proximo passo",
+          text: `${studioControlEventTitle(next)} - ${studioControlEventSubtitle(next)}`,
+        }
+      : {
+          tone: "is-done",
+          icon: "✓",
+          title: running ? "Fila quase concluida" : "Resumo",
+          text: events.length ? `${doneCount}/${events.length} passos processados nesta automacao.` : "Sem passos carregados.",
+        },
+  ];
+  agentScreenLiveBlockList.innerHTML = messages.map((message) => `
+    <article class="agent-screen-live-block ${message.tone}">
+      <span>${escapeHtml(message.icon)}</span>
+      <div>
+        <strong>${escapeHtml(message.title)}</strong>
+        <small>${escapeHtml(message.text)}</small>
+      </div>
+    </article>`).join("");
+}
+
 function renderStudioControl() {
   const remote = state.remoteControl;
   const visibleLibrary = studioControlVisibleLibrary();
@@ -13283,8 +14281,11 @@ function renderStudioControl() {
     if (visibleLibrary.some((item) => String(item.id) === current)) agentScreenAutomationSelect.value = current;
   }
   if (agentScreenExecuteButton) {
-    agentScreenExecuteButton.disabled = !remote.connected || !String(agentScreenAutomationSelect?.value || remote.selectedId || "") || remote.running;
+    agentScreenExecuteButton.textContent = remote.running ? "Parar" : "Executar";
+    agentScreenExecuteButton.classList.toggle("is-danger-mode", Boolean(remote.running));
+    agentScreenExecuteButton.disabled = !remote.connected || (!remote.running && !String(agentScreenAutomationSelect?.value || remote.selectedId || ""));
   }
+  renderAgentScheduler();
   renderAgentAutomationViews();
   studioControlViewButtons.forEach((button) => {
     const active = button.dataset.studioControlView === remote.activeView;
@@ -13381,6 +14382,7 @@ function renderStudioControl() {
   if (studioControlBlockText) {
     studioControlBlockText.textContent = studioControlCurrentEvent()?.title || (remote.progress.order ? `Bloco ${remote.progress.order}` : "Aguardando");
   }
+  renderAgentScreenLiveBlocks();
   renderStudioControlFlow();
   renderStudioControlSpreadsheet();
   renderStudioControlEditableTexts();
@@ -13947,20 +14949,30 @@ async function connectStudioControl(addressOverride = "") {
   refreshStudioControlStatus({ silent: true }).catch(() => null);
 }
 
-async function sendSavedAutomationToAgent(id = "") {
+async function sendSavedAutomationToAgent(id = "", addressOverride = "") {
   const automationId = String(id || state.agents.transferSelectedId || "").trim();
-  const address = normalizeAgentAddress(state.agents.transferTargetAddress || agentAutomationTargetSelect?.value || agentAutomationAddressInput?.value || state.remoteControl.address || "");
+  const address = normalizeAgentAddress(addressOverride || state.agents.transferTargetAddress || agentAutomationTargetSelect?.value || agentAutomationAddressInput?.value || state.remoteControl.address || "");
   if (!automationId) throw new Error("Escolha uma automacao para enviar.");
   if (!address) throw new Error("Informe o IP e a porta do Agent.");
   if (!state.remoteControl.connected || normalizeAgentAddress(state.remoteControl.address) !== address) {
+    state.agents.transferProgressLabel = "Conectando ao Agent antes do envio...";
+    renderAgentAutomationViews();
     await connectStudioControl(address);
   }
+  state.agents.transferProgressLabel = "Enviando pacote da automacao ao Agent...";
+  renderAgentAutomationViews();
   const result = await invoke("remote_agent_send_saved_automation", { address, id: automationId });
   const importedId = String(result?.imported_id || result?.importedId || "").trim();
+  state.agents.transferProgressLabel = "Atualizando automacoes remotas...";
+  renderAgentAutomationViews();
   await refreshStudioControlLibrary({ preferredId: importedId });
+  selectSchedulerAgentByAddress(address);
+  state.agentScheduler.selectedAutomationId = importedId || automationId;
+  renderAgentScheduler();
   if (agentAutomationTransferStatus) agentAutomationTransferStatus.textContent = "Automacao enviada com sucesso.";
   setMessage("Automacao enviada ao Agent.", "success");
   renderAgentAutomationViews();
+  return importedId || automationId;
 }
 
 async function openStudioControlAutomation(id) {
@@ -17836,6 +18848,25 @@ function insertValuesFromPanel(panelElement) {
   };
 }
 
+function normalizeInsertValuesForDraft(values = {}) {
+  const next = { ...values };
+  if (next.type === "open_url" && !String(next.openUrl || "").trim()) {
+    next.openUrl = "about:blank";
+  }
+  if (next.type === "open_program" && !String(next.programPath || "").trim()) {
+    next.programPath = "notepad.exe";
+  }
+  if (next.type === "chrome") {
+    next.chromeName = String(next.chromeName || "").trim() || "Chrome: capturar elemento";
+    if (!String(next.chromeTargetValue || "").trim() && !String(next.chromeHtml || "").trim()) {
+      next.chromeTargetMethod = next.chromeTargetMethod || "css";
+      next.chromeTargetValue = "__capturar_elemento__";
+      next.chromeActionType = next.chromeActionType || "clicar";
+    }
+  }
+  return next;
+}
+
 function closeInsertPanelWithAnimation(panelElement) {
   const panelState = state.insertPanel;
   const targetOrder = Number(panelElement?.dataset.targetOrder ?? panelState?.targetOrder);
@@ -18833,6 +19864,7 @@ agentsAutomationsTabButton?.addEventListener("click", async () => {
 agentAutomationTargetSelect?.addEventListener("change", () => {
   const address = normalizeAgentAddress(agentAutomationTargetSelect.value || "");
   state.agents.transferTargetAddress = address;
+  state.agents.transferProgressLabel = "";
   if (address) {
     if (normalizeAgentAddress(state.remoteControl.address) !== address) {
       state.remoteControl.connected = false;
@@ -18845,24 +19877,44 @@ agentAutomationTargetSelect?.addEventListener("change", () => {
 agentAutomationAddressInput?.addEventListener("input", () => {
   const address = String(agentAutomationAddressInput.value || "").trim();
   state.agents.transferTargetAddress = "";
+  state.agents.transferProgressLabel = "";
   if (normalizeAgentAddress(address) !== normalizeAgentAddress(state.remoteControl.address)) state.remoteControl.connected = false;
   state.remoteControl.address = address;
   renderAgentAutomationViews();
 });
 agentAutomationConnectButton?.addEventListener("click", async () => {
+  let keepProgressMessage = false;
   try {
+    state.agents.transferConnecting = true;
+    state.agents.transferProgressLabel = "Conectando ao Agent...";
+    renderAgentAutomationViews();
     setBusy("Conectando Agent");
     const address = normalizeAgentAddress(state.agents.transferTargetAddress || agentAutomationTargetSelect?.value || agentAutomationAddressInput?.value || "");
     await connectStudioControl(address);
-    refreshStudioControlLibrary({ silent: true }).catch((error) => {
-      console.warn("Agent conectado, mas a biblioteca remota nao carregou.", error);
+    selectSchedulerAgentByAddress(address);
+    try {
+      state.agents.transferProgressLabel = "Carregando automacoes do Agent...";
       renderAgentAutomationViews();
-    });
+      await refreshStudioControlLibrary({ silent: true });
+    } catch (libraryError) {
+      console.warn("Agent conectado, mas a biblioteca remota nao carregou.", libraryError);
+      state.agents.transferProgressLabel = "Conectado, mas nao consegui listar as automacoes remotas.";
+      keepProgressMessage = true;
+      setMessage(`Agent conectado, mas a biblioteca remota falhou: ${String(libraryError)}`, "error");
+    }
+    renderAgentScheduler();
+    renderAgentAutomationViews();
     setBusy("Pronto");
   } catch (error) {
     state.remoteControl.connected = false;
     setBusy("Erro");
     setMessage(String(error), "error");
+    renderAgentAutomationViews();
+  } finally {
+    state.agents.transferConnecting = false;
+    if (state.remoteControl.connected && !keepProgressMessage) {
+      state.agents.transferProgressLabel = "";
+    }
     renderAgentAutomationViews();
   }
 });
@@ -18870,18 +19922,28 @@ agentAutomationLocalList?.addEventListener("click", (event) => {
   const card = event.target.closest("[data-agent-transfer-id]");
   if (!card) return;
   state.agents.transferSelectedId = String(card.dataset.agentTransferId || "");
+  state.agents.transferProgressLabel = "";
   const selected = state.library.items.find((item) => String(item.id) === state.agents.transferSelectedId);
   if (agentAutomationTransferStatus) agentAutomationTransferStatus.textContent = `Selecionada: ${selected?.nome || selected?.name || "automacao"}`;
   renderAgentAutomationViews();
 });
 agentAutomationSendButton?.addEventListener("click", async () => {
   try {
+    state.agents.transferSending = true;
+    state.agents.transferProgressLabel = "Preparando envio...";
+    renderAgentAutomationViews();
     setBusy("Enviando automacao");
     await sendSavedAutomationToAgent();
+    state.agents.transferProgressLabel = "Automacao enviada e carregada no agendador.";
+    renderAgentAutomationViews();
     setBusy("Pronto");
   } catch (error) {
     setBusy("Erro");
+    state.agents.transferProgressLabel = `Falha no envio: ${String(error)}`;
     setMessage(String(error), "error");
+  } finally {
+    state.agents.transferSending = false;
+    renderAgentAutomationViews();
   }
 });
 agentScreenAutomationSelect?.addEventListener("change", () => {
@@ -18928,13 +19990,213 @@ agentScreenOpenVmButton?.addEventListener("click", async () => {
 });
 agentScreenExecuteButton?.addEventListener("click", async () => {
   try {
-    setBusy("Executando no Agent");
-    await runStudioControlAutomation(agentScreenAutomationSelect?.value || "", { minimizeAgent: true });
+    if (state.remoteControl.running) {
+      setBusy("Parando Agent");
+      await stopStudioControlAutomation();
+    } else {
+      setBusy("Executando no Agent");
+      await runStudioControlAutomation(agentScreenAutomationSelect?.value || "", { minimizeAgent: true });
+    }
     setBusy("Pronto");
   } catch (error) {
     setBusy("Erro");
     setMessage(String(error), "error");
   }
+});
+agentSchedulerAgentSelect?.addEventListener("change", () => {
+  state.agentScheduler.selectedAgentId = String(agentSchedulerAgentSelect.value || "");
+  state.agentScheduler.selectedAutomationId = "";
+  state.agentScheduler.createOpen = false;
+  renderAgentScheduler();
+});
+agentSchedulerConnectButton?.addEventListener("click", () => {
+  agentSchedulerConnectButton.disabled = true;
+  connectSelectedSchedulerAgent()
+    .catch((error) => {
+      setBusy("Erro");
+      setMessage(String(error), "error");
+      renderAgentScheduler();
+    })
+    .finally(() => {
+      renderAgentScheduler();
+    });
+});
+agentSchedulerAutomationCards?.addEventListener("click", (event) => {
+  const schedulerControl = event.target.closest(".agent-screen-automation-back button, .agent-screen-automation-back input, .agent-screen-automation-back select");
+  const runNowButton = event.target.closest("[data-agent-scheduler-run-now]");
+  if (runNowButton) {
+    event.stopPropagation();
+    runNowButton.disabled = true;
+    executeSchedulerAutomationNow(runNowButton.dataset.agentSchedulerRunNow || "")
+      .catch((error) => {
+        setBusy("Erro");
+        setMessage(String(error), "error");
+      })
+      .finally(() => renderAgentScheduler());
+    return;
+  }
+  const stopNowButton = event.target.closest("[data-agent-scheduler-stop-now]");
+  if (stopNowButton) {
+    event.stopPropagation();
+    stopNowButton.disabled = true;
+    stopStudioControlAutomation()
+      .catch((error) => {
+        setBusy("Erro");
+        setMessage(String(error), "error");
+      })
+      .finally(() => renderAgentScheduler());
+    return;
+  }
+  const closeButton = event.target.closest("[data-agent-scheduler-close-card]");
+  if (closeButton) {
+    event.stopPropagation();
+    const card = closeButton.closest(".agent-screen-automation-card");
+    card?.classList.add("is-unflipping");
+    window.setTimeout(() => {
+      state.agentScheduler.createOpen = false;
+      state.agentScheduler.suppressFlipAnimation = false;
+      renderAgentScheduler();
+    }, 380);
+    return;
+  }
+  const monthButton = event.target.closest("[data-agent-scheduler-month]");
+  if (monthButton) {
+    event.stopPropagation();
+    state.agentScheduler.suppressFlipAnimation = true;
+    ensureSchedulerDefaults();
+    const direction = Number(monthButton.dataset.agentSchedulerMonth || 0);
+    const [year, month] = String(state.agentScheduler.visibleMonth).split("-").map(Number);
+    state.agentScheduler.visibleMonth = schedulerMonthKey(new Date(year, month - 1 + direction, 1));
+    renderAgentScheduler();
+    return;
+  }
+  const dateButton = event.target.closest("[data-agent-scheduler-date]");
+  if (dateButton) {
+    event.stopPropagation();
+    state.agentScheduler.suppressFlipAnimation = true;
+    state.agentScheduler.selectedDate = String(dateButton.dataset.agentSchedulerDate || "");
+    state.agentScheduler.visibleMonth = state.agentScheduler.selectedDate.slice(0, 7);
+    renderAgentScheduler();
+    return;
+  }
+  const hourDeltaButton = event.target.closest("[data-agent-scheduler-hour-delta]");
+  if (hourDeltaButton) {
+    event.stopPropagation();
+    state.agentScheduler.suppressFlipAnimation = true;
+    const { hour, minute } = schedulerTimeParts();
+    const nextHour = hour + Number(hourDeltaButton.dataset.agentSchedulerHourDelta || 0);
+    if (agentSchedulerTimeInput) agentSchedulerTimeInput.value = schedulerTimeValue(nextHour, minute);
+    renderAgentScheduler();
+    return;
+  }
+  const minuteDeltaButton = event.target.closest("[data-agent-scheduler-minute-delta]");
+  if (minuteDeltaButton) {
+    event.stopPropagation();
+    state.agentScheduler.suppressFlipAnimation = true;
+    const { hour, minute } = schedulerTimeParts();
+    const nextMinute = minute + Number(minuteDeltaButton.dataset.agentSchedulerMinuteDelta || 0);
+    if (agentSchedulerTimeInput) agentSchedulerTimeInput.value = schedulerTimeValue(hour, nextMinute);
+    renderAgentScheduler();
+    return;
+  }
+  const hourButton = event.target.closest("[data-agent-scheduler-hour]");
+  if (hourButton) {
+    event.stopPropagation();
+    state.agentScheduler.suppressFlipAnimation = true;
+    const { minute } = schedulerTimeParts();
+    if (agentSchedulerTimeInput) agentSchedulerTimeInput.value = schedulerTimeValue(hourButton.dataset.agentSchedulerHour, minute);
+    renderAgentScheduler();
+    return;
+  }
+  const minuteButton = event.target.closest("[data-agent-scheduler-minute]");
+  if (minuteButton) {
+    event.stopPropagation();
+    state.agentScheduler.suppressFlipAnimation = true;
+    const { hour } = schedulerTimeParts();
+    if (agentSchedulerTimeInput) agentSchedulerTimeInput.value = schedulerTimeValue(hour, minuteButton.dataset.agentSchedulerMinute);
+    renderAgentScheduler();
+    return;
+  }
+  const repeatChip = event.target.closest("[data-agent-scheduler-repeat-chip]");
+  if (repeatChip) {
+    event.stopPropagation();
+    state.agentScheduler.suppressFlipAnimation = true;
+    state.agentScheduler.repeat = repeatChip.dataset.agentSchedulerRepeatChip || "once";
+    if (agentSchedulerRepeatSelect) agentSchedulerRepeatSelect.value = state.agentScheduler.repeat;
+    renderAgentScheduler();
+    return;
+  }
+  const createButton = event.target.closest("[data-agent-scheduler-create-inline]");
+  if (createButton) {
+    event.stopPropagation();
+    try {
+      createAgentScheduleFromForm();
+    } catch (error) {
+      setMessage(String(error), "error");
+    }
+    return;
+  }
+  if (schedulerControl) {
+    event.stopPropagation();
+    return;
+  }
+  const card = event.target.closest("[data-agent-scheduler-automation]");
+  if (!card) return;
+  state.agentScheduler.selectedAutomationId = String(card.dataset.agentSchedulerAutomation || "");
+  if (agentSchedulerAutomationSelect) agentSchedulerAutomationSelect.value = state.agentScheduler.selectedAutomationId;
+  state.agentScheduler.createOpen = true;
+  state.agentScheduler.suppressFlipAnimation = false;
+  renderAgentScheduler();
+});
+agentSchedulerAddButton?.addEventListener("click", () => {
+  state.agentScheduler.createOpen = true;
+  renderAgentScheduler();
+});
+agentSchedulerCancelButton?.addEventListener("click", () => {
+  state.agentScheduler.createOpen = false;
+  renderAgentScheduler();
+});
+agentSchedulerAutomationSelect?.addEventListener("change", () => {
+  state.agentScheduler.selectedAutomationId = String(agentSchedulerAutomationSelect.value || "");
+  renderAgentScheduler();
+});
+agentSchedulerTimeInput?.addEventListener("input", renderAgentScheduler);
+agentSchedulerRepeatSelect?.addEventListener("change", renderAgentScheduler);
+agentSchedulerPrevMonthButton?.addEventListener("click", () => {
+  ensureSchedulerDefaults();
+  const [year, month] = String(state.agentScheduler.visibleMonth).split("-").map(Number);
+  state.agentScheduler.visibleMonth = schedulerMonthKey(new Date(year, month - 2, 1));
+  renderAgentScheduler();
+});
+agentSchedulerNextMonthButton?.addEventListener("click", () => {
+  ensureSchedulerDefaults();
+  const [year, month] = String(state.agentScheduler.visibleMonth).split("-").map(Number);
+  state.agentScheduler.visibleMonth = schedulerMonthKey(new Date(year, month, 1));
+  renderAgentScheduler();
+});
+agentSchedulerCalendarGrid?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-agent-scheduler-date]");
+  if (!button) return;
+  state.agentScheduler.selectedDate = String(button.dataset.agentSchedulerDate || "");
+  state.agentScheduler.visibleMonth = state.agentScheduler.selectedDate.slice(0, 7);
+  renderAgentScheduler();
+});
+agentSchedulerCreateButton?.addEventListener("click", () => {
+  try {
+    createAgentScheduleFromForm();
+  } catch (error) {
+    setMessage(String(error), "error");
+  }
+});
+agentSchedulerList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-agent-schedule-remove]");
+  if (!button) return;
+  const id = String(button.dataset.agentScheduleRemove || "");
+  state.agentScheduler.items = state.agentScheduler.items.filter((item) => String(item.id) !== id);
+  state.agentScheduler.runningIds.delete(id);
+  persistAgentScheduler();
+  renderAgentScheduler();
+  setMessage("Agendamento removido.", "success");
 });
 smartRecorderStartButton?.addEventListener("click", () => {
   startSmartRecorder();
@@ -21466,7 +22728,7 @@ commandMapList.addEventListener("click", async (event) => {
   }
 
   if (action === "save") {
-    const values = insertValuesFromPanel(panel);
+    const values = normalizeInsertValuesForDraft(insertValuesFromPanel(panel));
     const common = {
       targetOrder: values.targetOrder,
       position: values.position,
@@ -21971,7 +23233,7 @@ commandMapList.addEventListener("click", async (event) => {
 
     state.insertPanel = {
       ...state.insertPanel,
-      ...insertValuesFromPanel(panel),
+      ...values,
       isSaving: true,
       suppressIntro: true,
     };
@@ -22045,8 +23307,10 @@ async function boot() {
     setBusy("Carregando");
     updateCommandMapSaveUI();
     loadAgentsConfig();
+    loadAgentScheduler();
     renderAgents();
     renderStudioControl();
+    startAgentSchedulerTimer();
     syncExecutionWindowModeFrom("top");
     setAssistControlTab(state.assistControlTab);
     setWorkspaceTab(state.activeTab);
