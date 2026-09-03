@@ -1351,6 +1351,24 @@ fn local_python_candidates(root: &Path) -> Vec<PathBuf> {
         }
     }
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let base = PathBuf::from(local_app_data);
+        for product in ["FlowDetect Agent", "FlowDetect Studio", "FlowDetect"] {
+            local_candidates.push(
+                base.join("Programs")
+                    .join(product)
+                    .join("resources")
+                    .join("python_runtime")
+                    .join("python.exe"),
+            );
+            local_candidates.push(
+                base.join("Programs")
+                    .join(product)
+                    .join("python_runtime")
+                    .join("python.exe"),
+            );
+        }
+    }
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
         let base = PathBuf::from(local_app_data)
             .join("Programs")
             .join("Python");
@@ -1427,6 +1445,22 @@ fn python_installer_candidates(root: &Path) -> Vec<PathBuf> {
             }
         }
     }
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let base = PathBuf::from(local_app_data);
+        for product in ["FlowDetect Agent", "FlowDetect Studio", "FlowDetect"] {
+            candidates.push(
+                base.join("Programs")
+                    .join(product)
+                    .join("resources")
+                    .join("python-installer.exe"),
+            );
+            candidates.push(
+                base.join("Programs")
+                    .join(product)
+                    .join("python-installer.exe"),
+            );
+        }
+    }
     candidates
 }
 
@@ -1458,6 +1492,22 @@ fn python_wheels_candidates(root: &Path) -> Vec<PathBuf> {
                 candidates.push(parent.join("resources").join("python-wheels"));
                 candidates.push(parent.join("python-wheels"));
             }
+        }
+    }
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        let base = PathBuf::from(local_app_data);
+        for product in ["FlowDetect Agent", "FlowDetect Studio", "FlowDetect"] {
+            candidates.push(
+                base.join("Programs")
+                    .join(product)
+                    .join("resources")
+                    .join("python-wheels"),
+            );
+            candidates.push(
+                base.join("Programs")
+                    .join(product)
+                    .join("python-wheels"),
+            );
         }
     }
     candidates
@@ -1595,11 +1645,7 @@ fn try_bootstrap_local_python(root: &Path) -> Result<(), String> {
         let mut command = Command::new("cmd");
         command.current_dir(root).arg("/C").arg(&installer_script);
         configure_no_window(&mut command);
-        if command
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
-        {
+        if command.status().map(|status| status.success()).unwrap_or(false) {
             return Ok(());
         }
     }
@@ -1613,11 +1659,17 @@ fn try_bootstrap_local_python(root: &Path) -> Result<(), String> {
         .map_err(|err| format!("Falha ao criar runtime Python local: {err}"))?;
 
     let target_dir_arg = format!("TargetDir={}", python_dir.to_string_lossy());
+    let installer_log_arg = format!(
+        "{}",
+        root.join("python_installer_runtime.log").to_string_lossy()
+    );
     let mut command = Command::new(&installer);
     command
         .current_dir(root)
         .args([
             "/quiet",
+            "/log",
+            &installer_log_arg,
             "InstallAllUsers=0",
             "AssociateFiles=0",
             "PrependPath=0",
@@ -1633,20 +1685,40 @@ fn try_bootstrap_local_python(root: &Path) -> Result<(), String> {
         ])
         .arg(target_dir_arg);
     configure_no_window(&mut command);
-    let output = command
-        .output()
+    let status = command
+        .status()
         .map_err(|err| format!("Falha ao instalar Python local do FlowDetect: {err}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let detail = if !stderr.is_empty() { stderr } else { stdout };
-        return Err(if detail.is_empty() {
-            "Falha ao instalar Python local do FlowDetect.".to_string()
-        } else {
-            format!("Falha ao instalar Python local do FlowDetect: {detail}")
-        });
+    if !status.success() && status.code() != Some(3010) {
+        return Err(format!(
+            "Falha ao instalar Python local do FlowDetect. Codigo: {:?}. Log: {}",
+            status.code(),
+            installer_log_arg
+        ));
     }
-    install_requirements_with_python(root, &python_dir.join("python.exe"))?;
+
+    let python_exe = python_dir.join("python.exe");
+    let mut ready = false;
+    for _ in 0..60 {
+        if python_exe.exists() {
+            let mut version_check = Command::new(&python_exe);
+            version_check.arg("--version");
+            configure_no_window(&mut version_check);
+            if version_check.status().map(|status| status.success()).unwrap_or(false) {
+                ready = true;
+                break;
+            }
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+
+    if !ready {
+        return Err(format!(
+            "Python local nao ficou pronto apos a instalacao. Log: {}",
+            installer_log_arg
+        ));
+    }
+
+    install_requirements_with_python(root, &python_exe)?;
     Ok(())
 }
 
@@ -1658,6 +1730,14 @@ fn python_command(root: &PathBuf) -> Result<(String, Vec<String>), String> {
     if let Some(detected) = probe_local_python(root) {
         let _ = PYTHON_COMMAND_CACHE.set(detected.clone());
         return Ok(detected);
+    }
+
+    if python_installer_candidates(root).into_iter().any(|path| path.exists()) {
+        try_bootstrap_local_python(root)?;
+        if let Some(detected) = probe_local_python(root) {
+            let _ = PYTHON_COMMAND_CACHE.set(detected.clone());
+            return Ok(detected);
+        }
     }
 
     let candidates = [

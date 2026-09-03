@@ -50,16 +50,10 @@
       "../../validar_dependencias_instaladas.py": "validar_dependencias_instaladas.py",
       "../../requirements.txt": "requirements.txt",
       "../../instalar_dependencias_silencioso.bat": "instalar_dependencias_silencioso.bat",
-      "../../README.md": "README.md",
-      "../../README_AGENTE.md": "README_AGENTE.md",
-      "../../COMO_COMPILAR_GERADOR.txt": "COMO_COMPILAR_GERADOR.txt",
-      "../../tauri_gerador/src-tauri/installer_support/python-installer.exe": "python-installer.exe",
-      "../../tauri_gerador/src-tauri/installer_support/python-wheels/": "python-wheels/",
+      "../../tauri_gerador/src-tauri/installer_support/python_runtime_prebuilt/": "python_runtime/",
       "../../tauri_gerador/src-tauri/installer_support/runtime_seed/mapeamento_teclado.json": "mapeamento_teclado.json",
       "../../tauri_gerador/src-tauri/installer_support/runtime_seed/resumo_teclado.txt": "resumo_teclado.txt",
-      "../../tauri_gerador/src-tauri/installer_support/runtime_seed/automacoes/": "automacoes/",
-      "installer_support/meshcentral/": "meshcentral/",
-      "installer_support/nodejs/": "nodejs/"
+      "../../tauri_gerador/src-tauri/installer_support/runtime_seed/automacoes/": "automacoes/"
     },
     "windows": {
       "webviewInstallMode": {

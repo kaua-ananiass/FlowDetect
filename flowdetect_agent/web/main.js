@@ -35,22 +35,14 @@ const state = {
   logs: [],
   librarySignature: "",
   remotePollTimer: null,
-  meshPollTimer: null,
-  webrtcPollTimer: null,
-  webrtcSessionId: "",
-  webrtcPeer: null,
-  webrtcStream: null,
-  pendingRemotePointerMove: null,
-  remotePointerMoveTimer: null,
-  remotePointerMoveBusy: false,
-  meshStatus: {
-    running: false,
-    starting: false,
-    message: "",
-    url: "",
-  },
   remoteStatusRefreshing: false,
   remoteConnected: false,
+  lowPowerMode: true,
+  lastProgressSignature: "",
+  lastAssistMapSignature: "",
+  lastObserverSignature: "",
+  lastRemoteLibraryCheckAt: 0,
+  lastRemoteProgressRenderAt: 0,
 };
 
 const elements = {
@@ -64,7 +56,6 @@ const elements = {
   observerProgressTitle: document.getElementById("observerProgressTitle"),
   observerCurrentBlockText: document.getElementById("observerCurrentBlockText"),
   observerBlockList: document.getElementById("observerBlockList"),
-  meshCentralStatusChip: document.getElementById("meshCentralStatusChip"),
   toggleAgentPanelButton: document.getElementById("toggleAgentPanelButton"),
   minimizeAgentButton: document.getElementById("minimizeAgentButton"),
   importZipButton: document.getElementById("importZipButton"),
@@ -106,6 +97,9 @@ const elements = {
   viewButtons: Array.from(document.querySelectorAll("[data-agent-view]")),
   viewPanels: Array.from(document.querySelectorAll("[data-agent-panel]")),
 };
+
+let progressRenderTimer = null;
+let pendingProgressPayload = null;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -670,248 +664,6 @@ function renderAgentConnectionState(snapshot = {}) {
   setElementText(elements.observerConnectionStatus, connected ? "STUDIO CONECTADO" : "ONLINE");
 }
 
-function renderMeshCentralStatus() {
-  if (!elements.meshCentralStatusChip) {
-    return;
-  }
-  const mesh = state.meshStatus || {};
-  const label = mesh.running
-    ? "Tela remota: ativa"
-    : mesh.starting
-      ? "Tela remota: preparando"
-      : "Tela remota: parada";
-  elements.meshCentralStatusChip.textContent = label;
-  elements.meshCentralStatusChip.title = mesh.message || mesh.url || label;
-  elements.meshCentralStatusChip.classList.toggle("is-running", Boolean(mesh.running));
-  elements.meshCentralStatusChip.classList.toggle("is-starting", Boolean(mesh.starting));
-}
-
-async function refreshMeshCentralStatus({ silent = false } = {}) {
-  try {
-    const result = await invoke("agent_meshcentral_status");
-    state.meshStatus = {
-      running: Boolean(result?.running),
-      starting: Boolean(result?.starting),
-      message: String(result?.message || ""),
-      url: String(result?.url || ""),
-    };
-    renderMeshCentralStatus();
-    if (!silent && state.meshStatus.message) {
-      pushLog(state.meshStatus.message, state.meshStatus.running ? "success" : "info", "Tela remota");
-    }
-  } catch (error) {
-    if (!silent) {
-      pushLog(String(error), "error", "Tela remota");
-    }
-  }
-}
-
-function startMeshCentralPolling() {
-  if (state.meshPollTimer) {
-    window.clearInterval(state.meshPollTimer);
-  }
-  state.meshPollTimer = window.setInterval(() => {
-    refreshMeshCentralStatus({ silent: true }).catch(() => {});
-  }, 2500);
-}
-
-function waitForAgentIceGatheringComplete(peer, timeoutMs = 2200) {
-  if (!peer || peer.iceGatheringState === "complete") {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    const timeout = window.setTimeout(done, timeoutMs);
-    function done() {
-      window.clearTimeout(timeout);
-      peer.removeEventListener("icegatheringstatechange", onChange);
-      resolve();
-    }
-    function onChange() {
-      if (peer.iceGatheringState === "complete") {
-        done();
-      }
-    }
-    peer.addEventListener("icegatheringstatechange", onChange);
-  });
-}
-
-function stopAgentWebRtc() {
-  if (state.webrtcPeer) {
-    state.webrtcPeer.close();
-    state.webrtcPeer = null;
-  }
-  if (state.webrtcStream) {
-    state.webrtcStream.getTracks().forEach((track) => track.stop());
-    state.webrtcStream = null;
-  }
-  state.webrtcSessionId = "";
-  state.pendingRemotePointerMove = null;
-  state.remotePointerMoveBusy = false;
-  if (state.remotePointerMoveTimer) {
-    window.clearTimeout(state.remotePointerMoveTimer);
-    state.remotePointerMoveTimer = null;
-  }
-}
-
-function flushRemotePointerMove() {
-  if (state.remotePointerMoveBusy) {
-    return;
-  }
-  const nextPayload = state.pendingRemotePointerMove;
-  state.pendingRemotePointerMove = null;
-  if (!nextPayload) {
-    return;
-  }
-  state.remotePointerMoveBusy = true;
-  invoke("agent_remote_control_event", { event: nextPayload })
-    .catch((error) => {
-      console.warn("Falha ao executar movimento remoto.", error);
-    })
-    .finally(() => {
-      state.remotePointerMoveBusy = false;
-      if (state.pendingRemotePointerMove) {
-        queueMicrotask(flushRemotePointerMove);
-      }
-    });
-}
-
-function scheduleRemotePointerMove(payload) {
-  state.pendingRemotePointerMove = payload;
-  if (state.remotePointerMoveBusy) {
-    return;
-  }
-  flushRemotePointerMove();
-}
-
-function restoreAgentWindowDuringShare() {
-  window.setTimeout(() => {
-    try {
-      const currentWindow = tauriWindow?.getCurrentWindow?.();
-      if (!currentWindow) {
-        return;
-      }
-      if (currentWindow.show) {
-        currentWindow.show().catch(() => {});
-      }
-      if (currentWindow.unminimize) {
-        currentWindow.unminimize().catch(() => {});
-      }
-      if (currentWindow.setFocus) {
-        currentWindow.setFocus().catch(() => {});
-      }
-    } catch (error) {
-      console.warn("Nao foi possivel restaurar o Agent durante o compartilhamento.", error);
-    }
-  }, 200);
-}
-
-async function startAgentWebRtcSession(signal) {
-  const sessionId = String(signal?.session_id || "");
-  const offer = signal?.offer || null;
-  if (!sessionId || !offer || sessionId === state.webrtcSessionId) {
-    return;
-  }
-  if (!navigator.mediaDevices?.getDisplayMedia || !window.RTCPeerConnection) {
-    await invoke("agent_webrtc_clear");
-    pushLog("WebRTC indisponivel neste Agent. Use a visualizacao leve do Studio.", "error", "Tela remota");
-    return;
-  }
-  stopAgentWebRtc();
-  state.webrtcSessionId = sessionId;
-  pushLog("Studio solicitou transmissao WebRTC. Confirme a captura de tela se o Windows pedir.", "info", "Tela remota");
-  try {
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: {
-        frameRate: { ideal: 60, max: 60 },
-        width: { ideal: 1920, max: 2560 },
-        height: { ideal: 1080, max: 1440 },
-        cursor: "always",
-        displaySurface: "monitor",
-      },
-      audio: false,
-      preferCurrentTab: false,
-      selfBrowserSurface: "exclude",
-      surfaceSwitching: "exclude",
-    });
-    state.webrtcStream = stream;
-    restoreAgentWindowDuringShare();
-    const peer = new RTCPeerConnection({ iceServers: [] });
-    state.webrtcPeer = peer;
-    peer.ondatachannel = (event) => {
-      const channel = event.channel;
-      if (!["flowdetect-control", "flowdetect-pointer"].includes(channel.label)) {
-        return;
-      }
-      channel.onmessage = (messageEvent) => {
-        try {
-          const payload = JSON.parse(String(messageEvent.data || "{}"));
-          if (channel.label === "flowdetect-pointer" && payload?.kind === "mouse" && payload?.event === "move") {
-            scheduleRemotePointerMove(payload);
-            return;
-          }
-          invoke("agent_remote_control_event", { event: payload }).catch((error) => {
-            console.warn("Falha ao executar controle remoto.", error);
-          });
-        } catch (error) {
-          console.warn("Evento remoto invalido.", error);
-        }
-      };
-    };
-    for (const track of stream.getVideoTracks()) {
-      track.contentHint = "detail";
-      const sender = peer.addTrack(track, stream);
-      const parameters = sender.getParameters();
-      parameters.degradationPreference = "maintain-resolution";
-      parameters.encodings = parameters.encodings?.length ? parameters.encodings : [{}];
-      parameters.encodings[0].maxBitrate = 12_000_000;
-      parameters.encodings[0].maxFramerate = 60;
-      sender.setParameters(parameters).catch((error) => {
-        console.warn("O WebRTC manteve os parametros padrao do Windows.", error);
-      });
-    }
-    await peer.setRemoteDescription(offer);
-    const answer = await peer.createAnswer();
-    await peer.setLocalDescription(answer);
-    await waitForAgentIceGatheringComplete(peer);
-    await invoke("agent_webrtc_set_answer", {
-      sessionId,
-      answer: {
-        type: peer.localDescription.type,
-        sdp: peer.localDescription.sdp,
-      },
-    });
-    pushLog("Transmissao WebRTC ativa para o Studio.", "success", "Tela remota");
-  } catch (error) {
-    stopAgentWebRtc();
-    await invoke("agent_webrtc_clear").catch(() => {});
-    pushLog(`Nao foi possivel iniciar WebRTC: ${String(error)}`, "error", "Tela remota");
-  }
-}
-
-async function pollAgentWebRtcOffer() {
-  try {
-    const signal = await invoke("agent_webrtc_poll_offer");
-    const sessionId = String(signal?.session_id || "");
-    if (sessionId && signal?.offer && sessionId !== state.webrtcSessionId) {
-      await startAgentWebRtcSession(signal);
-    }
-    if (!sessionId && state.webrtcSessionId) {
-      stopAgentWebRtc();
-    }
-  } catch (error) {
-    console.warn("Falha ao consultar offer WebRTC.", error);
-  }
-}
-
-function startAgentWebRtcPolling() {
-  if (state.webrtcPollTimer) {
-    window.clearInterval(state.webrtcPollTimer);
-  }
-  state.webrtcPollTimer = window.setInterval(() => {
-    pollAgentWebRtcOffer().catch(() => {});
-  }, 300);
-}
-
 async function safeListen(eventName, handler) {
   if (typeof tauriEvent?.listen !== "function") {
     return null;
@@ -1055,7 +807,7 @@ function syncSafeAreaGuard() {
     if (!state.safeAreaTimer) {
       state.safeAreaTimer = window.setInterval(() => {
         protectAgentSafeArea().catch(() => {});
-      }, 1500);
+      }, 4000);
     }
     protectAgentSafeArea().catch(() => {});
     return;
@@ -1086,6 +838,16 @@ function renderObserverBlocks() {
   const activeIndex = visibleEvents.findIndex((event) => Number(event.order) === activeOrder);
   const currentEvent = activeIndex >= 0 ? visibleEvents[activeIndex] : currentBlockEvent();
   setElementText(elements.observerCurrentBlockText, currentEvent?.title || "Aguardando execucao");
+  const observerSignature = [
+    visibleEvents.length,
+    activeOrder,
+    activeIndex,
+    state.running ? 1 : 0,
+  ].join("|");
+  if (state.lastObserverSignature === observerSignature) {
+    return;
+  }
+  state.lastObserverSignature = observerSignature;
 
   if (!visibleEvents.length) {
     elements.observerBlockList.innerHTML = `
@@ -1114,17 +876,32 @@ function renderObserverBlocks() {
 
 function renderProgress() {
   const percent = Math.max(0, Math.min(100, Number(state.progress.percent || 0)));
-  elements.progressTitle.textContent = state.progress.title;
-  elements.progressPercent.textContent = `${Math.round(percent)}%`;
-  elements.progressFill.style.width = `${percent}%`;
-  elements.progressDescription.textContent = state.progress.description;
+  const roundedPercent = Math.round(percent);
+  const progressSignature = [
+    roundedPercent,
+    state.progress.title || "",
+    state.progress.description || "",
+    state.progress.company || "",
+    state.currentSequence || "",
+    state.currentOrder || "",
+    state.running ? 1 : 0,
+  ].join("|");
+  if (state.lastProgressSignature === progressSignature) {
+    return;
+  }
+  state.lastProgressSignature = progressSignature;
+
+  if (elements.progressTitle) elements.progressTitle.textContent = state.progress.title;
+  if (elements.progressPercent) elements.progressPercent.textContent = `${roundedPercent}%`;
+  if (elements.progressFill) elements.progressFill.style.width = `${percent}%`;
+  if (elements.progressDescription) elements.progressDescription.textContent = state.progress.description;
 
   const currentPage = getPageDefinition(state.currentSequence);
-  elements.currentCompanyText.textContent = state.progress.company || "-";
-  elements.currentPageText.textContent = currentPage?.label || "Pagina 1";
-  elements.currentBlockText.textContent = currentBlockEvent()?.title || "Aguardando execucao";
+  if (elements.currentCompanyText) elements.currentCompanyText.textContent = state.progress.company || "-";
+  if (elements.currentPageText) elements.currentPageText.textContent = currentPage?.label || "Pagina 1";
+  if (elements.currentBlockText) elements.currentBlockText.textContent = currentBlockEvent()?.title || "Aguardando execucao";
 
-  setElementText(elements.observerProgressPercent, `${Math.round(percent)}%`);
+  setElementText(elements.observerProgressPercent, `${roundedPercent}%`);
   setElementText(elements.observerProgressTitle, state.progress.title || "Aguardando execucao");
   if (elements.observerProgressFill) {
     elements.observerProgressFill.style.width = `${percent}%`;
@@ -1366,6 +1143,19 @@ function centerCurrentCard(order, behavior = "smooth") {
 function renderAssistMap() {
   syncTheme();
   const visibleEvents = currentVisibleEvents();
+  const assistSignature = [
+    visibleEvents.map((event) => `${event.order}:${event.type}:${event.title}`).join(","),
+    state.currentSequence || "",
+    state.currentOrder || "",
+    state.detailOpenOrder || "",
+    state.running ? 1 : 0,
+    Math.round(Number(state.progress.percent || 0)),
+  ].join("|");
+  if (state.lastAssistMapSignature === assistSignature) {
+    renderPreviewToolbar();
+    return;
+  }
+  state.lastAssistMapSignature = assistSignature;
   if (!visibleEvents.length) {
     state.detailOpenOrder = null;
     elements.assistMapList.classList.remove("has-detail-open");
@@ -1600,6 +1390,9 @@ async function runAutomation(id = "") {
   state.progress.description = String(message || "Execucao iniciada.");
   state.progress.percent = 0;
   state.progress.company = "";
+  state.lastProgressSignature = "";
+  state.lastAssistMapSignature = "";
+  state.lastObserverSignature = "";
   renderProgress();
   renderAssistMap();
   updateButtons();
@@ -1634,6 +1427,43 @@ function applyProgressPosition(payload = {}) {
   }
 }
 
+function applyProgressPayload(payload = {}, options = {}) {
+  const forceMap = Boolean(options.forceMap);
+  const remoteRunning = options.running ?? true;
+  const previousOrder = Number(state.currentOrder || 0);
+  state.running = Boolean(remoteRunning);
+  applyProgressPosition(payload);
+  state.progress.percent = Number(payload.percent || state.progress.percent || 0);
+  state.progress.company = String(payload.company || state.progress.company || "");
+  state.progress.title = state.progress.company
+    ? `Executando ${state.progress.company}`
+    : String(payload.title || payload.titulo || "Executando automacao");
+  state.progress.description = String(payload.description || payload.descricao || state.progress.description || "Executando etapa da automacao.");
+  renderProgress();
+  const now = Date.now();
+  const orderChanged = Number(state.currentOrder || 0) !== previousOrder;
+  if (forceMap || orderChanged || now - state.lastRemoteProgressRenderAt > 900) {
+    state.lastRemoteProgressRenderAt = now;
+    renderPageChips();
+    renderAssistMap();
+  }
+  updateButtons();
+  setStatusChip(state.running ? "Executando" : "Pronto", state.running ? "running" : "idle");
+}
+
+function scheduleProgressPayload(payload = {}) {
+  pendingProgressPayload = { ...(pendingProgressPayload || {}), ...payload };
+  if (progressRenderTimer) {
+    return;
+  }
+  progressRenderTimer = window.setTimeout(() => {
+    const nextPayload = pendingProgressPayload || {};
+    pendingProgressPayload = null;
+    progressRenderTimer = null;
+    applyProgressPayload(nextPayload);
+  }, state.lowPowerMode ? 250 : 80);
+}
+
 function applyFinishedState(success, code) {
   state.running = false;
   state.progress.percent = success ? 100 : state.progress.percent;
@@ -1641,6 +1471,9 @@ function applyFinishedState(success, code) {
   state.progress.description = success
     ? "Automacao concluida com sucesso."
     : `Execucao encerrada com codigo ${code}.`;
+  state.lastProgressSignature = "";
+  state.lastAssistMapSignature = "";
+  state.lastObserverSignature = "";
   renderProgress();
   renderAssistMap();
   updateButtons();
@@ -1654,6 +1487,7 @@ async function refreshRemoteAgentState() {
   }
   state.remoteStatusRefreshing = true;
   try {
+    const now = Date.now();
     const snapshotPayload = await invoke("get_agent_remote_snapshot");
     const snapshot = snapshotPayload?.snapshot || {};
     const progress = snapshot.progress || {};
@@ -1661,38 +1495,38 @@ async function refreshRemoteAgentState() {
     const remoteRunning = Boolean(snapshot.running);
     renderAgentConnectionState(snapshot);
 
-    const libraryResult = await invoke("list_saved_automations");
-    const nextLibrary = Array.isArray(libraryResult?.items) ? libraryResult.items : [];
-    const nextSignature = librarySignature(nextLibrary);
-    const libraryChanged = nextSignature !== state.librarySignature;
-    if (libraryChanged) {
-      await refreshLibrary({
-        preferredId: remoteAutomationId || state.selectedAutomationId,
-        silent: true,
-        forceRoadmap: Boolean(remoteAutomationId),
-      });
-      if (!state.running) {
-        pushLog("Biblioteca atualizada automaticamente pelo Control.", "info", "Sincronizacao");
+    const shouldCheckLibrary = !state.lastRemoteLibraryCheckAt
+      || now - state.lastRemoteLibraryCheckAt > (remoteRunning ? 15000 : 8000)
+      || (remoteAutomationId && !state.library.some((item) => String(item.id) === remoteAutomationId));
+    if (shouldCheckLibrary) {
+      state.lastRemoteLibraryCheckAt = now;
+      const libraryResult = await invoke("list_saved_automations");
+      const nextLibrary = Array.isArray(libraryResult?.items) ? libraryResult.items : [];
+      const nextSignature = librarySignature(nextLibrary);
+      const libraryChanged = nextSignature !== state.librarySignature;
+      if (libraryChanged) {
+        await refreshLibrary({
+          preferredId: remoteAutomationId || state.selectedAutomationId,
+          silent: true,
+          forceRoadmap: Boolean(remoteAutomationId),
+        });
+        if (!state.running) {
+          pushLog("Biblioteca atualizada automaticamente pelo Control.", "info", "Sincronizacao");
+        }
       }
-    } else if (remoteAutomationId && String(state.selectedAutomationId) !== remoteAutomationId) {
+    }
+
+    if (remoteAutomationId && String(state.selectedAutomationId) !== remoteAutomationId) {
       await loadAutomationRoadmap(remoteAutomationId, { silent: true });
     }
 
     if (remoteRunning || state.running) {
-      state.running = remoteRunning;
-      if (progress.sequence || progress.order) {
-        applyProgressPosition(progress);
-      }
-      state.progress.percent = Number(progress.percent || state.progress.percent || 0);
-      state.progress.company = String(progress.company || state.progress.company || "");
-      state.progress.title = remoteRunning
-        ? `Executando ${selectedAutomation()?.nome || snapshot.automation_name || "automacao"}`
-        : state.progress.title;
-      state.progress.description = String(progress.description || state.progress.description || "");
-      renderProgress();
-      renderAssistMap();
-      updateButtons();
-      setStatusChip(remoteRunning ? "Executando" : "Pronto", remoteRunning ? "running" : "idle");
+      applyProgressPayload({
+        ...progress,
+        title: remoteRunning
+          ? `Executando ${selectedAutomation()?.nome || snapshot.automation_name || "automacao"}`
+          : state.progress.title,
+      }, { running: remoteRunning });
     }
 
     if (Array.isArray(snapshot.logs) && snapshot.logs.length) {
@@ -1711,7 +1545,7 @@ function startRemoteAgentPolling() {
   }
   state.remotePollTimer = window.setInterval(() => {
     refreshRemoteAgentState().catch(() => {});
-  }, 2000);
+  }, 3000);
 }
 
 async function handleLibraryClick(event) {
@@ -1886,7 +1720,7 @@ function handleAssistMapKeydown(event) {
 }
 
 async function boot() {
-  document.body.classList.add("agent-compact-mode");
+  document.body.classList.add("agent-compact-mode", "agent-lite-mode");
   await syncAgentCompactWindow("boot");
   scheduleAgentCompactWindowSync("boot-stabilize");
   await loadAgentConnectionInfo();
@@ -2020,7 +1854,13 @@ async function boot() {
   });
 
   await safeListen("test-execution-state", (event) => {
+    const wasRunning = state.running;
     state.running = Boolean(event.payload?.running);
+    if (wasRunning !== state.running) {
+      state.lastProgressSignature = "";
+      state.lastAssistMapSignature = "";
+      state.lastObserverSignature = "";
+    }
     renderProgress();
     renderAssistMap();
     updateButtons();
@@ -2043,19 +1883,7 @@ async function boot() {
 
   await safeListen("test-progress", (event) => {
     const payload = event.payload || {};
-    state.running = true;
-    applyProgressPosition(payload);
-    state.progress.percent = Number(payload.percent || 0);
-    state.progress.company = String(payload.company || state.progress.company || "");
-    state.progress.title = state.progress.company
-      ? `Executando ${state.progress.company}`
-      : "Executando automacao";
-    state.progress.description = String(payload.description || "Executando etapa da automacao.");
-    renderPageChips();
-    renderProgress();
-    renderAssistMap();
-    updateButtons();
-    setStatusChip("Executando", "running");
+    scheduleProgressPayload(payload);
   });
 
   await safeListen("test-finished", (event) => {
@@ -2073,10 +1901,6 @@ async function boot() {
     updateButtons();
     setStatusChip(state.running ? "Executando" : "Pronto", state.running ? "running" : "idle");
     startRemoteAgentPolling();
-    await refreshMeshCentralStatus({ silent: true });
-    startMeshCentralPolling();
-    // A captura e a resposta WebRTC agora pertencem ao runtime nativo Rust.
-    // Nao use getDisplayMedia aqui: ele abriria um seletor dentro da VM.
     pushLog("FlowDetect Agent pronto para uso.", "success", "Inicializacao");
   } catch (error) {
     pushLog(String(error), "error", "Inicializacao");

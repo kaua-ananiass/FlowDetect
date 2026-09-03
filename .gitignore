@@ -81,13 +81,12 @@ tauri_gerador/src-tauri/installer_support/runtime_seed/**/planilhas/
 tauri_gerador/src-tauri/installer_support/runtime_seed/**/*.xlsx
 tauri_gerador/src-tauri/installer_support/runtime_seed/**/*.xls
 tauri_gerador/src-tauri/installer_support/runtime_seed/**/*.png
-!flowdetect_agent/src-tauri/installer_support/
-!flowdetect_agent/src-tauri/installer_support/meshcentral/
-!flowdetect_agent/src-tauri/installer_support/meshcentral/**
-!flowdetect_agent/src-tauri/installer_support/nodejs/
-!flowdetect_agent/src-tauri/installer_support/nodejs/**
 flowdetect_agent/src-tauri/installer_support/*.zip
 tauri_gerador/src-tauri/installer_support/python-installer.exe
+tauri_gerador/src-tauri/installer_support/get-pip.py
+tauri_gerador/src-tauri/installer_support/python-*-embeddable-amd64.zip
+!tauri_gerador/src-tauri/installer_support/python_runtime_prebuilt/
+!tauri_gerador/src-tauri/installer_support/python_runtime_prebuilt/**
 tauri_gerador/src-tauri/installer_assets/__pycache__/
 
 # OS / editor

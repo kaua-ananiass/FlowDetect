@@ -1323,6 +1323,16 @@
                   <strong>Nenhuma VM selecionada</strong>
                   <span>Abra a aba Agentes e clique em uma maquina virtual para iniciar a sessao nativa.</span>
                 </div>
+                <div id="studioControlScreenBootOverlay" class="studio-control-screen-boot-overlay" hidden>
+                  <div class="studio-control-screen-boot-card">
+                    <span>Hyper-V</span>
+                    <strong id="studioControlScreenBootLabel">Inicializando VM...</strong>
+                    <p id="studioControlScreenBootDetail">Aguardando o Windows liberar a sessao aprimorada.</p>
+                    <div class="studio-control-screen-boot-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                      <i id="studioControlScreenBootFill"></i>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <section class="agent-screen-task-queue" aria-label="Tasks agendadas do Agent">

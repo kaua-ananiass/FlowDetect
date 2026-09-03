@@ -893,6 +893,29 @@ class ExecutorAutomacao:
             self._janela_contexto = str(janela.get("title") or "").strip()
         return janela
 
+    def rolar_para_varredura_visual(self, titulo_janela=None, direcao="baixo", pixels=520):
+        if self.cancelamento_solicitado():
+            return False
+        try:
+            self.preparar_janela_para_acao(titulo_janela)
+        except Exception:
+            pass
+        direcao = str(direcao or "baixo").strip().lower()
+        pixels = max(120, int(abs(float(pixels or 520))))
+        passos = max(1, min(8, int(round(pixels / 120))))
+        sentido = -1 if direcao in {"baixo", "down", "descer"} else 1
+        try:
+            pyautogui.scroll(sentido * passos)
+            safe_print(
+                f"Varredura visual: rolando para {'baixo' if sentido < 0 else 'cima'} e tentando reconhecer novamente.",
+                flush=True,
+            )
+            time.sleep(0.32)
+            return True
+        except Exception as erro:
+            safe_print(f"Varredura visual nao conseguiu rolar a tela: {erro}", flush=True)
+            return False
+
     def bounds_reconhecimento(self, local):
         if isinstance(local, dict):
             esquerda = int(local.get("left", local.get("x", 0)))
@@ -2823,20 +2846,20 @@ class ExecutorAutomacao:
 
         escalas_fallback = ()
         if template_muito_pequeno:
-            escalas_fallback = (0.98, 1.02, 0.95, 1.05, 0.92, 1.08, 0.90, 1.10)
+            escalas_fallback = (0.98, 1.02, 0.95, 1.05, 0.90, 1.10, 0.85, 1.15, 0.80, 1.25)
         elif template_pequeno:
-            escalas_fallback = (0.98, 1.02, 0.95, 1.05)
+            escalas_fallback = (0.98, 1.02, 0.95, 1.05, 0.90, 1.10, 0.85, 1.15, 0.80, 1.25)
         elif perfil_busca == "precise":
-            escalas_fallback = (0.97, 1.03, 0.94, 1.06, 0.90, 1.10)
+            escalas_fallback = (0.97, 1.03, 0.94, 1.06, 0.90, 1.10, 0.85, 1.15, 0.80, 1.25, 0.75, 1.35)
         elif perfil_busca == "balanced":
-            escalas_fallback = (0.97, 1.03, 0.94, 1.06)
+            escalas_fallback = (0.97, 1.03, 0.94, 1.06, 0.90, 1.10, 0.85, 1.15, 0.80, 1.25)
         if modo_estrito or perfil_busca == "fast":
             escalas_fallback = ()
         escalas_fallback = tuple(
             dict.fromkeys(
                 escala
                 for escala in escalas_fallback
-                if 0.90 <= float(escala) <= 1.10 and abs(float(escala) - 1.0) > 0.0001
+                if 0.75 <= float(escala) <= 1.35 and abs(float(escala) - 1.0) > 0.0001
             )
         )
 
@@ -6043,22 +6066,56 @@ class ExecutorAutomacao:
                     flush=True,
                 )
                 try:
-                    resultado = self.clicar_imagem(
-                        imagem=nome_imagem,
-                        timeout=timeout_reconhecimento,
-                        confianca=detalhes.get("confianca", 0.8),
-                        perfil_busca=detalhes.get("perfil_busca", "balanced"),
-                        offset_x=detalhes.get("offset_x", 0),
-                        offset_y=detalhes.get("offset_y", 0),
-                        clicar=detalhes.get("clicar", True),
-                        clicks=detalhes.get("cliques", 1 if detalhes.get("clicar", True) else 0),
-                        janela_alvo=janela_evento,
-                        bloco_id=f"bloco:{ordem_evento}",
-                        modo_area_busca=detalhes.get("modo_area_busca", "target_window"),
-                        area_personalizada=area_personalizada,
-                        texto_ocr_esperado=detalhes.get("texto_ocr_esperado", ""),
-                        leitura_relativa=detalhes.get("leitura_relativa") or {},
+                    modo_area_visual = self.normalizar_modo_area_busca(detalhes.get("modo_area_busca", "target_window"))
+                    auto_scroll = str(detalhes.get("varredura_scroll", detalhes.get("rolagem_ao_nao_encontrar", "auto"))).strip().lower()
+                    permitir_varredura_scroll = (
+                        auto_scroll not in {"0", "false", "nao", "não", "off", "desativado"}
+                        and modo_area_visual != "custom_area"
                     )
+                    quantidade_scrolls = max(
+                        0,
+                        min(
+                            8,
+                            int(
+                                detalhes.get(
+                                    "varredura_scroll_tentativas",
+                                    detalhes.get("rolagem_tentativas", 4 if permitir_varredura_scroll else 0),
+                                )
+                                or 0
+                            ),
+                        ),
+                    )
+                    pixels_scroll = max(120, int(detalhes.get("varredura_scroll_pixels", detalhes.get("rolagem_pixels", 560)) or 560))
+                    timeout_curto_scroll = max(1.2, min(3.0, timeout_reconhecimento * 0.35))
+                    resultado = None
+                    for etapa_scroll in range(quantidade_scrolls + 1):
+                        if self.cancelamento_solicitado():
+                            return self.resultado_fluxo("parar")
+                        resultado = self.clicar_imagem(
+                            imagem=nome_imagem,
+                            timeout=timeout_reconhecimento if etapa_scroll == 0 else timeout_curto_scroll,
+                            confianca=detalhes.get("confianca", 0.8),
+                            perfil_busca=detalhes.get("perfil_busca", "balanced"),
+                            offset_x=detalhes.get("offset_x", 0),
+                            offset_y=detalhes.get("offset_y", 0),
+                            clicar=detalhes.get("clicar", True),
+                            clicks=detalhes.get("cliques", 1 if detalhes.get("clicar", True) else 0),
+                            janela_alvo=janela_evento,
+                            bloco_id=f"bloco:{ordem_evento}",
+                            modo_area_busca=detalhes.get("modo_area_busca", "target_window"),
+                            area_personalizada=area_personalizada,
+                            texto_ocr_esperado=detalhes.get("texto_ocr_esperado", ""),
+                            leitura_relativa=detalhes.get("leitura_relativa") or {},
+                        )
+                        if resultado or etapa_scroll >= quantidade_scrolls:
+                            break
+                        if not permitir_varredura_scroll:
+                            break
+                        self.rolar_para_varredura_visual(
+                            titulo_janela=janela_evento,
+                            direcao=detalhes.get("varredura_scroll_direcao", detalhes.get("rolagem_direcao", "baixo")),
+                            pixels=pixels_scroll,
+                        )
                     ultima_falha_reconhecimento = None
                 except Exception as erro:
                     ultima_falha_reconhecimento = erro
