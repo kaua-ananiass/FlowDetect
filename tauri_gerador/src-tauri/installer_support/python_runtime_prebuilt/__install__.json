@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "id": "pythonembed-3.12-64",
+  "sort-version": "3.12.10",
+  "company": "PythonEmbed",
+  "tag": "3.12-64",
+  "install-for": [
+    "3.12.10-64",
+    "3.12-64",
+    "3-64"
+  ],
+  "run-for": [
+    {
+      "target": "python.exe",
+      "tag": "3.12.10-64"
+    },
+    {
+      "target": "python.exe",
+      "tag": "3.12-64"
+    },
+    {
+      "target": "python.exe",
+      "tag": "3-64"
+    }
+  ],
+  "alias": [],
+  "shortcuts": [
+    {
+      "kind": "pep514",
+      "Key": "PythonEmbed\\3.12",
+      "DisplayName": "Python 3.12.10 (embeddable)",
+      "SupportUrl": "https://www.python.org/",
+      "SysArchitecture": "64bit",
+      "SysVersion": "3.12",
+      "Version": "3.12.10",
+      "InstallPath": {
+        "_": "%PREFIX%",
+        "ExecutablePath": "%PREFIX%python.exe"
+      },
+      "Help": {
+        "Online Python Documentation": {
+          "_": "https://docs.python.org/3.12/"
+        }
+      }
+    },
+    {
+      "kind": "start",
+      "Name": "Python 3.12 (embeddable)",
+      "Items": [
+        {
+          "Name": "Python 3.12 (embeddable)",
+          "Target": "%PREFIX%python.exe",
+          "Icon": "%PREFIX%python.exe"
+        },
+        {
+          "Name": "Python 3.12 Online Documentation",
+          "Icon": "%SystemRoot%\\System32\\SHELL32.dll",
+          "IconIndex": 13,
+          "Target": "https://docs.python.org/3.12/"
+        }
+      ]
+    },
+    {
+      "kind": "uninstall",
+      "Publisher": "Python Software Foundation",
+      "HelpLink": "https://docs.python.org/3.12/"
+    }
+  ],
+  "display-name": "Python 3.12.10 (embeddable)",
+  "executable": ".\\python.exe",
+  "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embeddable-amd64.zip"
+}

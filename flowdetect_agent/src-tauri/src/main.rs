@@ -2,7 +2,6 @@
 
 #[path = "../../../tauri_gerador/src-tauri/src/lib.rs"]
 mod studio_runtime;
-mod native_remote;
 
 #[cfg(windows)]
 fn acquire_single_instance() -> bool {
@@ -23,6 +22,5 @@ fn main() {
     if !acquire_single_instance() {
         return;
     }
-    native_remote::bootstrap();
     studio_runtime::run();
 }

@@ -532,7 +532,17 @@ pub fn open(
     // O parser oficial do MSTSC configura o estado privado `sawvmconnect`
     // exigido pelo broker do Hyper-V. Depois da conexao, a janela do cliente
     // vira um filho real do WebView e permanece recortada dentro do painel.
-    open_vmconnect(owner, native_host, vm_id, vm_name, x, y, width, height)
+    match open_vmconnect(owner, native_host, vm_id, vm_name, x, y, width, height) {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            unsafe {
+                let host = HWND(native_host as *mut c_void);
+                let _ = ShowWindow(host, SW_HIDE);
+                let _ = DestroyWindow(host);
+            }
+            Err(error)
+        }
+    }
 }
 
 fn open_vmconnect(
@@ -1102,6 +1112,7 @@ pub fn close() -> Result<Value, String> {
                     WPARAM(0),
                     LPARAM(0),
                 );
+                let _ = DestroyWindow(HWND(session.parent as *mut c_void));
             }
         }
     }

@@ -2024,3 +2024,44 @@ body.agent-compact-mode .agent-observer-footer {
 body:not(.agent-compact-mode) .agent-observer-frame {
   display: none;
 }
+
+body.agent-lite-mode *,
+body.agent-lite-mode *::before,
+body.agent-lite-mode *::after {
+  animation: none !important;
+  transition-duration: 80ms !important;
+  scroll-behavior: auto !important;
+}
+
+body.agent-lite-mode.agent-compact-mode .agent-observer-frame {
+  border-color: rgba(45, 201, 242, 0.28);
+  background: transparent;
+  box-shadow: none;
+}
+
+body.agent-lite-mode.agent-compact-mode .agent-observer-frame::before,
+body.agent-lite-mode.agent-compact-mode .agent-observer-frame::after {
+  display: none;
+}
+
+body.agent-lite-mode .agent-observer-corner {
+  filter: none;
+  opacity: 0.74;
+}
+
+body.agent-lite-mode .agent-observer-header,
+body.agent-lite-mode .agent-observer-footer {
+  text-shadow: none;
+}
+
+body.agent-lite-mode .agent-observer-online i,
+body.agent-lite-mode .agent-observer-active i {
+  box-shadow: none;
+}
+
+body.agent-lite-mode .agent-assist-card,
+body.agent-lite-mode .agent-progress-block,
+body.agent-lite-mode .agent-panel,
+body.agent-lite-mode .agent-runtime-card {
+  box-shadow: none !important;
+}

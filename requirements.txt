@@ -1,8 +1,8 @@
-pynput
-pyautogui
-openpyxl
-opencv-python
-pillow
-pytesseract
-reportlab
-uiautomation
+pynput==1.8.2
+pyautogui==0.9.54
+openpyxl==3.1.5
+opencv-python==5.0.0.93
+pillow==12.3.0
+pytesseract==0.3.13
+reportlab==5.0.1
+uiautomation==2.0.29
