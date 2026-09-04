@@ -6249,10 +6249,10 @@ label span {
 
 .studio-control-screen-frame-wrap {
   position: relative;
-  width: min(100%, 1360px, calc((100vh - 288px) * 16 / 9));
+  width: min(100%, 1360px, calc((100vh - 260px) * 16 / 9));
   aspect-ratio: 16 / 9;
-  min-height: min(360px, calc(100vh - 288px));
-  max-height: calc(100vh - 288px);
+  min-height: min(360px, calc(100vh - 260px));
+  max-height: calc(100vh - 260px);
   overflow: hidden;
   border: 1px solid rgba(18, 181, 203, 0.2);
   border-radius: 22px;
@@ -6287,7 +6287,7 @@ label span {
 }
 
 .agent-screen-task-queue {
-  width: min(100%, 1360px, calc((100vh - 288px) * 16 / 9));
+  width: min(100%, 1360px, calc((100vh - 260px) * 16 / 9));
   height: 118px;
   max-height: 118px;
   overflow: hidden;

@@ -4623,18 +4623,22 @@ fn fit_window_to_agent_safe_area(
 
 #[cfg(windows)]
 fn set_agent_windows_work_area(enabled: bool) -> Result<Value, String> {
-    AGENT_WORK_AREA_GUARD_ENABLED.store(enabled, Ordering::Relaxed);
+    // O Agent nao deve mais reservar/forcar uma "area segura" na VM.
+    // Esse guard deixava janelas maximizadas presas dentro do desenho do Agent,
+    // causando capturas/OCR cortados quando a automacao rodava em tela cheia.
+    AGENT_WORK_AREA_GUARD_ENABLED.store(false, Ordering::Relaxed);
     let screen_width = unsafe { GetSystemMetrics(SM_CXSCREEN).max(1024) };
     let screen_height = unsafe { GetSystemMetrics(SM_CYSCREEN).max(768) };
     Ok(serde_json::json!({
         "ok": true,
-        "enabled": enabled,
-        "mode": "fullscreen_guard",
+        "enabled": false,
+        "requested": enabled,
+        "mode": "overlay_only",
         "safe_area": {
-            "left": AGENT_SAFE_MARGIN_LEFT,
-            "top": AGENT_SAFE_MARGIN_TOP,
-            "width": screen_width - AGENT_SAFE_MARGIN_LEFT - AGENT_SAFE_MARGIN_RIGHT,
-            "height": screen_height - AGENT_SAFE_MARGIN_TOP - AGENT_SAFE_MARGIN_BOTTOM
+            "left": 0,
+            "top": 0,
+            "width": screen_width,
+            "height": screen_height
         }
     }))
 }
@@ -5993,6 +5997,37 @@ fn add_mouse_block(
     run_helper_json(&root, &args)
 }
 
+fn append_embedded_recognition_ocr_args(
+    args: &mut Vec<String>,
+    modo_reconhecimento: Option<String>,
+    texto_ocr_busca: Option<String>,
+    acao_ocr: Option<String>,
+    salvar_ocr_em: Option<String>,
+    varredura_scroll: Option<bool>,
+    varredura_scroll_tentativas: Option<i32>,
+    varredura_scroll_pixels: Option<i32>,
+    varredura_scroll_direcao: Option<String>,
+) {
+    args.extend([
+        "--modo-reconhecimento".into(),
+        modo_reconhecimento.unwrap_or_else(|| "imagem".to_string()),
+        "--texto-ocr-busca".into(),
+        texto_ocr_busca.unwrap_or_default(),
+        "--acao-ocr".into(),
+        acao_ocr.unwrap_or_else(|| "clicar".to_string()),
+        "--salvar-ocr-em".into(),
+        salvar_ocr_em.unwrap_or_default(),
+        "--varredura-scroll".into(),
+        varredura_scroll.unwrap_or(true).to_string(),
+        "--varredura-scroll-tentativas".into(),
+        varredura_scroll_tentativas.unwrap_or(4).clamp(0, 8).to_string(),
+        "--varredura-scroll-pixels".into(),
+        varredura_scroll_pixels.unwrap_or(520).max(120).to_string(),
+        "--varredura-scroll-direcao".into(),
+        varredura_scroll_direcao.unwrap_or_else(|| "baixo".to_string()),
+    ]);
+}
+
 #[tauri::command]
 fn add_image_click_block(
     app: AppHandle,
@@ -6006,6 +6041,14 @@ fn add_image_click_block(
     offset_y: i32,
     janela_alvo: Option<String>,
     texto_ocr_esperado: Option<String>,
+    modo_reconhecimento: Option<String>,
+    texto_ocr_busca: Option<String>,
+    acao_ocr: Option<String>,
+    salvar_ocr_em: Option<String>,
+    varredura_scroll: Option<bool>,
+    varredura_scroll_tentativas: Option<i32>,
+    varredura_scroll_pixels: Option<i32>,
+    varredura_scroll_direcao: Option<String>,
     leitura_relativa_ativa: Option<bool>,
     leitura_relativa_lado: Option<String>,
     leitura_relativa_largura: Option<i32>,
@@ -6049,6 +6092,19 @@ fn add_image_click_block(
         janela_alvo.unwrap_or_default(),
         "--texto-ocr-esperado".into(),
         texto_ocr_esperado.unwrap_or_default(),
+    ];
+    append_embedded_recognition_ocr_args(
+        &mut args,
+        modo_reconhecimento,
+        texto_ocr_busca,
+        acao_ocr,
+        salvar_ocr_em,
+        varredura_scroll,
+        varredura_scroll_tentativas,
+        varredura_scroll_pixels,
+        varredura_scroll_direcao,
+    );
+    args.extend([
         "--leitura-relativa-ativa".into(),
         leitura_relativa_ativa.unwrap_or(false).to_string(),
         "--leitura-relativa-lado".into(),
@@ -6065,7 +6121,7 @@ fn add_image_click_block(
         leitura_relativa_salvar_em.unwrap_or_default(),
         "--ao-nao-encontrar".into(),
         ao_nao_encontrar,
-    ];
+    ]);
     if let Some(value) = sequencia_nao_encontrar {
         if !value.trim().is_empty() {
             args.push("--sequencia-nao-encontrar".into());
@@ -6090,6 +6146,155 @@ fn add_image_click_block(
         "--delay".into(),
         delay.to_string(),
     ]);
+    if let Some(sequence_name) = sequencia {
+        args.push("--sequencia".into());
+        args.push(sequence_name);
+    }
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
+    run_helper_json(&root, &args)
+}
+
+fn append_ocr_text_args(
+    args: &mut Vec<String>,
+    texto: String,
+    acao: String,
+    timeout: f64,
+    confianca: f64,
+    clicar: bool,
+    clicks: i32,
+    offset_x: i32,
+    offset_y: i32,
+    janela_alvo: Option<String>,
+    salvar_em: Option<String>,
+    ao_nao_encontrar: String,
+    sequencia_nao_encontrar: Option<String>,
+    bloco_nao_encontrar: Option<i32>,
+    atraso_sequencia_nao_encontrar: Option<f64>,
+    quantidade_tentativas: i32,
+    intervalo_tentativas: f64,
+    varredura_scroll: bool,
+    varredura_scroll_tentativas: i32,
+    varredura_scroll_pixels: i32,
+    varredura_scroll_direcao: Option<String>,
+) {
+    args.extend([
+        "--texto".into(),
+        texto,
+        "--acao".into(),
+        acao,
+        "--timeout".into(),
+        timeout.max(0.1).to_string(),
+        "--confianca".into(),
+        confianca.clamp(0.35, 1.0).to_string(),
+        "--clicar".into(),
+        clicar.to_string(),
+        "--clicks".into(),
+        clicks.max(0).to_string(),
+        "--offset-x".into(),
+        offset_x.to_string(),
+        "--offset-y".into(),
+        offset_y.to_string(),
+        "--janela-alvo".into(),
+        janela_alvo.unwrap_or_default(),
+        "--salvar-em".into(),
+        salvar_em.unwrap_or_default(),
+        "--ao-nao-encontrar".into(),
+        ao_nao_encontrar,
+    ]);
+    if let Some(value) = sequencia_nao_encontrar {
+        if !value.trim().is_empty() {
+            args.push("--sequencia-nao-encontrar".into());
+            args.push(value);
+        }
+    }
+    if let Some(value) = bloco_nao_encontrar {
+        if value > 0 {
+            args.push("--bloco-nao-encontrar".into());
+            args.push(value.to_string());
+        }
+    }
+    if let Some(value) = atraso_sequencia_nao_encontrar {
+        args.push("--atraso-sequencia-nao-encontrar".into());
+        args.push(value.max(0.0).to_string());
+    }
+    args.extend([
+        "--quantidade-tentativas".into(),
+        quantidade_tentativas.max(1).to_string(),
+        "--intervalo-tentativas".into(),
+        intervalo_tentativas.max(0.0).to_string(),
+        "--varredura-scroll".into(),
+        varredura_scroll.to_string(),
+        "--varredura-scroll-tentativas".into(),
+        varredura_scroll_tentativas.clamp(0, 8).to_string(),
+        "--varredura-scroll-pixels".into(),
+        varredura_scroll_pixels.max(120).to_string(),
+        "--varredura-scroll-direcao".into(),
+        varredura_scroll_direcao.unwrap_or_else(|| "baixo".to_string()),
+    ]);
+}
+
+#[tauri::command]
+fn add_ocr_text_block(
+    app: AppHandle,
+    texto: String,
+    acao: String,
+    timeout: f64,
+    confianca: f64,
+    clicar: bool,
+    clicks: i32,
+    offset_x: i32,
+    offset_y: i32,
+    janela_alvo: Option<String>,
+    salvar_em: Option<String>,
+    ao_nao_encontrar: String,
+    sequencia_nao_encontrar: Option<String>,
+    bloco_nao_encontrar: Option<i32>,
+    atraso_sequencia_nao_encontrar: Option<f64>,
+    quantidade_tentativas: i32,
+    intervalo_tentativas: f64,
+    varredura_scroll: bool,
+    varredura_scroll_tentativas: i32,
+    varredura_scroll_pixels: i32,
+    varredura_scroll_direcao: Option<String>,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec!["add-ocr-text".into()];
+    append_ocr_text_args(
+        &mut args,
+        texto,
+        acao,
+        timeout,
+        confianca,
+        clicar,
+        clicks,
+        offset_x,
+        offset_y,
+        janela_alvo,
+        salvar_em,
+        ao_nao_encontrar,
+        sequencia_nao_encontrar,
+        bloco_nao_encontrar,
+        atraso_sequencia_nao_encontrar,
+        quantidade_tentativas,
+        intervalo_tentativas,
+        varredura_scroll,
+        varredura_scroll_tentativas,
+        varredura_scroll_pixels,
+        varredura_scroll_direcao,
+    );
+    args.extend(["--delay".into(), delay.to_string()]);
     if let Some(sequence_name) = sequencia {
         args.push("--sequencia".into());
         args.push(sequence_name);
@@ -6845,6 +7050,14 @@ fn insert_image_click_block(
     offset_y: i32,
     janela_alvo: Option<String>,
     texto_ocr_esperado: Option<String>,
+    modo_reconhecimento: Option<String>,
+    texto_ocr_busca: Option<String>,
+    acao_ocr: Option<String>,
+    salvar_ocr_em: Option<String>,
+    varredura_scroll: Option<bool>,
+    varredura_scroll_tentativas: Option<i32>,
+    varredura_scroll_pixels: Option<i32>,
+    varredura_scroll_direcao: Option<String>,
     leitura_relativa_ativa: Option<bool>,
     leitura_relativa_lado: Option<String>,
     leitura_relativa_largura: Option<i32>,
@@ -6892,6 +7105,19 @@ fn insert_image_click_block(
         janela_alvo.unwrap_or_default(),
         "--texto-ocr-esperado".into(),
         texto_ocr_esperado.unwrap_or_default(),
+    ];
+    append_embedded_recognition_ocr_args(
+        &mut args,
+        modo_reconhecimento,
+        texto_ocr_busca,
+        acao_ocr,
+        salvar_ocr_em,
+        varredura_scroll,
+        varredura_scroll_tentativas,
+        varredura_scroll_pixels,
+        varredura_scroll_direcao,
+    );
+    args.extend([
         "--leitura-relativa-ativa".into(),
         leitura_relativa_ativa.unwrap_or(false).to_string(),
         "--leitura-relativa-lado".into(),
@@ -6908,7 +7134,7 @@ fn insert_image_click_block(
         leitura_relativa_salvar_em.unwrap_or_default(),
         "--ao-nao-encontrar".into(),
         ao_nao_encontrar,
-    ];
+    ]);
     if let Some(value) = sequencia_nao_encontrar {
         if !value.trim().is_empty() {
             args.push("--sequencia-nao-encontrar".into());
@@ -6933,6 +7159,86 @@ fn insert_image_click_block(
         "--delay".into(),
         delay.to_string(),
     ]);
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn insert_ocr_text_block(
+    app: AppHandle,
+    target_order: i32,
+    position: String,
+    texto: String,
+    acao: String,
+    timeout: f64,
+    confianca: f64,
+    clicar: bool,
+    clicks: i32,
+    offset_x: i32,
+    offset_y: i32,
+    janela_alvo: Option<String>,
+    salvar_em: Option<String>,
+    ao_nao_encontrar: String,
+    sequencia_nao_encontrar: Option<String>,
+    bloco_nao_encontrar: Option<i32>,
+    atraso_sequencia_nao_encontrar: Option<f64>,
+    quantidade_tentativas: i32,
+    intervalo_tentativas: f64,
+    varredura_scroll: bool,
+    varredura_scroll_tentativas: i32,
+    varredura_scroll_pixels: i32,
+    varredura_scroll_direcao: Option<String>,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "insert-ocr-text".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+    ];
+    append_ocr_text_args(
+        &mut args,
+        texto,
+        acao,
+        timeout,
+        confianca,
+        clicar,
+        clicks,
+        offset_x,
+        offset_y,
+        janela_alvo,
+        salvar_em,
+        ao_nao_encontrar,
+        sequencia_nao_encontrar,
+        bloco_nao_encontrar,
+        atraso_sequencia_nao_encontrar,
+        quantidade_tentativas,
+        intervalo_tentativas,
+        varredura_scroll,
+        varredura_scroll_tentativas,
+        varredura_scroll_pixels,
+        varredura_scroll_direcao,
+    );
+    args.extend(["--delay".into(), delay.to_string()]);
     if let Some(sequence_name) = sequencia {
         if !sequence_name.trim().is_empty() {
             args.push("--sequencia".into());
@@ -7602,6 +7908,14 @@ fn update_image_click_block(
     offset_y: i32,
     janela_alvo: Option<String>,
     texto_ocr_esperado: Option<String>,
+    modo_reconhecimento: Option<String>,
+    texto_ocr_busca: Option<String>,
+    acao_ocr: Option<String>,
+    salvar_ocr_em: Option<String>,
+    varredura_scroll: Option<bool>,
+    varredura_scroll_tentativas: Option<i32>,
+    varredura_scroll_pixels: Option<i32>,
+    varredura_scroll_direcao: Option<String>,
     leitura_relativa_ativa: Option<bool>,
     leitura_relativa_lado: Option<String>,
     leitura_relativa_largura: Option<i32>,
@@ -7646,6 +7960,19 @@ fn update_image_click_block(
         janela_alvo.unwrap_or_default(),
         "--texto-ocr-esperado".into(),
         texto_ocr_esperado.unwrap_or_default(),
+    ];
+    append_embedded_recognition_ocr_args(
+        &mut args,
+        modo_reconhecimento,
+        texto_ocr_busca,
+        acao_ocr,
+        salvar_ocr_em,
+        varredura_scroll,
+        varredura_scroll_tentativas,
+        varredura_scroll_pixels,
+        varredura_scroll_direcao,
+    );
+    args.extend([
         "--leitura-relativa-ativa".into(),
         leitura_relativa_ativa.unwrap_or(false).to_string(),
         "--leitura-relativa-lado".into(),
@@ -7662,7 +7989,7 @@ fn update_image_click_block(
         leitura_relativa_salvar_em.unwrap_or_default(),
         "--ao-nao-encontrar".into(),
         ao_nao_encontrar,
-    ];
+    ]);
     if let Some(value) = sequencia_nao_encontrar {
         if !value.trim().is_empty() {
             args.push("--sequencia-nao-encontrar".into());
@@ -7687,6 +8014,83 @@ fn update_image_click_block(
         "--delay".into(),
         delay.to_string(),
     ]);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn update_ocr_text_block(
+    app: AppHandle,
+    order: i32,
+    texto: String,
+    acao: String,
+    timeout: f64,
+    confianca: f64,
+    clicar: bool,
+    clicks: i32,
+    offset_x: i32,
+    offset_y: i32,
+    janela_alvo: Option<String>,
+    salvar_em: Option<String>,
+    ao_nao_encontrar: String,
+    sequencia_nao_encontrar: Option<String>,
+    bloco_nao_encontrar: Option<i32>,
+    atraso_sequencia_nao_encontrar: Option<f64>,
+    quantidade_tentativas: i32,
+    intervalo_tentativas: f64,
+    varredura_scroll: bool,
+    varredura_scroll_tentativas: i32,
+    varredura_scroll_pixels: i32,
+    varredura_scroll_direcao: Option<String>,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "update-ocr-text".into(),
+        "--order".into(),
+        order.to_string(),
+    ];
+    append_ocr_text_args(
+        &mut args,
+        texto,
+        acao,
+        timeout,
+        confianca,
+        clicar,
+        clicks,
+        offset_x,
+        offset_y,
+        janela_alvo,
+        salvar_em,
+        ao_nao_encontrar,
+        sequencia_nao_encontrar,
+        bloco_nao_encontrar,
+        atraso_sequencia_nao_encontrar,
+        quantidade_tentativas,
+        intervalo_tentativas,
+        varredura_scroll,
+        varredura_scroll_tentativas,
+        varredura_scroll_pixels,
+        varredura_scroll_direcao,
+    );
+    args.extend(["--delay".into(), delay.to_string()]);
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
     append_success_flow_args(
         &mut args,
         ao_sucesso,
@@ -8693,6 +9097,122 @@ fn test_image_recognition(
 }
 
 #[tauri::command]
+fn test_ocr_recognition(
+    app: AppHandle,
+    texto: String,
+    timeout: f64,
+    confianca: f64,
+    janela_alvo: Option<String>,
+    varredura_scroll: Option<bool>,
+    varredura_scroll_tentativas: Option<i32>,
+    varredura_scroll_pixels: Option<i32>,
+    varredura_scroll_direcao: Option<String>,
+) -> Result<String, String> {
+    let root = workspace_root(&app);
+    let script_path = root.join("executar_automacao.py");
+    if !script_path.exists() {
+        return Err(format!("Arquivo nao encontrado: {}", script_path.display()));
+    }
+    let texto_limpo = texto.trim().to_string();
+    if texto_limpo.is_empty() {
+        return Err("Informe o texto para testar o OCR inteligente.".into());
+    }
+
+    let _ = std::fs::remove_file(root.join("ultimo_log_launcher.txt"));
+    let _ = std::fs::remove_file(root.join(".parar_automacao.flag"));
+    append_launcher_log(
+        &root,
+        format!(
+            "Teste isolado de OCR iniciado | texto={} | timeout={} | confianca={}",
+            texto_limpo,
+            timeout.max(0.1),
+            confianca
+        ),
+    );
+
+    let (python_program, python_args) = python_command(&root)?;
+    let mut command = Command::new(&python_program);
+    command
+        .current_dir(&root)
+        .args(&python_args)
+        .arg(&script_path)
+        .arg("--modo")
+        .arg("reconhecimento")
+        .arg("--modo-reconhecimento")
+        .arg("texto_ocr")
+        .arg("--texto-ocr-busca")
+        .arg(texto_limpo.clone())
+        .arg("--acao-ocr")
+        .arg("localizar")
+        .arg("--timeout-ocr")
+        .arg(timeout.max(0.1).to_string())
+        .arg("--confianca-ocr")
+        .arg(confianca.clamp(0.35, 1.0).to_string())
+        .arg("--varredura-scroll")
+        .arg(varredura_scroll.unwrap_or(true).to_string())
+        .arg("--varredura-scroll-tentativas")
+        .arg(varredura_scroll_tentativas.unwrap_or(4).clamp(0, 8).to_string())
+        .arg("--varredura-scroll-pixels")
+        .arg(varredura_scroll_pixels.unwrap_or(520).max(120).to_string())
+        .arg("--varredura-scroll-direcao")
+        .arg(varredura_scroll_direcao.unwrap_or_else(|| "baixo".to_string()))
+        .arg("--atraso")
+        .arg("0")
+        .arg("--arquivo")
+        .arg(root.join("mapeamento_teclado.json"))
+        .arg("--planilha")
+        .arg(root.join("db.xlsx"))
+        .arg("--cancelamento-arquivo")
+        .arg(root.join(".parar_automacao.flag"));
+
+    if let Some(title) = janela_alvo
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        command.arg("--janela-alvo").arg(title);
+    }
+    configure_no_window(&mut command);
+
+    let main_window = app.get_webview_window("main");
+    if let Some(window) = main_window.as_ref() {
+        let _ = window.minimize();
+    }
+
+    let output = command
+        .output()
+        .map_err(|err| format!("Falha ao iniciar o teste de OCR: {err}"))?;
+
+    if let Some(window) = main_window.as_ref() {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stdout.is_empty() {
+        append_launcher_log(&root, format!("OCR TESTE STDOUT: {stdout}"));
+    }
+    if !stderr.is_empty() {
+        append_launcher_log(&root, format!("OCR TESTE STDERR: {stderr}"));
+    }
+    if output.status.success() {
+        return Ok(if stdout.is_empty() {
+            "OCR inteligente encontrou e confirmou o texto.".into()
+        } else {
+            stdout
+        });
+    }
+    let message = if !stderr.is_empty() { stderr } else { stdout };
+    Err(if message.is_empty() {
+        "OCR inteligente nao encontrou o texto.".into()
+    } else {
+        message
+    })
+}
+
+#[tauri::command]
 fn analyze_html_element(app: AppHandle, html: String) -> Result<Value, String> {
     let root = workspace_root(&app);
     run_helper_json(
@@ -9326,6 +9846,7 @@ pub fn run() {
             add_loop_end_block,
             add_mouse_block,
             add_image_click_block,
+            add_ocr_text_block,
             add_verify_button_state_block,
             add_chrome_html_block,
             add_uia_element_block,
@@ -9341,6 +9862,7 @@ pub fn run() {
             insert_loop_end_block,
             insert_mouse_block,
             insert_image_click_block,
+            insert_ocr_text_block,
             insert_chrome_html_block,
             insert_uia_element_block,
             insert_open_url_block,
@@ -9354,6 +9876,7 @@ pub fn run() {
             update_loop_marker_block,
             update_mouse_block,
             update_image_click_block,
+            update_ocr_text_block,
             update_verify_button_state_block,
             update_chrome_html_block,
             update_uia_element_block,
@@ -9377,6 +9900,7 @@ pub fn run() {
             chrome_web_test_element,
             chrome_web_open_site,
             test_image_recognition,
+            test_ocr_recognition,
             get_test_loop_data,
             get_test_execution_state,
             launch_quick_test,

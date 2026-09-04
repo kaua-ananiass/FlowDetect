@@ -661,7 +661,7 @@ function renderAgentConnectionState(snapshot = {}) {
     ? `Conectado ao Studio: ${safeAddress}`
     : `Aguardando Studio: ${safeAddress}`;
   setElementText(elements.observerConnectionAddress, safeAddress);
-  setElementText(elements.observerConnectionStatus, connected ? "STUDIO CONECTADO" : "ONLINE");
+  setElementText(elements.observerConnectionStatus, connected ? "CONECTADO" : "ONLINE");
 }
 
 async function safeListen(eventName, handler) {
