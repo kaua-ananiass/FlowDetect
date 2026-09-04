@@ -51,6 +51,7 @@
       "../../requirements.txt": "requirements.txt",
       "../../instalar_dependencias_silencioso.bat": "instalar_dependencias_silencioso.bat",
       "../../tauri_gerador/src-tauri/installer_support/python_runtime_prebuilt/": "python_runtime/",
+      "../../tauri_gerador/src-tauri/installer_support/Tesseract-OCR/": "Tesseract-OCR/",
       "../../tauri_gerador/src-tauri/installer_support/runtime_seed/mapeamento_teclado.json": "mapeamento_teclado.json",
       "../../tauri_gerador/src-tauri/installer_support/runtime_seed/resumo_teclado.txt": "resumo_teclado.txt",
       "../../tauri_gerador/src-tauri/installer_support/runtime_seed/automacoes/": "automacoes/"

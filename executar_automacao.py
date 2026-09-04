@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import ctypes
 import difflib
 import json
@@ -16,12 +16,35 @@ from datetime import datetime
 from pathlib import Path
 from textwrap import wrap
 
-import pyautogui
-from openpyxl import load_workbook
-
 APP_ROOT = Path(__file__).resolve().parent
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def habilitar_dpi_awareness():
+    if os.name != "nt" or not hasattr(ctypes, "windll"):
+        return
+    try:
+        # Per-monitor v2: evita mistura de coordenadas entre monitores com escala diferente.
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+        return
+    except Exception:
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        return
+    except Exception:
+        pass
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
+habilitar_dpi_awareness()
+
+import pyautogui
+from openpyxl import load_workbook
 
 
 def popen_silencioso(argumentos, **kwargs):
@@ -30,13 +53,15 @@ def popen_silencioso(argumentos, **kwargs):
     return subprocess.Popen(argumentos, **kwargs)
 
 try:
-    from PIL import Image, ImageDraw, ImageGrab
+    from PIL import Image, ImageDraw, ImageEnhance, ImageGrab, ImageOps
 
     PIL_DISPONIVEL = True
 except Exception:
     Image = None
     ImageDraw = None
+    ImageEnhance = None
     ImageGrab = None
+    ImageOps = None
     PIL_DISPONIVEL = False
 
 try:
@@ -94,6 +119,8 @@ def localizar_tesseract_executavel():
         APP_ROOT / "tesseract" / "tesseract.exe",
         APP_ROOT / "ocr" / "tesseract.exe",
         APP_ROOT / "tesseract.exe",
+        APP_ROOT / "tauri_gerador" / "src-tauri" / "installer_support" / "Tesseract-OCR" / "tesseract.exe",
+        APP_ROOT.parent / "tauri_gerador" / "src-tauri" / "installer_support" / "Tesseract-OCR" / "tesseract.exe",
     ]
     for candidato in candidatos:
         if candidato.exists():
@@ -101,6 +128,20 @@ def localizar_tesseract_executavel():
 
     encontrado = shutil.which("tesseract")
     return Path(encontrado) if encontrado else None
+
+
+def caminho_windows_curto(caminho):
+    texto = str(caminho)
+    if os.name != "nt":
+        return texto
+    try:
+        buffer = ctypes.create_unicode_buffer(32768)
+        resultado = ctypes.windll.kernel32.GetShortPathNameW(str(caminho), buffer, len(buffer))
+        if resultado:
+            return buffer.value
+    except Exception:
+        pass
+    return texto
 
 
 def configurar_tesseract_local():
@@ -112,7 +153,10 @@ def configurar_tesseract_local():
         return None
 
     try:
-        pytesseract.pytesseract.tesseract_cmd = str(executavel)
+        pytesseract.pytesseract.tesseract_cmd = caminho_windows_curto(executavel)
+        tessdata = executavel.parent / "tessdata"
+        if tessdata.exists():
+            os.environ.setdefault("TESSDATA_PREFIX", caminho_windows_curto(tessdata))
     except Exception:
         return None
     return executavel
@@ -139,6 +183,7 @@ TIPOS_COMPARACAO_PLANILHA = {"comparar_planilha_tela"}
 TIPOS_MARCADORES_LOOP = {"inicio_loop", "fim_loop"}
 TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
+TIPOS_OCR = {"procurar_texto_ocr"}
 TIPOS_VERIFICACAO = {"verificar_estado_botao"}
 TIPOS_CHROME = {"chrome_elemento_html"}
 TIPOS_UIA = {"uia_elemento"}
@@ -153,6 +198,7 @@ TIPOS_SUPORTADOS_EXECUTOR = {
     *TIPOS_MARCADORES_LOOP,
     *TIPOS_MOUSE,
     *TIPOS_IMAGEM,
+    *TIPOS_OCR,
     *TIPOS_VERIFICACAO,
     *TIPOS_CHROME,
     *TIPOS_UIA,
@@ -228,6 +274,7 @@ class ExecutorAutomacao:
         self._ultima_busca_ocr_info = None
         self._ultimo_ocr_global_em = 0.0
         self._cache_ocr_curto = {}
+        self._diagnosticos_ocr_salvos = set()
         self._janela_alvo_perdida_logada = False
         self._conflitos_janela_evento_logados = set()
         self.contexto_variaveis = {}
@@ -893,6 +940,107 @@ class ExecutorAutomacao:
             self._janela_contexto = str(janela.get("title") or "").strip()
         return janela
 
+    def janela_parece_interface_flowdetect(self, janela):
+        texto = self.normalizar_texto_busca(
+            f"{janela.get('title', '')} {janela.get('class_name', '')}"
+            if isinstance(janela, dict)
+            else ""
+        )
+        if not texto:
+            return False
+        termos_bloqueados = [
+            "flowdetect studio",
+            "flowdetect agent",
+            "visual studio code",
+            "windows terminal",
+            "powershell",
+            "cmd.exe",
+            "prompt de comando",
+            "terminal",
+        ]
+        return any(termo in texto for termo in termos_bloqueados)
+
+    def janela_parece_navegador(self, janela):
+        texto = self.normalizar_texto_busca(
+            f"{janela.get('title', '')} {janela.get('class_name', '')}"
+            if isinstance(janela, dict)
+            else ""
+        )
+        if not texto:
+            return False
+        termos_navegador = [
+            "google chrome",
+            "chrome_widgetwin",
+            "microsoft edge",
+            "mozilla firefox",
+            "brave",
+            "opera",
+        ]
+        return any(termo in texto for termo in termos_navegador)
+
+    def escolher_janela_ocr_automatica(self, texto_busca=""):
+        if self.janela_alvo or self.alvo_execucao_ativo() or self._janela_contexto:
+            return None
+
+        texto_alvo = self.normalizar_texto_busca(texto_busca)
+        termos_alvo = [termo for termo in re.split(r"\s+", texto_alvo) if len(termo) >= 3]
+        janelas = [
+            janela
+            for janela in self.listar_janelas_visiveis()
+            if int(janela.get("width", 0) or 0) >= 280
+            and int(janela.get("height", 0) or 0) >= 180
+            and not self.janela_parece_interface_flowdetect(janela)
+        ]
+
+        melhor = None
+        melhor_score = -1
+        for janela in janelas:
+            titulo = self.normalizar_texto_busca(janela.get("title", ""))
+            classe = self.normalizar_texto_busca(janela.get("class_name", ""))
+            score = 0
+            if self.janela_parece_navegador(janela):
+                score += 40
+            if "gov" in titulo or "fgts" in titulo:
+                score += 35
+            for termo in termos_alvo:
+                if termo in titulo:
+                    score += 8
+            if "chrome_widgetwin" in classe:
+                score += 5
+            if score > melhor_score:
+                melhor = janela
+                melhor_score = score
+
+        if melhor and melhor_score >= 35:
+            titulo = str(melhor.get("title") or "").strip()
+            safe_print(f"OCR inteligente selecionou janela automaticamente: {titulo}", flush=True)
+            self._janela_contexto = titulo
+            self._janela_fixada = melhor
+            try:
+                self.preparar_janela_para_acao(titulo)
+            except Exception:
+                pass
+            return melhor
+        return None
+
+    def adotar_janela_ativa_para_ocr(self):
+        if self.janela_alvo or self.alvo_execucao_ativo() or self._janela_contexto:
+            return None
+        janela = self.obter_janela_ativa()
+        if not janela:
+            return None
+        if self.janela_parece_interface_flowdetect(janela):
+            return None
+        if int(janela.get("width", 0) or 0) < 280 or int(janela.get("height", 0) or 0) < 180:
+            return None
+        titulo = str(janela.get("title") or "").strip()
+        if not titulo:
+            return None
+        safe_print(f"OCR inteligente usando janela ativa: {titulo}", flush=True)
+        self._janela_contexto = titulo
+        self._janela_fixada = janela
+        return janela
+
     def rolar_para_varredura_visual(self, titulo_janela=None, direcao="baixo", pixels=520):
         if self.cancelamento_solicitado():
             return False
@@ -977,10 +1125,12 @@ class ExecutorAutomacao:
                 limite_largura = limite_altura = 0
             limite_direita = limite_esquerda + max(0, limite_largura)
             limite_base = limite_topo + max(0, limite_altura)
+            direita_original = esquerda + largura
+            base_original = topo + altura
             esquerda = max(limite_esquerda, esquerda)
             topo = max(limite_topo, topo)
-            direita = min(limite_direita, esquerda + largura)
-            base = min(limite_base, topo + altura)
+            direita = min(limite_direita, direita_original)
+            base = min(limite_base, base_original)
             largura = max(0, direita - esquerda)
             altura = max(0, base - topo)
         if largura <= 0 or altura <= 0:
@@ -1952,6 +2102,50 @@ class ExecutorAutomacao:
         except Exception:
             return imagem
 
+    def gerar_variantes_imagem_ocr(self, imagem, fator=2, incluir_cor=True):
+        if imagem is None or Image is None:
+            return []
+        variantes = []
+        vistos = set()
+
+        def adicionar(nome, img):
+            if img is None:
+                return
+            chave = (nome, getattr(img, "mode", ""), int(getattr(img, "width", 0) or 0), int(getattr(img, "height", 0) or 0))
+            if chave in vistos:
+                return
+            vistos.add(chave)
+            variantes.append((nome, img))
+
+        try:
+            base_rgb = imagem.convert("RGB")
+            base_l = imagem.convert("L")
+            ampliada_l = self.ampliar_imagem_para_ocr(base_l, fator=fator)
+            adicionar("cinza", ampliada_l)
+            if incluir_cor:
+                adicionar("cor", self.ampliar_imagem_para_ocr(base_rgb, fator=fator))
+            if ImageOps is not None:
+                adicionar("autocontraste", ImageOps.autocontrast(ampliada_l))
+            if ImageEnhance is not None:
+                adicionar("contraste", ImageEnhance.Contrast(ampliada_l).enhance(1.9))
+                adicionar("brilho_contraste", ImageEnhance.Contrast(ImageEnhance.Brightness(ampliada_l).enhance(1.25)).enhance(2.2))
+            try:
+                histograma = ampliada_l.histogram()
+                total_pixels = max(1, sum(histograma))
+                media = int(sum(indice * valor for indice, valor in enumerate(histograma)) / total_pixels)
+            except Exception:
+                media = 128
+            limiares = [118, 135, 150, 170] if media >= 120 else [92, 110, 128, 145]
+            invertida = ampliada_l.point(lambda valor: 255 - valor)
+            adicionar("invertida", invertida)
+            for limiar in limiares:
+                adicionar(f"limiar_claro_{limiar}", ampliada_l.point(lambda valor, t=limiar: 255 if valor >= t else 0))
+                adicionar(f"limiar_escuro_{limiar}", ampliada_l.point(lambda valor, t=limiar: 0 if valor >= t else 255))
+                adicionar(f"invertida_limiar_{limiar}", invertida.point(lambda valor, t=limiar: 255 if valor >= t else 0))
+        except Exception:
+            return variantes
+        return variantes
+
     def extrair_textos_ocr_rapido(self, imagem, texto_esperado=""):
         if not OCR_DISPONIVEL or imagem is None or Image is None:
             return []
@@ -2319,7 +2513,11 @@ class ExecutorAutomacao:
             self.registrar_origem_captura("janela_alvo", janela=janela_execucao)
             origem_captura = "janela_alvo"
         else:
-            self.registrar_origem_captura("tela_inteira")
+            if region:
+                self.registrar_origem_captura("janela_alvo", janela={"title": self._janela_contexto or self.janela_alvo or "regiao definida"})
+                origem_captura = "janela_alvo"
+            else:
+                self.registrar_origem_captura("tela_inteira")
 
         if ImageGrab is None:
             captura = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
@@ -2333,8 +2531,24 @@ class ExecutorAutomacao:
                 top = int(region[1])
                 right = int(region[0] + region[2])
                 bottom = int(region[1] + region[3])
-                captura = ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True)
-                return finalizar_captura(captura, left, top)
+                esquerda_virtual, topo_virtual, _largura_virtual, _altura_virtual = self.obter_metricas_tela_virtual()
+                captura_total = ImageGrab.grab(all_screens=True)
+                largura_virtual = max(1, int(_largura_virtual or getattr(captura_total, "width", 1) or 1))
+                altura_virtual = max(1, int(_altura_virtual or getattr(captura_total, "height", 1) or 1))
+                escala_x = float(getattr(captura_total, "width", 1) or 1) / float(largura_virtual)
+                escala_y = float(getattr(captura_total, "height", 1) or 1) / float(altura_virtual)
+                rel_left = int(round((left - esquerda_virtual) * escala_x))
+                rel_top = int(round((top - topo_virtual) * escala_y))
+                rel_right = int(round((right - esquerda_virtual) * escala_x))
+                rel_bottom = int(round((bottom - topo_virtual) * escala_y))
+                rel_left = max(0, min(captura_total.width, rel_left))
+                rel_top = max(0, min(captura_total.height, rel_top))
+                rel_right = max(rel_left, min(captura_total.width, rel_right))
+                rel_bottom = max(rel_top, min(captura_total.height, rel_bottom))
+                captura = captura_total.crop((rel_left, rel_top, rel_right, rel_bottom))
+                base_left = int(round(esquerda_virtual + (rel_left / escala_x)))
+                base_top = int(round(topo_virtual + (rel_top / escala_y)))
+                return finalizar_captura(captura, base_left, base_top)
 
             esquerda_virtual, topo_virtual, largura_virtual, altura_virtual = self.obter_metricas_tela_virtual()
             captura = ImageGrab.grab(all_screens=True)
@@ -4784,6 +4998,12 @@ class ExecutorAutomacao:
             nome_imagem = Path(str(detalhes.get("imagem", ""))).name or "imagem"
             return f"Evento #{ordem}: imagem {nome_imagem}"
 
+        if tipo in TIPOS_OCR:
+            detalhes = evento.get("detalhes", {})
+            texto = self.limpar_saida_status(detalhes.get("texto", "texto"))
+            acao = self.limpar_saida_status(detalhes.get("acao", "clicar"))
+            return f"Evento #{ordem}: procurar texto {texto[:42]} [{acao}]"
+
         if tipo in TIPOS_VERIFICACAO:
             detalhes = evento.get("detalhes", {})
             return f"Evento #{ordem}: {detalhes.get('nome', 'verificar estado do botao')}"
@@ -5013,6 +5233,518 @@ class ExecutorAutomacao:
             bloco=detalhes.get("bloco_divergir", ""),
             atraso=detalhes.get("atraso_antes_sequencia_divergir", 0),
         )
+
+    def similaridade_texto(self, esperado, capturado):
+        esperado_norm = self.normalizar_texto_ocr(esperado)
+        capturado_norm = self.normalizar_texto_ocr(capturado)
+        if not esperado_norm or not capturado_norm:
+            return 0.0
+        if esperado_norm == capturado_norm:
+            return 1.0
+        if esperado_norm in capturado_norm:
+            return min(0.98, 0.82 + (len(esperado_norm) / max(len(capturado_norm), 1)) * 0.16)
+        esperado_compacto = re.sub(r"[^a-z0-9]+", "", esperado_norm)
+        capturado_compacto = re.sub(r"[^a-z0-9]+", "", capturado_norm)
+        scores = [float(difflib.SequenceMatcher(None, esperado_norm, capturado_norm).ratio())]
+        if esperado_compacto and capturado_compacto:
+            if esperado_compacto == capturado_compacto:
+                return 0.995
+            if esperado_compacto in capturado_compacto:
+                return min(0.985, 0.84 + (len(esperado_compacto) / max(len(capturado_compacto), 1)) * 0.14)
+            scores.append(float(difflib.SequenceMatcher(None, esperado_compacto, capturado_compacto).ratio()))
+        return max(scores)
+
+    def localizar_texto_por_uia(self, texto, confianca=0.72, janela_alvo=None, limite=650):
+        texto_alvo = self.normalizar_texto_ocr(texto)
+        if not texto_alvo:
+            return None
+        try:
+            auto = self.carregar_uia_runtime()
+        except Exception:
+            return None
+
+        try:
+            self.preparar_janela_para_acao(janela_alvo)
+        except Exception:
+            pass
+
+        roots = []
+        try:
+            if self.alvo_execucao_ativo():
+                hwnd = int((self.contexto_execucao_alvo or {}).get("target_hwnd", 0) or 0)
+                if hwnd:
+                    roots.append(auto.ControlFromHandle(hwnd))
+            elif janela_alvo:
+                janela = self.localizar_janela_alvo(janela_alvo)
+                if janela and int(janela.get("hwnd", 0) or 0):
+                    roots.append(auto.ControlFromHandle(int(janela.get("hwnd"))))
+        except Exception:
+            pass
+        if not roots:
+            try:
+                roots.append(auto.GetRootControl())
+            except Exception:
+                return None
+
+        melhor = None
+        visitados = 0
+        fila = list(roots)
+        while fila and visitados < max(80, int(limite or 650)):
+            if self.cancelamento_solicitado():
+                return None
+            control = fila.pop(0)
+            visitados += 1
+            try:
+                props = self.propriedades_controle_uia(control)
+                nome = str(props.get("name") or "").strip()
+                score = self.similaridade_texto(texto_alvo, nome)
+                rect = self.retangulo_controle_uia(control)
+                if nome and rect and score >= float(confianca):
+                    candidato = {
+                        "left": int(rect["left"]),
+                        "top": int(rect["top"]),
+                        "width": max(12, int(rect["right"] - rect["left"])),
+                        "height": max(10, int(rect["bottom"] - rect["top"])),
+                        "text": nome,
+                        "score": score,
+                        "source": "uia",
+                        "control": control,
+                    }
+                    if melhor is None or candidato["score"] > melhor["score"]:
+                        melhor = candidato
+                        if score >= 0.98:
+                            break
+                for child in control.GetChildren():
+                    fila.append(child)
+            except Exception:
+                continue
+        return melhor
+
+    def localizar_texto_por_ocr_screenshot(self, texto, confianca=0.72, janela_alvo=None, region=None):
+        if not OCR_DISPONIVEL or pytesseract is None:
+            if not self._ocr_indisponivel_logado:
+                safe_print(
+                    "OCR por screenshot indisponivel: Pillow/PyTesseract nao esta carregado.",
+                    flush=True,
+                )
+                self._ocr_indisponivel_logado = True
+            return None
+        texto_alvo = self.normalizar_texto_ocr(texto)
+        if not texto_alvo:
+            return None
+        try:
+            regiao_ocr = region or self.obter_regiao_busca(janela_alvo)
+            if regiao_ocr:
+                safe_print(f"OCR capturando regiao: {self.formatar_regiao_log(regiao_ocr)}", flush=True)
+            captura, base_left, base_top = self.capturar_tela_pil(region=regiao_ocr)
+            safe_print(
+                f"OCR base da captura: x={int(base_left)} y={int(base_top)} "
+                f"w={int(getattr(captura, 'width', 0) or 0)} h={int(getattr(captura, 'height', 0) or 0)}",
+                flush=True,
+            )
+        except Exception:
+            return None
+
+        itens = []
+        variantes = []
+        try:
+            area_captura = max(1, int(captura.width or 0) * int(captura.height or 0))
+            captura_grande = area_captura >= 900000
+            fator_ocr = 1.35 if captura_grande else 2
+            variantes = self.gerar_variantes_imagem_ocr(captura, fator=fator_ocr, incluir_cor=True)
+            imagem_escala = variantes[0][1] if variantes else captura
+            escala_x = float(getattr(imagem_escala, "width", 1) or 1) / max(1.0, float(getattr(captura, "width", 1) or 1))
+            escala_y = float(getattr(imagem_escala, "height", 1) or 1) / max(1.0, float(getattr(captura, "height", 1) or 1))
+        except Exception:
+            return None
+
+        configs = [
+            "--psm 6 -c preserve_interword_spaces=1",
+            "--psm 11 -c preserve_interword_spaces=1",
+            "--psm 12 -c preserve_interword_spaces=1",
+            "--psm 7 -c preserve_interword_spaces=1",
+            "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/.-:_ ",
+            "--psm 11 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/.-:_ ",
+        ]
+        for nome_variante, imagem in variantes:
+            for config in configs:
+                try:
+                    dados = pytesseract.image_to_data(imagem, config=config, output_type=pytesseract.Output.DICT)
+                except Exception as erro:
+                    nome_erro = erro.__class__.__name__.lower()
+                    mensagem_erro = str(erro).lower()
+                    if (
+                        "tesseractnotfound" in nome_erro
+                        or "tesseract is not installed" in mensagem_erro
+                        or "tesseract.exe" in mensagem_erro
+                    ):
+                        if not self._ocr_indisponivel_logado:
+                            safe_print(
+                                "OCR por screenshot indisponivel: tesseract.exe nao foi encontrado. "
+                                "Inclua o Tesseract-OCR junto ao FlowDetect ou instale o motor OCR no sistema.",
+                                flush=True,
+                            )
+                            self._ocr_indisponivel_logado = True
+                    continue
+
+                total = len(dados.get("text", []))
+                for indice in range(total):
+                    bruto = str(dados.get("text", [""])[indice] or "").strip()
+                    if not bruto:
+                        continue
+                    try:
+                        conf_ocr = float(dados.get("conf", ["0"])[indice])
+                    except Exception:
+                        conf_ocr = 0.0
+                    if conf_ocr < 18:
+                        continue
+                    left = int(float(dados.get("left", [0])[indice]) / escala_x) + int(base_left)
+                    top = int(float(dados.get("top", [0])[indice]) / escala_y) + int(base_top)
+                    width = max(8, int(float(dados.get("width", [0])[indice]) / escala_x))
+                    height = max(8, int(float(dados.get("height", [0])[indice]) / escala_y))
+                    itens.append({
+                        "text": bruto,
+                        "left": left,
+                        "top": top,
+                        "width": width,
+                        "height": height,
+                        "variant": nome_variante,
+                    })
+
+        candidatos = []
+        if itens:
+            itens.sort(key=lambda item: (int(item["top"] / 14), item["left"]))
+
+            linhas = []
+            for item in itens:
+                centro_y = int(item["top"] + item["height"] / 2)
+                linha = next((grupo for grupo in linhas if abs(grupo["centro_y"] - centro_y) <= max(10, int(item["height"] * 0.7))), None)
+                if linha is None:
+                    linha = {"centro_y": centro_y, "itens": []}
+                    linhas.append(linha)
+                linha["itens"].append(item)
+
+            for linha in linhas:
+                grupo_linha = sorted(linha["itens"], key=lambda item: item["left"])
+                texto_linha = " ".join(item["text"] for item in grupo_linha)
+                score_linha = self.similaridade_texto(texto_alvo, texto_linha)
+                if score_linha >= float(confianca):
+                    left = min(item["left"] for item in grupo_linha)
+                    top = min(item["top"] for item in grupo_linha)
+                    right = max(item["left"] + item["width"] for item in grupo_linha)
+                    bottom = max(item["top"] + item["height"] for item in grupo_linha)
+                    candidatos.append({
+                        "left": left,
+                        "top": top,
+                        "width": max(12, right - left),
+                        "height": max(10, bottom - top),
+                        "text": texto_linha,
+                        "score": score_linha,
+                        "source": "ocr",
+                    })
+
+            palavras_alvo = texto_alvo.split()
+            janela = max(1, min(max(6, len(palavras_alvo) + 2), 10))
+            for inicio in range(len(itens)):
+                for tamanho in range(1, min(janela, len(itens) - inicio) + 1):
+                    grupo = itens[inicio : inicio + tamanho]
+                    texto_grupo = " ".join(item["text"] for item in grupo)
+                    score = self.similaridade_texto(texto_alvo, texto_grupo)
+                    if score < float(confianca):
+                        continue
+                    left = min(item["left"] for item in grupo)
+                    top = min(item["top"] for item in grupo)
+                    right = max(item["left"] + item["width"] for item in grupo)
+                    bottom = max(item["top"] + item["height"] for item in grupo)
+                    candidatos.append({
+                        "left": left,
+                        "top": top,
+                        "width": max(12, right - left),
+                        "height": max(10, bottom - top),
+                        "text": texto_grupo,
+                        "score": score,
+                        "source": "ocr",
+                    })
+
+        if not candidatos and itens:
+            amostras = " | ".join(str(item.get("text", "")) for item in itens[:24])
+            if amostras:
+                safe_print(f"OCR leu, mas nao bateu com o texto esperado. Amostra: {amostras}", flush=True)
+        if not candidatos:
+            resultado_varredura = self.localizar_texto_por_ocr_em_regioes(
+                captura,
+                texto_alvo,
+                confianca=confianca,
+                base_left=base_left,
+                base_top=base_top,
+            )
+            if resultado_varredura:
+                return resultado_varredura
+            chave_diag = f"{texto_alvo}|{int(base_left)}|{int(base_top)}|{getattr(captura, 'width', 0)}|{getattr(captura, 'height', 0)}"
+            if chave_diag not in self._diagnosticos_ocr_salvos:
+                self._diagnosticos_ocr_salvos.add(chave_diag)
+                diagnostico = self.salvar_captura_bruta_reconhecimento(
+                    region=regiao_ocr,
+                    titulo_janela=janela_alvo or self._janela_contexto,
+                )
+                if diagnostico:
+                    safe_print(f"OCR diagnostico salvo em: {diagnostico}", flush=True)
+            return None
+        return max(candidatos, key=lambda item: item["score"])
+
+    def extrair_textos_ocr_leve(self, imagem):
+        if not OCR_DISPONIVEL or pytesseract is None or imagem is None or Image is None:
+            return []
+        try:
+            area = max(1, int(imagem.width or 0) * int(imagem.height or 0))
+            fator = 1.4 if area >= 450000 else (2 if area < 180000 else 1.6)
+            variantes = self.gerar_variantes_imagem_ocr(imagem, fator=fator, incluir_cor=False)
+        except Exception:
+            return []
+        configs = [
+            "--psm 6 -c preserve_interword_spaces=1",
+            "--psm 11 -c preserve_interword_spaces=1",
+            "--psm 12 -c preserve_interword_spaces=1",
+            "--psm 7 -c preserve_interword_spaces=1",
+        ]
+        textos = []
+        for _nome, variante in variantes:
+            for config in configs:
+                try:
+                    texto = pytesseract.image_to_string(variante, config=config)
+                except Exception:
+                    continue
+                texto = self.normalizar_texto_ocr(texto)
+                if texto and texto not in textos:
+                    textos.append(texto)
+        return textos
+
+    def texto_ocr_imagem_corresponde(self, imagem, texto_alvo, confianca=0.72, pesado=False):
+        textos = self.extrair_textos_ocr_leve(imagem)
+        if pesado:
+            for texto in self.extrair_variantes_texto_ocr_imagem(imagem):
+                if texto and texto not in textos:
+                    textos.append(texto)
+        melhor_texto = ""
+        melhor_score = 0.0
+        for texto_lido in textos:
+            score = self.similaridade_texto(texto_alvo, texto_lido)
+            if score > melhor_score:
+                melhor_score = score
+                melhor_texto = texto_lido
+            if score >= float(confianca):
+                return True, texto_lido, score
+        return False, melhor_texto, melhor_score
+
+    def subdividir_regiao_ocr(self, largura, altura):
+        regioes = []
+        metade_largura = max(1, int(largura / 2))
+        metade_altura = max(1, int(altura / 2))
+        # Prioriza o lado direito, onde botões de login/acesso aparecem com frequência.
+        regioes.extend([
+            (metade_largura, 0, largura - metade_largura, altura),
+            (0, 0, metade_largura, altura),
+            (metade_largura, 0, largura - metade_largura, metade_altura),
+            (metade_largura, metade_altura, largura - metade_largura, altura - metade_altura),
+            (0, 0, metade_largura, metade_altura),
+            (0, metade_altura, metade_largura, altura - metade_altura),
+        ])
+        filtradas = []
+        vistos = set()
+        for x, y, w, h in regioes:
+            if w < 80 or h < 40:
+                continue
+            chave = (x, y, w, h)
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            filtradas.append(chave)
+        return filtradas
+
+    def localizar_texto_por_ocr_em_regioes(self, captura, texto_alvo, confianca=0.72, base_left=0, base_top=0):
+        if captura is None or Image is None:
+            return None
+
+        fila = [(0, 0, int(captura.width or 0), int(captura.height or 0), 0)]
+        melhor = None
+        melhor_score = 0.0
+        max_niveis = 3
+        analisadas = 0
+        while fila and analisadas < 10:
+            x, y, largura, altura, nivel = fila.pop(0)
+            if largura < 80 or altura < 40:
+                continue
+            analisadas += 1
+            try:
+                recorte = captura.crop((x, y, x + largura, y + altura))
+            except Exception:
+                continue
+            area_recorte = max(1, largura * altura)
+            encontrou, texto_lido, score = self.texto_ocr_imagem_corresponde(
+                recorte,
+                texto_alvo,
+                confianca=max(0.58, float(confianca) - 0.05),
+                pesado=area_recorte <= 260000,
+            )
+            if score > melhor_score:
+                melhor_score = score
+                melhor = (x, y, largura, altura, texto_lido, score)
+            if not encontrou:
+                continue
+            if nivel >= max_niveis or largura <= 260 or altura <= 140:
+                safe_print(
+                    f"OCR encontrou texto por varredura regional: '{texto_lido}' "
+                    f"(similaridade={score:.2f}).",
+                    flush=True,
+                )
+                return {
+                    "left": int(base_left + x),
+                    "top": int(base_top + y),
+                    "width": max(24, int(largura)),
+                    "height": max(24, int(altura)),
+                    "text": texto_lido,
+                    "score": score,
+                    "source": "ocr-regiao",
+                }
+            for sub_x, sub_y, sub_w, sub_h in self.subdividir_regiao_ocr(largura, altura):
+                fila.append((x + sub_x, y + sub_y, sub_w, sub_h, nivel + 1))
+
+        if melhor and melhor_score >= max(0.70, float(confianca) + 0.08):
+            x, y, largura, altura, texto_lido, score = melhor
+            safe_print(
+                f"OCR encontrou texto por leitura regional ampla: '{texto_lido}' "
+                f"(similaridade={score:.2f}).",
+                flush=True,
+            )
+            return {
+                "left": int(base_left + x),
+                "top": int(base_top + y),
+                "width": max(24, int(largura)),
+                "height": max(24, int(altura)),
+                "text": texto_lido,
+                "score": score,
+                "source": "ocr-regiao",
+            }
+        return None
+
+    def clicar_resultado_texto(self, resultado, clicar=True, clicks=1, offset_x=0, offset_y=0):
+        if not resultado:
+            return None
+        self.marcar_area_reconhecida(resultado, duracao=0.45, bloqueante=True)
+        destino_x = int(resultado["left"] + resultado["width"] / 2 + int(offset_x or 0))
+        destino_y = int(resultado["top"] + resultado["height"] / 2 + int(offset_y or 0))
+        if clicar:
+            time.sleep(0.08)
+            pyautogui.click(destino_x, destino_y, clicks=max(1, int(clicks or 1)))
+            self._ultimo_clique_visual_em = time.perf_counter()
+            self._ultima_posicao_clique_visual = {
+                "x": destino_x,
+                "y": destino_y,
+                "button": "left",
+                "clicks": max(1, int(clicks or 1)),
+            }
+        return {"x": destino_x, "y": destino_y}
+
+    def executar_bloco_procurar_texto_ocr(self, evento):
+        detalhes = evento.get("detalhes") or {}
+        ordem = int(evento.get("ordem", 0) or 0)
+        texto = str(detalhes.get("texto", "") or "").strip()
+        if not texto:
+            raise RuntimeError("Bloco OCR inteligente sem texto configurado.")
+        acao = str(detalhes.get("acao", "clicar") or "clicar").strip().lower()
+        deve_clicar = bool(detalhes.get("clicar", True)) and acao in {"clicar", "click"}
+        janela_evento = self.resolver_janela_evento(
+            detalhes.get("janela_alvo"),
+            registrar_conflito=not bool(str(detalhes.get("janela_alvo") or "").strip()),
+            priorizar_evento=bool(str(detalhes.get("janela_alvo") or "").strip()),
+        )
+        if not janela_evento:
+            janela_auto = self.escolher_janela_ocr_automatica(texto)
+            if janela_auto:
+                janela_evento = str(janela_auto.get("title") or "").strip()
+        tentativas = max(1, int(detalhes.get("quantidade_tentativas", 3) or 3))
+        intervalo = max(0.0, float(detalhes.get("intervalo_tentativas", 0.7) or 0.7))
+        confianca = max(0.35, min(1.0, float(detalhes.get("confianca", 0.72) or 0.72)))
+        timeout = max(0.1, float(detalhes.get("timeout", 8) or 8))
+        permitir_scroll = str(detalhes.get("varredura_scroll", True)).strip().lower() not in {"0", "false", "nao", "não", "off", "desativado"}
+        scrolls = max(0, min(8, int(detalhes.get("varredura_scroll_tentativas", 4) or 4)))
+        pixels_scroll = max(120, int(detalhes.get("varredura_scroll_pixels", 520) or 520))
+        direcao_scroll = str(detalhes.get("varredura_scroll_direcao", "baixo") or "baixo")
+        fim = time.perf_counter() + timeout
+        ultimo_resultado = None
+
+        for tentativa in range(tentativas):
+            if self.cancelamento_solicitado():
+                return self.resultado_fluxo("parar")
+            safe_print(f"Bloco {ordem}: procurando texto '{texto}' | tentativa {tentativa + 1}/{tentativas}", flush=True)
+            etapas_scroll = scrolls + 1 if permitir_scroll else 1
+            for etapa in range(etapas_scroll):
+                if self.cancelamento_solicitado():
+                    return self.resultado_fluxo("parar")
+                if not janela_evento:
+                    janela_auto = self.escolher_janela_ocr_automatica(texto) or self.adotar_janela_ativa_para_ocr()
+                    if janela_auto:
+                        janela_evento = str(janela_auto.get("title") or "").strip()
+                resultado = self.localizar_texto_por_uia(texto, confianca=confianca, janela_alvo=janela_evento)
+                if not resultado:
+                    resultado = self.localizar_texto_por_ocr_screenshot(texto, confianca=confianca, janela_alvo=janela_evento)
+                if resultado:
+                    ultimo_resultado = resultado
+                    capturado = str(resultado.get("text") or texto).strip()
+                    self.salvar_variavel_contexto("ultimo_ocr", capturado)
+                    self.salvar_variavel_contexto("ocr_tela", capturado)
+                    self.salvar_variavel_contexto(f"ocr_bloco_{ordem}", capturado)
+                    salvar_em = str(detalhes.get("salvar_em", "") or "").strip()
+                    if salvar_em:
+                        self.salvar_variavel_contexto(salvar_em, capturado)
+                    safe_print(
+                        f"Texto encontrado por {resultado.get('source', 'texto')}: '{capturado}' "
+                        f"(similaridade={float(resultado.get('score', 0.0) or 0.0):.2f}).",
+                        flush=True,
+                    )
+                    if acao == "verificar":
+                        return self.resultado_sucesso_evento(evento)
+                    self.clicar_resultado_texto(
+                        resultado,
+                        clicar=deve_clicar,
+                        clicks=detalhes.get("cliques", 1),
+                        offset_x=detalhes.get("offset_x", 0),
+                        offset_y=detalhes.get("offset_y", 0),
+                    )
+                    return self.resultado_sucesso_evento(evento)
+                if etapa < etapas_scroll - 1:
+                    self.rolar_para_varredura_visual(
+                        titulo_janela=janela_evento,
+                        direcao=direcao_scroll,
+                        pixels=pixels_scroll,
+                    )
+                if time.perf_counter() >= fim:
+                    break
+            if tentativa < tentativas - 1 and intervalo > 0:
+                if not self.esperar(intervalo):
+                    return self.resultado_fluxo("parar")
+
+        acao_falha = str(detalhes.get("ao_nao_encontrar", "parar") or "parar")
+        if acao_falha in {"continuar", "pular"}:
+            safe_print(f"Bloco {ordem}: texto '{texto}' nao encontrado. Continuando.", flush=True)
+            return self.resultado_fluxo("continuar")
+        if acao_falha == "ir_para_sequencia":
+            sequencia = str(detalhes.get("sequencia_nao_encontrar", "") or "").strip()
+            return self.resultado_fluxo(
+                "ir_para_sequencia",
+                sequencia=sequencia,
+                atraso=detalhes.get("atraso_antes_sequencia_nao_encontrar", 0),
+            )
+        if acao_falha == "ir_para_bloco":
+            return self.resultado_fluxo(
+                "ir_para_bloco",
+                bloco=detalhes.get("bloco_nao_encontrar", ""),
+                atraso=detalhes.get("atraso_antes_sequencia_nao_encontrar", 0),
+            )
+        extra = ""
+        if ultimo_resultado:
+            extra = f" | melhor texto: {ultimo_resultado.get('text', '')}"
+        raise RuntimeError(f"Texto nao encontrado na tela: {texto}{extra}")
 
     def cancelamento_solicitado(self):
         if self.cancelar.is_set():
@@ -5897,11 +6629,100 @@ class ExecutorAutomacao:
                 r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
                 r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
             ]
+        elif navegador in {"padrao", "default", ""}:
+            candidatos = [
+                shutil.which("chrome"),
+                shutil.which("chrome.exe"),
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                shutil.which("msedge"),
+                shutil.which("msedge.exe"),
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            ]
         else:
             return None
         for candidato in candidatos:
             if candidato and Path(str(candidato)).exists():
                 return str(candidato)
+        return None
+
+    def aguardar_e_fixar_janela_navegador(self, url="", navegador="padrao", timeout=6.0):
+        fim = time.perf_counter() + max(0.5, float(timeout or 0))
+        texto_url = self.normalizar_texto_busca(url)
+        compacto_url = re.sub(r"[^a-z0-9]+", "", texto_url)
+        termos_url = [
+            termo
+            for termo in re.split(r"[^a-zA-Z0-9]+", str(url or "").lower())
+            if len(termo) >= 3 and termo not in {"http", "https", "www", "com", "br", "gov"}
+        ]
+        navegador = str(navegador or "padrao").strip().lower()
+        melhor = None
+        melhor_score = -1
+
+        while time.perf_counter() <= fim:
+            if self.cancelamento_solicitado():
+                return None
+            for janela in self.listar_janelas_visiveis():
+                if self.janela_parece_interface_flowdetect(janela):
+                    continue
+                if int(janela.get("width", 0) or 0) < 360 or int(janela.get("height", 0) or 0) < 240:
+                    continue
+                titulo = self.normalizar_texto_busca(janela.get("title", ""))
+                classe = self.normalizar_texto_busca(janela.get("class_name", ""))
+                compacto_titulo = re.sub(r"[^a-z0-9]+", "", titulo)
+                score = 0
+                if self.janela_parece_navegador(janela):
+                    score += 50
+                if navegador == "chrome" and "chrome_widgetwin" in classe:
+                    score += 18
+                if navegador == "edge" and ("edge" in titulo or "applicationframe" in classe):
+                    score += 14
+                if compacto_url and compacto_url[:18] and compacto_url[:18] in compacto_titulo:
+                    score += 35
+                for termo in termos_url:
+                    termo_norm = self.normalizar_texto_busca(termo)
+                    termo_compacto = re.sub(r"[^a-z0-9]+", "", termo_norm)
+                    if termo_norm and termo_norm in titulo:
+                        score += 12
+                    elif termo_compacto and termo_compacto in compacto_titulo:
+                        score += 10
+                if "nova guia" in titulo or "new tab" in titulo:
+                    score -= 8
+                if score > melhor_score:
+                    melhor = janela
+                    melhor_score = score
+
+            if melhor and melhor_score >= 50:
+                titulo_original = str(melhor.get("title") or "").strip()
+                self._janela_contexto = titulo_original
+                self._janela_fixada = melhor
+                try:
+                    self.preparar_janela_para_acao(titulo_original)
+                    pyautogui.hotkey("win", "up")
+                except Exception:
+                    pass
+                safe_print(
+                    f"Janela do navegador fixada para proximos reconhecimentos: {titulo_original}",
+                    flush=True,
+                )
+                return melhor
+            time.sleep(0.25)
+
+        if melhor and melhor_score >= 35:
+            titulo_original = str(melhor.get("title") or "").strip()
+            self._janela_contexto = titulo_original
+            self._janela_fixada = melhor
+            try:
+                self.preparar_janela_para_acao(titulo_original)
+                pyautogui.hotkey("win", "up")
+            except Exception:
+                pass
+            safe_print(
+                f"Janela provavel do navegador fixada: {titulo_original}",
+                flush=True,
+            )
+            return melhor
         return None
 
     def executar_bloco_abrir_url(self, evento):
@@ -5918,13 +6739,32 @@ class ExecutorAutomacao:
         executavel = self.localizar_executavel_navegador(navegador)
         if executavel:
             argumentos = [executavel]
+            nome_executavel = Path(executavel).name.lower()
+            navegador_automatizavel = navegador in {"chrome", "edge", "padrao", "default", ""} or nome_executavel in {"chrome.exe", "msedge.exe"}
+            if navegador_automatizavel:
+                argumentos.extend([
+                    "--start-maximized",
+                    "--force-renderer-accessibility",
+                    "--enable-accessibility-object-model",
+                ])
             if nova_janela:
                 argumentos.append("--new-window")
             argumentos.append(url)
             popen_silencioso(argumentos)
         else:
             webbrowser.open(url, new=1 if nova_janela else 2)
-        if aguardar > 0 and not self.esperar(aguardar):
+        janela = self.aguardar_e_fixar_janela_navegador(
+            url=url,
+            navegador=navegador,
+            timeout=max(aguardar, 5.0),
+        )
+        if janela is None:
+            safe_print(
+                "Aviso: a URL foi solicitada, mas nenhuma janela de navegador ficou visivel para fixar. "
+                "Os proximos reconhecimentos podem capturar a area de trabalho.",
+                flush=True,
+            )
+        if janela is None and aguardar > 0 and not self.esperar(aguardar):
             return self.resultado_fluxo("parar")
         return self.resultado_sucesso_evento(evento)
 
@@ -6032,6 +6872,15 @@ class ExecutorAutomacao:
 
         if tipo in TIPOS_IMAGEM:
             detalhes = evento.get("detalhes", {})
+            if str(detalhes.get("modo_reconhecimento", "imagem") or "imagem").strip().lower() == "texto_ocr":
+                detalhes_ocr = {
+                    **detalhes,
+                    "texto": detalhes.get("texto_ocr_busca", ""),
+                    "acao": detalhes.get("acao_ocr", "clicar"),
+                    "salvar_em": detalhes.get("salvar_ocr_em", ""),
+                }
+                evento_ocr = {**evento, "detalhes": detalhes_ocr}
+                return self.executar_bloco_procurar_texto_ocr(evento_ocr)
             ordem_evento = int(evento.get("ordem", 0) or 0)
             nome_imagem = str(detalhes.get("imagem") or "")
             janela_evento = self.resolver_janela_evento(
@@ -6198,6 +7047,9 @@ class ExecutorAutomacao:
             raise RuntimeError(f"Imagem nao encontrada: {detalhes.get('imagem')}{complemento}")
 
             return self.resultado_fluxo("parar")
+
+        if tipo in TIPOS_OCR:
+            return self.executar_bloco_procurar_texto_ocr(evento)
 
         if tipo in TIPOS_VERIFICACAO:
             detalhes = evento.get("detalhes", {})
@@ -7243,6 +8095,15 @@ def criar_parser():
     parser.add_argument("--area-busca-largura-imagem", type=int, default=0)
     parser.add_argument("--area-busca-altura-imagem", type=int, default=0)
     parser.add_argument("--texto-ocr-esperado", default="")
+    parser.add_argument("--modo-reconhecimento", choices=("imagem", "texto_ocr"), default="imagem")
+    parser.add_argument("--texto-ocr-busca", default="")
+    parser.add_argument("--acao-ocr", choices=("clicar", "localizar", "verificar"), default="localizar")
+    parser.add_argument("--confianca-ocr", type=float, default=0.72)
+    parser.add_argument("--timeout-ocr", type=float, default=8.0)
+    parser.add_argument("--varredura-scroll", default="true")
+    parser.add_argument("--varredura-scroll-tentativas", type=int, default=4)
+    parser.add_argument("--varredura-scroll-pixels", type=int, default=520)
+    parser.add_argument("--varredura-scroll-direcao", choices=("baixo", "cima"), default="baixo")
     parser.add_argument("--leitura-relativa-ativa", default="false")
     parser.add_argument("--leitura-relativa-lado", default="livre")
     parser.add_argument("--leitura-relativa-largura", type=int, default=140)
@@ -7285,6 +8146,7 @@ def main():
     elif executor.janela_alvo:
         safe_print(f"Janela alvo configurada: {executor.janela_alvo}", flush=True)
     if atraso > 0:
+        safe_print(f"Voce tem {atraso:g}s para focar a janela onde a automacao deve executar.", flush=True)
         time.sleep(atraso)
 
     if args.modo != "reconhecimento" and not executor.janela_alvo and not executor.alvo_execucao_ativo():
@@ -7301,32 +8163,61 @@ def main():
     try:
         try:
             if args.modo == "reconhecimento":
-                leitura_relativa_teste = {
-                    "ativo": str(args.leitura_relativa_ativa or "").strip().lower() in {"1", "true", "sim", "yes"},
-                    "lado": args.leitura_relativa_lado,
-                    "largura": args.leitura_relativa_largura,
-                    "altura": args.leitura_relativa_altura,
-                    "offset_x": args.leitura_relativa_offset_x,
-                    "offset_y": args.leitura_relativa_offset_y,
-                    "salvar_em": args.leitura_relativa_salvar_em,
-                }
-                sucesso = executor.testar_reconhecimento(
-                    imagem=args.imagem_teste,
-                    timeout=args.timeout_imagem,
-                    confianca=args.confianca_imagem,
-                    janela_alvo=args.janela_alvo,
-                    clicar=False,
-                    perfil_busca=args.perfil_busca_imagem,
-                    modo_area_busca=args.modo_area_busca_imagem,
-                    area_personalizada={
-                        "x": args.area_busca_x_imagem,
-                        "y": args.area_busca_y_imagem,
-                        "width": args.area_busca_largura_imagem,
-                        "height": args.area_busca_altura_imagem,
-                    },
-                    texto_ocr_esperado=args.texto_ocr_esperado,
-                    leitura_relativa=leitura_relativa_teste,
-                )
+                if args.modo_reconhecimento == "texto_ocr":
+                    evento_teste = {
+                        "ordem": 0,
+                        "tipo": "clicar_imagem",
+                        "detalhes": {
+                            "modo_reconhecimento": "texto_ocr",
+                            "texto": args.texto_ocr_busca,
+                            "texto_ocr_busca": args.texto_ocr_busca,
+                            "acao": "localizar",
+                            "acao_ocr": args.acao_ocr,
+                            "timeout": args.timeout_ocr,
+                            "confianca": args.confianca_ocr,
+                            "clicar": False,
+                            "cliques": 0,
+                            "janela_alvo": args.janela_alvo,
+                            "quantidade_tentativas": 1,
+                            "intervalo_tentativas": 0,
+                            "varredura_scroll": str(args.varredura_scroll or "").strip().lower() not in {"0", "false", "nao", "não", "off"},
+                            "varredura_scroll_tentativas": args.varredura_scroll_tentativas,
+                            "varredura_scroll_pixels": args.varredura_scroll_pixels,
+                            "varredura_scroll_direcao": args.varredura_scroll_direcao,
+                            "ao_nao_encontrar": "parar",
+                            "ao_sucesso": "continuar",
+                        },
+                    }
+                    resultado = executor.executar_bloco_procurar_texto_ocr(evento_teste)
+                    sucesso = resultado.get("acao") != "parar"
+                    safe_print("Teste de OCR inteligente concluido com sucesso.", flush=True)
+                else:
+                    leitura_relativa_teste = {
+                        "ativo": str(args.leitura_relativa_ativa or "").strip().lower() in {"1", "true", "sim", "yes"},
+                        "lado": args.leitura_relativa_lado,
+                        "largura": args.leitura_relativa_largura,
+                        "altura": args.leitura_relativa_altura,
+                        "offset_x": args.leitura_relativa_offset_x,
+                        "offset_y": args.leitura_relativa_offset_y,
+                        "salvar_em": args.leitura_relativa_salvar_em,
+                    }
+                    sucesso = executor.testar_reconhecimento(
+                        imagem=args.imagem_teste,
+                        timeout=args.timeout_imagem,
+                        confianca=args.confianca_imagem,
+                        janela_alvo=args.janela_alvo,
+                        clicar=False,
+                        perfil_busca=args.perfil_busca_imagem,
+                        modo_area_busca=args.modo_area_busca_imagem,
+                        area_personalizada={
+                            "x": args.area_busca_x_imagem,
+                            "y": args.area_busca_y_imagem,
+                            "width": args.area_busca_largura_imagem,
+                            "height": args.area_busca_altura_imagem,
+                        },
+                        texto_ocr_esperado=args.texto_ocr_esperado,
+                        leitura_relativa=leitura_relativa_teste,
+                    )
             elif args.modo == "loop":
                 sucesso = executor.executar_loop(loop_start=args.loop_start)
             else:

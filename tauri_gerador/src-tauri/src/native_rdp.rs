@@ -971,9 +971,6 @@ pub fn resize(x: i32, y: i32, width: i32, height: i32, visible: bool) -> Result<
         if visible {
             if session.version == "mstsc-embedded" {
                 let host = HWND(session.parent as *mut c_void);
-                // A superficie OPWindowClass nao suporta ser movida ou
-                // redimensionada depois de conectada. Centralize apenas o
-                // painel de recorte, preservando o framebuffer intacto.
                 let available_width = width.max(320);
                 let available_height = height.max(240);
                 let host_width = available_width.min(session.surface_width.max(320));
@@ -990,8 +987,12 @@ pub fn resize(x: i32, y: i32, width: i32, height: i32, visible: bool) -> Result<
                     SWP_NOACTIVATE | SWP_SHOWWINDOW,
                 )
                 .map_err(|error| format!("Falha ao dimensionar o painel da VM: {error}"))?;
-                // A superficie RDP conserva a origem e o tamanho negociados
-                // na abertura; o host fornece o recorte seguro.
+                let _ = RedrawWindow(
+                    host,
+                    None,
+                    None,
+                    RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
+                );
             } else {
                 SetWindowPos(
                     hwnd,

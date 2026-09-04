@@ -46,6 +46,7 @@ TIPOS_SEQUENCIA_PLANILHA = {"sequencia_planilha"}
 TIPOS_MARCADORES_LOOP = {"inicio_loop", "fim_loop"}
 TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
+TIPOS_OCR = {"procurar_texto_ocr"}
 TIPOS_VERIFICACAO = {"verificar_estado_botao"}
 TIPOS_CHROME = {"chrome_elemento_html"}
 TIPOS_UIA = {"uia_elemento"}
@@ -58,6 +59,7 @@ TIPOS_SUPORTADOS_RUNTIME = {
     *TIPOS_MARCADORES_LOOP,
     *TIPOS_MOUSE,
     *TIPOS_IMAGEM,
+    *TIPOS_OCR,
     *TIPOS_VERIFICACAO,
     *TIPOS_CHROME,
     *TIPOS_UIA,
@@ -1229,6 +1231,18 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
             f"| perfil:{perfil_busca} | area:{modo_area_busca}{janela} | falha:{acao}{alvo}]"
         )
 
+    if tipo_evento in TIPOS_OCR:
+        detalhes = metadados or {}
+        texto = str(detalhes.get("texto", "") or "").strip() or "texto"
+        acao = str(detalhes.get("acao", "clicar") or "clicar").strip().lower()
+        timeout = float(detalhes.get("timeout", 8) or 8)
+        confianca = float(detalhes.get("confianca", 0.72) or 0.72)
+        tentativas = max(1, int(detalhes.get("quantidade_tentativas", 3) or 3))
+        return (
+            f"[OCR:{texto[:48]} | acao:{acao} | "
+            f"timeout={timeout:g}s | similaridade={confianca:g} | tentativas={tentativas}]"
+        )
+
     if tipo_evento in TIPOS_CHROME:
         detalhes = metadados or {}
         alvo = detalhes.get("alvo") or {}
@@ -1349,6 +1363,29 @@ def montar_comando_python(teclas, tipo_evento, texto_livre=None, metadados=None)
             f"bloco_nao_encontrar={detalhes.get('bloco_nao_encontrar', '')!r}, "
             f"quantidade_tentativas={int(detalhes.get('quantidade_tentativas', 1) or 1)!r}, "
             f"intervalo_tentativas={float(detalhes.get('intervalo_tentativas', 1) or 1)!r}"
+            ")"
+        )
+
+    if tipo_evento in TIPOS_OCR:
+        detalhes = metadados or {}
+        return (
+            "procurar_texto_ocr("
+            f"texto={str(detalhes.get('texto', ''))!r}, "
+            f"acao={str(detalhes.get('acao', 'clicar'))!r}, "
+            f"timeout={float(detalhes.get('timeout', 8) or 8)!r}, "
+            f"confianca={float(detalhes.get('confianca', 0.72) or 0.72)!r}, "
+            f"clicar={bool(detalhes.get('clicar', True))!r}, "
+            f"clicks={max(0, int(detalhes.get('cliques', 1 if detalhes.get('clicar', True) else 0) or 0))!r}, "
+            f"offset_x={int(detalhes.get('offset_x', 0) or 0)!r}, "
+            f"offset_y={int(detalhes.get('offset_y', 0) or 0)!r}, "
+            f"janela_alvo={str(detalhes.get('janela_alvo', ''))!r}, "
+            f"quantidade_tentativas={int(detalhes.get('quantidade_tentativas', 3) or 3)!r}, "
+            f"intervalo_tentativas={float(detalhes.get('intervalo_tentativas', 0.7) or 0.7)!r}, "
+            f"varredura_scroll={bool(detalhes.get('varredura_scroll', True))!r}, "
+            f"varredura_scroll_tentativas={int(detalhes.get('varredura_scroll_tentativas', 4) or 4)!r}, "
+            f"varredura_scroll_pixels={int(detalhes.get('varredura_scroll_pixels', 520) or 520)!r}, "
+            f"varredura_scroll_direcao={str(detalhes.get('varredura_scroll_direcao', 'baixo'))!r}, "
+            f"ao_nao_encontrar={str(detalhes.get('ao_nao_encontrar', 'parar'))!r}"
             ")"
         )
 
@@ -1641,6 +1678,34 @@ def normalizar_eventos(payload):
             continue
         elif tipo in TIPOS_IMAGEM:
             detalhes["imagem"] = normalizar_id_imagem(detalhes.get("imagem"))
+            detalhes["modo_reconhecimento"] = str(detalhes.get("modo_reconhecimento", "imagem") or "imagem").strip().lower() or "imagem"
+            detalhes["texto_ocr_busca"] = str(detalhes.get("texto_ocr_busca", "") or "").strip()
+            detalhes["acao_ocr"] = str(detalhes.get("acao_ocr", "clicar") or "clicar").strip().lower() or "clicar"
+            detalhes["salvar_ocr_em"] = str(detalhes.get("salvar_ocr_em", "") or "").strip()
+            evento["detalhes"] = detalhes
+        elif tipo in TIPOS_OCR:
+            detalhes["texto"] = str(detalhes.get("texto", "") or "").strip()
+            detalhes["acao"] = str(detalhes.get("acao", "clicar") or "clicar").strip().lower() or "clicar"
+            detalhes["timeout"] = max(0.1, float(detalhes.get("timeout", 8) or 8))
+            detalhes["confianca"] = max(0.35, min(1.0, float(detalhes.get("confianca", 0.72) or 0.72)))
+            detalhes["clicar"] = bool(detalhes.get("clicar", detalhes["acao"] == "clicar"))
+            detalhes["cliques"] = max(0, int(detalhes.get("cliques", 1 if detalhes["clicar"] else 0) or 0))
+            detalhes["offset_x"] = int(detalhes.get("offset_x", 0) or 0)
+            detalhes["offset_y"] = int(detalhes.get("offset_y", 0) or 0)
+            detalhes["janela_alvo"] = str(detalhes.get("janela_alvo", "") or "").strip()
+            detalhes["salvar_em"] = str(detalhes.get("salvar_em", "") or "").strip()
+            detalhes["ao_nao_encontrar"] = str(detalhes.get("ao_nao_encontrar", "parar") or "parar")
+            detalhes["sequencia_nao_encontrar"] = str(detalhes.get("sequencia_nao_encontrar", "") or "").strip()
+            detalhes["atraso_antes_sequencia_nao_encontrar"] = normalizar_atraso_transicao(
+                detalhes.get("atraso_antes_sequencia_nao_encontrar", 0)
+            )
+            detalhes["bloco_nao_encontrar"] = int(detalhes.get("bloco_nao_encontrar")) if str(detalhes.get("bloco_nao_encontrar", "") or "").strip() else ""
+            detalhes["quantidade_tentativas"] = max(1, int(detalhes.get("quantidade_tentativas", 3) or 3))
+            detalhes["intervalo_tentativas"] = max(0.0, float(detalhes.get("intervalo_tentativas", 0.7) or 0.7))
+            detalhes["varredura_scroll"] = str(detalhes.get("varredura_scroll", True)).strip().lower() not in {"0", "false", "nao", "não", "off", "desativado"}
+            detalhes["varredura_scroll_tentativas"] = max(0, min(8, int(detalhes.get("varredura_scroll_tentativas", 4) or 4)))
+            detalhes["varredura_scroll_pixels"] = max(120, int(detalhes.get("varredura_scroll_pixels", 520) or 520))
+            detalhes["varredura_scroll_direcao"] = str(detalhes.get("varredura_scroll_direcao", "baixo") or "baixo").strip().lower() or "baixo"
             evento["detalhes"] = detalhes
         elif tipo in TIPOS_VERIFICACAO:
             detalhes["imagem_ativo"] = normalizar_id_imagem(detalhes.get("imagem_ativo"))
@@ -1965,6 +2030,10 @@ def criar_bloco_clicar_imagem(
     leitura_relativa_offset_x=0,
     leitura_relativa_offset_y=0,
     leitura_relativa_salvar_em="",
+    modo_reconhecimento="imagem",
+    texto_ocr_busca="",
+    acao_ocr="clicar",
+    salvar_ocr_em="",
     ao_nao_encontrar="parar",
     sequencia_nao_encontrar="",
     atraso_sequencia_nao_encontrar=0,
@@ -1997,6 +2066,10 @@ def criar_bloco_clicar_imagem(
         "offset_y": int(offset_y),
         "janela_alvo": str(janela_alvo or "").strip(),
         "texto_ocr_esperado": str(texto_ocr_esperado or "").strip(),
+        "modo_reconhecimento": str(modo_reconhecimento or "imagem").strip().lower() or "imagem",
+        "texto_ocr_busca": str(texto_ocr_busca or "").strip(),
+        "acao_ocr": str(acao_ocr or "clicar").strip().lower() or "clicar",
+        "salvar_ocr_em": str(salvar_ocr_em or "").strip(),
         "leitura_relativa": {
             "ativo": str(leitura_relativa_ativa).strip().lower() in {"1", "true", "sim", "yes"},
             "lado": str(leitura_relativa_lado or "livre").strip().lower() or "livre",
@@ -2025,6 +2098,70 @@ def criar_bloco_clicar_imagem(
         "texto": formatar_evento(["imagem"], "clicar_imagem", metadados=detalhes),
         "intervalo_antes": round(float(delay), 3),
         "comando_python": montar_comando_python(["imagem"], "clicar_imagem", metadados=detalhes),
+        "detalhes": detalhes,
+    }
+
+
+def criar_bloco_procurar_texto_ocr(
+    texto,
+    delay,
+    acao="clicar",
+    timeout=8,
+    confianca=0.72,
+    clicar=True,
+    clicks=1,
+    offset_x=0,
+    offset_y=0,
+    janela_alvo="",
+    salvar_em="",
+    ao_nao_encontrar="parar",
+    sequencia_nao_encontrar="",
+    atraso_sequencia_nao_encontrar=0,
+    bloco_nao_encontrar="",
+    quantidade_tentativas=3,
+    intervalo_tentativas=0.7,
+    varredura_scroll=True,
+    varredura_scroll_tentativas=4,
+    varredura_scroll_pixels=520,
+    varredura_scroll_direcao="baixo",
+    ao_sucesso="continuar",
+    bloco_sucesso="",
+    sequencia_sucesso="",
+    atraso_sequencia_sucesso=0,
+    sequencia="principal",
+):
+    acao_normalizada = str(acao or "clicar").strip().lower() or "clicar"
+    deve_clicar = bool(clicar) and acao_normalizada in {"clicar", "click"}
+    detalhes = aplicar_fluxo_sucesso({
+        "texto": str(texto or "").strip(),
+        "acao": acao_normalizada,
+        "timeout": max(0.1, float(timeout or 8)),
+        "confianca": max(0.35, min(1.0, float(confianca or 0.72))),
+        "clicar": deve_clicar,
+        "cliques": max(0, int(clicks if deve_clicar else 0)),
+        "offset_x": int(offset_x or 0),
+        "offset_y": int(offset_y or 0),
+        "janela_alvo": str(janela_alvo or "").strip(),
+        "salvar_em": str(salvar_em or "").strip(),
+        "ao_nao_encontrar": str(ao_nao_encontrar or "parar"),
+        "sequencia_nao_encontrar": str(sequencia_nao_encontrar or "").strip(),
+        "atraso_antes_sequencia_nao_encontrar": normalizar_atraso_transicao(atraso_sequencia_nao_encontrar),
+        "bloco_nao_encontrar": int(bloco_nao_encontrar) if str(bloco_nao_encontrar or "").strip() else "",
+        "quantidade_tentativas": max(1, int(quantidade_tentativas or 3)),
+        "intervalo_tentativas": max(0.0, float(intervalo_tentativas or 0.7)),
+        "varredura_scroll": str(varredura_scroll).strip().lower() not in {"0", "false", "nao", "não", "off", "desativado"},
+        "varredura_scroll_tentativas": max(0, min(8, int(varredura_scroll_tentativas or 4))),
+        "varredura_scroll_pixels": max(120, int(varredura_scroll_pixels or 520)),
+        "varredura_scroll_direcao": str(varredura_scroll_direcao or "baixo").strip().lower() or "baixo",
+    }, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
+    return {
+        "ordem": 0,
+        "sequencia": normalizar_nome_sequencia(sequencia),
+        "tipo": "procurar_texto_ocr",
+        "teclas": ["ocr"],
+        "texto": formatar_evento(["ocr"], "procurar_texto_ocr", metadados=detalhes),
+        "intervalo_antes": round(float(delay), 3),
+        "comando_python": montar_comando_python(["ocr"], "procurar_texto_ocr", metadados=detalhes),
         "detalhes": detalhes,
     }
 
@@ -2438,12 +2575,29 @@ def card_do_evento(evento):
         )
         descricao = f"{tipo_clique} absoluto na tela"
     elif tipo == "clicar_imagem":
-        titulo = "Reconhecimento visual"
-        subtitulo = Path(str(detalhes.get("imagem", ""))).name or "Referencia visual"
+        if str(detalhes.get("modo_reconhecimento", "imagem") or "imagem").lower() == "texto_ocr":
+            titulo = "Reconhecimento OCR"
+            subtitulo = resumir_texto(detalhes.get("texto_ocr_busca", ""), 70) or "Texto/OCR inteligente"
+            descricao = (
+                f"Acao: {detalhes.get('acao_ocr', 'clicar')} | "
+                f"Similaridade {float(detalhes.get('confianca', 0.72) or 0.72):g} | "
+                f"Falha: {detalhes.get('ao_nao_encontrar', 'parar')}"
+            )
+        else:
+            titulo = "Reconhecimento visual"
+            subtitulo = Path(str(detalhes.get("imagem", ""))).name or "Referencia visual"
+            descricao = (
+                f"Timeout {float(detalhes.get('timeout', 10) or 10):g}s | "
+                f"Confianca {float(detalhes.get('confianca', 0.8) or 0.8):g} | "
+                f"Falha: {detalhes.get('ao_nao_encontrar', 'parar')}"
+            )
+    elif tipo == "procurar_texto_ocr":
+        titulo = "OCR inteligente"
+        subtitulo = resumir_texto(detalhes.get("texto", ""), 70)
+        acao = str(detalhes.get("acao", "clicar") or "clicar")
         descricao = (
-            f"Timeout {float(detalhes.get('timeout', 10) or 10):g}s | "
-            f"Confianca {float(detalhes.get('confianca', 0.8) or 0.8):g} | "
-            f"Falha: {detalhes.get('ao_nao_encontrar', 'parar')}"
+            f"Acao: {acao} | Similaridade {float(detalhes.get('confianca', 0.72) or 0.72):g} | "
+            f"Tentativas {int(detalhes.get('quantidade_tentativas', 3) or 3)}"
         )
     elif tipo == "chrome_elemento_html":
         titulo = detalhes.get("nome", "Chrome / Elemento HTML")
@@ -2547,6 +2701,7 @@ def payload_para_resposta(payload):
             "key_blocks": sum(1 for evento in eventos if evento.get("tipo") in {"tecla", "atalho"}),
             "mouse_blocks": sum(1 for evento in eventos if evento.get("tipo") == "mouse_click"),
             "image_blocks": sum(1 for evento in eventos if evento.get("tipo") == "clicar_imagem"),
+            "ocr_blocks": sum(1 for evento in eventos if evento.get("tipo") == "procurar_texto_ocr"),
             "chrome_blocks": sum(1 for evento in eventos if evento.get("tipo") == "chrome_elemento_html"),
             "branch_blocks": sum(1 for evento in eventos if evento.get("tipo") in TIPOS_VERIFICACAO),
             "spreadsheet_blocks": sum(1 for evento in eventos if evento.get("tipo") == "sequencia_planilha"),
@@ -3010,12 +3165,55 @@ def comando_adicionar_imagem(args):
             args.leitura_relativa_offset_x,
             args.leitura_relativa_offset_y,
             args.leitura_relativa_salvar_em,
+            args.modo_reconhecimento,
+            args.texto_ocr_busca,
+            args.acao_ocr,
+            args.salvar_ocr_em,
             args.ao_nao_encontrar,
             args.sequencia_nao_encontrar,
             args.atraso_sequencia_nao_encontrar,
             args.bloco_nao_encontrar,
             args.quantidade_tentativas,
             args.intervalo_tentativas,
+            True,
+            4,
+            560,
+            "baixo",
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+            args.sequencia,
+        )
+    )
+    return salvar_e_retornar(payload)
+
+
+def comando_adicionar_texto_ocr(args):
+    payload = carregar_e_normalizar()
+    payload["eventos"].append(
+        criar_bloco_procurar_texto_ocr(
+            args.texto,
+            args.delay,
+            args.acao,
+            args.timeout,
+            args.confianca,
+            args.clicar,
+            args.clicks,
+            args.offset_x,
+            args.offset_y,
+            args.janela_alvo,
+            args.salvar_em,
+            args.ao_nao_encontrar,
+            args.sequencia_nao_encontrar,
+            args.atraso_sequencia_nao_encontrar,
+            args.bloco_nao_encontrar,
+            args.quantidade_tentativas,
+            args.intervalo_tentativas,
+            args.varredura_scroll,
+            args.varredura_scroll_tentativas,
+            args.varredura_scroll_pixels,
+            args.varredura_scroll_direcao,
             args.ao_sucesso,
             args.bloco_sucesso,
             args.sequencia_sucesso,
@@ -3235,12 +3433,58 @@ def comando_inserir_imagem(args):
             args.leitura_relativa_offset_x,
             args.leitura_relativa_offset_y,
             args.leitura_relativa_salvar_em,
+            args.modo_reconhecimento,
+            args.texto_ocr_busca,
+            args.acao_ocr,
+            args.salvar_ocr_em,
             args.ao_nao_encontrar,
             args.sequencia_nao_encontrar,
             args.atraso_sequencia_nao_encontrar,
             args.bloco_nao_encontrar,
             args.quantidade_tentativas,
             args.intervalo_tentativas,
+            True,
+            4,
+            560,
+            "baixo",
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+            args.sequencia,
+        ),
+        args.target_order,
+        args.position,
+    )
+    return salvar_e_retornar(payload)
+
+
+def comando_inserir_texto_ocr(args):
+    payload = carregar_e_normalizar()
+    inserir_evento(
+        payload,
+        criar_bloco_procurar_texto_ocr(
+            args.texto,
+            args.delay,
+            args.acao,
+            args.timeout,
+            args.confianca,
+            args.clicar,
+            args.clicks,
+            args.offset_x,
+            args.offset_y,
+            args.janela_alvo,
+            args.salvar_em,
+            args.ao_nao_encontrar,
+            args.sequencia_nao_encontrar,
+            args.atraso_sequencia_nao_encontrar,
+            args.bloco_nao_encontrar,
+            args.quantidade_tentativas,
+            args.intervalo_tentativas,
+            args.varredura_scroll,
+            args.varredura_scroll_tentativas,
+            args.varredura_scroll_pixels,
+            args.varredura_scroll_direcao,
             args.ao_sucesso,
             args.bloco_sucesso,
             args.sequencia_sucesso,
@@ -3497,6 +3741,10 @@ def comando_atualizar_imagem(args):
     detalhes["offset_y"] = int(args.offset_y)
     detalhes["janela_alvo"] = str(args.janela_alvo or "").strip()
     detalhes["texto_ocr_esperado"] = str(args.texto_ocr_esperado or "").strip()
+    detalhes["modo_reconhecimento"] = str(args.modo_reconhecimento or "imagem").strip().lower() or "imagem"
+    detalhes["texto_ocr_busca"] = str(args.texto_ocr_busca or "").strip()
+    detalhes["acao_ocr"] = str(args.acao_ocr or "clicar").strip().lower() or "clicar"
+    detalhes["salvar_ocr_em"] = str(args.salvar_ocr_em or "").strip()
     detalhes["leitura_relativa"] = {
         "ativo": str(args.leitura_relativa_ativa).strip().lower() in {"1", "true", "sim", "yes"},
         "lado": str(args.leitura_relativa_lado or "livre").strip().lower() or "livre",
@@ -3512,12 +3760,53 @@ def comando_atualizar_imagem(args):
     detalhes["bloco_nao_encontrar"] = int(args.bloco_nao_encontrar) if str(args.bloco_nao_encontrar or "").strip() else ""
     detalhes["quantidade_tentativas"] = max(1, int(args.quantidade_tentativas or 1))
     detalhes["intervalo_tentativas"] = max(0.0, float(args.intervalo_tentativas))
+    detalhes["varredura_scroll"] = str(args.varredura_scroll).strip().lower() not in {"0", "false", "nao", "nÃ£o", "off", "desativado"}
+    detalhes["varredura_scroll_tentativas"] = max(0, min(8, int(args.varredura_scroll_tentativas or 0)))
+    detalhes["varredura_scroll_pixels"] = max(120, int(args.varredura_scroll_pixels or 520))
+    detalhes["varredura_scroll_direcao"] = str(args.varredura_scroll_direcao or "baixo").strip().lower() or "baixo"
     detalhes = aplicar_fluxo_sucesso(detalhes, args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso)
     evento["detalhes"] = detalhes
     if args.delay is not None:
         evento["intervalo_antes"] = args.delay
     if args.sequencia is not None:
         evento["sequencia"] = normalizar_nome_sequencia(args.sequencia)
+    return salvar_e_retornar(payload)
+
+
+def comando_atualizar_texto_ocr(args):
+    payload = carregar_e_normalizar()
+    _, evento = localizar_evento(payload, args.order)
+    if evento.get("tipo") != "procurar_texto_ocr":
+        raise ValueError("O bloco selecionado nao eh do tipo OCR inteligente.")
+    bloco = criar_bloco_procurar_texto_ocr(
+        args.texto,
+        args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
+        args.acao,
+        args.timeout,
+        args.confianca,
+        args.clicar,
+        args.clicks,
+        args.offset_x,
+        args.offset_y,
+        args.janela_alvo,
+        args.salvar_em,
+        args.ao_nao_encontrar,
+        args.sequencia_nao_encontrar,
+        args.atraso_sequencia_nao_encontrar,
+        args.bloco_nao_encontrar,
+        args.quantidade_tentativas,
+        args.intervalo_tentativas,
+        args.varredura_scroll,
+        args.varredura_scroll_tentativas,
+        args.varredura_scroll_pixels,
+        args.varredura_scroll_direcao,
+        args.ao_sucesso,
+        args.bloco_sucesso,
+        args.sequencia_sucesso,
+        args.atraso_sequencia_sucesso,
+        args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
+    )
+    evento.update(bloco)
     return salvar_e_retornar(payload)
 
 
@@ -3796,6 +4085,38 @@ def build_parser():
         parser_destino.add_argument("--parametros", default="")
         parser_destino.add_argument("--aguardar-segundos", type=float, default=2)
 
+    def adicionar_argumentos_texto_ocr(parser_destino):
+        parser_destino.add_argument("--texto", required=True)
+        parser_destino.add_argument("--acao", choices=["clicar", "localizar", "verificar"], default="clicar")
+        parser_destino.add_argument("--timeout", type=float, default=8)
+        parser_destino.add_argument("--confianca", type=float, default=0.72)
+        parser_destino.add_argument("--clicar", type=lambda value: str(value).lower() in {"1", "true", "sim", "yes"}, default=True)
+        parser_destino.add_argument("--clicks", type=int, default=1)
+        parser_destino.add_argument("--offset-x", type=int, default=0)
+        parser_destino.add_argument("--offset-y", type=int, default=0)
+        parser_destino.add_argument("--janela-alvo", default="")
+        parser_destino.add_argument("--salvar-em", default="")
+        parser_destino.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
+        parser_destino.add_argument("--sequencia-nao-encontrar", default="")
+        parser_destino.add_argument("--atraso-sequencia-nao-encontrar", type=float, default=0)
+        parser_destino.add_argument("--bloco-nao-encontrar", default="")
+        parser_destino.add_argument("--quantidade-tentativas", type=int, default=3)
+        parser_destino.add_argument("--intervalo-tentativas", type=float, default=0.7)
+        parser_destino.add_argument("--varredura-scroll", type=lambda value: str(value).lower() not in {"0", "false", "nao", "não", "off"}, default=True)
+        parser_destino.add_argument("--varredura-scroll-tentativas", type=int, default=4)
+        parser_destino.add_argument("--varredura-scroll-pixels", type=int, default=520)
+        parser_destino.add_argument("--varredura-scroll-direcao", choices=["baixo", "cima"], default="baixo")
+
+    def adicionar_argumentos_ocr_embutido(parser_destino):
+        parser_destino.add_argument("--modo-reconhecimento", choices=["imagem", "texto_ocr"], default="imagem")
+        parser_destino.add_argument("--texto-ocr-busca", default="")
+        parser_destino.add_argument("--acao-ocr", choices=["clicar", "localizar", "verificar"], default="clicar")
+        parser_destino.add_argument("--salvar-ocr-em", default="")
+        parser_destino.add_argument("--varredura-scroll", type=lambda value: str(value).lower() not in {"0", "false", "nao", "nÃ£o", "off"}, default=True)
+        parser_destino.add_argument("--varredura-scroll-tentativas", type=int, default=4)
+        parser_destino.add_argument("--varredura-scroll-pixels", type=int, default=520)
+        parser_destino.add_argument("--varredura-scroll-direcao", choices=["baixo", "cima"], default="baixo")
+
     subparsers.add_parser("list")
     subparsers.add_parser("automation-library-list")
     subparsers.add_parser("workbook-meta")
@@ -3870,7 +4191,7 @@ def build_parser():
     adicionar_argumentos_fluxo_sucesso(add_mouse)
 
     add_image = subparsers.add_parser("add-image-click")
-    add_image.add_argument("--imagem", required=True)
+    add_image.add_argument("--imagem", default="")
     add_image.add_argument("--timeout", type=float, default=10)
     add_image.add_argument("--confianca", type=float, default=0.8)
     add_image.add_argument("--perfil-busca", default="balanced")
@@ -3885,6 +4206,7 @@ def build_parser():
     add_image.add_argument("--offset-y", type=int, default=0)
     add_image.add_argument("--janela-alvo", default="")
     adicionar_argumentos_leitura_relativa(add_image)
+    adicionar_argumentos_ocr_embutido(add_image)
     add_image.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
     add_image.add_argument("--sequencia-nao-encontrar", default="")
     add_image.add_argument("--atraso-sequencia-nao-encontrar", type=float, default=0)
@@ -3894,6 +4216,12 @@ def build_parser():
     add_image.add_argument("--delay", type=float, default=0)
     add_image.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(add_image)
+
+    add_ocr = subparsers.add_parser("add-ocr-text")
+    adicionar_argumentos_texto_ocr(add_ocr)
+    add_ocr.add_argument("--delay", type=float, default=0)
+    add_ocr.add_argument("--sequencia", default="principal")
+    adicionar_argumentos_fluxo_sucesso(add_ocr)
 
     add_verify = subparsers.add_parser("add-verify-button-state")
     add_verify.add_argument("--nome", default="Verificar estado do botao")
@@ -4008,7 +4336,7 @@ def build_parser():
     insert_image = subparsers.add_parser("insert-image-click")
     insert_image.add_argument("--target-order", type=int, required=True)
     insert_image.add_argument("--position", choices=["before", "after"], required=True)
-    insert_image.add_argument("--imagem", required=True)
+    insert_image.add_argument("--imagem", default="")
     insert_image.add_argument("--timeout", type=float, default=10)
     insert_image.add_argument("--confianca", type=float, default=0.8)
     insert_image.add_argument("--perfil-busca", default="balanced")
@@ -4023,6 +4351,7 @@ def build_parser():
     insert_image.add_argument("--offset-y", type=int, default=0)
     insert_image.add_argument("--janela-alvo", default="")
     adicionar_argumentos_leitura_relativa(insert_image)
+    adicionar_argumentos_ocr_embutido(insert_image)
     insert_image.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
     insert_image.add_argument("--sequencia-nao-encontrar", default="")
     insert_image.add_argument("--atraso-sequencia-nao-encontrar", type=float, default=0)
@@ -4032,6 +4361,14 @@ def build_parser():
     insert_image.add_argument("--delay", type=float, default=0)
     insert_image.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(insert_image)
+
+    insert_ocr = subparsers.add_parser("insert-ocr-text")
+    insert_ocr.add_argument("--target-order", type=int, required=True)
+    insert_ocr.add_argument("--position", choices=["before", "after"], required=True)
+    adicionar_argumentos_texto_ocr(insert_ocr)
+    insert_ocr.add_argument("--delay", type=float, default=0)
+    insert_ocr.add_argument("--sequencia", default="principal")
+    adicionar_argumentos_fluxo_sucesso(insert_ocr)
 
     insert_verify = subparsers.add_parser("insert-verify-button-state")
     insert_verify.add_argument("--target-order", type=int, required=True)
@@ -4158,7 +4495,7 @@ def build_parser():
 
     update_image = subparsers.add_parser("update-image-click")
     update_image.add_argument("--order", type=int, required=True)
-    update_image.add_argument("--imagem", required=True)
+    update_image.add_argument("--imagem", default="")
     update_image.add_argument("--timeout", type=float, default=10)
     update_image.add_argument("--confianca", type=float, default=0.8)
     update_image.add_argument("--perfil-busca", default="balanced")
@@ -4173,6 +4510,7 @@ def build_parser():
     update_image.add_argument("--offset-y", type=int, default=0)
     update_image.add_argument("--janela-alvo", default="")
     adicionar_argumentos_leitura_relativa(update_image)
+    adicionar_argumentos_ocr_embutido(update_image)
     update_image.add_argument("--ao-nao-encontrar", choices=["parar", "continuar", "pular", "tentar_novamente", "ir_para_sequencia", "ir_para_bloco"], default="parar")
     update_image.add_argument("--sequencia-nao-encontrar", default="")
     update_image.add_argument("--atraso-sequencia-nao-encontrar", type=float, default=0)
@@ -4182,6 +4520,13 @@ def build_parser():
     update_image.add_argument("--delay", type=float)
     update_image.add_argument("--sequencia")
     adicionar_argumentos_fluxo_sucesso(update_image)
+
+    update_ocr = subparsers.add_parser("update-ocr-text")
+    update_ocr.add_argument("--order", type=int, required=True)
+    adicionar_argumentos_texto_ocr(update_ocr)
+    update_ocr.add_argument("--delay", type=float)
+    update_ocr.add_argument("--sequencia")
+    adicionar_argumentos_fluxo_sucesso(update_ocr)
 
     update_verify = subparsers.add_parser("update-verify-button-state")
     update_verify.add_argument("--order", type=int, required=True)
@@ -4313,6 +4658,7 @@ COMANDOS = {
     "add-key": comando_adicionar_teclas,
     "add-mouse": comando_adicionar_mouse,
     "add-image-click": comando_adicionar_imagem,
+    "add-ocr-text": comando_adicionar_texto_ocr,
     "add-verify-button-state": comando_adicionar_verificacao,
     "add-chrome-html": comando_adicionar_chrome_html,
     "add-uia-element": comando_adicionar_uia_elemento,
@@ -4325,6 +4671,7 @@ COMANDOS = {
     "insert-key": comando_inserir_teclas,
     "insert-mouse": comando_inserir_mouse,
     "insert-image-click": comando_inserir_imagem,
+    "insert-ocr-text": comando_inserir_texto_ocr,
     "insert-verify-button-state": comando_inserir_verificacao,
     "insert-chrome-html": comando_inserir_chrome_html,
     "insert-uia-element": comando_inserir_uia_elemento,
@@ -4337,6 +4684,7 @@ COMANDOS = {
     "update-key": comando_atualizar_teclas,
     "update-mouse": comando_atualizar_mouse,
     "update-image-click": comando_atualizar_imagem,
+    "update-ocr-text": comando_atualizar_texto_ocr,
     "update-verify-button-state": comando_atualizar_verificacao,
     "update-chrome-html": comando_atualizar_chrome_html,
     "update-uia-element": comando_atualizar_uia_elemento,

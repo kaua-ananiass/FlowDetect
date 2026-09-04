@@ -2034,7 +2034,9 @@ body.agent-lite-mode *::after {
 }
 
 body.agent-lite-mode.agent-compact-mode .agent-observer-frame {
-  border-color: rgba(45, 201, 242, 0.28);
+  inset: 0;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
@@ -2046,12 +2048,76 @@ body.agent-lite-mode.agent-compact-mode .agent-observer-frame::after {
 
 body.agent-lite-mode .agent-observer-corner {
   filter: none;
-  opacity: 0.74;
+  width: 22px;
+  height: 22px;
+  opacity: 0.7;
+  border-width: 1px !important;
+}
+
+body.agent-lite-mode .agent-observer-corner-tl {
+  top: 8px;
+  left: 8px;
+}
+
+body.agent-lite-mode .agent-observer-corner-tr {
+  top: 8px;
+  right: 8px;
+}
+
+body.agent-lite-mode .agent-observer-corner-bl {
+  bottom: 8px;
+  left: 8px;
+}
+
+body.agent-lite-mode .agent-observer-corner-br {
+  right: 8px;
+  bottom: 8px;
 }
 
 body.agent-lite-mode .agent-observer-header,
 body.agent-lite-mode .agent-observer-footer {
   text-shadow: none;
+}
+
+body.agent-lite-mode.agent-compact-mode .agent-observer-header {
+  top: 8px;
+  right: 10px;
+  left: auto;
+  min-height: 0;
+  justify-content: flex-end;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+body.agent-lite-mode.agent-compact-mode .agent-observer-header > strong,
+body.agent-lite-mode.agent-compact-mode .agent-observer-address,
+body.agent-lite-mode.agent-compact-mode .agent-observer-active,
+body.agent-lite-mode.agent-compact-mode .agent-observer-footer,
+body.agent-lite-mode.agent-compact-mode .agent-observer-progress,
+body.agent-lite-mode.agent-compact-mode .agent-observer-blocks {
+  display: none !important;
+}
+
+body.agent-lite-mode.agent-compact-mode .agent-observer-header-status {
+  gap: 0;
+}
+
+body.agent-lite-mode.agent-compact-mode .agent-observer-online {
+  min-width: 0;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid rgba(69, 242, 194, 0.34);
+  border-radius: 999px;
+  background: rgba(3, 13, 25, 0.5);
+  color: rgba(231, 254, 255, 0.92);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  backdrop-filter: blur(4px);
+}
+
+body.agent-lite-mode.agent-compact-mode .agent-observer-online i {
+  width: 6px;
+  height: 6px;
 }
 
 body.agent-lite-mode .agent-observer-online i,

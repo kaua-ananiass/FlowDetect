@@ -3,12 +3,24 @@
     DetailPrint "Validando Python portatil do FlowDetect Agent..."
     IfFileExists "$INSTDIR\python_runtime\python.exe" 0 flowdetect_agent_runtime_missing
       ExecWait '"$INSTDIR\python_runtime\python.exe" -c "import openpyxl, pyautogui, cv2, PIL, pytesseract, reportlab, uiautomation"' $0
-      StrCmp $0 "0" flowdetect_prepare_hyperv
+      StrCmp $0 "0" flowdetect_agent_check_tesseract
       MessageBox MB_ICONSTOP|MB_OK "O Python portatil foi copiado, mas as bibliotecas do FlowDetect Agent nao foram validadas.$\r$\n$\r$\nRecompile o Agent recriando python_runtime_prebuilt."
       Abort
 
     flowdetect_agent_runtime_missing:
       MessageBox MB_ICONSTOP|MB_OK "O Python portatil do FlowDetect Agent nao foi encontrado no pacote.$\r$\n$\r$\nRecompile o Agent incluindo python_runtime_prebuilt como python_runtime."
+      Abort
+
+    flowdetect_agent_check_tesseract:
+      DetailPrint "Validando motor OCR local do FlowDetect Agent..."
+      IfFileExists "$INSTDIR\Tesseract-OCR\tesseract.exe" 0 flowdetect_agent_tesseract_missing
+        ExecWait '"$INSTDIR\Tesseract-OCR\tesseract.exe" --version' $0
+        StrCmp $0 "0" flowdetect_prepare_hyperv
+        MessageBox MB_ICONSTOP|MB_OK "O Tesseract OCR foi copiado, mas nao abriu corretamente.$\r$\n$\r$\nRecompile o Agent recriando installer_support\Tesseract-OCR."
+        Abort
+
+    flowdetect_agent_tesseract_missing:
+      MessageBox MB_ICONSTOP|MB_OK "O motor OCR do FlowDetect Agent nao foi encontrado no pacote.$\r$\n$\r$\nAntes da build, prepare a pasta:$\r$\ntauri_gerador\src-tauri\installer_support\Tesseract-OCR\tesseract.exe"
       Abort
 
     Goto flowdetect_prepare_hyperv

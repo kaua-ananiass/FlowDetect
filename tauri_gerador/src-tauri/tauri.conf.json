@@ -52,6 +52,7 @@
       "../../hyperv_setup/README.md": "hyperv_setup/README.md",
       "installer_support/python-installer.exe": "python-installer.exe",
       "installer_support/python-wheels/": "python-wheels/",
+      "installer_support/Tesseract-OCR/": "Tesseract-OCR/",
       "installer_support/runtime_seed/mapeamento_teclado.json": "mapeamento_teclado.json",
       "installer_support/runtime_seed/resumo_teclado.txt": "resumo_teclado.txt",
       "installer_support/runtime_seed/automacoes/": "automacoes/"
