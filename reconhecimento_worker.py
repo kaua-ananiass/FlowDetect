@@ -36,10 +36,14 @@ def main():
         try:
             request = json.loads(linha)
             executor.janela_alvo = str(request.get("janela_alvo") or "").strip()
+            modo_reconhecimento = str(request.get("modo_reconhecimento") or "").strip().lower()
+            texto_ocr = str(request.get("texto_ocr_busca") or request.get("texto_ocr_esperado") or "").strip()
+            timeout_solicitado = float(request.get("timeout", 10) or 10)
+            timeout_teste = min(timeout_solicitado, 4.0 if modo_reconhecimento == "texto_ocr" and texto_ocr else 2.5)
             with contextlib.redirect_stdout(logs):
                 sucesso = executor.testar_reconhecimento(
                     imagem=request.get("imagem", ""),
-                    timeout=min(float(request.get("timeout", 10) or 10), 2.5),
+                    timeout=timeout_teste,
                     confianca=float(request.get("confianca", 0.8) or 0.8),
                     janela_alvo=request.get("janela_alvo") or "",
                     clicar=False,
@@ -47,7 +51,7 @@ def main():
                     bloco_id=request.get("bloco_id") or "",
                     modo_area_busca=request.get("modo_area_busca") or "target_window",
                     area_personalizada=request.get("area_personalizada") or {},
-                    texto_ocr_esperado=request.get("texto_ocr_esperado") or "",
+                    texto_ocr_esperado=texto_ocr,
                     leitura_relativa=request.get("leitura_relativa") or {},
                     mostrar_marcador=True,
                     marcador_bloqueante=True,
