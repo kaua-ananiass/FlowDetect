@@ -10406,6 +10406,21 @@ label span {
   line-height: 1.35;
 }
 
+.ocr-text-editor-simple {
+  gap: 8px;
+}
+
+.recognition-ocr-embedded-panel {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(18, 181, 203, 0.16);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top right, rgba(18, 181, 203, 0.12), transparent 45%),
+    rgba(5, 14, 26, 0.42);
+}
+
 .recognition-simple-image-card {
   display: grid;
   gap: 7px;
@@ -11281,15 +11296,19 @@ label span {
 
 .command-tree-card.is-inline-expanded .recognition-simple-actions {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
 }
 
 .command-tree-card.is-inline-expanded .recognition-simple-actions .tree-open-button {
   min-height: 25px;
+  border-color: rgba(230, 247, 255, 0.1);
+  background: rgba(230, 247, 255, 0.035);
+  box-shadow: none;
 }
 
 .command-tree-card.is-inline-expanded .recognition-test-inline {
-  width: min(230px, 100%);
-  min-height: 28px;
+  width: 100%;
+  min-height: 30px;
   justify-self: center;
   border-color: rgba(18, 181, 203, 0.42);
   background:
@@ -11302,6 +11321,21 @@ label span {
 
 .command-tree-card.is-inline-expanded .recognition-choice-button {
   min-height: 26px;
+}
+
+.command-tree-card.is-inline-expanded .recognition-ocr-embedded-panel {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.command-tree-card.is-inline-expanded .ocr-text-editor-simple {
+  gap: 7px;
+}
+
+.command-tree-card.is-inline-expanded .ocr-text-editor-simple .recognition-card-helper {
+  padding: 0 2px;
+  font-size: 0.5rem;
 }
 
 .command-tree-card.is-inline-expanded .command-tree-actions {
