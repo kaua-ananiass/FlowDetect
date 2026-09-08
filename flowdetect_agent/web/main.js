@@ -616,12 +616,9 @@ async function syncAgentCompactWindow(reason = "sync") {
 }
 
 function scheduleAgentCompactWindowSync(reason = "sync") {
+  // A janela do Agent deve ficar em tela cheia sem ficar se reajustando em loop.
+  // Repetir resize aqui fazia o Chrome/VM "brigar" com o overlay e deixava tudo pesado.
   void syncAgentCompactWindow(reason);
-  [250, 900, 1800].forEach((delay) => {
-    window.setTimeout(() => {
-      void syncAgentCompactWindow(`${reason}:${delay}`);
-    }, delay);
-  });
 }
 
 async function loadAgentConnectionInfo() {

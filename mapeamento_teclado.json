@@ -1,5 +1,5 @@
 {
-  "criado_em": "2026-09-04T13:29:50",
+  "criado_em": "2026-09-08T13:24:02",
   "instrucoes": [
     "Teclas simples e atalhos sao gravados individualmente.",
     "F8 abre uma caixa de texto grande e salva o bloco como um unico comando.",
@@ -8,7 +8,7 @@
     "A aba Planilha pode adicionar uma sequencia inteira ou so linhas selecionadas ao roteiro.",
     "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura."
   ],
-  "resumo_digitado": "[ABRIR URL:https://fgtsdigital.sistema.gov.br/portal/login | padrao | nova_janela | aguardar=10s][IMAGEM:achei | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:imagem | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+  "resumo_digitado": "[ABRIR URL:https://fgtsdigital.sistema.gov.br/portal/login | padrao | nova_janela | aguardar=10s][IMAGEM:achei_001 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar][IMAGEM:imagem | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
   "eventos": [
     {
       "ordem": 1,
@@ -39,11 +39,11 @@
       "teclas": [
         "imagem"
       ],
-      "texto": "[IMAGEM:achei | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
+      "texto": "[IMAGEM:achei_001 | clicar | timeout=10s | conf=0.8 | perfil:balanced | area:target_window | falha:parar]",
       "intervalo_antes": 0.3,
-      "comando_python": "clicar_por_imagem(imagem='imagens/achei', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
+      "comando_python": "clicar_por_imagem(imagem='imagens/achei_001', timeout=10.0, confianca=0.8, perfil_busca='balanced', modo_area_busca='target_window', area_busca_x=0, area_busca_y=0, area_busca_largura=0, area_busca_altura=0, clicar=True, clicks=1, offset_x=0, offset_y=0, janela_alvo='', ao_nao_encontrar='parar', sequencia_nao_encontrar='', bloco_nao_encontrar='', quantidade_tentativas=3, intervalo_tentativas=1.0)",
       "detalhes": {
-        "imagem": "imagens/achei",
+        "imagem": "imagens/achei_001",
         "timeout": 10.0,
         "confianca": 0.8,
         "perfil_busca": "balanced",
@@ -57,14 +57,14 @@
         "offset_x": 0,
         "offset_y": 0,
         "janela_alvo": "",
-        "texto_ocr_esperado": "New issue",
+        "texto_ocr_esperado": "",
         "leitura_relativa": {
-          "ativo": false,
+          "ativo": true,
           "lado": "livre",
-          "largura": 140,
-          "altura": 40,
-          "offset_x": 0,
-          "offset_y": 0,
+          "largura": 222,
+          "altura": 56,
+          "offset_x": -7,
+          "offset_y": 4,
           "salvar_em": ""
         },
         "ao_nao_encontrar": "parar",

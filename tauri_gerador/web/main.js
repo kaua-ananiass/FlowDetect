@@ -2011,7 +2011,8 @@ async function submitDevAdminLogin() {
 
 async function runImageRecognitionTest(values, options = {}) {
   const recognitionMode = String(values?.recognitionMode || "imagem");
-  if (recognitionMode === "texto_ocr") {
+  const imagePath = String(values?.imagePath || "").trim();
+  if (recognitionMode === "texto_ocr" && !imagePath) {
     const ocrText = String(values?.ocrText || "").trim();
     const statusKey = `ocr:${ocrText}`;
     if (!ocrText) {
@@ -2032,10 +2033,14 @@ async function runImageRecognitionTest(values, options = {}) {
       );
       const result = await invoke("test_ocr_recognition", {
         texto: ocrText,
-        timeout: parseNumber(values.ocrTimeout ?? values.timeout, 8),
+        timeout: options.inheritWindowFallback === false
+          ? Math.min(4, parseNumber(values.ocrTimeout ?? values.timeout, 8))
+          : parseNumber(values.ocrTimeout ?? values.timeout, 8),
         confianca: parseNumber(values.ocrConfidence ?? values.confidence, 0.72),
         janelaAlvo: (values.ocrWindowTitle || values.windowTitle)?.trim() || null,
-        varreduraScroll: Boolean(values.ocrScrollEnabled),
+        varreduraScroll: options.inheritWindowFallback === false
+          ? false
+          : Boolean(values.ocrScrollEnabled),
         varreduraScrollTentativas: Math.max(0, Math.trunc(parseNumber(values.ocrScrollAttempts, 4))),
         varreduraScrollPixels: Math.max(120, Math.trunc(parseNumber(values.ocrScrollPixels, 520))),
         varreduraScrollDirecao: values.ocrScrollDirection || "baixo",
@@ -2056,7 +2061,6 @@ async function runImageRecognitionTest(values, options = {}) {
     }
   }
 
-  const imagePath = String(values?.imagePath || "").trim();
   if (!imagePath) {
     setMessage("Selecione uma referencia visual antes de testar o reconhecimento.", "error");
     if (Number.isFinite(Number(options.recognitionOrder))) {
@@ -2084,7 +2088,13 @@ async function runImageRecognitionTest(values, options = {}) {
       areaBuscaLargura: 0,
       areaBuscaAltura: 0,
       janelaAlvo: (values.ocrWindowTitle || values.windowTitle)?.trim() || null,
-      textoOcrEsperado: values.expectedOcrText?.trim() || null,
+      modoReconhecimento: recognitionMode,
+      textoOcrBusca: recognitionMode === "texto_ocr"
+        ? values.ocrText?.trim() || null
+        : null,
+      textoOcrEsperado: recognitionMode === "texto_ocr"
+        ? values.ocrText?.trim() || values.expectedOcrText?.trim() || null
+        : values.expectedOcrText?.trim() || null,
       ...relativeOcrInvokeArgs(values),
     });
     setBusy("Pronto");
@@ -2887,6 +2897,16 @@ function formatAssistValue(value, max = 40) {
 function getEditableTextEvents(roadmap = state.roadmap) {
   return getAssistRoadmapEvents(roadmap)
     .filter((event) => event?.type === "texto_livre" && Boolean(event?.details?.editavel_execucao));
+}
+
+async function runOcrRecognitionTest(values, options = {}) {
+  return runImageRecognitionTest(
+    {
+      ...values,
+      recognitionMode: "texto_ocr",
+    },
+    options
+  );
 }
 
 function getEditableTextLabel(event) {
@@ -8202,14 +8222,12 @@ function renderRecognitionCompactTreeEditor(event) {
   return `
     <div class="recognition-card-compact-editor">
       ${renderRecognitionTreeHiddenFields(details, event.order)}
-      ${recognitionMode === "texto_ocr" ? "" : `
-        <div class="recognition-card-compact-preview">
-          ${renderRecognitionPreviewPanel(details.imagem ?? "")}
-        </div>
-      `}
+      <div class="recognition-card-compact-preview">
+        ${renderRecognitionPreviewPanel(details.imagem ?? "")}
+      </div>
       <div class="recognition-card-compact-row">
-        <span>${recognitionMode === "texto_ocr" ? "Texto que ele procura" : "O que ele procura"}</span>
-        <strong>${escapeHtml(recognitionMode === "texto_ocr" ? (details.texto_ocr_busca || "Configure o texto") : imageName)}</strong>
+        <span>${recognitionMode === "texto_ocr" ? "Hibrido OCR + imagem" : "O que ele procura"}</span>
+        <strong>${escapeHtml(recognitionMode === "texto_ocr" ? `${details.texto_ocr_busca || "Configure o texto"} + ${imageName}` : imageName)}</strong>
       </div>
       ${expectedText ? `
         <div class="recognition-card-compact-row">
@@ -8315,100 +8333,65 @@ function ocrClickArgsFromMode(mode, action = "clicar") {
   return { clicar: true, clicks: 1 };
 }
 
-function renderOcrTextFields(fieldAttr, details = {}, currentOrder = null) {
-  const action = String(details.acao ?? "clicar");
+function renderOcrTextFields(fieldAttr, details = {}, currentOrder = null, options = {}) {
+  const embeddedHybrid = Boolean(options.embeddedHybrid);
   const clickMode = ocrClickModeFromDetails(details);
   const failureAction = String(details.ao_nao_encontrar ?? "parar");
   const scrollEnabled = details.varredura_scroll !== false;
+  const actionAttr = fieldAttr === "data-tree-field"
+    ? "data-tree-action"
+    : fieldAttr === "data-insert-field"
+      ? "data-insert-action"
+      : "data-action";
+  const hiddenField = (name, value) => `<input ${fieldAttr}="${name}" type="hidden" value="${escapeHtml(value ?? "")}" />`;
+  const hiddenDefaults = `
+    ${hiddenField("ocrAction", "clicar")}
+    ${embeddedHybrid ? hiddenField("ocrClickMode", clickMode) : ""}
+    ${hiddenField("ocrConfidence", details.confianca ?? 0.72)}
+    ${hiddenField("ocrTimeout", details.timeout ?? 8)}
+    ${hiddenField("ocrOffsetX", details.offset_x ?? 0)}
+    ${hiddenField("ocrOffsetY", details.offset_y ?? 0)}
+    ${hiddenField("ocrSaveAs", details.salvar_em ?? "")}
+    ${hiddenField("ocrWindowTitle", details.janela_alvo ?? "")}
+    ${hiddenField("ocrRetryCount", details.quantidade_tentativas ?? 3)}
+    ${hiddenField("ocrRetryInterval", details.intervalo_tentativas ?? 0.7)}
+    ${hiddenField("ocrScrollEnabled", scrollEnabled ? "true" : "false")}
+    ${hiddenField("ocrScrollDirection", details.varredura_scroll_direcao ?? "baixo")}
+    ${hiddenField("ocrScrollAttempts", details.varredura_scroll_tentativas ?? 4)}
+    ${hiddenField("ocrScrollPixels", details.varredura_scroll_pixels ?? 520)}
+  `;
+  const hiddenStandaloneFlow = embeddedHybrid ? "" : `
+    ${hiddenField("successAction", details.ao_sucesso ?? "continuar")}
+    ${hiddenField("successBlock", details.bloco_sucesso ?? "")}
+    ${hiddenField("successSequence", details.sequencia_sucesso ?? "")}
+    ${hiddenField("successSequenceDelay", formatTransitionDelayValue(details.atraso_antes_sequencia_sucesso ?? 0))}
+    ${hiddenField("ocrFailureAction", failureAction)}
+    ${hiddenField("ocrFailureBlock", details.bloco_nao_encontrar ?? "")}
+    ${hiddenField("ocrFailureSequence", details.sequencia_nao_encontrar ?? "")}
+    ${hiddenField("ocrFailureSequenceDelay", formatTransitionDelayValue(details.atraso_antes_sequencia_nao_encontrar ?? 0))}
+  `;
   return `
-    <div class="field-stack ocr-text-editor">
-      <label>
-        <span>Texto para procurar</span>
+    <div class="field-stack ocr-text-editor ocr-text-editor-simple">
+      <label class="recognition-cell recognition-cell-full">
+        <span>${embeddedHybrid ? "Texto alvo" : "Texto para procurar"}</span>
         <input ${fieldAttr}="ocrText" type="text" value="${escapeHtml(details.texto ?? "")}" placeholder="Ex.: Entrar, Continuar, Acessar" />
       </label>
-      <div class="tree-inline-fields">
-        <label>
-          <span>Acao</span>
-          <select ${fieldAttr}="ocrAction">
-            <option value="clicar" ${action === "clicar" ? "selected" : ""}>Clicar no texto</option>
-            <option value="localizar" ${action === "localizar" ? "selected" : ""}>So localizar</option>
-            <option value="verificar" ${action === "verificar" ? "selected" : ""}>Verificar se existe</option>
-          </select>
-        </label>
-        <label>
-          <span>Confianca</span>
-          <input ${fieldAttr}="ocrConfidence" type="number" min="0.3" max="1" step="0.01" value="${escapeHtml(details.confianca ?? 0.72)}" />
-        </label>
-        <label>
-          <span>Timeout</span>
-          <input ${fieldAttr}="ocrTimeout" type="number" min="0.5" step="0.5" value="${escapeHtml(details.timeout ?? 8)}" />
-        </label>
-      </div>
-      <div class="tree-inline-fields">
-        <label>
-          <span>Clique</span>
+      ${embeddedHybrid ? "" : `
+        <label class="recognition-cell recognition-cell-full">
+          <span>Depois de encontrar</span>
           <select ${fieldAttr}="ocrClickMode">
-            <option value="single" ${clickMode === "single" ? "selected" : ""}>1 clique</option>
-            <option value="double" ${clickMode === "double" ? "selected" : ""}>2 cliques</option>
-            <option value="identify" ${clickMode === "identify" ? "selected" : ""}>Nao clicar</option>
+            <option value="single" ${clickMode === "single" ? "selected" : ""}>Clicar uma vez</option>
+            <option value="double" ${clickMode === "double" ? "selected" : ""}>Clicar duas vezes</option>
+            <option value="identify" ${clickMode === "identify" ? "selected" : ""}>Apenas confirmar</option>
           </select>
         </label>
-        <label>
-          <span>Offset X</span>
-          <input ${fieldAttr}="ocrOffsetX" type="number" step="1" value="${escapeHtml(details.offset_x ?? 0)}" />
-        </label>
-        <label>
-          <span>Offset Y</span>
-          <input ${fieldAttr}="ocrOffsetY" type="number" step="1" value="${escapeHtml(details.offset_y ?? 0)}" />
-        </label>
-        <label>
-          <span>Salvar em</span>
-          <input ${fieldAttr}="ocrSaveAs" type="text" value="${escapeHtml(details.salvar_em ?? "")}" placeholder="ultimo_ocr" />
-        </label>
-      </div>
-      <label>
-        <span>Janela alvo opcional</span>
-        <select ${fieldAttr}="ocrWindowTitle">
-          ${recognitionWindowOptionsMarkup(details.janela_alvo ?? "", "Sem janela fixa")}
-        </select>
-      </label>
-      <div class="tree-inline-fields">
-        <label>
-          <span>Tentativas</span>
-          <input ${fieldAttr}="ocrRetryCount" type="number" min="1" step="1" value="${escapeHtml(details.quantidade_tentativas ?? 3)}" />
-        </label>
-        <label>
-          <span>Intervalo</span>
-          <input ${fieldAttr}="ocrRetryInterval" type="number" min="0" step="0.1" value="${escapeHtml(details.intervalo_tentativas ?? 0.7)}" />
-        </label>
-        <label>
-          <span>Scroll</span>
-          <select ${fieldAttr}="ocrScrollEnabled">
-            <option value="true" ${scrollEnabled ? "selected" : ""}>Varredura ligada</option>
-            <option value="false" ${!scrollEnabled ? "selected" : ""}>Sem varredura</option>
-          </select>
-        </label>
-        <label>
-          <span>Direcao</span>
-          <select ${fieldAttr}="ocrScrollDirection">
-            <option value="baixo" ${String(details.varredura_scroll_direcao ?? "baixo") === "baixo" ? "selected" : ""}>Baixo</option>
-            <option value="cima" ${String(details.varredura_scroll_direcao ?? "") === "cima" ? "selected" : ""}>Cima</option>
-          </select>
-        </label>
-        <label>
-          <span>Passos scroll</span>
-          <input ${fieldAttr}="ocrScrollAttempts" type="number" min="0" step="1" value="${escapeHtml(details.varredura_scroll_tentativas ?? 4)}" />
-        </label>
-        <label>
-          <span>Pixels scroll</span>
-          <input ${fieldAttr}="ocrScrollPixels" type="number" min="80" step="20" value="${escapeHtml(details.varredura_scroll_pixels ?? 520)}" />
-        </label>
-      </div>
-      <div class="tree-inline-fields">
-        ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
-        ${renderFailureFlowFields(fieldAttr, failureAction, details.bloco_nao_encontrar ?? "", details.sequencia_nao_encontrar ?? "", details.atraso_antes_sequencia_nao_encontrar ?? 0, currentOrder)}
-      </div>
-      <p class="recognition-card-helper">Primeiro tento ler o texto real da janela; se nao der, uso OCR na imagem da tela. Assim o bloco sofre menos com tamanho/resolucao diferente da VM.</p>
+      `}
+      ${hiddenDefaults}
+      ${hiddenStandaloneFlow}
+      ${embeddedHybrid ? "" : `<button class="tree-open-button recognition-test-inline" ${actionAttr}="test-ocr-recognition" type="button">Testar OCR agora</button>`}
+      <p class="recognition-card-helper">${embeddedHybrid
+        ? "O FlowDetect usa o texto para achar candidatos e a imagem para escolher o ponto correto."
+        : "O FlowDetect procura esse texto na tela e mostra os candidatos encontrados."}</p>
     </div>
   `;
 }
@@ -8751,13 +8734,7 @@ function renderRecognitionExpandedTreeEditor(event) {
         <button class="recognition-card-tab ${activeRecognitionTab === "visual" ? "is-active" : ""}" data-recognition-tab-target="visual" type="button" aria-pressed="${activeRecognitionTab === "visual" ? "true" : "false"}">Busca</button>
         <button class="recognition-card-tab ${activeRecognitionTab === "behavior" ? "is-active" : ""}" data-recognition-tab-target="behavior" type="button" aria-pressed="${activeRecognitionTab === "behavior" ? "true" : "false"}">Clique e ajustes</button>
       </div>
-      <label class="recognition-cell recognition-cell-full">
-        <span>Modo do reconhecimento</span>
-        <select data-tree-field="recognitionMode">
-          <option value="imagem" ${recognitionMode !== "texto_ocr" ? "selected" : ""}>Imagem / print de referencia</option>
-          <option value="texto_ocr" ${recognitionMode === "texto_ocr" ? "selected" : ""}>OCR inteligente / procurar texto</option>
-        </select>
-      </label>
+      <input data-tree-field="recognitionMode" type="hidden" value="${escapeHtml(recognitionMode)}" />
 
       <div class="recognition-card-panel ${activeRecognitionTab === "visual" ? "is-active" : ""}" data-recognition-tab-panel="visual" ${activeRecognitionTab === "visual" ? "" : "hidden"}>
         ${recognitionMode === "texto_ocr" ? `
@@ -8767,10 +8744,10 @@ function renderRecognitionExpandedTreeEditor(event) {
               texto: details.texto_ocr_busca ?? "",
               acao: details.acao_ocr ?? "clicar",
               salvar_em: details.salvar_ocr_em ?? "",
-            }, event.order)}
+            }, event.order, { embeddedHybrid: true })}
           </div>
         ` : ""}
-        <div ${recognitionMode === "texto_ocr" ? "hidden" : ""}>
+        <div>
         <input data-tree-field="imagePath" type="hidden" value="${escapeHtml(details.imagem ?? "")}" />
         <input data-tree-field="windowTitle" type="hidden" value="" />
         <div class="recognition-preview-compact-wrap">
@@ -8803,11 +8780,14 @@ function renderRecognitionExpandedTreeEditor(event) {
           <button class="tree-open-button" data-tree-action="capture-image" type="button">Tirar novo print</button>
           <button class="tree-open-button" data-tree-action="select-image" type="button">Trocar imagem</button>
         </div>
-        <label class="recognition-cell recognition-cell-full recognition-ocr-field">
-          <span>Texto para confirmar</span>
-          <input data-tree-field="expectedOcrText" type="text" value="${escapeHtml(details.texto_ocr_esperado ?? "")}" placeholder="Opcional. Ex: 06/2025" />
-        </label>
-        <button class="tree-open-button recognition-test-inline" data-tree-action="test-image-recognition" type="button">Procurar agora</button>
+        ${recognitionMode === "texto_ocr" ? `
+          <input data-tree-field="expectedOcrText" type="hidden" value="" />
+        ` : `
+          <label class="recognition-cell recognition-cell-full recognition-ocr-field">
+            <span>Texto para confirmar</span>
+            <input data-tree-field="expectedOcrText" type="text" value="${escapeHtml(details.texto_ocr_esperado ?? "")}" placeholder="Opcional. Ex: 06/2025" />
+          </label>
+        `}
         </div>
       </div>
 
@@ -12370,15 +12350,95 @@ async function openHypervVmScreen(vmName = "") {
   return nativeConnected;
 }
 
+async function waitForHypervGuestReady(vmName = "", options = {}) {
+  const name = String(vmName || "").trim();
+  if (!name) return false;
+  const timeoutMs = Math.max(8000, Number(options.timeoutMs ?? 90000));
+  const pollMs = Math.max(900, Number(options.pollMs ?? 1800));
+  const minWaitMs = Math.max(0, Number(options.minWaitMs ?? 8000));
+  const agentId = options.agentId ?? "";
+  const startedAt = Date.now();
+  let lastDetail = "";
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const elapsed = Date.now() - startedAt;
+    const percent = Math.min(72, 18 + Math.round((elapsed / timeoutMs) * 54));
+    let detail = "Aguardando o Windows terminar o boot.";
+    try {
+      const status = await invoke("get_hyperv_vm_boot_status", { vmName: name });
+      const stateName = String(status?.state || "").trim();
+      const uptime = Number(status?.uptimeSeconds || 0);
+      if (status?.ready && elapsed >= minWaitMs) {
+        setVmScreenBootState({
+          active: true,
+          vmName: name,
+          label: "Windows pronto",
+          detail: "Tela inicial detectada. Abrindo sessao Hyper-V.",
+          percent: 76,
+        });
+        if (agentId) {
+          updateAgentRuntime(agentId, {
+            connectionStage: "Windows pronto; abrindo tela",
+            startupProgress: 76,
+            status: "starting",
+          });
+        }
+        return true;
+      }
+      if (stateName.toLowerCase() !== "running") {
+        detail = `VM ${stateName || "iniciando"}. Aguardando ficar ligada.`;
+      } else if (uptime < 20) {
+        detail = "VM ligada. Windows ainda carregando arquivos iniciais.";
+      } else if (status?.heartbeatReady && uptime < 55) {
+        detail = "Windows respondeu ao Hyper-V. Aguardando estabilizar antes da conexao.";
+      } else if (status?.heartbeatReady || status?.guestReady) {
+        detail = "Windows quase pronto. Esperando a sessao Hyper-V ficar segura.";
+      } else if (status?.ip) {
+        detail = "Rede da VM apareceu, mas o Windows ainda nao confirmou o boot.";
+      } else {
+        detail = "VM ligada. Aguardando heartbeat/rede do Windows.";
+      }
+    } catch (error) {
+      detail = `Aguardando sinais do Windows: ${String(error || "").replace(/^Falha no Hyper-V:\s*/i, "")}`;
+    }
+    lastDetail = detail;
+    setVmScreenBootState({
+      active: true,
+      vmName: name,
+      label: `Inicializando ${name}`,
+      detail,
+      percent,
+    });
+    if (agentId) {
+      updateAgentRuntime(agentId, {
+        connectionStage: detail,
+        startupProgress: percent,
+        status: "starting",
+      });
+    }
+    await waitMs(pollMs);
+  }
+
+  setVmScreenBootState({
+    active: true,
+    vmName: name,
+    label: "Windows ainda nao confirmou o boot",
+    detail: lastDetail || "A tela inicial ainda nao ficou pronta.",
+    percent: 74,
+  });
+  return false;
+}
+
 async function openHypervVmScreenWhenReady(vmName = "", options = {}) {
   const name = String(vmName || "").trim();
   if (!name) return false;
   const warmupMs = Math.max(0, Number(options.warmupMs ?? 16000));
   const attempts = Math.max(1, Math.trunc(Number(options.attempts ?? 5)));
   const agentId = options.agentId ?? "";
-  const startedAt = Date.now();
 
   setWorkspaceTab("agent-screen");
+  await closeNativeHypervRdp().catch(() => null);
+  await closeEmbeddedHypervConsole().catch(() => null);
   setVmScreenBootState({
     active: true,
     vmName: name,
@@ -12387,29 +12447,16 @@ async function openHypervVmScreenWhenReady(vmName = "", options = {}) {
     percent: 26,
   });
 
-  while (Date.now() - startedAt < warmupMs) {
-    const elapsed = Date.now() - startedAt;
-    const progress = Math.min(62, 26 + Math.round((elapsed / Math.max(1, warmupMs)) * 36));
-    const detail = progress < 42
-      ? "VM ligada. O Windows ainda esta carregando."
-      : progress < 56
-        ? "Preparando a sessao aprimorada antes de conectar."
-        : "Quase pronto. Evitando conectar durante o boot.";
-    setVmScreenBootState({
-      active: true,
-      vmName: name,
-      label: `Inicializando ${name}`,
-      detail,
-      percent: progress,
-    });
-    if (agentId) {
-      updateAgentRuntime(agentId, {
-        connectionStage: detail,
-        startupProgress: Math.max(progress, Number(state.remoteControl.vmScreenBoot?.percent || 0)),
-        status: "starting",
-      });
-    }
-    await waitMs(1000);
+  const guestReady = await waitForHypervGuestReady(name, {
+    timeoutMs: Math.max(45000, warmupMs + 65000),
+    minWaitMs: Math.min(Math.max(4000, warmupMs), 18000),
+    agentId,
+  });
+  if (!guestReady) {
+    await waitMs(900);
+    clearVmScreenBootState();
+    renderStudioControl();
+    return false;
   }
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -13206,16 +13253,34 @@ async function connectScheduledVmAgent(vmName = "") {
   throw new Error(`Nao consegui conectar no Agent da VM ${name}.`);
 }
 
-async function connectScheduledAgent(item = {}) {
+async function connectScheduledAgent(item = {}, options = {}) {
   const scheduledAgent = findAgentForSchedule(item);
   const vmName = String(scheduledAgent?.vmName || item.vmName || "").trim();
+  const address = normalizeAgentAddress(scheduledAgent?.address || item.address || "");
+
+  if (schedulerAgentMatchesCurrentConnection(scheduledAgent || {}, item)) {
+    return scheduledAgent || {
+      id: item.agentId || `agent-${normalizeAgentAddress(state.remoteControl.address)}`,
+      name: item.agentName || "Agent",
+      vmName,
+      address: normalizeAgentAddress(state.remoteControl.address || address),
+    };
+  }
+
+  if (address) {
+    await connectStudioControl(address);
+    return scheduledAgent || { id: `agent-${address}`, name: item.agentName || "Agent", vmName, address };
+  }
+
+  if (options.apiOnly) {
+    throw new Error("Este Agent ainda nao possui IP salvo. Conecte no Agent uma vez pela aba Agentes ou Tela do Agent antes de executar.");
+  }
+
   if (vmName) {
     return connectScheduledVmAgent(vmName);
   }
-  const address = normalizeAgentAddress(scheduledAgent?.address || item.address || "");
-  if (!address) throw new Error("Agent sem VM ou endereco configurado.");
-  await connectStudioControl(address);
-  return scheduledAgent || { id: `agent-${address}`, name: item.agentName || "Agent", address };
+
+  throw new Error("Agent sem VM ou endereco configurado.");
 }
 
 async function connectSelectedSchedulerAgent() {
@@ -13312,7 +13377,7 @@ async function executeSchedulerAutomationNow(automationId = "") {
     address: normalizeAgentAddress(agent.address || ""),
     automationId: String(automation.id),
     automationName: automation.nome || automation.name || "Automacao",
-  });
+  }, { apiOnly: true });
   await refreshStudioControlLibrary({ silent: true });
   const remoteAutomation = studioControlVisibleLibrary().find((item) => String(item.id) === String(automation.id));
   if (!remoteAutomation) {
@@ -13723,6 +13788,17 @@ function agentConnected(agent = {}) {
     state.remoteControl.connected
     && normalizeAgentAddress(state.remoteControl.address) === normalizeAgentAddress(agent.address)
   );
+}
+
+function schedulerAgentMatchesCurrentConnection(agent = {}, extra = {}) {
+  if (!state.remoteControl.connected) return false;
+  const currentAddress = normalizeAgentAddress(state.remoteControl.address || "");
+  const expectedAddress = normalizeAgentAddress(agent.address || extra.address || "");
+  if (currentAddress && expectedAddress && currentAddress === expectedAddress) return true;
+
+  const expectedVm = String(agent.vmName || extra.vmName || "").trim().toLowerCase();
+  const currentVm = String(state.remoteControl.nativeRdpVmName || state.remoteControl.hypervVmName || "").trim().toLowerCase();
+  return Boolean(expectedVm && currentVm && expectedVm === currentVm);
 }
 
 function updateAgentFromConnection(address = "", ping = {}) {
@@ -16734,13 +16810,7 @@ function renderInsertRecognitionPanel(panel, order) {
           aria-pressed="${activeTab === "advanced" ? "true" : "false"}"
         >Avancado</button>
       </div>
-      <label class="recognition-cell recognition-cell-full">
-        <span>Modo do reconhecimento</span>
-        <select data-insert-field="recognitionMode">
-          <option value="imagem" ${recognitionMode !== "texto_ocr" ? "selected" : ""}>Imagem / print de referencia</option>
-          <option value="texto_ocr" ${recognitionMode === "texto_ocr" ? "selected" : ""}>OCR inteligente / procurar texto</option>
-        </select>
-      </label>
+      <input data-insert-field="recognitionMode" type="hidden" value="${escapeHtml(recognitionMode)}" />
 
       <div
         class="recognition-card-panel ${activeTab === "base" ? "is-active" : ""}"
@@ -16773,10 +16843,10 @@ function renderInsertRecognitionPanel(panel, order) {
               bloco_sucesso: panel.successBlock,
               sequencia_sucesso: panel.successSequence,
               atraso_antes_sequencia_sucesso: panel.successSequenceDelay,
-            }, order)}
+            }, order, { embeddedHybrid: true })}
           </div>
         ` : ""}
-        <div ${recognitionMode === "texto_ocr" ? "hidden" : ""}>
+        <div>
         <label class="recognition-reference-field">
           <span>Referencia visual</span>
           <input
@@ -16813,10 +16883,14 @@ function renderInsertRecognitionPanel(panel, order) {
               ${recognitionWindowOptionsMarkup(panel.windowTitle ?? "", "Sem janela fixa neste bloco")}
             </select>
           </label>
-          <label class="recognition-cell recognition-cell-full">
-            <span>Texto OCR obrigatorio</span>
-            <input data-insert-field="expectedOcrText" type="text" value="${escapeHtml(panel.expectedOcrText ?? "")}" placeholder="Ex: 06/2025" />
-          </label>
+          ${recognitionMode === "texto_ocr" ? `
+            <input data-insert-field="expectedOcrText" type="hidden" value="" />
+          ` : `
+            <label class="recognition-cell recognition-cell-full">
+              <span>Texto OCR obrigatorio</span>
+              <input data-insert-field="expectedOcrText" type="text" value="${escapeHtml(panel.expectedOcrText ?? "")}" placeholder="Ex: 06/2025" />
+            </label>
+          `}
           <button class="tree-open-button recognition-window-refresh" data-insert-action="refresh-recognition-windows" type="button">Atualizar janelas</button>
         </div>
         </div>
@@ -17871,6 +17945,7 @@ function renderCommandMap(options = {}) {
     const isLastCard = index === events.length - 1;
     const hasRecordButton = event.type === "tecla" || event.type === "atalho";
     const isRecognitionCard = event.type === "clicar_imagem";
+    const isOcrTextCard = event.type === "procurar_texto_ocr";
     const isInlineExpanded = Number(state.expandedTreeCardOrder) === Number(event.order);
     const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "comparar_planilha_tela";
     const isLoopMarkerCard = isLoopMarkerType(event.type);
@@ -17884,9 +17959,14 @@ function renderCommandMap(options = {}) {
     const primaryActions = isRecognitionCard
       ? `
         <button class="tree-save-button" data-tree-action="save">Salvar</button>
-        <button class="tree-open-button" data-tree-action="test-image-recognition">Testar</button>
+        <button class="tree-open-button" data-tree-action="test-image-recognition">Procurar</button>
         <button class="tree-open-button" data-tree-action="capture-image">Capturar</button>
       `
+      : isOcrTextCard
+        ? `
+          <button class="tree-save-button" data-tree-action="save">Salvar</button>
+          <button class="tree-open-button" data-tree-action="test-ocr-recognition">Testar</button>
+        `
       : `
         <button class="tree-save-button" data-tree-action="save">Salvar</button>
         <button class="tree-open-button" data-tree-action="open-editor">Editor</button>
@@ -19099,7 +19179,7 @@ async function invokeCommandCardUpdate(snapshot) {
     if (recognitionMode === "texto_ocr" && !normalizeStringValue(values.ocrText)) {
       throw new Error(`O bloco ${order} de reconhecimento OCR esta sem texto para procurar.`);
     }
-    if (recognitionMode !== "texto_ocr" && !normalizeStringValue(values.imagePath)) {
+    if (!normalizeStringValue(values.imagePath)) {
       throw new Error(`O bloco ${order} de reconhecimento esta sem referencia visual.`);
     }
     return invoke("update_image_click_block", {
@@ -22435,9 +22515,19 @@ timelineList.addEventListener("click", (event) => {
 
   if (action === "test-image-recognition") {
       state.commandMapFocusOrder = order;
-      runImageRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
+      if (type === "procurar_texto_ocr") {
+        runOcrRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
+      } else {
+        runImageRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
+      }
       return;
     }
+
+  if (action === "test-ocr-recognition") {
+    state.commandMapFocusOrder = order;
+    runOcrRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
+    return;
+  }
 
   if (action === "select-verify-active-image") {
     state.commandMapFocusOrder = order;
@@ -23146,9 +23236,19 @@ commandMapList.addEventListener("click", async (event) => {
 
   if (action === "test-image-recognition") {
       setCommandMapFocus(order);
-      runImageRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
+      if (type === "procurar_texto_ocr") {
+        runOcrRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
+      } else {
+        runImageRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
+      }
       return;
     }
+
+  if (action === "test-ocr-recognition") {
+    setCommandMapFocus(order);
+    runOcrRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
+    return;
+  }
 
   if (action === "select-verify-active-image") {
     setCommandMapFocus(order);
@@ -23566,6 +23666,16 @@ commandMapList.addEventListener("click", async (event) => {
     return;
   }
 
+  if (action === "test-ocr-recognition") {
+    setCommandMapFocus(Number(panel.dataset.targetOrder));
+    state.insertPanel = {
+      ...state.insertPanel,
+      ...insertValuesFromPanel(panel),
+    };
+    runOcrRecognitionTest(state.insertPanel, { inheritWindowFallback: false });
+    return;
+  }
+
   if (action === "select-chrome-fallback-image") {
     setCommandMapFocus(Number(panel.dataset.targetOrder));
     openImagePicker({ scope: "insert-panel-chrome-fallback", order: Number(panel.dataset.targetOrder) });
@@ -23721,6 +23831,13 @@ commandMapList.addEventListener("click", async (event) => {
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     } else if (values.type === "image") {
+      const recognitionMode = String(values.recognitionMode || "imagem");
+      if (!normalizeStringValue(values.imagePath)) {
+        throw new Error("O reconhecimento hibrido precisa de uma imagem/print de referencia.");
+      }
+      if (recognitionMode === "texto_ocr" && !normalizeStringValue(values.ocrText)) {
+        throw new Error("O reconhecimento hibrido precisa tambem do texto OCR para procurar.");
+      }
       promiseFactory = () =>
         isFirstBlock
           ? invoke("add_image_click_block", {
