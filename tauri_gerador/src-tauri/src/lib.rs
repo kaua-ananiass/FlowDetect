@@ -41,7 +41,7 @@ use windows::Win32::{
         EnumWindows, GetForegroundWindow, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
         GetWindowThreadProcessId, IsWindow, IsWindowVisible, IsZoomed, SetWindowLongPtrW,
         SetWindowPos, ShowWindow, GWLP_HWNDPARENT, GWL_STYLE, SM_CXSCREEN, SM_CYSCREEN,
-        SWP_FRAMECHANGED, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_RESTORE, WS_CAPTION,
+        SWP_FRAMECHANGED, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_MAXIMIZE, SW_RESTORE, WS_CAPTION,
         WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
     },
 };
@@ -637,6 +637,55 @@ fn get_hyperv_vm_connection(vm_name: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn get_hyperv_vm_boot_status(vm_name: String) -> Result<Value, String> {
+    let name = vm_name.trim();
+    if name.is_empty() {
+        return Err("Informe o nome da VM do Hyper-V.".to_string());
+    }
+    hyperv_json(&format!(
+        r#"
+$vm=Get-VM -Name {name};
+$services=@(Get-VMIntegrationService -VM $vm -ErrorAction SilentlyContinue);
+$heartbeat=$services | Where-Object {{ $_.Name -match 'Heartbeat|Pulsacao|Pulsa|Batimento' }} | Select-Object -First 1;
+$guest=$services | Where-Object {{ $_.Name -match 'Guest|Convidado' }} | Select-Object -First 1;
+$ips=@(Get-VMNetworkAdapter -VM $vm -ErrorAction SilentlyContinue | ForEach-Object IPAddresses | Where-Object {{ $_ -match '^\d+\.' -and $_ -notmatch '^169\.254\.' }} | Select-Object -Unique);
+$heartbeatText=$(if($heartbeat) {{ [string]$heartbeat.PrimaryStatusDescription }} else {{ '' }});
+$heartbeatOp=$(if($heartbeat) {{ [string]($heartbeat.PrimaryOperationalStatus -join ',') }} else {{ '' }});
+$uptimeSeconds=$(try {{ [int][Math]::Round($vm.Uptime.TotalSeconds) }} catch {{ 0 }});
+$heartbeatReady=$false;
+if($heartbeat) {{
+  $heartbeatReady=(($heartbeatText -match 'OK|Ok|operating normally|normal|corretamente|Tudo') -or ($heartbeatOp -match 'Ok|OK')) -and ($heartbeatText -notmatch 'No Contact|Sem contato|Lost|Error|Erro|Critical|Critico|Crítico');
+}}
+$guestReady=$false;
+if($guest) {{
+  $guestReady=([string]$guest.PrimaryStatusDescription -match 'OK|Ok|operating normally|normal|corretamente|Tudo') -or ([string]($guest.PrimaryOperationalStatus -join ',') -match 'Ok|OK');
+}}
+$stableHeartbeat=$heartbeatReady -and $uptimeSeconds -ge 75;
+$networkReady=$heartbeatReady -and $ips.Count -gt 0 -and $uptimeSeconds -ge 55;
+$guestServiceReady=$heartbeatReady -and $guestReady -and $uptimeSeconds -ge 55;
+$ready=($vm.State.ToString() -eq 'Running') -and ($stableHeartbeat -or $networkReady -or $guestServiceReady);
+[pscustomobject]@{{
+  ok=$true;
+  name=$vm.Name;
+  state=$vm.State.ToString();
+  ready=$ready;
+  uptimeSeconds=$uptimeSeconds;
+  heartbeatReady=$heartbeatReady;
+  stableHeartbeat=$stableHeartbeat;
+  networkReady=$networkReady;
+  guestServiceReady=$guestServiceReady;
+  heartbeatStatus=$heartbeatText;
+  heartbeatOperational=$heartbeatOp;
+  guestReady=$guestReady;
+  ip=($ips | Select-Object -First 1);
+  ips=$ips
+}} | ConvertTo-Json -Compress
+"#,
+        name = powershell_literal(name)
+    ))
+}
+
+#[tauri::command]
 fn probe_native_hyperv_rdp() -> Result<Value, String> {
     native_rdp::probe()
 }
@@ -651,6 +700,24 @@ async fn open_native_hyperv_rdp(
     height: i32,
 ) -> Result<Value, String> {
     let vm_name = vm_name.trim().to_string();
+    let boot_status = get_hyperv_vm_boot_status(vm_name.clone())?;
+    let guest_ready = boot_status
+        .get("ready")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !guest_ready {
+        let state = boot_status
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("desconhecido");
+        let uptime = boot_status
+            .get("uptimeSeconds")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        return Err(format!(
+            "A VM ainda nao esta pronta para abrir a tela. Estado: {state}; boot: {uptime}s. Aguarde a tela inicial do Windows aparecer."
+        ));
+    }
     run_hyperv_powershell(&format!("$vm=Get-VM -Name {}; Set-VMHost -EnableEnhancedSessionMode $true; Set-VM -VM $vm -EnhancedSessionTransportType VMBus -ErrorAction SilentlyContinue; [pscustomobject]@{{ok=$true;name=$vm.Name;state=$vm.State.ToString();enhancedSessionTransport=(Get-VM -Name $vm.Name).EnhancedSessionTransportType.ToString()}} | ConvertTo-Json -Compress", powershell_literal(&vm_name)))?;
     let connection = get_hyperv_vm_connection(vm_name.clone())?;
     let vm_id = connection
@@ -8869,6 +8936,8 @@ fn test_image_recognition(
     confianca: f64,
     perfil_busca: Option<String>,
     janela_alvo: Option<String>,
+    modo_reconhecimento: Option<String>,
+    texto_ocr_busca: Option<String>,
     texto_ocr_esperado: Option<String>,
     leitura_relativa_ativa: Option<bool>,
     leitura_relativa_lado: Option<String>,
@@ -8915,6 +8984,8 @@ fn test_image_recognition(
         "confianca": confianca,
         "perfil_busca": perfil_busca_resolvido,
         "janela_alvo": janela_alvo.clone().unwrap_or_default(),
+        "modo_reconhecimento": modo_reconhecimento.clone().unwrap_or_else(|| "imagem".to_string()),
+        "texto_ocr_busca": texto_ocr_busca.clone().unwrap_or_default(),
         "texto_ocr_esperado": texto_ocr_esperado.clone().unwrap_or_default(),
         "leitura_relativa": leitura_relativa_payload,
         "modo_area_busca": "target_window",
@@ -8926,6 +8997,7 @@ fn test_image_recognition(
     if let Some(window) = main_window.as_ref() {
         let _ = window.minimize();
     }
+    thread::sleep(Duration::from_millis(380));
 
     match test_image_recognition_worker(&root, worker_payload) {
         Ok((success, stdout, stderr)) => {
@@ -9022,6 +9094,20 @@ fn test_image_recognition(
         .filter(|value| !value.is_empty())
     {
         command.arg("--texto-ocr-esperado").arg(text);
+    }
+    if let Some(mode) = modo_reconhecimento
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        command.arg("--modo-reconhecimento").arg(mode);
+    }
+    if let Some(text) = texto_ocr_busca
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        command.arg("--texto-ocr-busca").arg(text);
     }
     command
         .arg("--leitura-relativa-ativa")
@@ -9145,11 +9231,11 @@ fn test_ocr_recognition(
         .arg("--acao-ocr")
         .arg("localizar")
         .arg("--timeout-ocr")
-        .arg(timeout.max(0.1).to_string())
+        .arg(timeout.clamp(0.5, 4.0).to_string())
         .arg("--confianca-ocr")
         .arg(confianca.clamp(0.35, 1.0).to_string())
         .arg("--varredura-scroll")
-        .arg(varredura_scroll.unwrap_or(true).to_string())
+        .arg(varredura_scroll.unwrap_or(false).to_string())
         .arg("--varredura-scroll-tentativas")
         .arg(varredura_scroll_tentativas.unwrap_or(4).clamp(0, 8).to_string())
         .arg("--varredura-scroll-pixels")
@@ -9157,7 +9243,7 @@ fn test_ocr_recognition(
         .arg("--varredura-scroll-direcao")
         .arg(varredura_scroll_direcao.unwrap_or_else(|| "baixo".to_string()))
         .arg("--atraso")
-        .arg("0")
+        .arg("0.35")
         .arg("--arquivo")
         .arg(root.join("mapeamento_teclado.json"))
         .arg("--planilha")
@@ -9178,6 +9264,7 @@ fn test_ocr_recognition(
     if let Some(window) = main_window.as_ref() {
         let _ = window.minimize();
     }
+    thread::sleep(Duration::from_millis(380));
 
     let output = command
         .output()
@@ -9687,7 +9774,6 @@ fn set_agent_compact_mode(app: AppHandle, compact: bool) -> Result<Value, String
         )
     };
     let _ = window.unminimize();
-    let _ = window.unmaximize();
     let _ = window.show();
     let _ = window.set_focus();
     window.set_resizable(true).map_err(|err| err.to_string())?;
@@ -9700,11 +9786,16 @@ fn set_agent_compact_mode(app: AppHandle, compact: bool) -> Result<Value, String
     window
         .set_position(tauri::PhysicalPosition::new(x, y))
         .map_err(|err| err.to_string())?;
+    if compact {
+        let _ = window.maximize();
+    } else {
+        let _ = window.unmaximize();
+    }
     window
-        .set_always_on_top(compact)
+        .set_always_on_top(false)
         .map_err(|err| err.to_string())?;
     window
-        .set_resizable(!compact)
+        .set_resizable(true)
         .map_err(|err| err.to_string())?;
     window
         .set_ignore_cursor_events(compact)
@@ -9713,17 +9804,21 @@ fn set_agent_compact_mode(app: AppHandle, compact: bool) -> Result<Value, String
     {
         let hwnd = window.hwnd().map_err(|err| err.to_string())?;
         unsafe {
-            let _ = ShowWindow(HWND(hwnd.0), SW_RESTORE);
-            SetWindowPos(
-                HWND(hwnd.0),
-                None,
-                x,
-                y,
-                width as i32,
-                height as i32,
-                SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
-            )
-            .map_err(|err| format!("Falha ao alinhar janela do Agent: {err}"))?;
+            if compact {
+                let _ = ShowWindow(HWND(hwnd.0), SW_MAXIMIZE);
+            } else {
+                let _ = ShowWindow(HWND(hwnd.0), SW_RESTORE);
+                SetWindowPos(
+                    HWND(hwnd.0),
+                    None,
+                    x,
+                    y,
+                    width as i32,
+                    height as i32,
+                    SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+                )
+                .map_err(|err| format!("Falha ao alinhar janela do Agent: {err}"))?;
+            }
         }
     }
     let work_area = set_agent_windows_work_area(compact)?;
@@ -9762,10 +9857,6 @@ pub fn run() {
                         thread::sleep(Duration::from_millis(90));
                     }
                 });
-                thread::spawn(move || loop {
-                    protect_agent_fullscreen_area();
-                    thread::sleep(Duration::from_millis(250));
-                });
             }
             Ok(())
         })
@@ -9798,6 +9889,7 @@ pub fn run() {
             turn_off_hyperv_vm,
             kill_hyperv_vm_process,
             get_hyperv_vm_connection,
+            get_hyperv_vm_boot_status,
             probe_native_hyperv_rdp,
             open_native_hyperv_rdp,
             resize_native_hyperv_rdp,
