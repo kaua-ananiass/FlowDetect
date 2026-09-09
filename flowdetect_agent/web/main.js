@@ -616,9 +616,8 @@ async function syncAgentCompactWindow(reason = "sync") {
 }
 
 function scheduleAgentCompactWindowSync(reason = "sync") {
-  // A janela do Agent deve ficar em tela cheia sem ficar se reajustando em loop.
-  // Repetir resize aqui fazia o Chrome/VM "brigar" com o overlay e deixava tudo pesado.
-  void syncAgentCompactWindow(reason);
+  // O Agent agora roda como servico visualmente discreto; nao force resize/overlay.
+  void reason;
 }
 
 async function loadAgentConnectionInfo() {
@@ -1717,9 +1716,7 @@ function handleAssistMapKeydown(event) {
 }
 
 async function boot() {
-  document.body.classList.add("agent-compact-mode", "agent-lite-mode");
-  await syncAgentCompactWindow("boot");
-  scheduleAgentCompactWindowSync("boot-stabilize");
+  document.body.classList.add("agent-service-mode", "agent-lite-mode");
   await loadAgentConnectionInfo();
   renderLogs();
   renderSelection();
@@ -1732,13 +1729,12 @@ async function boot() {
   updateButtons();
 
   const toggleOverlayMode = async () => {
-    const compact = !document.body.classList.contains("agent-compact-mode");
-    document.body.classList.toggle("agent-compact-mode", compact);
-    elements.toggleAgentPanelButton.textContent = compact ? "Detalhes" : "Recolher";
-    await invoke("set_agent_compact_mode", { compact }).catch((error) => pushLog(String(error), "error", "Janela"));
-    if (compact) {
-      scheduleAgentCompactWindowSync("toggle-compact");
-    }
+    const currentWindow = tauriWindow?.getCurrentWindow?.();
+    await currentWindow?.show?.().catch(() => {});
+    await currentWindow?.setFocus?.().catch(() => {});
+    document.body.classList.remove("agent-service-mode");
+    document.body.classList.toggle("agent-compact-mode", false);
+    elements.toggleAgentPanelButton.textContent = "Ocultar";
   };
   await safeListen("agent-overlay-toggle-request", () => { void toggleOverlayMode(); });
   await safeListen("agent-identity-updated", (event) => {
@@ -1754,10 +1750,12 @@ async function boot() {
 
   elements.importZipButton?.addEventListener("click", () => elements.automationZipInput?.click());
   elements.toggleAgentPanelButton?.addEventListener("click", async () => {
-    await toggleOverlayMode();
+    document.body.classList.add("agent-service-mode");
+    await tauriWindow?.getCurrentWindow?.()?.hide?.().catch(() => {});
   });
   elements.minimizeAgentButton?.addEventListener("click", () => {
-    tauriWindow?.getCurrentWindow?.()?.minimize?.().catch(() => {});
+    document.body.classList.add("agent-service-mode");
+    tauriWindow?.getCurrentWindow?.()?.hide?.().catch(() => {});
   });
   elements.refreshLibraryButton?.addEventListener("click", async () => {
     try {

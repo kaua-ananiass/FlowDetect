@@ -46,6 +46,20 @@ use windows::Win32::{
     },
 };
 
+const BUNDLED_CAPTURAR_CLIQUES: &[u8] = include_bytes!("../../../capturar_cliques.py");
+const BUNDLED_CAPTURAR_IMAGEM_TELA: &[u8] = include_bytes!("../../../capturar_imagem_tela.py");
+const BUNDLED_CHROME_WEB_BRIDGE: &[u8] = include_bytes!("../../../chrome_web_bridge.py");
+const BUNDLED_COMANDOS_TECLADO: &[u8] = include_bytes!("../../../comandos_teclado.py");
+const BUNDLED_EXECUTAR_AUTOMACAO: &[u8] = include_bytes!("../../../executar_automacao.py");
+const BUNDLED_GERENCIAR_DADOS_PLANILHA: &[u8] = include_bytes!("../../../gerenciar_dados_planilha.py");
+const BUNDLED_GERENCIAR_ROTEIRO: &[u8] = include_bytes!("../../../gerenciar_roteiro.py");
+const BUNDLED_LISTAR_JANELAS_ABERTAS: &[u8] = include_bytes!("../../../listar_janelas_abertas.py");
+const BUNDLED_MAPEAR_ELEMENTOS_JANELA: &[u8] = include_bytes!("../../../mapear_elementos_janela.py");
+const BUNDLED_OVERLAY_AUTOMACAO_TELA: &[u8] = include_bytes!("../../../overlay_automacao_tela.py");
+const BUNDLED_OVERLAY_JANELA_ALVO: &[u8] = include_bytes!("../../../overlay_janela_alvo.py");
+const BUNDLED_RECONHECIMENTO_WORKER: &[u8] = include_bytes!("../../../reconhecimento_worker.py");
+const BUNDLED_VALIDAR_DEPENDENCIAS: &[u8] = include_bytes!("../../../validar_dependencias_instaladas.py");
+
 #[derive(Serialize)]
 struct ExportResult {
     build_dir: String,
@@ -1833,15 +1847,93 @@ fn python_command(root: &PathBuf) -> Result<(String, Vec<String>), String> {
     Err("Nenhum interpretador Python compativel foi encontrado.".to_string())
 }
 
+fn bundled_python_script_bytes(script_name: &str) -> Option<&'static [u8]> {
+    match script_name.replace('\\', "/").as_str() {
+        "capturar_cliques.py" => Some(BUNDLED_CAPTURAR_CLIQUES),
+        "capturar_imagem_tela.py" => Some(BUNDLED_CAPTURAR_IMAGEM_TELA),
+        "chrome_web_bridge.py" => Some(BUNDLED_CHROME_WEB_BRIDGE),
+        "comandos_teclado.py" => Some(BUNDLED_COMANDOS_TECLADO),
+        "executar_automacao.py" => Some(BUNDLED_EXECUTAR_AUTOMACAO),
+        "gerenciar_dados_planilha.py" => Some(BUNDLED_GERENCIAR_DADOS_PLANILHA),
+        "gerenciar_roteiro.py" => Some(BUNDLED_GERENCIAR_ROTEIRO),
+        "listar_janelas_abertas.py" => Some(BUNDLED_LISTAR_JANELAS_ABERTAS),
+        "mapear_elementos_janela.py" => Some(BUNDLED_MAPEAR_ELEMENTOS_JANELA),
+        "overlay_automacao_tela.py" => Some(BUNDLED_OVERLAY_AUTOMACAO_TELA),
+        "overlay_janela_alvo.py" => Some(BUNDLED_OVERLAY_JANELA_ALVO),
+        "reconhecimento_worker.py" => Some(BUNDLED_RECONHECIMENTO_WORKER),
+        "validar_dependencias_instaladas.py" => Some(BUNDLED_VALIDAR_DEPENDENCIAS),
+        _ => None,
+    }
+}
+
+fn python_script_repair_reason(path: &Path) -> Result<Option<String>, String> {
+    if !path.exists() {
+        return Ok(Some("arquivo ausente".to_string()));
+    }
+    let bytes = fs::read(path)
+        .map_err(|err| format!("Falha ao ler script Python {}: {err}", path.display()))?;
+    if bytes.is_empty() {
+        return Ok(Some("arquivo vazio".to_string()));
+    }
+    if bytes.iter().any(|byte| *byte == 0) {
+        return Ok(Some("arquivo contem bytes nulos".to_string()));
+    }
+    if bytes.starts_with(b"MZ") || bytes.starts_with(b"PK\x03\x04") {
+        return Ok(Some("arquivo nao parece ser codigo Python".to_string()));
+    }
+    Ok(None)
+}
+
+fn ensure_python_script_integrity(root: &PathBuf, script_name: &str) -> Result<PathBuf, String> {
+    let script_path = root.join(script_name);
+    let Some(bundled_bytes) = bundled_python_script_bytes(script_name) else {
+        if script_path.exists() {
+            return Ok(script_path);
+        }
+        return Err(format!("Arquivo nao encontrado: {}", script_path.display()));
+    };
+
+    if let Some(reason) = python_script_repair_reason(&script_path)? {
+        fs::create_dir_all(root)
+            .map_err(|err| format!("Falha ao preparar pasta do runtime FlowDetect: {err}"))?;
+        if script_path.exists() {
+            let backup_name = format!(
+                "{}.corrompido.{}",
+                script_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("script.py"),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            );
+            let backup_path = script_path.with_file_name(backup_name);
+            let _ = fs::copy(&script_path, backup_path);
+        }
+        fs::write(&script_path, bundled_bytes).map_err(|err| {
+            format!(
+                "Falha ao reparar {} ({reason}) usando a copia embutida: {err}",
+                script_path.display()
+            )
+        })?;
+        append_launcher_log(
+            root,
+            format!(
+                "[FlowDetect] Script reparado automaticamente: {} ({reason})",
+                script_path.display()
+            ),
+        );
+    }
+    Ok(script_path)
+}
+
 fn run_python_script(
     root: &PathBuf,
     script_name: &str,
     extra_args: &[String],
 ) -> Result<String, String> {
-    let script_path = root.join(script_name);
-    if !script_path.exists() {
-        return Err(format!("Arquivo nao encontrado: {}", script_path.display()));
-    }
+    let script_path = ensure_python_script_integrity(root, script_name)?;
 
     let (mut python_program, mut python_args) = python_command(root)?;
     if let Err(first_error) = ensure_python_dependencies(root, &python_program, &python_args) {
@@ -9827,6 +9919,36 @@ fn set_agent_compact_mode(app: AppHandle, compact: bool) -> Result<Value, String
     )
 }
 
+fn set_agent_service_window_hidden(app: &AppHandle, hidden: bool) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_always_on_top(false);
+        let _ = window.set_skip_taskbar(hidden);
+        if hidden {
+            let _ = window.hide();
+        } else {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+}
+
+fn toggle_agent_service_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let visible = window.is_visible().unwrap_or(false);
+        let _ = window.set_always_on_top(false);
+        if visible {
+            let _ = window.set_skip_taskbar(true);
+            let _ = window.hide();
+        } else {
+            let _ = window.set_skip_taskbar(false);
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -9841,6 +9963,7 @@ pub fn run() {
             if is_flowdetect_agent_runtime(&app_handle) {
                 let root = workspace_root(&app_handle);
                 start_agent_http_server(app_handle.clone(), root);
+                set_agent_service_window_hidden(&app_handle, true);
                 let hotkey_app = app_handle.clone();
                 thread::spawn(move || {
                     let mut pressed = false;
@@ -9851,6 +9974,7 @@ pub fn run() {
                                 && GetAsyncKeyState(VK_F12.0 as i32) < 0
                         };
                         if active && !pressed {
+                            toggle_agent_service_window(&hotkey_app);
                             let _ = hotkey_app.emit("agent-overlay-toggle-request", ());
                         }
                         pressed = active;

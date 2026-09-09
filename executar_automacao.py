@@ -941,6 +941,19 @@ class ExecutorAutomacao:
             self._janela_contexto = str(janela.get("title") or "").strip()
         return janela
 
+    def maximizar_janela_por_hwnd(self, hwnd):
+        if not hwnd or not hasattr(ctypes, "windll"):
+            return False
+        try:
+            user32 = ctypes.windll.user32
+            SW_MAXIMIZE = 3
+            user32.ShowWindow(wintypes.HWND(int(hwnd)), SW_MAXIMIZE)
+            user32.BringWindowToTop(wintypes.HWND(int(hwnd)))
+            user32.SetForegroundWindow(wintypes.HWND(int(hwnd)))
+            return True
+        except Exception:
+            return False
+
     def janela_parece_interface_flowdetect(self, janela):
         texto = self.normalizar_texto_busca(
             f"{janela.get('title', '')} {janela.get('class_name', '')}"
@@ -1780,7 +1793,7 @@ class ExecutorAutomacao:
             region=region,
             retornar_candidatos=True,
             marcar_candidatos=False,
-            limite_candidatos=1 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 2,
+            limite_candidatos=3 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 6,
         )
         if not candidatos_ocr:
             return None
@@ -1814,7 +1827,6 @@ class ExecutorAutomacao:
             )
             if not regiao_visual:
                 continue
-            score_ocr_atual = float(candidato.get("score", 0.0) or 0.0)
             safe_print(
                 f"Hibrido: candidato OCR {indice}/{len(candidatos_ocr)} "
                 f"'{candidato.get('text') or candidato.get('texto') or esperado}' em {self.formatar_regiao_log((esquerda, topo, largura, altura))}.",
@@ -1827,8 +1839,6 @@ class ExecutorAutomacao:
                 perfil_busca="fast",
             )
             if not local_visual:
-                if score_ocr_atual >= 0.96:
-                    break
                 continue
             confirmado = local_visual
             score_visual = float((self._ultima_busca_template_info or {}).get("score", confirmado.get("score", 0.0)) or 0.0)
@@ -1888,25 +1898,11 @@ class ExecutorAutomacao:
                 bloqueante=True,
                 margem=2,
             )
-            fallback = dict(melhor_ocr)
-            fallback.update({
-                "search_stage": "ocr_text_fallback",
-                "ocr_anchor_confirmed": True,
-                "ocr_text": str(melhor_ocr.get("text") or melhor_ocr.get("texto") or esperado),
-                "ocr_bounds": {
-                    "left": int(esquerda),
-                    "top": int(topo),
-                    "width": int(largura),
-                    "height": int(altura),
-                },
-                "source": "ocr_text_fallback",
-            })
             safe_print(
-                "Hibrido: OCR confirmou o texto, mas a imagem mudou escala/posicao e nao confirmou. "
-                "Usando o texto OCR como ponto seguro.",
+                "Hibrido: OCR encontrou texto parecido, mas a imagem de referencia nao confirmou. "
+                "O bloco nao vai clicar nesse candidato.",
                 flush=True,
             )
-            return fallback
         safe_print("Hibrido: OCR encontrou texto, mas a imagem nao confirmou nenhum candidato.", flush=True)
         return None
 
@@ -5417,6 +5413,38 @@ class ExecutorAutomacao:
             if esperado_compacto in capturado_compacto:
                 return min(0.985, 0.84 + (len(esperado_compacto) / max(len(capturado_compacto), 1)) * 0.14)
             scores.append(float(difflib.SequenceMatcher(None, esperado_compacto, capturado_compacto).ratio()))
+        palavras_esperadas = esperado_norm.split()
+        palavras_capturadas = capturado_norm.split()
+        if len(palavras_esperadas) >= 2 and len(palavras_capturadas) >= 2:
+            tamanho = len(palavras_esperadas)
+            melhor_janela = 0.0
+            for inicio in range(0, max(1, len(palavras_capturadas) - tamanho + 1)):
+                janela = palavras_capturadas[inicio : inicio + tamanho]
+                if len(janela) != tamanho:
+                    continue
+                palavra_scores = [
+                    float(difflib.SequenceMatcher(None, ref, cap).ratio())
+                    for ref, cap in zip(palavras_esperadas, janela)
+                ]
+                media_palavras = sum(palavra_scores) / max(1, len(palavra_scores))
+                primeira_ref = palavras_esperadas[0]
+                primeira_cap = janela[0]
+                primeira_score = palavra_scores[0]
+                if (
+                    primeira_score < 0.67
+                    or (
+                        len(primeira_ref) <= 4
+                        and primeira_ref[:1] != primeira_cap[:1]
+                        and primeira_score < 0.82
+                    )
+                ):
+                    media_palavras *= 0.55
+                if any(score < 0.62 for score in palavra_scores):
+                    media_palavras *= 0.65
+                melhor_janela = max(melhor_janela, media_palavras)
+            if melhor_janela < 0.70:
+                return min(max(scores), 0.64)
+            return max(max(scores), min(0.98, melhor_janela))
         return max(scores)
 
     def localizar_texto_por_uia(self, texto, confianca=0.72, janela_alvo=None, limite=650):
@@ -6940,7 +6968,7 @@ class ExecutorAutomacao:
                 return str(candidato)
         return None
 
-    def aguardar_e_fixar_janela_navegador(self, url="", navegador="padrao", timeout=6.0):
+    def aguardar_e_fixar_janela_navegador(self, url="", navegador="padrao", timeout=6.0, tela_cheia=False):
         fim = time.perf_counter() + max(0.5, float(timeout or 0))
         texto_url = self.normalizar_texto_busca(url)
         compacto_url = re.sub(r"[^a-z0-9]+", "", texto_url)
@@ -6992,7 +7020,8 @@ class ExecutorAutomacao:
                 self._janela_fixada = melhor
                 try:
                     self.preparar_janela_para_acao(titulo_original)
-                    pyautogui.hotkey("win", "up")
+                    if not self.maximizar_janela_por_hwnd(melhor.get("hwnd")):
+                        pyautogui.hotkey("win", "up")
                 except Exception:
                     pass
                 safe_print(
@@ -7008,7 +7037,8 @@ class ExecutorAutomacao:
             self._janela_fixada = melhor
             try:
                 self.preparar_janela_para_acao(titulo_original)
-                pyautogui.hotkey("win", "up")
+                if not self.maximizar_janela_por_hwnd(melhor.get("hwnd")):
+                    pyautogui.hotkey("win", "up")
             except Exception:
                 pass
             safe_print(
@@ -7024,6 +7054,7 @@ class ExecutorAutomacao:
         navegador = str(detalhes.get("navegador", "padrao") or "padrao").strip().lower()
         modo_abertura = str(detalhes.get("modo_abertura", "nova_janela") or "nova_janela").strip().lower()
         aguardar = max(0.0, float(detalhes.get("aguardar_segundos", 3) or 0))
+        tela_cheia = bool(detalhes.get("tela_cheia", False))
         nova_janela = modo_abertura != "nova_aba"
         safe_print(
             f"Abrindo URL: {url} | navegador={navegador} | modo={modo_abertura}",
@@ -7036,7 +7067,7 @@ class ExecutorAutomacao:
             navegador_automatizavel = navegador in {"chrome", "edge", "padrao", "default", ""} or nome_executavel in {"chrome.exe", "msedge.exe"}
             if navegador_automatizavel:
                 argumentos.extend([
-                    "--start-maximized",
+                    "--start-fullscreen" if tela_cheia else "--start-maximized",
                     "--force-renderer-accessibility",
                     "--enable-accessibility-object-model",
                 ])
@@ -7050,6 +7081,7 @@ class ExecutorAutomacao:
             url=url,
             navegador=navegador,
             timeout=max(aguardar, 5.0),
+            tela_cheia=tela_cheia,
         )
         if janela is None:
             safe_print(
