@@ -17079,6 +17079,12 @@ function renderInsertPanel(order) {
       description: "Para procurar uma imagem na tela e decidir o proximo passo.",
       hint: "Depois de criar, abra os detalhes e tire o print de referencia.",
     },
+    image_ocr: {
+      title: "OCR + Visual",
+      label: "Hibrido",
+      description: "Para achar um texto por OCR e confirmar pelo recorte visual.",
+      hint: "Depois de criar, abra os detalhes e configure o texto e a referencia.",
+    },
     ocr_text: {
       title: "Texto/OCR inteligente",
       label: "OCR",
@@ -17140,7 +17146,10 @@ function renderInsertPanel(order) {
       hint: "Coloque depois dos blocos que precisam repetir.",
     },
   };
-  const selectedMeta = typeMeta[panel.type] || typeMeta.key;
+  const selectedTypeMeta = panel.type === "image" && String(panel.recognitionMode || "imagem") === "texto_ocr"
+    ? "image_ocr"
+    : panel.type;
+  const selectedMeta = typeMeta[selectedTypeMeta] || typeMeta.key;
 
   return `
     <div class="insert-card-panel is-compact-create ${panel.suppressIntro ? "is-stable" : ""} ${panel.isSaving ? "is-saving" : ""}" data-target-order="${order}">
@@ -17157,7 +17166,8 @@ function renderInsertPanel(order) {
         <button class="insert-type-button ${panel.type === "key" ? "is-active" : ""}" data-insert-type="key" type="button" ${panel.isSaving ? "disabled" : ""}>Tecla</button>
         <button class="insert-type-button ${panel.type === "text" ? "is-active" : ""}" data-insert-type="text" type="button" ${panel.isSaving ? "disabled" : ""}>Texto</button>
         <button class="insert-type-button ${panel.type === "mouse" ? "is-active" : ""}" data-insert-type="mouse" type="button" ${panel.isSaving ? "disabled" : ""}>Mouse</button>
-        <button class="insert-type-button ${panel.type === "image" ? "is-active" : ""}" data-insert-type="image" type="button" ${panel.isSaving ? "disabled" : ""}>Reconhecimento</button>
+        <button class="insert-type-button ${panel.type === "image" && String(panel.recognitionMode || "imagem") !== "texto_ocr" ? "is-active" : ""}" data-insert-type="image" data-insert-recognition-mode="imagem" type="button" ${panel.isSaving ? "disabled" : ""}>Reconhecimento</button>
+        <button class="insert-type-button ${panel.type === "image" && String(panel.recognitionMode || "imagem") === "texto_ocr" ? "is-active" : ""}" data-insert-type="image" data-insert-recognition-mode="texto_ocr" type="button" ${panel.isSaving ? "disabled" : ""}>OCR + Visual</button>
         <button class="insert-type-button ${panel.type === "open_url" ? "is-active" : ""}" data-insert-type="open_url" type="button" ${panel.isSaving ? "disabled" : ""}>Abrir URL</button>
         <button class="insert-type-button ${panel.type === "open_program" ? "is-active" : ""}" data-insert-type="open_program" type="button" ${panel.isSaving ? "disabled" : ""}>Abrir Programa</button>
         <button class="insert-type-button ${panel.type === "save_download" ? "is-active" : ""}" data-insert-type="save_download" type="button" ${panel.isSaving ? "disabled" : ""}>Salvar download</button>
@@ -23483,6 +23493,11 @@ commandMapList.addEventListener("click", async (event) => {
       };
     }
     state.insertPanel.type = button.dataset.insertType;
+    if (button.dataset.insertRecognitionMode) {
+      state.insertPanel.recognitionMode = button.dataset.insertRecognitionMode;
+    } else if (state.insertPanel.type === "image") {
+      state.insertPanel.recognitionMode = "imagem";
+    }
     state.insertPanel.suppressIntro = true;
     if (state.insertPanel.type === "spreadsheet" || state.insertPanel.type === "write_spreadsheet") {
       state.insertPanel.workbook = resolveWorkbookId(state.insertPanel.workbook);
@@ -23831,13 +23846,6 @@ commandMapList.addEventListener("click", async (event) => {
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     } else if (values.type === "image") {
-      const recognitionMode = String(values.recognitionMode || "imagem");
-      if (!normalizeStringValue(values.imagePath)) {
-        throw new Error("O reconhecimento hibrido precisa de uma imagem/print de referencia.");
-      }
-      if (recognitionMode === "texto_ocr" && !normalizeStringValue(values.ocrText)) {
-        throw new Error("O reconhecimento hibrido precisa tambem do texto OCR para procurar.");
-      }
       promiseFactory = () =>
         isFirstBlock
           ? invoke("add_image_click_block", {
