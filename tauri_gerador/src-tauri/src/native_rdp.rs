@@ -5,14 +5,17 @@ use std::{
     fs, mem,
     process::Command,
     ptr,
-    sync::{LazyLock, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        LazyLock, Mutex,
+    },
     thread,
     time::Duration,
 };
 use windows::{
     core::{Interface, BSTR, PCSTR, PCWSTR, PWSTR, VARIANT},
     Win32::{
-        Foundation::{BOOL, HWND, LPARAM, WPARAM},
+        Foundation::{BOOL, HWND, LPARAM, LRESULT, POINT, WPARAM},
         Graphics::Gdi::{
             RedrawWindow, RDW_ALLCHILDREN, RDW_ERASE, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW,
         },
@@ -33,12 +36,16 @@ use windows::{
                 KEYEVENTF_KEYUP, VK_RETURN,
             },
             WindowsAndMessaging::{
-                CreateWindowExW, DestroyWindow, DispatchMessageW, EnumChildWindows, EnumWindows,
-                GetClassNameW, GetMessageW, GetWindowLongPtrW, GetWindowTextW,
+                CallNextHookEx, CreateWindowExW, DestroyWindow, DispatchMessageW, EnumChildWindows,
+                EnumWindows, GetClassNameW, GetMessageW, GetWindowLongPtrW, GetWindowTextW,
                 GetWindowThreadProcessId, IsWindow, IsWindowVisible, PostMessageW, SendMessageW,
-                SetForegroundWindow, SetParent, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-                TranslateMessage, BM_CLICK, GWL_STYLE, MSG, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-                SWP_SHOWWINDOW, SW_HIDE, SW_SHOW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE,
+                SetForegroundWindow, SetParent, SetWindowsHookExW, SetWindowLongPtrW, SetWindowPos,
+                ShowWindow, TranslateMessage, BM_CLICK, GWL_STYLE, HC_ACTION, HHOOK,
+                MSLLHOOKSTRUCT, MSG, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE,
+                SW_SHOW, UnhookWindowsHookEx, WH_MOUSE_LL, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE,
+                WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN,
+                WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEWHEEL, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN,
+                WM_RBUTTONUP, WM_XBUTTONDBLCLK, WM_XBUTTONDOWN, WM_XBUTTONUP,
                 WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_MAXIMIZEBOX,
                 WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME, WS_VISIBLE,
             },
@@ -112,6 +119,107 @@ struct NativeRdpState {
 }
 static STATE: LazyLock<Mutex<NativeRdpState>> =
     LazyLock::new(|| Mutex::new(NativeRdpState::default()));
+static MOUSE_INPUT_ENABLED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
+static MOUSE_HOOK_HANDLE: LazyLock<Mutex<isize>> = LazyLock::new(|| Mutex::new(0));
+static MOUSE_BLOCK_BOUNDS: LazyLock<Mutex<Option<MouseBlockBounds>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[derive(Clone, Copy)]
+struct MouseBlockBounds {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+impl MouseBlockBounds {
+    fn contains(self, point: POINT) -> bool {
+        point.x >= self.left
+            && point.x <= self.right
+            && point.y >= self.top
+            && point.y <= self.bottom
+    }
+}
+
+fn set_mouse_block_bounds(left: i32, top: i32, width: i32, height: i32, visible: bool) {
+    let mut guard = MOUSE_BLOCK_BOUNDS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if visible {
+        *guard = Some(MouseBlockBounds {
+            left,
+            top,
+            right: left + width.max(1),
+            bottom: top + height.max(1),
+        });
+    } else {
+        *guard = None;
+    }
+}
+
+unsafe extern "system" fn mouse_block_hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if code == HC_ACTION as i32 && !MOUSE_INPUT_ENABLED.load(Ordering::SeqCst) {
+        let message = wparam.0 as u32;
+        let should_block = matches!(
+            message,
+            WM_LBUTTONDOWN
+                | WM_LBUTTONUP
+                | WM_LBUTTONDBLCLK
+                | WM_RBUTTONDOWN
+                | WM_RBUTTONUP
+                | WM_RBUTTONDBLCLK
+                | WM_MBUTTONDOWN
+                | WM_MBUTTONUP
+                | WM_MBUTTONDBLCLK
+                | WM_XBUTTONDOWN
+                | WM_XBUTTONUP
+                | WM_XBUTTONDBLCLK
+                | WM_MOUSEWHEEL
+                | WM_MOUSEHWHEEL
+        );
+        if !should_block {
+            return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
+        }
+        let Some(event) = (lparam.0 as *const MSLLHOOKSTRUCT).as_ref() else {
+            return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
+        };
+        let inside = MOUSE_BLOCK_BOUNDS
+            .lock()
+            .ok()
+            .and_then(|guard| *guard)
+            .map(|bounds| bounds.contains(event.pt))
+            .unwrap_or(false);
+        if inside {
+            return LRESULT(1);
+        }
+    }
+    CallNextHookEx(HHOOK::default(), code, wparam, lparam)
+}
+
+fn ensure_mouse_block_hook() -> Result<(), String> {
+    let mut guard = MOUSE_HOOK_HANDLE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if *guard != 0 {
+        return Ok(());
+    }
+    let hook = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_block_hook_proc), None, 0) }
+        .map_err(|error| format!("Falha ao ativar trava de mouse: {error}"))?;
+    *guard = hook.0 as isize;
+    Ok(())
+}
+
+fn release_mouse_block_hook() {
+    let mut guard = MOUSE_HOOK_HANDLE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if *guard != 0 {
+        unsafe {
+            let _ = UnhookWindowsHookEx(HHOOK(*guard as *mut c_void));
+        }
+        *guard = 0;
+    }
+}
 
 struct ProcessWindowSearch {
     process_id: u32,
@@ -966,6 +1074,7 @@ pub fn resize(x: i32, y: i32, width: i32, height: i32, visible: bool) -> Result<
         state.active_vm_id.clear();
         return Err("Nenhuma sessao RDP nativa ativa.".into());
     };
+    let mut next_block_bounds: Option<(i32, i32, i32, i32)> = None;
     unsafe {
         let hwnd = HWND(session.hwnd as *mut c_void);
         if visible {
@@ -977,6 +1086,7 @@ pub fn resize(x: i32, y: i32, width: i32, height: i32, visible: bool) -> Result<
                 let host_height = available_height.min(session.surface_height.max(240));
                 let host_x = x + (available_width - host_width) / 2;
                 let host_y = y + (available_height - host_height) / 2;
+                next_block_bounds = Some((host_x, host_y, host_width, host_height));
                 SetWindowPos(
                     host,
                     None,
@@ -994,6 +1104,7 @@ pub fn resize(x: i32, y: i32, width: i32, height: i32, visible: bool) -> Result<
                     RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
                 );
             } else {
+                next_block_bounds = Some((x, y, width.max(320), height.max(240)));
                 SetWindowPos(
                     hwnd,
                     None,
@@ -1014,8 +1125,32 @@ pub fn resize(x: i32, y: i32, width: i32, height: i32, visible: bool) -> Result<
             );
         }
     }
+    if let Some((left, top, block_width, block_height)) = next_block_bounds {
+        set_mouse_block_bounds(left, top, block_width, block_height, visible);
+    } else {
+        set_mouse_block_bounds(0, 0, 0, 0, false);
+    }
     let version = session.version.clone();
     Ok(serde_json::json!({"ok":true,"visible":visible,"vm_id":active_vm_id,"version":version}))
+}
+
+pub fn set_input_enabled(enabled: bool) -> Result<Value, String> {
+    let state = STATE.lock().unwrap_or_else(|error| error.into_inner());
+    let active_vm_id = state.active_vm_id.clone();
+    drop(state);
+    MOUSE_INPUT_ENABLED.store(enabled, Ordering::SeqCst);
+    if enabled {
+        release_mouse_block_hook();
+    } else {
+        ensure_mouse_block_hook()?;
+    }
+    Ok(serde_json::json!({
+        "ok": true,
+        "enabled": enabled,
+        "active": !active_vm_id.is_empty(),
+        "mode": "mouse-hook",
+        "vm_id": active_vm_id
+    }))
 }
 
 pub fn activate(
@@ -1035,6 +1170,7 @@ pub fn activate(
         return Err("A VM ainda nao possui uma sessao nativa aberta.".into());
     }
 
+    let mut next_block_bounds: Option<(i32, i32, i32, i32)> = None;
     for (session_vm_id, session) in state.sessions.iter_mut() {
         let is_target = *session_vm_id == normalized_vm_id;
         unsafe {
@@ -1048,6 +1184,7 @@ pub fn activate(
                     let host_height = available_height.min(session.surface_height.max(240));
                     let host_x = x + (available_width - host_width) / 2;
                     let host_y = y + (available_height - host_height) / 2;
+                    next_block_bounds = Some((host_x, host_y, host_width, host_height));
                     SetWindowPos(
                         parent,
                         None,
@@ -1067,6 +1204,7 @@ pub fn activate(
                         RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
                     );
                 } else {
+                    next_block_bounds = Some((x, y, width.max(320), height.max(240)));
                     SetWindowPos(
                         hwnd,
                         None,
@@ -1089,12 +1227,19 @@ pub fn activate(
     }
 
     state.active_vm_id = normalized_vm_id.clone();
+    if let Some((left, top, block_width, block_height)) = next_block_bounds {
+        set_mouse_block_bounds(left, top, block_width, block_height, visible);
+    } else {
+        set_mouse_block_bounds(0, 0, 0, 0, false);
+    }
     Ok(serde_json::json!({"ok":true,"visible":visible,"vm_id":normalized_vm_id,"reused":true}))
 }
 
 pub fn close() -> Result<Value, String> {
     let mut state = STATE.lock().unwrap_or_else(|error| error.into_inner());
     let closed_ids: Vec<String> = state.sessions.keys().cloned().collect();
+    set_mouse_block_bounds(0, 0, 0, 0, false);
+    release_mouse_block_hook();
     for session in state.sessions.drain().map(|(_, session)| session) {
         unsafe {
             if session.hwnd != 0 {
