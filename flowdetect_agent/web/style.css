@@ -240,7 +240,8 @@ button {
 .agent-primary-button,
 .agent-secondary-button,
 .agent-danger-button,
-.agent-ghost-button {
+.agent-ghost-button,
+.agent-mouse-control-button {
   min-height: 36px;
   padding: 0 14px;
   border-radius: 999px;
@@ -251,7 +252,8 @@ button {
 .agent-primary-button:hover,
 .agent-secondary-button:hover,
 .agent-danger-button:hover,
-.agent-ghost-button:hover {
+.agent-ghost-button:hover,
+.agent-mouse-control-button:hover {
   transform: translateY(-1px);
 }
 
@@ -280,6 +282,42 @@ button {
 .agent-ghost-button {
   color: var(--text-soft);
   background: rgba(255, 255, 255, 0.03);
+}
+
+.agent-mouse-control-button {
+  border: 1px solid rgba(248, 113, 113, 0.42);
+  color: #ffe1e1;
+  background:
+    radial-gradient(circle at top right, rgba(248, 113, 113, 0.22), transparent 42%),
+    linear-gradient(180deg, rgba(78, 24, 32, 0.98), rgba(41, 15, 20, 0.98));
+  box-shadow: 0 12px 26px rgba(248, 113, 113, 0.12);
+  white-space: nowrap;
+}
+
+.agent-mouse-control-button::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 999px;
+  background: #ef4444;
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.75);
+  vertical-align: 1px;
+}
+
+.agent-mouse-control-button.is-enabled {
+  border-color: rgba(34, 197, 94, 0.58);
+  color: #dcfce7;
+  background:
+    radial-gradient(circle at top right, rgba(34, 197, 94, 0.26), transparent 42%),
+    linear-gradient(180deg, rgba(22, 82, 48, 0.98), rgba(15, 51, 34, 0.98));
+  box-shadow: 0 14px 30px rgba(34, 197, 94, 0.16);
+}
+
+.agent-mouse-control-button.is-enabled::before {
+  background: #22c55e;
+  box-shadow: 0 0 14px rgba(34, 197, 94, 0.8);
 }
 
 .agent-overview-grid {

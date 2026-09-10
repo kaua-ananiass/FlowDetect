@@ -66,6 +66,7 @@
 
         <div class="agent-hero-actions">
           <span id="agentConnectionAddress" class="agent-connection-chip">Conectar: carregando...</span>
+          <button id="toggleMouseControlButton" class="agent-mouse-control-button is-disabled" type="button" aria-pressed="false" title="Bloqueia movimentos e cliques remotos enviados pelo Studio">Mouse desligado</button>
           <button id="importZipButton" class="agent-primary-button" type="button">Importar ZIP</button>
           <button id="refreshLibraryButton" class="agent-secondary-button" type="button">Atualizar</button>
           <button id="toggleAgentPanelButton" class="agent-secondary-button agent-panel-toggle" type="button">Detalhes</button>
@@ -177,6 +178,7 @@
               </div>
 
               <div class="agent-run-bar">
+                <button id="toggleMouseControlInlineButton" class="agent-mouse-control-button is-disabled" type="button" aria-pressed="false">Mouse remoto desligado</button>
                 <button id="runAutomationButton" class="agent-primary-button agent-run-button" type="button">Executar</button>
                 <button id="stopAutomationButton" class="agent-danger-button" type="button">Parar</button>
               </div>

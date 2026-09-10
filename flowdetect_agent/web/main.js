@@ -38,6 +38,7 @@ const state = {
   remoteStatusRefreshing: false,
   remoteConnected: false,
   lowPowerMode: true,
+  mouseControlEnabled: false,
   lastProgressSignature: "",
   lastAssistMapSignature: "",
   lastObserverSignature: "",
@@ -57,6 +58,8 @@ const elements = {
   observerCurrentBlockText: document.getElementById("observerCurrentBlockText"),
   observerBlockList: document.getElementById("observerBlockList"),
   toggleAgentPanelButton: document.getElementById("toggleAgentPanelButton"),
+  toggleMouseControlButton: document.getElementById("toggleMouseControlButton"),
+  toggleMouseControlInlineButton: document.getElementById("toggleMouseControlInlineButton"),
   minimizeAgentButton: document.getElementById("minimizeAgentButton"),
   importZipButton: document.getElementById("importZipButton"),
   refreshLibraryButton: document.getElementById("refreshLibraryButton"),
@@ -637,6 +640,57 @@ async function loadAgentConnectionInfo() {
     setElementText(elements.observerConnectionAddress, "127.0.0.1:18452");
     elements.agentConnectionAddress.title = "Use este endereco se o Control estiver no mesmo computador.";
     elements.agentConnectionAddress.classList.remove("is-online");
+  }
+}
+
+function renderMouseControlState() {
+  const enabled = Boolean(state.mouseControlEnabled);
+  document.body.classList.toggle("agent-mouse-control-enabled", enabled);
+  document.body.classList.toggle("agent-mouse-control-disabled", !enabled);
+  [
+    elements.toggleMouseControlButton,
+    elements.toggleMouseControlInlineButton,
+  ].forEach((button) => {
+    if (!button) {
+      return;
+    }
+    button.classList.toggle("is-enabled", enabled);
+    button.classList.toggle("is-disabled", !enabled);
+    button.setAttribute("aria-pressed", enabled ? "true" : "false");
+    button.textContent = enabled ? "Mouse ligado" : "Mouse desligado";
+    button.title = enabled
+      ? "Mouse remoto liberado. Clique para bloquear movimentos e cliques enviados pelo Studio."
+      : "Mouse remoto bloqueado. Clique para permitir movimentos e cliques enviados pelo Studio.";
+  });
+}
+
+async function loadMouseControlState() {
+  try {
+    const payload = await invoke("get_agent_mouse_control_state");
+    state.mouseControlEnabled = Boolean(payload?.mouse_enabled);
+  } catch (error) {
+    state.mouseControlEnabled = false;
+    pushLog(`Mouse remoto bloqueado por seguranca: ${String(error)}`, "warn", "Mouse");
+  }
+  renderMouseControlState();
+}
+
+async function toggleMouseControl() {
+  const nextEnabled = !Boolean(state.mouseControlEnabled);
+  try {
+    const payload = await invoke("set_agent_mouse_control_enabled", { enabled: nextEnabled });
+    state.mouseControlEnabled = Boolean(payload?.mouse_enabled);
+    renderMouseControlState();
+    pushLog(
+      state.mouseControlEnabled
+        ? "Mouse remoto liberado pelo Agent."
+        : "Mouse remoto bloqueado pelo Agent.",
+      state.mouseControlEnabled ? "success" : "info",
+      "Mouse"
+    );
+  } catch (error) {
+    pushLog(String(error), "error", "Mouse");
+    renderMouseControlState();
   }
 }
 
@@ -1718,6 +1772,7 @@ function handleAssistMapKeydown(event) {
 async function boot() {
   document.body.classList.add("agent-service-mode", "agent-lite-mode");
   await loadAgentConnectionInfo();
+  await loadMouseControlState();
   renderLogs();
   renderSelection();
   renderTarget();
@@ -1749,6 +1804,8 @@ async function boot() {
   });
 
   elements.importZipButton?.addEventListener("click", () => elements.automationZipInput?.click());
+  elements.toggleMouseControlButton?.addEventListener("click", () => { void toggleMouseControl(); });
+  elements.toggleMouseControlInlineButton?.addEventListener("click", () => { void toggleMouseControl(); });
   elements.toggleAgentPanelButton?.addEventListener("click", async () => {
     document.body.classList.add("agent-service-mode");
     await tauriWindow?.getCurrentWindow?.()?.hide?.().catch(() => {});
