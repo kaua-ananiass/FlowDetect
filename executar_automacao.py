@@ -519,6 +519,39 @@ class ExecutorAutomacao:
     def limpar_saida_status(self, valor):
         return str(valor).replace("|", "/").replace("\n", " ").replace("\r", " ").strip()
 
+    def aplicar_text_overrides(self, raw_overrides):
+        bruto = str(raw_overrides or "").strip()
+        if not bruto:
+            return 0
+        try:
+            dados = json.loads(bruto)
+        except Exception as erro:
+            raise ValueError(f"Overrides de texto invalidos: {erro}") from erro
+        if not isinstance(dados, dict):
+            raise ValueError("Overrides de texto precisam ser um objeto JSON, exemplo: {\"4\":\"01072026\"}.")
+
+        overrides = {
+            str(chave).strip(): "" if valor is None else str(valor)
+            for chave, valor in dados.items()
+            if str(chave).strip()
+        }
+        if not overrides:
+            return 0
+
+        aplicados = 0
+        for evento in self.eventos:
+            if str(evento.get("tipo") or "").strip() != "texto_livre":
+                continue
+            ordem = str(evento.get("ordem", "") or "").strip()
+            if ordem not in overrides:
+                continue
+            evento["texto"] = overrides[ordem]
+            evento["text"] = overrides[ordem]
+            aplicados += 1
+        if aplicados:
+            safe_print(f"Textos editaveis aplicados: {aplicados} bloco(s).", flush=True)
+        return aplicados
+
     def corrigir_texto_corrompido(self, texto):
         bruto = str(texto or "")
         if not bruto:
@@ -1311,6 +1344,34 @@ class ExecutorAutomacao:
                 "cor_fundo_etiqueta": "#075985",
                 "etiqueta": "OCR candidato",
             },
+            "ocr_busca_1": {
+                "cor_borda": "#38BDF8",
+                "cor_flash": "#7DD3FC",
+                "cor_texto": "#E6F7FF",
+                "cor_fundo_etiqueta": "#075985",
+                "etiqueta": "OCR 1",
+            },
+            "ocr_busca_2": {
+                "cor_borda": "#A78BFA",
+                "cor_flash": "#C4B5FD",
+                "cor_texto": "#F5F3FF",
+                "cor_fundo_etiqueta": "#6D28D9",
+                "etiqueta": "OCR 2",
+            },
+            "ocr_busca_3": {
+                "cor_borda": "#86EFAC",
+                "cor_flash": "#BBF7D0",
+                "cor_texto": "#F0FDF4",
+                "cor_fundo_etiqueta": "#15803D",
+                "etiqueta": "OCR 3",
+            },
+            "ocr_busca_4": {
+                "cor_borda": "#F0ABFC",
+                "cor_flash": "#F5D0FE",
+                "cor_texto": "#FDF4FF",
+                "cor_fundo_etiqueta": "#A21CAF",
+                "etiqueta": "OCR 4",
+            },
             "ocr_falha": {
                 "cor_borda": "#38BDF8",
                 "cor_flash": "#93C5FD",
@@ -1447,6 +1508,13 @@ class ExecutorAutomacao:
                     retangulo_x2 = min(overlay_largura - 6, retangulo_x1 + max(18, largura_visivel - 8))
                 if retangulo_y2 <= retangulo_y1:
                     retangulo_y2 = min(overlay_altura - 6, retangulo_y1 + max(18, altura_visivel - 8))
+
+                if tema.startswith("ocr_busca"):
+                    retangulo_x1 = int(area_visivel_esquerda - overlay_esquerda)
+                    retangulo_y1 = int(area_visivel_topo - overlay_topo)
+                    retangulo_x2 = int(area_visivel_direita - overlay_esquerda)
+                    retangulo_y2 = int(area_visivel_base - overlay_topo)
+                    raio = min(4, max(1, altura / 4))
 
                 retangulo_principal = canvas_overlay.create_polygon(
                     pontos_retangulo_arredondado(retangulo_x1, retangulo_y1, retangulo_x2, retangulo_y2, raio),
@@ -1766,6 +1834,236 @@ class ExecutorAutomacao:
             safe_print(f"Falha ao reconstruir referencia pela ancora OCR: {erro}", flush=True)
             return None
 
+    def marcar_alvos_ocr_em_sequencia(self, local, leitura_relativa=None, dimensoes_referencia=None):
+        config = leitura_relativa or {}
+        layouts = config.get("ocr_target_layouts") or []
+        bounds = local.get("ocr_related_bounds") or [local.get("ocr_bounds") or {}]
+        esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
+        ref_w, ref_h = dimensoes_referencia or (largura, altura)
+        scale_x, scale_y = largura / max(1, ref_w), altura / max(1, ref_h)
+        for index, detected in enumerate(bounds):
+            if self.cancelamento_solicitado():
+                return
+            if layouts:
+                layout = layouts[index] if index < len(layouts) else {}
+                if index == 0:
+                    width, height = config.get("largura", 140), config.get("altura", 40)
+                    ox, oy = config.get("offset_x", 0), config.get("offset_y", 0)
+                else:
+                    width, height = layout.get("width") or 140, layout.get("height") or 40
+                    ox = layout.get("offsetX")
+                    oy = layout.get("offsetY")
+                    ox = ox if ox is not None else config.get("offset_x", 0) + index * .032 * ref_w
+                    oy = oy if oy is not None else config.get("offset_y", 0) + index * .072 * ref_h
+                w, h = max(1, round(width * scale_x)), max(1, round(height * scale_y))
+                x = round(esquerda + largura / 2 + ox * scale_x - w / 2)
+                y = round(topo + altura / 2 + oy * scale_y - h / 2)
+            else:
+                x, y, w, h = self.bounds_reconhecimento(detected)
+            self.marcar_regiao_absoluta(x, y, w, h, tema=f"ocr_busca_{min(index + 1, 4)}",
+                                       etiqueta=f"OCR {index + 1}", duracao=0.14,
+                                       bloqueante=True, margem=0)
+
+    def regioes_alvos_ocr_por_layout(self, local, leitura_relativa=None, dimensoes_referencia=None, quantidade=0):
+        config = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        layouts = config.get("ocr_target_layouts") if isinstance(config.get("ocr_target_layouts"), list) else []
+        esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
+        ref_w, ref_h = dimensoes_referencia or (largura, altura)
+        scale_x, scale_y = largura / max(1, ref_w), altura / max(1, ref_h)
+        total = max(int(quantidade or 0), len(layouts), 1)
+        regioes = []
+        for index in range(total):
+            layout = layouts[index] if index < len(layouts) and isinstance(layouts[index], dict) else {}
+            if index == 0:
+                width = config.get("largura", layout.get("width", 140))
+                height = config.get("altura", layout.get("height", 40))
+                ox = config.get("offset_x", layout.get("offsetX", 0))
+                oy = config.get("offset_y", layout.get("offsetY", 0))
+            else:
+                width = layout.get("width") or 140
+                height = layout.get("height") or 40
+                ox = layout.get("offsetX")
+                oy = layout.get("offsetY")
+                ox = ox if ox is not None else config.get("offset_x", 0) + index * 0.032 * ref_w
+                oy = oy if oy is not None else config.get("offset_y", 0) + index * 0.072 * ref_h
+            w = max(1, round(float(width or 140) * scale_x))
+            h = max(1, round(float(height or 40) * scale_y))
+            x = round(esquerda + largura / 2 + float(ox or 0) * scale_x - w / 2)
+            y = round(topo + altura / 2 + float(oy or 0) * scale_y - h / 2)
+            regioes.append((int(x), int(y), int(w), int(h)))
+        return regioes
+
+    def regiao_referencia_alvo_ocr(self, index, leitura_relativa=None, dimensoes_referencia=None):
+        config = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        layouts = config.get("ocr_target_layouts") if isinstance(config.get("ocr_target_layouts"), list) else []
+        ref_w, ref_h = dimensoes_referencia or (0, 0)
+        if ref_w <= 0 or ref_h <= 0:
+            return None
+        layout = layouts[index] if index < len(layouts) and isinstance(layouts[index], dict) else {}
+        if index == 0:
+            width = config.get("largura", layout.get("width", 140))
+            height = config.get("altura", layout.get("height", 40))
+            ox = config.get("offset_x", layout.get("offsetX", 0))
+            oy = config.get("offset_y", layout.get("offsetY", 0))
+        else:
+            width = layout.get("width") or 140
+            height = layout.get("height") or 40
+            ox = layout.get("offsetX")
+            oy = layout.get("offsetY")
+            ox = ox if ox is not None else config.get("offset_x", 0) + index * 0.032 * ref_w
+            oy = oy if oy is not None else config.get("offset_y", 0) + index * 0.072 * ref_h
+        w = max(1, int(round(float(width or 140))))
+        h = max(1, int(round(float(height or 40))))
+        x = int(round(ref_w / 2 + float(ox or 0) - w / 2))
+        y = int(round(ref_h / 2 + float(oy or 0) - h / 2))
+        x = max(0, min(x, max(0, ref_w - 1)))
+        y = max(0, min(y, max(0, ref_h - 1)))
+        w = max(1, min(w, ref_w - x))
+        h = max(1, min(h, ref_h - y))
+        return x, y, w, h
+
+    def comparar_recorte_alvo_ocr_visual(self, captura, caminho_referencia, index, leitura_relativa=None, dimensoes_referencia=None):
+        if not OPENCV_DISPONIVEL or np is None or cv2 is None or captura is None or not caminho_referencia:
+            return 0.0
+        regiao_ref = self.regiao_referencia_alvo_ocr(index, leitura_relativa, dimensoes_referencia)
+        if not regiao_ref:
+            return 0.0
+        try:
+            with Image.open(caminho_referencia) as imagem_ref:
+                rx, ry, rw, rh = regiao_ref
+                ref_crop = imagem_ref.convert("RGB").crop((rx, ry, rx + rw, ry + rh))
+            live_crop = captura.convert("RGB").resize(ref_crop.size)
+            ref_gray = cv2.cvtColor(np.array(ref_crop), cv2.COLOR_RGB2GRAY)
+            live_gray = cv2.cvtColor(np.array(live_crop), cv2.COLOR_RGB2GRAY)
+            resultado = cv2.matchTemplate(live_gray, ref_gray, cv2.TM_CCOEFF_NORMED)
+            return float(resultado[0][0]) if resultado is not None and resultado.size else 0.0
+        except Exception:
+            return 0.0
+
+    def confirmar_alvos_ocr_por_layout_visual(self, local, texto_esperado="", leitura_relativa=None, dimensoes_referencia=None, caminho_referencia=None, marcar=True):
+        spec = self.interpretar_texto_ocr_composto(texto_esperado)
+        partes = [str(parte or "").strip() for parte in (spec or {}).get("partes", []) if str(parte or "").strip()]
+        quantidade = self.quantidade_alvos_ocr_esperados(texto_esperado, leitura_relativa)
+        if len(partes) < quantidade:
+            return None
+        regioes = self.regioes_alvos_ocr_por_layout(local, leitura_relativa, dimensoes_referencia, quantidade)
+        if len(regioes) < quantidade:
+            return None
+        bounds = []
+        textos_lidos = []
+        for index, esperado in enumerate(partes[:quantidade]):
+            regiao = self.limitar_regiao(regioes[index])
+            if not regiao:
+                return None
+            if marcar:
+                self.marcar_regiao_absoluta(
+                    int(regiao[0]), int(regiao[1]), int(regiao[2]), int(regiao[3]),
+                    tema=f"ocr_busca_{min(index + 1, 4)}",
+                    etiqueta=f"OCR {index + 1}",
+                    duracao=0.12,
+                    bloqueante=True,
+                    margem=0,
+                )
+            try:
+                captura, _base_left, _base_top = self.capturar_tela_pil(region=regiao)
+            except Exception:
+                return None
+            textos = self.extrair_textos_ocr_rapido(captura, texto_esperado=esperado)
+            if not textos:
+                textos = [
+                    self.extrair_texto_ocr_imagem_pil(captura, config="--psm 6"),
+                    self.extrair_texto_ocr_imagem_pil(captura, config="--psm 7"),
+                    self.extrair_texto_ocr_imagem_pil(captura, config="--psm 8"),
+                    self.extrair_texto_ocr_imagem_pil(captura, config="--psm 13"),
+                ]
+            capturado = " ".join(str(item or "").strip() for item in textos if str(item or "").strip()).strip()
+            confirmado = self.texto_ocr_confirma_alvo(esperado, capturado, limite_ratio=0.90)
+            score_visual = 0.0
+            if not confirmado and caminho_referencia:
+                score_visual = self.comparar_recorte_alvo_ocr_visual(
+                    captura,
+                    caminho_referencia,
+                    index,
+                    leitura_relativa=leitura_relativa,
+                    dimensoes_referencia=dimensoes_referencia,
+                )
+                confirmado = score_visual >= 0.72
+                if confirmado and not capturado:
+                    capturado = esperado
+            safe_print(
+                f"OCR alvo {index + 1}/{quantidade}: esperado='{esperado}' | capturado='{capturado}' "
+                f"| visual={score_visual:.2f} | {'OK' if confirmado else 'falhou'}",
+                flush=True,
+            )
+            if not confirmado:
+                return None
+            bounds.append({
+                "parte": esperado,
+                "texto": capturado or esperado,
+                "left": int(regiao[0]),
+                "top": int(regiao[1]),
+                "width": int(regiao[2]),
+                "height": int(regiao[3]),
+            })
+            textos_lidos.append(capturado or esperado)
+        confirmado = dict(local)
+        confirmado.update({
+            "search_stage": "ocr_visual_hybrid",
+            "ocr_anchor_confirmed": True,
+            "ocr_layout_targets_marked": bool(marcar),
+            "ocr_composto": True,
+            "ocr_relacional": bool((spec or {}).get("relacional")),
+            "ocr_partes": partes[:quantidade],
+            "ocr_textos": textos_lidos,
+            "ocr_text": " | ".join(textos_lidos),
+            "ocr_related_bounds": bounds,
+            "ocr_bounds": bounds[0] if bounds else {},
+        })
+        return confirmado
+
+    def quantidade_alvos_ocr_esperados(self, texto_esperado="", leitura_relativa=None):
+        spec = self.interpretar_texto_ocr_composto(texto_esperado)
+        partes = spec.get("partes", []) if spec else []
+        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        layouts = leitura.get("ocr_target_layouts") if isinstance(leitura.get("ocr_target_layouts"), list) else []
+        return max(1, len([parte for parte in partes if str(parte or "").strip()]), len(layouts))
+
+    def ocr_hibrido_tem_todos_alvos(self, local, texto_esperado="", leitura_relativa=None):
+        if not isinstance(local, dict):
+            return False
+        quantidade = self.quantidade_alvos_ocr_esperados(texto_esperado, leitura_relativa)
+        if quantidade <= 1:
+            return bool(local.get("ocr_anchor_confirmed") or local.get("ocr_visual_anchor"))
+        bounds = local.get("ocr_related_bounds")
+        if not isinstance(bounds, list):
+            return False
+        validos = [
+            bound for bound in bounds
+            if isinstance(bound, dict)
+            and int(bound.get("width", 0) or 0) > 0
+            and int(bound.get("height", 0) or 0) > 0
+        ]
+        return len(validos) >= quantidade
+
+    def texto_ocr_confirma_alvo(self, esperado, capturado, limite_ratio=0.90):
+        texto_esperado = str(esperado or "").strip()
+        texto_capturado = str(capturado or "").strip()
+        if not texto_esperado:
+            return True
+        comparacao = self.comparar_texto_reconhecimento_preciso(texto_esperado, texto_capturado)
+        if comparacao.get("reference") == comparacao.get("captured"):
+            return True
+        if float(comparacao.get("ratio", 0.0) or 0.0) >= float(limite_ratio or 0.90):
+            return True
+        esperado_digitos = re.sub(r"\D+", "", texto_esperado)
+        if esperado_digitos and esperado_digitos == texto_esperado.replace(" ", ""):
+            grupos = re.findall(r"\d+", texto_capturado)
+            if esperado_digitos in grupos:
+                return True
+            if comparacao.get("has_digits") and float(comparacao.get("digit_ratio", 0.0) or 0.0) >= 0.999:
+                return True
+        return False
+
     def localizar_referencia_hibrida_ocr_visual(
         self,
         caminho_referencia,
@@ -1775,6 +2073,7 @@ class ExecutorAutomacao:
         confianca_ocr=0.72,
         confianca_visual=0.8,
         perfil_busca="balanced",
+        leitura_relativa=None,
     ):
         esperado = str(texto_ocr_esperado or "").strip()
         if not esperado or not OCR_DISPONIVEL or not dimensoes_referencia:
@@ -1786,15 +2085,79 @@ class ExecutorAutomacao:
         if ref_largura <= 0 or ref_altura <= 0:
             return None
 
-        candidatos_ocr = self.localizar_texto_por_ocr_screenshot(
-            esperado,
-            confianca=max(0.55, min(float(confianca_ocr or 0.72), 0.78)),
-            janela_alvo=None,
-            region=region,
-            retornar_candidatos=True,
-            marcar_candidatos=False,
-            limite_candidatos=3 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 6,
-        )
+        spec_composto = self.interpretar_texto_ocr_composto(esperado)
+        quantidade_esperada = self.quantidade_alvos_ocr_esperados(esperado, leitura_relativa)
+        partes_compostas = spec_composto.get("partes", []) if spec_composto else []
+        if quantidade_esperada > 1 and len([parte for parte in partes_compostas if str(parte or "").strip()]) < quantidade_esperada:
+            safe_print(
+                "Hibrido OCR + imagem bloqueado: existem varios alvos OCR, mas o texto de busca chegou incompleto. "
+                f"Recebido='{esperado}'.",
+                flush=True,
+            )
+            return None
+        if quantidade_esperada > 1:
+            local_visual_previo = self.procurar_imagem_por_template(
+                caminho_referencia,
+                confianca=max(0.55, min(float(confianca_visual or 0.8), 0.9)),
+                region=region,
+                perfil_busca="fast",
+            )
+            if local_visual_previo:
+                confirmado_por_layout = self.confirmar_alvos_ocr_por_layout_visual(
+                    local_visual_previo,
+                    texto_esperado=esperado,
+                    leitura_relativa=leitura_relativa,
+                    dimensoes_referencia=dimensoes_referencia,
+                    caminho_referencia=caminho_referencia,
+                    marcar=True,
+                )
+                if confirmado_por_layout:
+                    info_template = self._ultima_busca_template_info or {}
+                    confirmado_por_layout["hybrid_score"] = float(info_template.get("score", local_visual_previo.get("score", 0.0)) or 0.0)
+                    safe_print(
+                        "Hibrido etapa 2/2: OCRs do layout confirmados e reconhecimento visual pronto "
+                        f"(alvos={quantidade_esperada}, score={float(confirmado_por_layout.get('hybrid_score', 0.0) or 0.0):.2f}).",
+                        flush=True,
+                    )
+                    return confirmado_por_layout
+                safe_print(
+                    "Hibrido: imagem apareceu, mas nem todos os alvos OCR do layout foram confirmados. "
+                    "O bloco nao vai clicar nesse candidato.",
+                    flush=True,
+                )
+                return None
+            safe_print(
+                "Hibrido: reconhecimento visual ainda nao encontrou a referencia para validar os OCRs do layout.",
+                flush=True,
+            )
+            return None
+        layout_alvos = self.montar_layouts_alvos_ocr(
+            leitura_relativa,
+            dimensoes_referencia=dimensoes_referencia,
+            quantidade=len(spec_composto.get("partes", [])) if spec_composto else 0,
+        ) if spec_composto else []
+        if spec_composto and len(layout_alvos) >= 2:
+            candidatos_ocr = self.localizar_texto_composto_por_ocr_screenshot(
+                esperado,
+                spec_composto,
+                confianca=max(0.55, min(float(confianca_ocr or 0.72), 0.78)),
+                janela_alvo=None,
+                region=region,
+                retornar_candidatos=True,
+                marcar_candidatos=False,
+                limite_candidatos=3 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 6,
+                layout_alvos=layout_alvos,
+            )
+        else:
+            candidatos_ocr = self.localizar_texto_por_ocr_screenshot(
+                esperado,
+                confianca=max(0.55, min(float(confianca_ocr or 0.72), 0.78)),
+                janela_alvo=None,
+                region=region,
+                retornar_candidatos=True,
+                marcar_candidatos=False,
+                limite_candidatos=3 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 6,
+            )
         if not candidatos_ocr:
             return None
 
@@ -1857,6 +2220,19 @@ class ExecutorAutomacao:
                 },
                 "hybrid_score": score_total,
             })
+            for chave_extra in (
+                "ocr_composto",
+                "ocr_relacional",
+                "ocr_partes",
+                "ocr_textos",
+                "ocr_related_bounds",
+                "ocr_anchor_bounds",
+                "ocr_value_bounds",
+                "ocr_union_bounds",
+                "ocr_relation_score",
+            ):
+                if chave_extra in candidato:
+                    confirmado[chave_extra] = candidato.get(chave_extra)
             if score_total >= 0.82 or score_ocr >= 0.92:
                 melhor = confirmado
                 melhor_score = score_total
@@ -1866,19 +2242,17 @@ class ExecutorAutomacao:
                 melhor = confirmado
 
         if melhor:
-            ocr_bounds = melhor.get("ocr_bounds") if isinstance(melhor.get("ocr_bounds"), dict) else {}
-            if ocr_bounds:
-                self.marcar_regiao_absoluta(
-                    int(ocr_bounds.get("left", 0) or 0),
-                    int(ocr_bounds.get("top", 0) or 0),
-                    int(ocr_bounds.get("width", 0) or 0),
-                    int(ocr_bounds.get("height", 0) or 0),
-                    tema="ocr_busca",
-                    etiqueta="OCR",
-                    duracao=0.28,
-                    bloqueante=True,
-                    margem=2,
+            if not self.ocr_hibrido_tem_todos_alvos(melhor, esperado, leitura_relativa):
+                quantidade = self.quantidade_alvos_ocr_esperados(esperado, leitura_relativa)
+                encontrados = len(melhor.get("ocr_related_bounds") or [])
+                safe_print(
+                    "Hibrido: imagem confirmou, mas o OCR obrigatorio ainda esta incompleto "
+                    f"({encontrados}/{quantidade} alvo(s)). O bloco nao vai clicar neste candidato.",
+                    flush=True,
                 )
+                return None
+            if not melhor.get("ocr_layout_targets_marked"):
+                self.marcar_alvos_ocr_em_sequencia(melhor, leitura_relativa, dimensoes_referencia)
             safe_print(
                 "Hibrido etapa 2/2: reconhecimento visual confirmado "
                 f"(texto='{melhor.get('ocr_text', esperado)}', score={melhor_score:.2f}).",
@@ -2642,6 +3016,46 @@ class ExecutorAutomacao:
         except Exception:
             return self.obter_metricas_tela_virtual()
 
+    def listar_regioes_monitores(self):
+        if not hasattr(ctypes, "windll"):
+            return []
+
+        monitores = []
+        user32 = ctypes.windll.user32
+
+        try:
+            callback_type = ctypes.WINFUNCTYPE(
+                ctypes.c_int,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.POINTER(wintypes.RECT),
+                ctypes.c_long,
+            )
+
+            def callback(_monitor, _hdc, rect, _param):
+                try:
+                    esquerda = int(rect.contents.left)
+                    topo = int(rect.contents.top)
+                    direita = int(rect.contents.right)
+                    base = int(rect.contents.bottom)
+                    largura = max(0, direita - esquerda)
+                    altura = max(0, base - topo)
+                    if largura > 0 and altura > 0:
+                        monitores.append((esquerda, topo, largura, altura))
+                except Exception:
+                    pass
+                return 1
+
+            user32.EnumDisplayMonitors(0, 0, callback_type(callback), 0)
+        except Exception:
+            monitores = []
+
+        if not monitores:
+            esquerda, topo, largura, altura = self.obter_metricas_tela_virtual()
+            if largura > 0 and altura > 0:
+                monitores.append((esquerda, topo, largura, altura))
+        return monitores
+
     def capturar_tela_pil(self, region=None):
         if not PIL_DISPONIVEL:
             raise RuntimeError("Pillow indisponivel para captura visual.")
@@ -2692,6 +3106,12 @@ class ExecutorAutomacao:
                 top = int(region[1])
                 right = int(region[0] + region[2])
                 bottom = int(region[1] + region[3])
+                try:
+                    captura = ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True)
+                    if int(getattr(captura, "width", 0) or 0) > 0 and int(getattr(captura, "height", 0) or 0) > 0:
+                        return finalizar_captura(captura, left, top)
+                except Exception:
+                    pass
                 esquerda_virtual, topo_virtual, _largura_virtual, _altura_virtual = self.obter_metricas_tela_virtual()
                 captura_total = ImageGrab.grab(all_screens=True)
                 largura_virtual = max(1, int(_largura_virtual or getattr(captura_total, "width", 1) or 1))
@@ -5447,6 +5867,392 @@ class ExecutorAutomacao:
             return max(max(scores), min(0.98, melhor_janela))
         return max(scores)
 
+    def interpretar_texto_ocr_composto(self, texto):
+        bruto = str(texto or "").strip()
+        if not bruto:
+            return None
+        for separador in ("=>", "->", "→", "⇢"):
+            if separador in bruto:
+                partes = [parte.strip() for parte in bruto.split(separador) if parte.strip()]
+                if len(partes) >= 2:
+                    return {"partes": partes, "relacional": True, "separador": separador}
+
+        linhas = [linha.strip() for linha in re.split(r"[\r\n]+", bruto) if linha.strip()]
+        if len(linhas) >= 2:
+            segunda_tem_numero = any(re.search(r"\d", linha) for linha in linhas[1:])
+            return {"partes": linhas, "relacional": bool(segunda_tem_numero), "separador": "linha"}
+
+        partes_multiplas = [parte.strip() for parte in re.split(r"\s*(?:\||;|\+)\s*", bruto) if parte.strip()]
+        if len(partes_multiplas) >= 2:
+            return {"partes": partes_multiplas, "relacional": False, "separador": "multi"}
+        return None
+
+    def _retangulo_texto_ocr(self, candidato):
+        if not isinstance(candidato, dict):
+            return None
+        try:
+            left = int(candidato.get("left", 0) or 0)
+            top = int(candidato.get("top", 0) or 0)
+            width = max(1, int(candidato.get("width", 0) or 0))
+            height = max(1, int(candidato.get("height", 0) or 0))
+            return left, top, width, height
+        except Exception:
+            return None
+
+    def _unir_retangulos_ocr(self, candidatos):
+        retangulos = [self._retangulo_texto_ocr(candidato) for candidato in candidatos]
+        retangulos = [retangulo for retangulo in retangulos if retangulo]
+        if not retangulos:
+            return None
+        left = min(retangulo[0] for retangulo in retangulos)
+        top = min(retangulo[1] for retangulo in retangulos)
+        right = max(retangulo[0] + retangulo[2] for retangulo in retangulos)
+        bottom = max(retangulo[1] + retangulo[3] for retangulo in retangulos)
+        return left, top, max(1, right - left), max(1, bottom - top)
+
+    def pontuar_relacao_ocr_vertical(self, ancora, valor):
+        rect_ancora = self._retangulo_texto_ocr(ancora)
+        rect_valor = self._retangulo_texto_ocr(valor)
+        if not rect_ancora or not rect_valor:
+            return 0.0
+        ax, ay, aw, ah = rect_ancora
+        vx, vy, vw, vh = rect_valor
+        acx = ax + (aw / 2.0)
+        acy = ay + (ah / 2.0)
+        vcx = vx + (vw / 2.0)
+        vcy = vy + (vh / 2.0)
+        if vcy <= acy:
+            return 0.0
+        distancia_y = max(0.0, vy - (ay + ah))
+        limite_y = max(42.0, min(280.0, ah * 12.0 + 90.0))
+        if distancia_y > limite_y:
+            return 0.0
+        sobreposicao_x = max(0.0, min(ax + aw, vx + vw) - max(ax, vx))
+        menor_largura = max(1.0, float(min(aw, vw)))
+        taxa_sobreposicao = sobreposicao_x / menor_largura
+        centro_diferenca = abs(vcx - acx)
+        tolerancia_centro = max(70.0, aw * 0.62)
+        dentro_coluna = (ax - 24) <= vcx <= (ax + aw + 24)
+        score_x = 1.0 if dentro_coluna else max(0.0, 1.0 - (centro_diferenca / tolerancia_centro))
+        score_x = max(score_x, min(1.0, taxa_sobreposicao))
+        if score_x < 0.18:
+            return 0.0
+        score_y = max(0.0, 1.0 - (distancia_y / limite_y))
+        return max(0.0, min(1.0, (score_x * 0.66) + (score_y * 0.34)))
+
+    def montar_layouts_alvos_ocr(self, leitura_relativa=None, dimensoes_referencia=None, quantidade=0):
+        config = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        layouts = config.get("ocr_target_layouts") if isinstance(config.get("ocr_target_layouts"), list) else []
+        ref_w, ref_h = dimensoes_referencia or (0, 0)
+        alvos = []
+        total = max(int(quantidade or 0), len(layouts))
+        for index in range(total):
+            layout = layouts[index] if index < len(layouts) and isinstance(layouts[index], dict) else {}
+            if index == 0:
+                width = config.get("largura", layout.get("width", 140))
+                height = config.get("altura", layout.get("height", 40))
+                offset_x = config.get("offset_x", layout.get("offsetX", 0))
+                offset_y = config.get("offset_y", layout.get("offsetY", 0))
+            else:
+                width = layout.get("width", 140)
+                height = layout.get("height", 40)
+                offset_x = layout.get("offsetX")
+                offset_y = layout.get("offsetY")
+                if offset_x is None:
+                    offset_x = config.get("offset_x", 0) + index * 0.032 * max(1, ref_w)
+                if offset_y is None:
+                    offset_y = config.get("offset_y", 0) + index * 0.072 * max(1, ref_h)
+            alvos.append({
+                "offset_x": float(offset_x or 0),
+                "offset_y": float(offset_y or 0),
+                "width": float(width or 140),
+                "height": float(height or 40),
+            })
+        return alvos
+
+    def pontuar_relacao_ocr_por_layout(self, ancora, valor, layout_ancora=None, layout_valor=None):
+        rect_ancora = self._retangulo_texto_ocr(ancora)
+        rect_valor = self._retangulo_texto_ocr(valor)
+        if not rect_ancora or not rect_valor or not layout_ancora or not layout_valor:
+            return 0.0
+        ax, ay, aw, ah = rect_ancora
+        vx, vy, vw, vh = rect_valor
+        dx_detectado = (vx + vw / 2.0) - (ax + aw / 2.0)
+        dy_detectado = (vy + vh / 2.0) - (ay + ah / 2.0)
+        dx_esperado = float(layout_valor.get("offset_x", 0.0) or 0.0) - float(layout_ancora.get("offset_x", 0.0) or 0.0)
+        dy_esperado = float(layout_valor.get("offset_y", 0.0) or 0.0) - float(layout_ancora.get("offset_y", 0.0) or 0.0)
+        if abs(dx_esperado) < 1 and abs(dy_esperado) < 1:
+            return 0.0
+
+        escalas = [1.0]
+        if abs(dx_esperado) >= 6:
+            escalas.append(max(0.45, min(2.4, dx_detectado / dx_esperado)))
+        if abs(dy_esperado) >= 6:
+            escalas.append(max(0.45, min(2.4, dy_detectado / dy_esperado)))
+
+        melhor = 0.0
+        tamanho_ref = max(
+            float(layout_ancora.get("width", 0.0) or 0.0),
+            float(layout_ancora.get("height", 0.0) or 0.0),
+            float(layout_valor.get("width", 0.0) or 0.0),
+            float(layout_valor.get("height", 0.0) or 0.0),
+            24.0,
+        )
+        for escala in escalas:
+            erro_x = abs(dx_detectado - dx_esperado * escala)
+            erro_y = abs(dy_detectado - dy_esperado * escala)
+            tolerancia_x = max(46.0, tamanho_ref * max(0.72, escala) * 1.35)
+            tolerancia_y = max(32.0, tamanho_ref * max(0.72, escala) * 1.05)
+            score_x = max(0.0, 1.0 - (erro_x / tolerancia_x))
+            score_y = max(0.0, 1.0 - (erro_y / tolerancia_y))
+            melhor = max(melhor, (score_x * 0.58) + (score_y * 0.42))
+        return max(0.0, min(1.0, melhor))
+
+    def localizar_texto_por_layout_relativo_ocr(self, ancora, texto, layout_ancora=None, layout_valor=None, region=None):
+        rect_ancora = self._retangulo_texto_ocr(ancora)
+        if not rect_ancora or not layout_ancora or not layout_valor:
+            return None
+        texto_esperado = str(texto or "").strip()
+        if not texto_esperado:
+            return None
+        ax, ay, aw, ah = rect_ancora
+        layout_anchor_w = max(1.0, float(layout_ancora.get("width", 0) or 1))
+        layout_anchor_h = max(1.0, float(layout_ancora.get("height", 0) or 1))
+        escala_x = max(0.45, min(2.5, aw / layout_anchor_w))
+        escala_y = max(0.45, min(2.5, ah / layout_anchor_h))
+        dx = (float(layout_valor.get("offset_x", 0) or 0) - float(layout_ancora.get("offset_x", 0) or 0)) * escala_x
+        dy = (float(layout_valor.get("offset_y", 0) or 0) - float(layout_ancora.get("offset_y", 0) or 0)) * escala_y
+        largura = max(18, int(round(float(layout_valor.get("width", 40) or 40) * escala_x)))
+        altura = max(14, int(round(float(layout_valor.get("height", 20) or 20) * escala_y)))
+        centro_x = ax + aw / 2.0 + dx
+        centro_y = ay + ah / 2.0 + dy
+        margem_x = max(8, int(largura * 0.35))
+        margem_y = max(6, int(altura * 0.45))
+        regiao = self.limitar_regiao(
+            (
+                int(round(centro_x - largura / 2.0 - margem_x)),
+                int(round(centro_y - altura / 2.0 - margem_y)),
+                int(round(largura + margem_x * 2)),
+                int(round(altura + margem_y * 2)),
+            ),
+            limite=region,
+        )
+        if not regiao:
+            return None
+        try:
+            captura, _base_left, _base_top = self.capturar_tela_pil(region=regiao)
+        except Exception:
+            return None
+        textos = self.extrair_textos_ocr_rapido(captura, texto_esperado=texto_esperado)
+        if not textos:
+            textos = [
+                self.extrair_texto_ocr_imagem_pil(captura, config="--psm 6"),
+                self.extrair_texto_ocr_imagem_pil(captura, config="--psm 7"),
+            ]
+        capturado = " ".join(str(item or "").strip() for item in textos if str(item or "").strip()).strip()
+        confirmado = self.texto_ocr_confirma_alvo(texto_esperado, capturado, limite_ratio=0.90)
+        if not confirmado:
+            return None
+        return {
+            "left": int(regiao[0]),
+            "top": int(regiao[1]),
+            "width": int(regiao[2]),
+            "height": int(regiao[3]),
+            "text": capturado or texto_esperado,
+            "texto": capturado or texto_esperado,
+            "score": max(0.72, float(comparacao.get("ratio", 0.0) or 0.0)),
+            "source": "ocr_layout_relativo",
+        }
+
+    def montar_candidato_ocr_composto(self, partes, candidatos_escolhidos, relacional=False, score_layout=1.0):
+        if not candidatos_escolhidos:
+            return None
+        alvo_clique = candidatos_escolhidos[1] if relacional and len(candidatos_escolhidos) >= 2 else candidatos_escolhidos[0]
+        rect = self._retangulo_texto_ocr(alvo_clique) or self._unir_retangulos_ocr(candidatos_escolhidos)
+        uniao = self._unir_retangulos_ocr(candidatos_escolhidos)
+        if not rect:
+            return None
+        left, top, width, height = rect
+        scores = [float(candidato.get("score", 0.0) or 0.0) for candidato in candidatos_escolhidos]
+        score_texto = sum(scores) / max(1, len(scores))
+        score_total = (score_texto * 0.78) + (float(score_layout or 0.0) * 0.22)
+        textos_lidos = [str(candidato.get("text") or candidato.get("texto") or "").strip() for candidato in candidatos_escolhidos]
+        bounds = []
+        for indice, candidato in enumerate(candidatos_escolhidos):
+            r = self._retangulo_texto_ocr(candidato)
+            if not r:
+                continue
+            bounds.append({
+                "parte": str(partes[indice] if indice < len(partes) else "").strip(),
+                "texto": textos_lidos[indice] if indice < len(textos_lidos) else "",
+                "left": int(r[0]),
+                "top": int(r[1]),
+                "width": int(r[2]),
+                "height": int(r[3]),
+            })
+        candidato = {
+            "left": int(left),
+            "top": int(top),
+            "width": int(width),
+            "height": int(height),
+            "text": " | ".join(texto for texto in textos_lidos if texto) or " | ".join(partes),
+            "score": max(0.0, min(1.0, score_total)),
+            "source": "ocr_relacional" if relacional else "ocr_multiplo",
+            "ocr_composto": True,
+            "ocr_relacional": bool(relacional),
+            "ocr_partes": list(partes),
+            "ocr_textos": textos_lidos,
+            "ocr_related_bounds": bounds,
+        }
+        if uniao:
+            candidato["ocr_union_bounds"] = {
+                "left": int(uniao[0]),
+                "top": int(uniao[1]),
+                "width": int(uniao[2]),
+                "height": int(uniao[3]),
+            }
+        if relacional and len(bounds) >= 2:
+            candidato["ocr_anchor_bounds"] = bounds[0]
+            candidato["ocr_value_bounds"] = bounds[1]
+            candidato["ocr_relation_score"] = float(score_layout or 0.0)
+        return candidato
+
+    def localizar_texto_composto_por_ocr_screenshot(
+        self,
+        texto_original,
+        spec,
+        confianca=0.72,
+        janela_alvo=None,
+        region=None,
+        retornar_candidatos=False,
+        marcar_candidatos=False,
+        limite_candidatos=8,
+        layout_alvos=None,
+    ):
+        partes = [str(parte or "").strip() for parte in (spec or {}).get("partes", []) if str(parte or "").strip()]
+        if len(partes) < 2:
+            return [] if retornar_candidatos else None
+        relacional = bool((spec or {}).get("relacional"))
+        conjuntos = []
+        limite_por_parte = 5 if relacional else 3
+        for indice_parte, parte in enumerate(partes):
+            encontrados = self.localizar_texto_por_ocr_screenshot(
+                parte,
+                confianca=max(0.50, min(float(confianca or 0.72), 0.80)),
+                janela_alvo=janela_alvo,
+                region=region,
+                retornar_candidatos=True,
+                marcar_candidatos=False,
+                limite_candidatos=limite_por_parte,
+                _permitir_composto=False,
+            )
+            if not encontrados:
+                if not (layout_alvos and indice_parte > 0):
+                    safe_print(f"OCR composto: parte obrigatoria nao encontrada: '{parte}'.", flush=True)
+                    return [] if retornar_candidatos else None
+                safe_print(
+                    f"OCR composto: parte '{parte}' nao apareceu na busca geral; tentando area roxa do layout.",
+                    flush=True,
+                )
+                encontrados = []
+            conjuntos.append(encontrados)
+
+        candidatos_compostos = []
+        if relacional:
+            for ancora in conjuntos[0][:5]:
+                valores = conjuntos[1][:5]
+                if not valores and layout_alvos and len(layout_alvos) >= 2:
+                    valor_layout = self.localizar_texto_por_layout_relativo_ocr(
+                        ancora,
+                        partes[1],
+                        layout_alvos[0],
+                        layout_alvos[1],
+                        region=region,
+                    )
+                    valores = [valor_layout] if valor_layout else []
+                for valor in valores:
+                    score_vertical = self.pontuar_relacao_ocr_vertical(ancora, valor)
+                    score_por_layout = 0.0
+                    if layout_alvos and len(layout_alvos) >= 2:
+                        score_por_layout = self.pontuar_relacao_ocr_por_layout(ancora, valor, layout_alvos[0], layout_alvos[1])
+                    score_layout = max(score_vertical, score_por_layout)
+                    if score_layout <= 0.0:
+                        continue
+                    escolhidos = [ancora, valor]
+                    valido = True
+                    for extra_indice, extras in enumerate(conjuntos[2:], start=2):
+                        melhor_extra = None
+                        melhor_extra_score = -1.0
+                        if not extras and layout_alvos and len(layout_alvos) > extra_indice:
+                            extra_layout = self.localizar_texto_por_layout_relativo_ocr(
+                                ancora,
+                                partes[extra_indice],
+                                layout_alvos[0],
+                                layout_alvos[extra_indice],
+                                region=region,
+                            )
+                            extras = [extra_layout] if extra_layout else []
+                        for extra in extras[:5]:
+                            score_extra = 1.0
+                            if layout_alvos and len(layout_alvos) > extra_indice:
+                                score_extra = self.pontuar_relacao_ocr_por_layout(ancora, extra, layout_alvos[0], layout_alvos[extra_indice])
+                            if score_extra > melhor_extra_score:
+                                melhor_extra_score = score_extra
+                                melhor_extra = extra
+                        if melhor_extra is None or melhor_extra_score <= 0.0:
+                            valido = False
+                            break
+                        escolhidos.append(melhor_extra)
+                    if not valido:
+                        continue
+                    candidato = self.montar_candidato_ocr_composto(partes, escolhidos, relacional=True, score_layout=score_layout)
+                    if candidato:
+                        candidatos_compostos.append(candidato)
+        else:
+            escolhidos = [grupo[0] for grupo in conjuntos if grupo]
+            if len(escolhidos) == len(partes):
+                candidato = self.montar_candidato_ocr_composto(partes, escolhidos, relacional=False, score_layout=1.0)
+                if candidato:
+                    candidatos_compostos.append(candidato)
+
+        if not candidatos_compostos:
+            modo = "relacao" if relacional else "multiplos textos"
+            safe_print(f"OCR composto: encontrou as partes de '{texto_original}', mas nao validou {modo}.", flush=True)
+            return [] if retornar_candidatos else None
+
+        candidatos_compostos.sort(key=lambda item: float(item.get("score", 0.0) or 0.0), reverse=True)
+        candidatos_compostos = candidatos_compostos[: max(1, int(limite_candidatos or 8))]
+        if marcar_candidatos:
+            for indice, candidato in enumerate(candidatos_compostos[:4], start=1):
+                bounds = candidato.get("ocr_related_bounds") if isinstance(candidato.get("ocr_related_bounds"), list) else []
+                if bounds:
+                    for parte_indice, bound in enumerate(bounds[:4], start=1):
+                        self.marcar_area_reconhecida(
+                            bound,
+                            duracao=0.18,
+                            bloqueante=False,
+                            tema=f"ocr_busca_{min(parte_indice, 4)}",
+                            etiqueta=f"OCR {indice}.{parte_indice}",
+                            margem=3,
+                        )
+                else:
+                    self.marcar_area_reconhecida(
+                        candidato,
+                        duracao=0.18,
+                        bloqueante=False,
+                        tema="ocr_busca",
+                        etiqueta=f"OCR {indice}",
+                        margem=3,
+                    )
+        safe_print(
+            f"OCR composto confirmado ({'relacional' if relacional else 'multiplo'}): "
+            f"{', '.join(partes)}.",
+            flush=True,
+        )
+        if retornar_candidatos:
+            return candidatos_compostos
+        return candidatos_compostos[0]
+
     def localizar_texto_por_uia(self, texto, confianca=0.72, janela_alvo=None, limite=650):
         texto_alvo = self.normalizar_texto_ocr(texto)
         if not texto_alvo:
@@ -5522,6 +6328,7 @@ class ExecutorAutomacao:
         retornar_candidatos=False,
         marcar_candidatos=False,
         limite_candidatos=8,
+        _permitir_composto=True,
     ):
         if not OCR_DISPONIVEL or pytesseract is None:
             if not self._ocr_indisponivel_logado:
@@ -5531,9 +6338,22 @@ class ExecutorAutomacao:
                 )
                 self._ocr_indisponivel_logado = True
             return None
+        if _permitir_composto:
+            spec_composto = self.interpretar_texto_ocr_composto(texto)
+            if spec_composto:
+                return self.localizar_texto_composto_por_ocr_screenshot(
+                    texto,
+                    spec_composto,
+                    confianca=confianca,
+                    janela_alvo=janela_alvo,
+                    region=region,
+                    retornar_candidatos=retornar_candidatos,
+                    marcar_candidatos=marcar_candidatos,
+                    limite_candidatos=limite_candidatos,
+                )
         texto_alvo = self.normalizar_texto_ocr(texto)
         if not texto_alvo:
-            return None
+            return [] if retornar_candidatos else None
         try:
             regiao_ocr = region or self.obter_regiao_busca(janela_alvo)
             if regiao_ocr:
@@ -6302,7 +7122,17 @@ class ExecutorAutomacao:
                 adicionar_regiao_busca(regioes_busca, regiao_personalizada, "custom_area", fallback=bool(regiao_historica))
 
             if hibrido_ocr_visual_obrigatorio and not regioes_busca:
-                adicionar_regiao_busca(regioes_busca, None, "screen", fallback=False)
+                monitores = self.listar_regioes_monitores()
+                if len(monitores) > 1:
+                    for indice_monitor, regiao_monitor in enumerate(monitores, start=1):
+                        adicionar_regiao_busca(
+                            regioes_busca,
+                            regiao_monitor,
+                            f"monitor_{indice_monitor}",
+                            fallback=False,
+                        )
+                else:
+                    adicionar_regiao_busca(regioes_busca, None, "screen", fallback=False)
 
             self._ultima_regiao_reconhecimento = regioes_busca[-1]["region"] if regioes_busca else None
             if (usando_alvo_execucao or janela_alvo or self.janela_alvo) and not regioes_busca:
@@ -6350,6 +7180,7 @@ class ExecutorAutomacao:
                         confianca_ocr=0.72,
                         confianca_visual=confianca,
                         perfil_busca=perfil_busca_tentativa,
+                        leitura_relativa=leitura_relativa,
                     )
                     if local_hibrido:
                         self.registrar_reconhecimento_bem_sucedido(
@@ -6701,15 +7532,18 @@ class ExecutorAutomacao:
         ordem_bloco = None
         if str(bloco_id or "").startswith("bloco:"):
             ordem_bloco = str(bloco_id).split(":", 1)[1].strip()
-        duracao_marcacao = 0.95 if clicar else 1.35
-        self.marcar_area_reconhecida(local, duracao=0.55, bloqueante=True)
         leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
         salvar_em = str(leitura.get("salvar_em", "") or "").strip()
         ocr_ja_confirmado = (
             isinstance(local, dict)
             and (
-                local.get("ocr_anchor_confirmed")
-                or (local.get("ocr_visual_anchor") and texto_ocr_esperado and not salvar_em)
+                self.ocr_hibrido_tem_todos_alvos(local, texto_ocr_esperado, leitura_relativa)
+                or (
+                    local.get("ocr_visual_anchor")
+                    and texto_ocr_esperado
+                    and not salvar_em
+                    and self.quantidade_alvos_ocr_esperados(texto_ocr_esperado, leitura_relativa) <= 1
+                )
             )
         )
         if texto_ocr_esperado and ocr_ja_confirmado:
@@ -6751,6 +7585,7 @@ class ExecutorAutomacao:
                 flush=True,
             )
             return None
+        self.marcar_area_reconhecida(local, duracao=0.55, bloqueante=True)
         offset_click_x, offset_click_y = self.escalar_offset_referencia(
             local,
             offset_x=offset_x,
@@ -6836,13 +7671,7 @@ class ExecutorAutomacao:
         )
         caminho_imagem, _imagem_id = self.resolver_imagem(imagem)
         dimensoes_referencia = self.obter_dimensoes_imagem(caminho_imagem) if caminho_imagem.exists() else None
-        if mostrar_marcador:
-            self.marcar_area_reconhecida(
-                local,
-                duracao=max(0.12, float(duracao_marcador or 0.24)),
-                bloqueante=bool(marcador_bloqueante),
-            )
-        if texto_ocr_esperado and isinstance(local, dict) and (local.get("ocr_anchor_confirmed") or local.get("ocr_visual_anchor")):
+        if texto_ocr_esperado and isinstance(local, dict) and self.ocr_hibrido_tem_todos_alvos(local, texto_ocr_esperado, leitura_relativa):
             capturado_ocr = str(local.get("ocr_text") or texto_ocr_esperado).strip()
             safe_print(
                 f"Teste de reconhecimento: OCR confirmado pela ancora '{capturado_ocr}'.",
@@ -6871,6 +7700,12 @@ class ExecutorAutomacao:
         ):
             safe_print("Teste de reconhecimento: imagem encontrada, mas o OCR nao confirmou o texto esperado.", flush=True)
             return False
+        if mostrar_marcador:
+            self.marcar_area_reconhecida(
+                local,
+                duracao=max(0.12, float(duracao_marcador or 0.24)),
+                bloqueante=bool(marcador_bloqueante),
+            )
         if clicar:
             self.clicar_area_reconhecida(local, button="left")
 
@@ -7272,7 +8107,7 @@ class ExecutorAutomacao:
                             modo_area_busca=detalhes.get("modo_area_busca", "target_window"),
                             area_personalizada=area_personalizada,
                             texto_ocr_esperado=texto_ocr_hibrido or detalhes.get("texto_ocr_esperado", ""),
-                            leitura_relativa=detalhes.get("leitura_relativa") or {},
+                            leitura_relativa={**(detalhes.get("leitura_relativa") or {}), "ocr_target_layouts": detalhes.get("ocr_target_layouts") or []},
                         )
                         if resultado or etapa_scroll >= quantidade_scrolls:
                             break
@@ -8429,6 +9264,8 @@ def criar_parser():
     parser.add_argument("--leitura-relativa-offset-x", type=int, default=0)
     parser.add_argument("--leitura-relativa-offset-y", type=int, default=0)
     parser.add_argument("--leitura-relativa-salvar-em", default="")
+    parser.add_argument("--ocr-target-layouts", default="[]")
+    parser.add_argument("--text-overrides", default="")
     return parser
 
 
@@ -8450,6 +9287,7 @@ def main():
         target_context=args.target_context,
         modo_teste_reconhecimento=args.modo == "reconhecimento",
     )
+    executor.aplicar_text_overrides(args.text_overrides)
 
     atraso = max(0, round(float(args.atraso), 2))
     safe_print(f"Automacao pronta. Atraso inicial: {atraso}s", flush=True)
@@ -8519,6 +9357,7 @@ def main():
                         "offset_x": args.leitura_relativa_offset_x,
                         "offset_y": args.leitura_relativa_offset_y,
                         "salvar_em": args.leitura_relativa_salvar_em,
+                        "ocr_target_layouts": json.loads(args.ocr_target_layouts or "[]"),
                     }
                     sucesso = executor.testar_reconhecimento(
                         imagem=args.imagem_teste,
