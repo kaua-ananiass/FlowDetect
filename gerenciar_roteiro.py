@@ -2030,6 +2030,7 @@ def criar_bloco_clicar_imagem(
     leitura_relativa_offset_x=0,
     leitura_relativa_offset_y=0,
     leitura_relativa_salvar_em="",
+    ocr_target_layouts="[]",
     modo_reconhecimento="imagem",
     texto_ocr_busca="",
     acao_ocr="clicar",
@@ -2070,6 +2071,7 @@ def criar_bloco_clicar_imagem(
         "texto_ocr_busca": str(texto_ocr_busca or "").strip(),
         "acao_ocr": str(acao_ocr or "clicar").strip().lower() or "clicar",
         "salvar_ocr_em": str(salvar_ocr_em or "").strip(),
+        "ocr_target_layouts": json.loads(ocr_target_layouts or "[]"),
         "leitura_relativa": {
             "ativo": str(leitura_relativa_ativa).strip().lower() in {"1", "true", "sim", "yes"},
             "lado": str(leitura_relativa_lado or "livre").strip().lower() or "livre",
@@ -3165,6 +3167,7 @@ def comando_adicionar_imagem(args):
             args.leitura_relativa_offset_x,
             args.leitura_relativa_offset_y,
             args.leitura_relativa_salvar_em,
+            args.ocr_target_layouts,
             args.modo_reconhecimento,
             args.texto_ocr_busca,
             args.acao_ocr,
@@ -3433,6 +3436,7 @@ def comando_inserir_imagem(args):
             args.leitura_relativa_offset_x,
             args.leitura_relativa_offset_y,
             args.leitura_relativa_salvar_em,
+            args.ocr_target_layouts,
             args.modo_reconhecimento,
             args.texto_ocr_busca,
             args.acao_ocr,
@@ -3745,6 +3749,7 @@ def comando_atualizar_imagem(args):
     detalhes["texto_ocr_busca"] = str(args.texto_ocr_busca or "").strip()
     detalhes["acao_ocr"] = str(args.acao_ocr or "clicar").strip().lower() or "clicar"
     detalhes["salvar_ocr_em"] = str(args.salvar_ocr_em or "").strip()
+    detalhes["ocr_target_layouts"] = json.loads(args.ocr_target_layouts or "[]")
     detalhes["leitura_relativa"] = {
         "ativo": str(args.leitura_relativa_ativa).strip().lower() in {"1", "true", "sim", "yes"},
         "lado": str(args.leitura_relativa_lado or "livre").strip().lower() or "livre",
@@ -4072,6 +4077,7 @@ def build_parser():
         parser_destino.add_argument("--leitura-relativa-offset-x", type=int, default=0)
         parser_destino.add_argument("--leitura-relativa-offset-y", type=int, default=0)
         parser_destino.add_argument("--leitura-relativa-salvar-em", default="")
+        parser_destino.add_argument("--ocr-target-layouts", default="[]")
 
     def adicionar_argumentos_abrir_url(parser_destino):
         parser_destino.add_argument("--url", required=True)

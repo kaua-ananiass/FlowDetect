@@ -1299,8 +1299,13 @@
             </div>
             <div class="studio-control-screen-actions">
               <section class="agent-screen-vm-bar" aria-label="Tela da maquina virtual">
+                <label class="studio-control-input-toggle agent-screen-mouse-toggle" title="Quando desligado, o Studio nao envia mouse para a tela da VM.">
+                  <input id="studioControlRemoteInputToggle" type="checkbox" />
+                  <span id="studioControlRemoteInputLabel">Mouse</span>
+                  <i aria-hidden="true"></i>
+                </label>
+                <span class="agent-screen-bar-label">Tela</span>
                 <label>
-                  <span>Tela</span>
                   <select id="agentScreenVmSelect"><option value="">Selecionar VM</option></select>
                 </label>
                 <button id="agentScreenPrepareButton" class="ghost-button" type="button">Preparar telas</button>
