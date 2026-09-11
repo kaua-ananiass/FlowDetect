@@ -12,7 +12,7 @@ ORIGINAL_STDOUT = sys.stdout
 
 
 def responder(payload):
-    ORIGINAL_STDOUT.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    ORIGINAL_STDOUT.write(json.dumps(payload, ensure_ascii=True) + "\n")
     ORIGINAL_STDOUT.flush()
 
 

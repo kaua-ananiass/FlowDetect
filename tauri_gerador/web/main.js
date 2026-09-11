@@ -1,4 +1,4 @@
-const tauriCore = window.__TAURI__?.core ?? null;
+﻿const tauriCore = window.__TAURI__?.core ?? null;
 const tauriEvent = window.__TAURI__?.event ?? null;
 const tauriDialog = window.__TAURI__?.dialog ?? null;
 window.__GENERATOR_MAIN_READY = true;
@@ -558,6 +558,7 @@ const studioControlMeshPathInput = document.getElementById("studioControlMeshPat
 const studioControlMeshStartButton = document.getElementById("studioControlMeshStartButton");
 const studioControlMeshLoadButton = document.getElementById("studioControlMeshLoadButton");
 const studioControlRemoteInputToggle = document.getElementById("studioControlRemoteInputToggle");
+const studioControlRemoteInputLabel = document.getElementById("studioControlRemoteInputLabel");
 const studioControlMeshEmbedButton = document.getElementById("studioControlMeshEmbedButton");
 const studioControlMeshOpenButton = document.getElementById("studioControlMeshOpenButton");
 const studioControlMeshClearButton = document.getElementById("studioControlMeshClearButton");
@@ -3870,6 +3871,7 @@ function applyCommandMapDraftToEvent(event) {
     details.janela_alvo = normalizeRecognitionWindowTitle(values.ocrWindowTitle || values.windowTitle || details.janela_alvo || "");
     details.texto_ocr_esperado = values.expectedOcrText ?? details.texto_ocr_esperado ?? "";
     details.texto_ocr_busca = values.ocrText ?? details.texto_ocr_busca ?? "";
+    details.ocr_target_layouts = values.ocrTargetLayouts ?? details.ocr_target_layouts ?? [];
     details.acao_ocr = values.ocrAction || details.acao_ocr || "clicar";
     details.salvar_ocr_em = values.ocrSaveAs ?? details.salvar_ocr_em ?? "";
     details.offset_x = Math.trunc(parseNumber(values.clickOffsetX, 0));
@@ -6215,16 +6217,16 @@ function renderUiaSelectedPanelLegacy() {
     <div class="uia-property-card">
       <span class="uia-kind">${escapeHtml(element.field_kind || "elemento")}</span>
       <h5>${escapeHtml(uiaElementLabel(element))}</h5>
-      <p>Ação recomendada: <strong>${escapeHtml(uiaActionLabel(element.recommended_action))}</strong></p>
+      <p>AÃ§Ã£o recomendada: <strong>${escapeHtml(uiaActionLabel(element.recommended_action))}</strong></p>
       <div class="uia-selector-quality ${uiaQualityClass(selector.quality || element.selector_quality)}">
-        ${escapeHtml(selector.quality || element.selector_quality || "FRAGIL")} · ${escapeHtml(selector.strategy || "seletor")}
+        ${escapeHtml(selector.quality || element.selector_quality || "FRAGIL")} Â· ${escapeHtml(selector.strategy || "seletor")}
       </div>
       <div class="uia-props-grid">
         <span>Name</span><strong>${escapeHtml(element.name || "-")}</strong>
         <span>AutomationId</span><strong>${escapeHtml(element.automation_id || "-")}</strong>
         <span>Tipo</span><strong>${escapeHtml(element.control_type || "-")}</strong>
         <span>Classe</span><strong>${escapeHtml(element.class_name || "-")}</strong>
-        <span>Área</span><strong>${escapeHtml(`${rect.width || 0}x${rect.height || 0}`)}</strong>
+        <span>Ãrea</span><strong>${escapeHtml(`${rect.width || 0}x${rect.height || 0}`)}</strong>
         <span>Capacidades</span><strong>${escapeHtml((element.capabilities || []).join(", ") || "-")}</strong>
       </div>
       ${warnings.length ? `<div class="uia-warning">${escapeHtml(warnings.join(" "))}</div>` : ""}
@@ -6504,7 +6506,7 @@ function renderChromePreviewHtmlOld(analysis) {
       <div class="chrome-preview-copy chrome-preview-empty">
         <p class="panel-kicker">Fluxo sugerido</p>
         <h3>Cole o elemento HTML</h3>
-        <p class="muted-copy">O gerador analisa o elemento, identifica o melhor seletor e sugere automaticamente a ação mais adequada.</p>
+        <p class="muted-copy">O gerador analisa o elemento, identifica o melhor seletor e sugere automaticamente a aÃ§Ã£o mais adequada.</p>
       </div>
     `;
   }
@@ -6515,9 +6517,9 @@ function renderChromePreviewHtmlOld(analysis) {
       <p class="panel-kicker">Elemento detectado</p>
       <h3>${escapeHtml(chromeKindLabel(chromeKindFromAnalysis(analysis)))}</h3>
       <p class="muted-copy">Tag: <strong>${escapeHtml(element.tag || "-")}</strong>${element.type ? ` | Tipo: <strong>${escapeHtml(element.type)}</strong>` : ""}${element.placeholder ? ` | Placeholder: <strong>${escapeHtml(element.placeholder)}</strong>` : ""}</p>
-      <p class="muted-copy">Melhor método: <strong>${escapeHtml(best.metodo || "css")}</strong></p>
+      <p class="muted-copy">Melhor mÃ©todo: <strong>${escapeHtml(best.metodo || "css")}</strong></p>
       <p class="muted-copy">Alvo: <strong>${escapeHtml(best.valor || "-")}</strong></p>
-      <p class="muted-copy">Confiança: <strong>${escapeHtml(best.confianca || analysis.confianca || "media")}</strong> | Ação sugerida: <strong>${escapeHtml((analysis.acao_sugerida || {}).tipo || "clicar")}</strong></p>
+      <p class="muted-copy">ConfianÃ§a: <strong>${escapeHtml(best.confianca || analysis.confianca || "media")}</strong> | AÃ§Ã£o sugerida: <strong>${escapeHtml((analysis.acao_sugerida || {}).tipo || "clicar")}</strong></p>
     </div>
   `;
 }
@@ -6563,7 +6565,7 @@ function renderChromeBlockFieldsOld(event, mode = "card", currentOrder = null) {
       ${hasAnalysis ? `
       <div class="chrome-quick-grid">
         <label>
-          <span>Método de busca</span>
+          <span>MÃ©todo de busca</span>
           <select ${fieldAttr}="chromeTargetMethod">
             ${renderChromeMethodOptions(analysis, details.alvo?.metodo ?? "css")}
           </select>
@@ -6573,7 +6575,7 @@ function renderChromeBlockFieldsOld(event, mode = "card", currentOrder = null) {
           <input ${fieldAttr}="chromeTargetValue" type="text" value="${escapeHtml(details.alvo?.valor ?? "")}" />
         </label>
         <label>
-          <span>Ação</span>
+          <span>AÃ§Ã£o</span>
           <select ${fieldAttr}="chromeActionType">
             ${renderChromeActionOptions(kind, actionType)}
           </select>
@@ -6594,7 +6596,7 @@ function renderChromeBlockFieldsOld(event, mode = "card", currentOrder = null) {
         ` : ""}
       </div>
       <details class="chrome-advanced-panel">
-        <summary>Configurações avançadas</summary>
+        <summary>ConfiguraÃ§Ãµes avanÃ§adas</summary>
         <div class="chrome-advanced-grid">
           <label>
             <span>Timeout (ms)</span>
@@ -6603,7 +6605,7 @@ function renderChromeBlockFieldsOld(event, mode = "card", currentOrder = null) {
           ${chromeActionSupportsSaveAs(actionType) ? `
           <label>
             <span>Salvar texto em</span>
-            <input ${fieldAttr}="chromeSaveAs" type="text" value="${escapeHtml(details.acao?.salvar_em ?? "")}" placeholder="Nome da variável" />
+            <input ${fieldAttr}="chromeSaveAs" type="text" value="${escapeHtml(details.acao?.salvar_em ?? "")}" placeholder="Nome da variÃ¡vel" />
           </label>
           ` : `<input ${fieldAttr}="chromeSaveAs" type="hidden" value="${escapeHtml(details.acao?.salvar_em ?? "")}" />`}
           ${chromeActionSupportsPressAfter(actionType) ? `
@@ -6629,7 +6631,7 @@ function renderChromeBlockFieldsOld(event, mode = "card", currentOrder = null) {
             </select>
           </label>
           <label>
-            <span>Bloco após sucesso</span>
+            <span>Bloco apÃ³s sucesso</span>
             <select ${fieldAttr}="chromeSuccessBlock">
               ${blockTargetOptions(details.bloco_sucesso ?? "", currentOrder, "Escolha um bloco")}
             </select>
@@ -6685,7 +6687,7 @@ function renderChromeBlockFieldsOld(event, mode = "card", currentOrder = null) {
       </details>
       ` : `
       <div class="chrome-minimal-help">
-        <p class="muted-copy">Depois da análise, o gerador mostra automaticamente o melhor método de busca e a ação sugerida para esse elemento.</p>
+        <p class="muted-copy">Depois da anÃ¡lise, o gerador mostra automaticamente o melhor mÃ©todo de busca e a aÃ§Ã£o sugerida para esse elemento.</p>
       </div>
       `}
     </div>
@@ -7545,6 +7547,7 @@ function recognitionClickTargetDetails(details = {}) {
 
 function relativeOcrInvokeArgs(values = {}) {
   return {
+    ocrTargetLayouts: JSON.stringify(values.ocrTargetLayouts ?? []),
     leituraRelativaAtiva: Boolean(values.relativeOcrEnabled),
     leituraRelativaLado: values.relativeOcrSide || "livre",
     leituraRelativaLargura: Math.max(16, Math.trunc(parseNumber(values.relativeOcrWidth, 140))),
@@ -7568,6 +7571,7 @@ function relativeOcrChanged(values = {}, details = {}) {
   return (
     Boolean(values.relativeOcrEnabled) !== current.active
     || normalizeStringValue(values.relativeOcrSide || "livre") !== normalizeStringValue(current.side)
+    || JSON.stringify(values.ocrTargetLayouts ?? []) !== JSON.stringify(details.ocr_target_layouts ?? [])
     || Number(values.relativeOcrWidth || 140) !== Number(current.width)
     || Number(values.relativeOcrHeight || 40) !== Number(current.height)
     || Number(values.relativeOcrOffsetX || 0) !== Number(current.offsetX)
@@ -7620,6 +7624,11 @@ function relativeOcrOverlayStyle(relativeOcr = {}, metrics = null) {
     left = offsetToPreviewPercent(relativeOcr.offsetX, metrics?.naturalWidth, 3);
     top = offsetToPreviewPercent(relativeOcr.offsetY, metrics?.naturalHeight, 3);
   }
+  const stackIndex = Math.max(0, Math.trunc(parseNumber(relativeOcr.stackIndex, 0)));
+  if (stackIndex > 0) {
+    left = Math.max(8, Math.min(92, left + (stackIndex * 3.2)));
+    top = Math.max(8, Math.min(92, top + (stackIndex * 7.2)));
+  }
   return `--ocr-target-w:${visualWidth}%;--ocr-target-h:${visualHeight}%;--ocr-left:${left}%;--ocr-top:${top}%;`;
 }
 
@@ -7629,10 +7638,43 @@ function clickTargetOverlayStyle(clickTarget = {}, metrics = null) {
   return `--click-left:${left}%;--click-top:${top}%;`;
 }
 
-function renderRelativeOcrPreviewOverlay(relativeOcr = {}, clickTarget = {}) {
+function renderRelativeOcrPreviewOverlay(relativeOcr = {}, clickTarget = {}, targetCount = 1, targetLayouts = []) {
   const side = ["direita", "esquerda", "abaixo", "acima", "centro", "livre"].includes(relativeOcr.side)
     ? relativeOcr.side
     : "livre";
+  const count = Math.max(1, Math.min(6, Math.trunc(parseNumber(targetCount, 1))));
+  const ocrTargets = Array.from({ length: count }, (_item, index) => {
+    const color = OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length];
+    const layout = Array.isArray(targetLayouts) ? targetLayouts[index] : null;
+    const hasOwnOffset = index > 0 && layout && layout.offsetX !== null && layout.offsetY !== null;
+    const hasOwnSize = index > 0 && layout && layout.width !== null && layout.height !== null;
+    const targetRelativeOcr = index > 0
+      ? {
+          ...relativeOcr,
+          side: hasOwnOffset ? "livre" : relativeOcr.side,
+          offsetX: hasOwnOffset ? layout.offsetX : relativeOcr.offsetX,
+          offsetY: hasOwnOffset ? layout.offsetY : relativeOcr.offsetY,
+          width: hasOwnSize ? layout.width : 140,
+          height: hasOwnSize ? layout.height : 40,
+          stackIndex: hasOwnOffset ? 0 : index,
+        }
+      : { ...relativeOcr, stackIndex: 0 };
+    return `
+      <div
+        class="recognition-ocr-target-box is-${escapeHtml(side)} is-target-${index + 1}"
+        data-relative-ocr-target="true"
+        data-ocr-target-index="${index}"
+        data-ocr-target-color="${escapeHtml(color)}"
+        data-recognition-drag-target="ocr"
+        style="${escapeHtml(relativeOcrOverlayStyle(targetRelativeOcr))}"
+      >
+        <i class="recognition-ocr-resize-handle is-nw" data-recognition-drag-target="ocr-resize" data-recognition-resize-corner="nw" aria-hidden="true"></i>
+        <i class="recognition-ocr-resize-handle is-ne" data-recognition-drag-target="ocr-resize" data-recognition-resize-corner="ne" aria-hidden="true"></i>
+        <i class="recognition-ocr-resize-handle is-sw" data-recognition-drag-target="ocr-resize" data-recognition-resize-corner="sw" aria-hidden="true"></i>
+        <i class="recognition-ocr-resize-handle is-se" data-recognition-drag-target="ocr-resize" data-recognition-resize-corner="se" aria-hidden="true"></i>
+      </div>
+    `;
+  }).join("");
   return `
     <div class="recognition-ocr-map-overlay" data-relative-ocr-map="true">
       <div
@@ -7643,18 +7685,7 @@ function renderRelativeOcrPreviewOverlay(relativeOcr = {}, clickTarget = {}) {
       >
         <span>Clique</span>
       </div>
-      <div
-        class="recognition-ocr-target-box is-${escapeHtml(side)}"
-        data-relative-ocr-target="true"
-        data-recognition-drag-target="ocr"
-        style="${escapeHtml(relativeOcrOverlayStyle(relativeOcr))}"
-      >
-        <span>Ler aqui</span>
-        <i class="recognition-ocr-resize-handle is-nw" data-recognition-drag-target="ocr-resize" data-recognition-resize-corner="nw" aria-hidden="true"></i>
-        <i class="recognition-ocr-resize-handle is-ne" data-recognition-drag-target="ocr-resize" data-recognition-resize-corner="ne" aria-hidden="true"></i>
-        <i class="recognition-ocr-resize-handle is-sw" data-recognition-drag-target="ocr-resize" data-recognition-resize-corner="sw" aria-hidden="true"></i>
-        <i class="recognition-ocr-resize-handle is-se" data-recognition-drag-target="ocr-resize" data-recognition-resize-corner="se" aria-hidden="true"></i>
-      </div>
+      ${ocrTargets}
     </div>
   `;
 }
@@ -7716,7 +7747,14 @@ function updateRelativeOcrPreviewOverlay(container) {
     offsetX: get("clickOffsetX")?.value || 0,
     offsetY: get("clickOffsetY")?.value || 0,
   };
-  const overlayMarkup = renderRelativeOcrPreviewOverlay(relativeOcr, clickData);
+  const targetCount = ocrTargetCountFromContainer(container);
+  const targetLayouts = ocrTargetLayoutsFromContainer(container);
+  const overlayMarkup = renderRelativeOcrPreviewOverlay(
+    relativeOcr,
+    clickData,
+    targetCount,
+    targetLayouts
+  );
   container.querySelectorAll("[data-recognition-preview-card]").forEach((previewCard) => {
     previewCard.dataset.recognitionPreviewOverlay = overlayMarkup;
     if (previewCard.dataset.recognitionPreviewMarkers === "false") {
@@ -7727,15 +7765,32 @@ function updateRelativeOcrPreviewOverlay(container) {
     const imageMap = stage?.querySelector("[data-recognition-preview-image-map]");
     if (imageMap?.querySelector(".recognition-preview-image")) {
       const currentOverlay = imageMap.querySelector("[data-relative-ocr-map]");
-      if (!currentOverlay) {
+      if (currentOverlay) {
+        const currentCount = currentOverlay.querySelectorAll("[data-relative-ocr-target]").length;
+        if (currentCount !== targetCount) {
+          currentOverlay.outerHTML = overlayMarkup;
+        }
+      } else {
         imageMap.insertAdjacentHTML("beforeend", overlayMarkup);
       }
     }
   });
   container.querySelectorAll("[data-relative-ocr-target]").forEach((target) => {
     const metrics = recognitionPreviewImageMetrics(target);
-    target.className = `recognition-ocr-target-box is-${relativeOcr.side}`;
-    target.setAttribute("style", relativeOcrOverlayStyle(relativeOcr, metrics));
+    const index = Math.max(0, Math.trunc(parseNumber(target.dataset.ocrTargetIndex, 0)));
+    const layout = targetLayouts[index];
+    const hasOwnOffset = index > 0 && layout && layout.offsetX !== null && layout.offsetY !== null;
+    const targetRelativeOcr = {
+      ...relativeOcr,
+      side: hasOwnOffset ? "livre" : relativeOcr.side,
+      offsetX: hasOwnOffset ? layout.offsetX : relativeOcr.offsetX,
+      offsetY: hasOwnOffset ? layout.offsetY : relativeOcr.offsetY,
+      width: index > 0 ? (layout?.width ?? 140) : relativeOcr.width,
+      height: index > 0 ? (layout?.height ?? 40) : relativeOcr.height,
+      stackIndex: hasOwnOffset ? 0 : index,
+    };
+    target.className = `recognition-ocr-target-box is-${relativeOcr.side} is-target-${index + 1}`;
+    target.setAttribute("style", relativeOcrOverlayStyle(targetRelativeOcr, metrics));
   });
   container.querySelectorAll("[data-click-target-point]").forEach((clickTarget) => {
     const metrics = recognitionPreviewImageMetrics(clickTarget);
@@ -7764,8 +7819,30 @@ function setRecognitionVisualOffsetFromPointer(container, dragTarget, clientX, c
   const ocrOffsetYField = container.querySelector('[data-tree-field="relativeOcrOffsetY"], [data-field="relativeOcrOffsetY"], [data-insert-field="relativeOcrOffsetY"]');
 
   if (targetKind === "ocr-resize") {
-    const currentOffsetX = Math.trunc(parseNumber(ocrOffsetXField?.value, 0));
-    const currentOffsetY = Math.trunc(parseNumber(ocrOffsetYField?.value, 0));
+    const resizedBox = dragTarget.closest("[data-relative-ocr-target]");
+    const targetIndex = Math.max(0, Math.trunc(parseNumber(resizedBox?.dataset.ocrTargetIndex, 0)));
+    const row = targetIndex > 0 ? ocrTargetRowByIndex(container, targetIndex) : null;
+    const rowOffsetX = row?.querySelector("[data-ocr-target-offset-x]");
+    const rowOffsetY = row?.querySelector("[data-ocr-target-offset-y]");
+    const rowWidth = row?.querySelector("[data-ocr-target-width]");
+    const rowHeight = row?.querySelector("[data-ocr-target-height]");
+    const hasRowOffset = String(rowOffsetX?.value ?? "").trim() !== "" || String(rowOffsetY?.value ?? "").trim() !== "";
+    const baseOffsetX = Math.trunc(parseNumber(ocrOffsetXField?.value, 0));
+    const baseOffsetY = Math.trunc(parseNumber(ocrOffsetYField?.value, 0));
+    const currentOffsetX = targetIndex > 0
+      ? (
+          hasRowOffset
+            ? Math.trunc(parseNumber(rowOffsetX?.value, baseOffsetX))
+            : baseOffsetX + Math.trunc(((targetIndex * 3.2) / 100) * Number(metrics?.naturalWidth || 300))
+        )
+      : baseOffsetX;
+    const currentOffsetY = targetIndex > 0
+      ? (
+          hasRowOffset
+            ? Math.trunc(parseNumber(rowOffsetY?.value, baseOffsetY))
+            : baseOffsetY + Math.trunc(((targetIndex * 7.2) / 100) * Number(metrics?.naturalHeight || 300))
+        )
+      : baseOffsetY;
     const centerX = offsetToPreviewPercent(currentOffsetX, metrics?.naturalWidth, 3);
     const centerY = offsetToPreviewPercent(currentOffsetY, metrics?.naturalHeight, 3);
     const visualWidth = Math.max(18, Math.min(86, Math.abs(percentX - centerX) * 2));
@@ -7776,40 +7853,40 @@ function setRecognitionVisualOffsetFromPointer(container, dragTarget, clientX, c
     const height = metrics
       ? Math.max(12, Math.min(metrics.naturalHeight, Math.trunc((visualHeight / 100) * metrics.naturalHeight)))
       : Math.max(36, Math.min(256, Math.trunc(visualHeight * 4)));
-    if (widthField) {
+    if (targetIndex > 0) {
+      if (rowOffsetX) rowOffsetX.value = String(currentOffsetX);
+      if (rowOffsetY) rowOffsetY.value = String(currentOffsetY);
+      if (rowWidth) rowWidth.value = String(width);
+      if (rowHeight) rowHeight.value = String(height);
+    } else if (widthField) {
       widthField.value = String(width);
     }
-    if (heightField) {
+    if (targetIndex === 0 && heightField) {
       heightField.value = String(height);
     }
-    if (sideField) {
+    if (targetIndex === 0 && sideField) {
       sideField.value = "livre";
     }
-    if (enabledField) {
+    if (targetIndex === 0 && enabledField) {
       enabledField.checked = true;
     }
-    const box = dragTarget.closest("[data-relative-ocr-target]");
-    box?.setAttribute("style", relativeOcrOverlayStyle({
+    resizedBox?.setAttribute("style", relativeOcrOverlayStyle({
       side: "livre",
       width,
       height,
       offsetX: currentOffsetX,
       offsetY: currentOffsetY,
+      stackIndex: 0,
     }, metrics));
     updateRelativeOcrPreviewOverlay(container);
     if (container.classList.contains("command-tree-card") || container.classList.contains("flow-card")) {
       syncCommandMapDraftFromCard(container);
     }
     if (container.classList.contains("insert-card-panel") && state.insertPanel) {
-      const values = insertValuesFromPanel();
-      Object.assign(state.insertPanel, {
-        relativeOcrEnabled: values.relativeOcrEnabled,
-        relativeOcrSide: values.relativeOcrSide,
-        relativeOcrWidth: values.relativeOcrWidth,
-        relativeOcrHeight: values.relativeOcrHeight,
-        relativeOcrOffsetX: values.relativeOcrOffsetX,
-        relativeOcrOffsetY: values.relativeOcrOffsetY,
-      });
+      state.insertPanel = {
+        ...state.insertPanel,
+        ...insertValuesFromPanel(container),
+      };
     }
     return;
   }
@@ -7820,6 +7897,34 @@ function setRecognitionVisualOffsetFromPointer(container, dragTarget, clientX, c
   const offsetY = metrics
     ? Math.trunc(((percentY - 50) / 100) * metrics.naturalHeight)
     : Math.trunc((percentY - 50) * 3);
+  const targetIndex = Math.max(0, Math.trunc(parseNumber(dragTarget.dataset.ocrTargetIndex, 0)));
+  if (targetKind === "ocr" && targetIndex > 0) {
+    const row = ocrTargetRowByIndex(container, targetIndex);
+    const rowOffsetX = row?.querySelector("[data-ocr-target-offset-x]");
+    const rowOffsetY = row?.querySelector("[data-ocr-target-offset-y]");
+    if (rowOffsetX) rowOffsetX.value = String(offsetX);
+    if (rowOffsetY) rowOffsetY.value = String(offsetY);
+    dragTarget.className = `recognition-ocr-target-box is-livre is-target-${targetIndex + 1} is-dragging`;
+    dragTarget.setAttribute("style", relativeOcrOverlayStyle({
+      side: "livre",
+      width: row?.querySelector("[data-ocr-target-width]")?.value || 140,
+      height: row?.querySelector("[data-ocr-target-height]")?.value || 40,
+      offsetX,
+      offsetY,
+      stackIndex: 0,
+    }, metrics));
+    updateRelativeOcrPreviewOverlay(container);
+    if (container.classList.contains("command-tree-card") || container.classList.contains("flow-card")) {
+      syncCommandMapDraftFromCard(container);
+    }
+    if (container.classList.contains("insert-card-panel") && state.insertPanel) {
+      state.insertPanel = {
+        ...state.insertPanel,
+        ...insertValuesFromPanel(container),
+      };
+    }
+    return;
+  }
   const fieldPrefix = targetKind === "ocr" ? "relativeOcrOffset" : "clickOffset";
   const xField = container.querySelector(`[data-tree-field="${fieldPrefix}X"], [data-field="${fieldPrefix}X"], [data-insert-field="${fieldPrefix}X"]`);
   const yField = container.querySelector(`[data-tree-field="${fieldPrefix}Y"], [data-field="${fieldPrefix}Y"], [data-insert-field="${fieldPrefix}Y"]`);
@@ -8159,6 +8264,7 @@ function renderRecognitionTreeHiddenFields(details = {}, currentOrder = null) {
     <input data-tree-field="searchProfile" type="hidden" value="${escapeHtml(normalizeRecognitionProfile(details.perfil_busca, "balanced"))}" />
     <input data-tree-field="expectedOcrText" type="hidden" value="${escapeHtml(details.texto_ocr_esperado ?? "")}" />
     <input data-tree-field="ocrText" type="hidden" value="${escapeHtml(details.texto_ocr_busca ?? "")}" />
+    <input data-ocr-target-layouts type="hidden" value="${escapeHtml(JSON.stringify(details.ocr_target_layouts ?? []))}" />
     <input data-tree-field="ocrAction" type="hidden" value="${escapeHtml(details.acao_ocr ?? "clicar")}" />
     <input data-tree-field="ocrSaveAs" type="hidden" value="${escapeHtml(details.salvar_ocr_em ?? "")}" />
     <input data-tree-field="ocrScrollEnabled" type="hidden" value="${escapeHtml(details.varredura_scroll !== false ? "true" : "false")}" />
@@ -8223,7 +8329,14 @@ function renderRecognitionCompactTreeEditor(event) {
     <div class="recognition-card-compact-editor">
       ${renderRecognitionTreeHiddenFields(details, event.order)}
       <div class="recognition-card-compact-preview">
-        ${renderRecognitionPreviewPanel(details.imagem ?? "")}
+        ${renderRecognitionPreviewPanel(details.imagem ?? "", {
+          overlay: renderRelativeOcrPreviewOverlay(
+            relativeOcr,
+            recognitionClickTargetDetails(details),
+            Math.max(ocrTargetCountFromText(details.texto_ocr_busca ?? ""), details.ocr_target_layouts?.length || 0),
+            details.ocr_target_layouts ?? []
+          ),
+        })}
       </div>
       <div class="recognition-card-compact-row">
         <span>${recognitionMode === "texto_ocr" ? "Hibrido OCR + imagem" : "O que ele procura"}</span>
@@ -8333,6 +8446,150 @@ function ocrClickArgsFromMode(mode, action = "clicar") {
   return { clicar: true, clicks: 1 };
 }
 
+const OCR_TARGET_COLORS = ["azul", "roxo", "verde", "rosa", "laranja", "ciano"];
+
+function splitOcrTargetText(text = "") {
+  const raw = String(text ?? "").trim();
+  if (!raw) return [""];
+  const lines = raw.split(/\r?\n+/).map((item) => item.trim()).filter(Boolean);
+  if (lines.length > 1) return lines;
+  for (const separator of ["=>", "->", "\u2192", "\u21e2"]) {
+    if (raw.includes(separator)) {
+      const parts = raw.split(separator).map((item) => item.trim()).filter(Boolean);
+      if (parts.length > 1) return parts;
+    }
+  }
+  const looseParts = raw.split(/\s*(?:\||;|\+)\s*/).map((item) => item.trim()).filter(Boolean);
+  return looseParts.length > 1 ? looseParts : [raw];
+}
+
+function readOcrTargetText(container, fieldAttr) {
+  const targets = Array.from(container?.querySelectorAll(`[${fieldAttr}="ocrTarget"]`) || [])
+    .map((input) => String(input.value || "").trim())
+    .filter(Boolean);
+  if (targets.length) return targets.join("\n");
+  return container?.querySelector(`[${fieldAttr}="ocrText"]`)?.value ?? "";
+}
+
+function ocrTargetCountFromText(text = "") {
+  return splitOcrTargetText(text).filter((item) => String(item || "").trim()).length || 1;
+}
+
+function ocrTargetCountFromContainer(container) {
+  const directTargets = Array.from(container?.querySelectorAll("[data-ocr-target-field]") || []);
+  if (directTargets.length) return directTargets.length;
+  const fallback = container?.querySelector('[data-tree-field="ocrText"], [data-field="ocrText"], [data-insert-field="ocrText"]')?.value || "";
+  return Math.max(ocrTargetCountFromText(fallback), ocrTargetLayoutsFromContainer(container).length);
+}
+
+function ocrTargetLayoutsFromContainer(container) {
+  const rows = Array.from(container?.querySelectorAll("[data-ocr-target-row]") || []);
+  if (!rows.length) {
+    try {
+      const saved = JSON.parse(container?.querySelector("[data-ocr-target-layouts]")?.value || "[]");
+      return Array.isArray(saved) ? saved : [];
+    } catch {
+      return [];
+    }
+  }
+  return rows.map((row, index) => {
+    const offsetXField = row.querySelector("[data-ocr-target-offset-x]");
+    const offsetYField = row.querySelector("[data-ocr-target-offset-y]");
+    const widthField = row.querySelector("[data-ocr-target-width]");
+    const heightField = row.querySelector("[data-ocr-target-height]");
+    const hasOffset = String(offsetXField?.value ?? "").trim() !== "" || String(offsetYField?.value ?? "").trim() !== "";
+    const hasSize = String(widthField?.value ?? "").trim() !== "" || String(heightField?.value ?? "").trim() !== "";
+    return {
+      index,
+      offsetX: hasOffset ? parseNumber(offsetXField?.value, 0) : null,
+      offsetY: hasOffset ? parseNumber(offsetYField?.value, 0) : null,
+      width: hasSize ? parseNumber(widthField?.value, 140) : null,
+      height: hasSize ? parseNumber(heightField?.value, 40) : null,
+    };
+  });
+}
+
+function ocrTargetRowByIndex(container, index) {
+  return Array.from(container?.querySelectorAll("[data-ocr-target-row]") || [])[Math.max(0, Number(index) || 0)] || null;
+}
+
+function renderOcrTargetRows(fieldAttr, actionAttr, text = "", layouts = []) {
+  const targets = splitOcrTargetText(text);
+  return `
+    <div class="ocr-target-list" data-ocr-target-list>
+      ${targets.map((target, index) => {
+        const color = OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length];
+        return `
+          <div class="ocr-target-row" data-ocr-target-row data-ocr-target-color="${escapeHtml(color)}">
+            <span class="ocr-target-color-dot" aria-hidden="true"></span>
+            <label>
+              <span>Texto alvo ${index + 1}</span>
+              <input ${fieldAttr}="ocrTarget" data-ocr-target-field type="text" value="${escapeHtml(target)}" placeholder="${index === 0 ? "Ex.: Lanc Cont. Valor Docum" : "Ex.: 135"}" />
+              <input ${fieldAttr}="ocrTargetOffsetX" data-ocr-target-offset-x type="hidden" value="${escapeHtml(layouts?.[index]?.offsetX ?? "")}" />
+              <input ${fieldAttr}="ocrTargetOffsetY" data-ocr-target-offset-y type="hidden" value="${escapeHtml(layouts?.[index]?.offsetY ?? "")}" />
+              <input ${fieldAttr}="ocrTargetWidth" data-ocr-target-width type="hidden" value="${escapeHtml(layouts?.[index]?.width ?? "")}" />
+              <input ${fieldAttr}="ocrTargetHeight" data-ocr-target-height type="hidden" value="${escapeHtml(layouts?.[index]?.height ?? "")}" />
+            </label>
+            <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo" ${targets.length <= 1 ? "disabled" : ""}>&times;</button>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function refreshOcrTargetRows(container) {
+  const rows = Array.from(container?.querySelectorAll("[data-ocr-target-row]") || []);
+  rows.forEach((row, index) => {
+    row.dataset.ocrTargetColor = OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length];
+    const label = row.querySelector("label > span");
+    if (label) label.textContent = `Texto alvo ${index + 1}`;
+    const input = row.querySelector("[data-ocr-target-field]");
+    if (input) input.placeholder = index === 0 ? "Ex.: Lanc Cont. Valor Docum" : "Ex.: 135";
+    const remove = row.querySelector(".ocr-target-remove");
+    if (remove) remove.disabled = rows.length <= 1;
+  });
+}
+
+function addOcrTargetRow(container, fieldAttr, actionAttr, value = "") {
+  const list = container?.querySelector("[data-ocr-target-list]");
+  if (!list) return;
+  const index = list.querySelectorAll("[data-ocr-target-row]").length;
+  const row = document.createElement("div");
+  row.className = "ocr-target-row";
+  row.dataset.ocrTargetRow = "";
+  row.dataset.ocrTargetColor = OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length];
+  row.innerHTML = `
+    <span class="ocr-target-color-dot" aria-hidden="true"></span>
+    <label>
+      <span>Texto alvo ${index + 1}</span>
+      <input ${fieldAttr}="ocrTarget" data-ocr-target-field type="text" value="${escapeHtml(value)}" placeholder="${index === 0 ? "Ex.: Lanc Cont. Valor Docum" : "Ex.: 135"}" />
+      <input ${fieldAttr}="ocrTargetOffsetX" data-ocr-target-offset-x type="hidden" value="" />
+      <input ${fieldAttr}="ocrTargetOffsetY" data-ocr-target-offset-y type="hidden" value="" />
+      <input ${fieldAttr}="ocrTargetWidth" data-ocr-target-width type="hidden" value="" />
+      <input ${fieldAttr}="ocrTargetHeight" data-ocr-target-height type="hidden" value="" />
+    </label>
+    <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo">&times;</button>
+  `;
+  list.appendChild(row);
+  refreshOcrTargetRows(container);
+  updateRelativeOcrPreviewOverlay(container);
+  row.querySelector("[data-ocr-target-field]")?.focus();
+}
+
+function removeOcrTargetRow(button) {
+  const container = button?.closest(".ocr-text-editor");
+  const row = button?.closest("[data-ocr-target-row]");
+  const rows = Array.from(container?.querySelectorAll("[data-ocr-target-row]") || []);
+  if (!container || !row || rows.length <= 1) return;
+  const focusIndex = Math.max(0, rows.indexOf(row) - 1);
+  row.remove();
+  refreshOcrTargetRows(container);
+  updateRelativeOcrPreviewOverlay(container);
+  const nextRows = Array.from(container.querySelectorAll("[data-ocr-target-row]"));
+  nextRows[Math.min(focusIndex, nextRows.length - 1)]?.querySelector("[data-ocr-target-field]")?.focus();
+}
+
 function renderOcrTextFields(fieldAttr, details = {}, currentOrder = null, options = {}) {
   const embeddedHybrid = Boolean(options.embeddedHybrid);
   const clickMode = ocrClickModeFromDetails(details);
@@ -8372,10 +8629,12 @@ function renderOcrTextFields(fieldAttr, details = {}, currentOrder = null, optio
   `;
   return `
     <div class="field-stack ocr-text-editor ocr-text-editor-simple">
-      <label class="recognition-cell recognition-cell-full">
-        <span>${embeddedHybrid ? "Texto alvo" : "Texto para procurar"}</span>
-        <input ${fieldAttr}="ocrText" type="text" value="${escapeHtml(details.texto ?? "")}" placeholder="Ex.: Entrar, Continuar, Acessar" />
-      </label>
+      <input ${fieldAttr}="ocrText" type="hidden" value="${escapeHtml(details.texto ?? "")}" />
+      <div class="ocr-target-header">
+        <span>${embeddedHybrid ? "Textos alvo" : "Textos para procurar"}</span>
+        <button class="tree-open-button ocr-target-add" ${actionAttr}="add-ocr-target" type="button">+ alvo</button>
+      </div>
+      ${renderOcrTargetRows(fieldAttr, actionAttr, details.texto ?? "", details.ocr_target_layouts)}
       ${embeddedHybrid ? "" : `
         <label class="recognition-cell recognition-cell-full">
           <span>Depois de encontrar</span>
@@ -8390,8 +8649,8 @@ function renderOcrTextFields(fieldAttr, details = {}, currentOrder = null, optio
       ${hiddenStandaloneFlow}
       ${embeddedHybrid ? "" : `<button class="tree-open-button recognition-test-inline" ${actionAttr}="test-ocr-recognition" type="button">Testar OCR agora</button>`}
       <p class="recognition-card-helper">${embeddedHybrid
-        ? "O FlowDetect usa o texto para achar candidatos e a imagem para escolher o ponto correto."
-        : "O FlowDetect procura esse texto na tela e mostra os candidatos encontrados."}</p>
+        ? "Cada alvo precisa aparecer na tela. Se o segundo alvo for numero, ele precisa estar abaixo/alinhado ao primeiro."
+        : "Cada alvo precisa aparecer na tela. Se o segundo alvo for numero, ele precisa estar abaixo/alinhado ao primeiro."}</p>
     </div>
   `;
 }
@@ -8752,7 +9011,12 @@ function renderRecognitionExpandedTreeEditor(event) {
         <input data-tree-field="windowTitle" type="hidden" value="" />
         <div class="recognition-preview-compact-wrap">
           ${renderRecognitionPreviewPanel(details.imagem ?? "", {
-            overlay: renderRelativeOcrPreviewOverlay(relativeOcr, clickTarget),
+            overlay: renderRelativeOcrPreviewOverlay(
+              relativeOcr,
+              clickTarget,
+              ocrTargetCountFromText(details.texto_ocr_busca ?? ""),
+              details.ocr_target_layouts ?? []
+            ),
             markersVisible: showRecognitionMarkers,
           })}
         </div>
@@ -10941,7 +11205,7 @@ function renderWorkbookPreview() {
   }
 
   const rows = filteredWorkbookRows();
-  workbookMeta.textContent = `${preview.workbook_name} • ${preview.total_rows} linhas encontradas na aba ${preview.sheet}. Use a tabela para escolher valores ou colunas.`;
+  workbookMeta.textContent = `${preview.workbook_name} Ã¢â‚¬Â¢ ${preview.total_rows} linhas encontradas na aba ${preview.sheet}. Use a tabela para escolher valores ou colunas.`;
   workbookRowsInfo.textContent = `${rows.length} de ${preview.total_rows} linhas visiveis`;
 
   const headerCells = preview.headers
@@ -12031,6 +12295,27 @@ async function syncNativeHypervRdp() {
   }).catch((error) => console.warn("Nao foi possivel sincronizar o RDP Hyper-V.", error));
 }
 
+async function syncNativeHypervInputLock() {
+  if (!state.remoteControl.nativeRdpActive) return;
+  await invoke("set_native_hyperv_rdp_input_enabled", {
+    enabled: Boolean(state.remoteControl.remoteInputEnabled),
+  }).catch((error) => console.warn("Nao foi possivel alternar entrada do RDP Hyper-V.", error));
+}
+
+async function setStudioRemoteMouseEnabled(enabled, { notify = true } = {}) {
+  state.remoteControl.remoteInputEnabled = Boolean(enabled);
+  renderStudioControlScreenOnly();
+  await syncNativeHypervInputLock();
+  if (notify) {
+    setMessage(
+      state.remoteControl.remoteInputEnabled
+        ? "Mouse remoto ligado: movimentos e cliques podem entrar na tela da VM."
+        : "Mouse remoto desligado: a tela fica somente para assistir.",
+      "success"
+    );
+  }
+}
+
 function nativeRdpSizeChangedEnough(nextBounds) {
   const previous = state.remoteControl.nativeRdpLastBounds;
   if (!previous || !nextBounds) return true;
@@ -12162,6 +12447,7 @@ async function openNativeHypervRdp(vmName = "") {
       state.remoteControl.nativeRdpVmName = name;
       state.remoteControl.nativeRdpLastBounds = bounds;
       studioControlScreenFrameWrap?.classList.add("has-screen", "has-native-rdp");
+      await syncNativeHypervInputLock();
       scheduleNativeHypervRdpSync();
       return true;
     }
@@ -12175,6 +12461,7 @@ async function openNativeHypervRdp(vmName = "") {
       if (studioControlScreenStatus) {
         studioControlScreenStatus.textContent = `Tela da ${name} reativada sem reconectar.`;
       }
+      await syncNativeHypervInputLock();
       scheduleNativeHypervRdpSync();
       return true;
     } catch (_missingSession) {
@@ -12205,6 +12492,7 @@ async function openNativeHypervRdp(vmName = "") {
       });
       state.remoteControl.nativeRdpLastBounds = finalBounds;
     }
+    await syncNativeHypervInputLock();
     studioControlScreenFrameWrap?.classList.add("has-screen", "has-native-rdp");
     if (studioControlScreenStatus) {
       const provider = String(result?.provider || "");
@@ -12321,7 +12609,7 @@ async function openEmbeddedHypervConsole(vmName = "") {
     }
     if (studioControlHypervCloseButton) studioControlHypervCloseButton.hidden = false;
     if (studioControlScreenStatus) {
-      studioControlScreenStatus.textContent = `Console local ativo · ${name} · sem depender do IP do Agent.`;
+      studioControlScreenStatus.textContent = `Console local ativo Â· ${name} Â· sem depender do IP do Agent.`;
     }
     scheduleEmbeddedHypervConsoleSync();
     window.clearInterval(state.remoteControl.hypervKeepaliveTimer);
@@ -12591,7 +12879,18 @@ function renderStudioControlScreen() {
   const hasNativeScreen = Boolean(remote.nativeRdpActive || remote.hypervConsoleActive);
   const boot = remote.vmScreenBoot || {};
   const bootActive = Boolean(boot.active);
+  const mouseEnabled = Boolean(remote.remoteInputEnabled);
+  if (studioControlRemoteInputToggle) {
+    studioControlRemoteInputToggle.checked = mouseEnabled;
+    studioControlRemoteInputToggle.closest(".studio-control-input-toggle")?.classList.toggle("is-enabled", mouseEnabled);
+    studioControlRemoteInputToggle.closest(".studio-control-input-toggle")?.classList.toggle("is-disabled", !mouseEnabled);
+  }
+  if (studioControlRemoteInputLabel) {
+    studioControlRemoteInputLabel.textContent = mouseEnabled ? "Mouse ON" : "Mouse OFF";
+  }
   studioControlScreenFrameWrap?.classList.toggle("has-screen", hasNativeScreen);
+  studioControlScreenFrameWrap?.classList.toggle("is-input-locked", hasNativeScreen && !mouseEnabled);
+  studioControlScreenFrameWrap?.classList.toggle("is-input-ready", hasNativeScreen && mouseEnabled);
   studioControlScreenFrameWrap?.classList.toggle("is-booting-vm", bootActive);
   if (studioControlScreenBootOverlay) {
     studioControlScreenBootOverlay.hidden = !bootActive;
@@ -12614,7 +12913,7 @@ function renderStudioControlScreen() {
     } else if (remote.nativeRdpActive) {
       studioControlScreenStatus.textContent = `Conectando a ${remote.nativeRdpVmName} pela sessao aprimorada do Hyper-V...`;
     } else if (remote.hypervConsoleActive) {
-      studioControlScreenStatus.textContent = `Console local do Hyper-V ativo · ${remote.hypervVmName} · IP não necessário.`;
+      studioControlScreenStatus.textContent = `Console local do Hyper-V ativo Â· ${remote.hypervVmName} Â· IP nÃ£o necessÃ¡rio.`;
     } else {
       studioControlScreenStatus.textContent = "Selecione uma VM na aba Agentes. A conexao usa o GUID do Hyper-V, sem IP.";
     }
@@ -12958,9 +13257,9 @@ function agentSchedulerCalendarMarkup() {
   return `
     <div class="agent-screen-calendar is-inline">
       <div class="agent-screen-calendar-head">
-        <button class="micro-button" type="button" data-agent-scheduler-month="-1" aria-label="Mes anterior">‹</button>
+        <button class="micro-button" type="button" data-agent-scheduler-month="-1" aria-label="Mes anterior">Ã¢â‚¬Â¹</button>
         <strong>${escapeHtml(monthLabel)}</strong>
-        <button class="micro-button" type="button" data-agent-scheduler-month="1" aria-label="Proximo mes">›</button>
+        <button class="micro-button" type="button" data-agent-scheduler-month="1" aria-label="Proximo mes">Ã¢â‚¬Âº</button>
       </div>
       <div class="agent-screen-calendar-week">
         <span>D</span><span>S</span><span>T</span><span>Q</span><span>Q</span><span>S</span><span>S</span>
@@ -12987,16 +13286,16 @@ function agentSchedulerTimeWheelMarkup() {
     <div class="agent-screen-time-wheel" aria-label="Horario do agendamento">
       <div>
         <span>Hora</span>
-        <button type="button" data-agent-scheduler-hour-delta="1">▲</button>
+        <button type="button" data-agent-scheduler-hour-delta="1">Ã¢â€“Â²</button>
         <strong>${String(hour).padStart(2, "0")}</strong>
-        <button type="button" data-agent-scheduler-hour-delta="-1">▼</button>
+        <button type="button" data-agent-scheduler-hour-delta="-1">Ã¢â€“Â¼</button>
       </div>
       <em>:</em>
       <div>
         <span>Min</span>
-        <button type="button" data-agent-scheduler-minute-delta="1">▲</button>
+        <button type="button" data-agent-scheduler-minute-delta="1">Ã¢â€“Â²</button>
         <strong>${String(minute).padStart(2, "0")}</strong>
-        <button type="button" data-agent-scheduler-minute-delta="-1">▼</button>
+        <button type="button" data-agent-scheduler-minute-delta="-1">Ã¢â€“Â¼</button>
       </div>
     </div>`;
 }
@@ -13161,7 +13460,7 @@ function renderAgentScheduler() {
                   <span class="agent-screen-schedule-badge">${escapeHtml(scheduleStatusLabel(item))}</span>
                 </div>
                 <div class="agent-screen-schedule-meta">
-                  ${escapeHtml(formatScheduleDate(item.runAt))} · ${escapeHtml(scheduleRepeatLabel(item.repeat))}
+                  ${escapeHtml(formatScheduleDate(item.runAt))} Â· ${escapeHtml(scheduleRepeatLabel(item.repeat))}
                   ${item.error ? `<br>Erro: ${escapeHtml(item.error)}` : ""}
                 </div>
                 <div class="agent-screen-schedule-actions">
@@ -13592,7 +13891,7 @@ function renderAgentVmList() {
         <div>
           ${isBase ? '<span class="agents-vm-base-badge">VM-base principal</span>' : ""}
           <strong>${escapeHtml(name || "VM sem nome")}</strong>
-          <span>${escapeHtml(`${vm.state || "Desconhecido"}${vm.ip ? ` · ${vm.ip}` : ""}`)}</span>
+          <span>${escapeHtml(`${vm.state || "Desconhecido"}${vm.ip ? ` Â· ${vm.ip}` : ""}`)}</span>
         </div>
         <div class="agents-vm-actions">
           ${isBase ? `<button class="primary-button" type="button" data-hyperv-base-action="configure" data-hyperv-vm-name="${escapeHtml(name)}">Configurar VM-base</button><button class="ghost-button" type="button" data-hyperv-base-action="stop" data-hyperv-vm-name="${escapeHtml(name)}" ${String(vm.state).toLowerCase() === "off" ? "disabled" : ""}>Desligar base</button>` : ""}
@@ -13621,7 +13920,7 @@ function hypervVmLauncherMarkup(vm = {}) {
       </div>
       <div class="vm-launcher-head">
         <span class="vm-launcher-type">${isBase ? "VM-base" : "Maquina virtual"}</span>
-        <span class="vm-launcher-state"><i></i>${escapeHtml(running ? "Em execução" : stateName)}</span>
+        <span class="vm-launcher-state"><i></i>${escapeHtml(running ? "Em execuÃ§Ã£o" : stateName)}</span>
       </div>
       <div class="vm-launcher-copy">
         <h3>${escapeHtml(name)}</h3>
@@ -14243,8 +14542,8 @@ async function resolveAgentVmName(agent) {
     const available = state.agents.vms.map((vm) => String(vm?.name || "").trim()).filter(Boolean);
     throw new Error(
       available.length
-        ? `A VM "${configuredName}" não foi encontrada. VMs disponíveis: ${available.join(", ")}. Edite o card e selecione o nome correto.`
-        : `A VM "${configuredName}" não foi encontrada e o Hyper-V não retornou nenhuma VM.`
+        ? `A VM "${configuredName}" nÃ£o foi encontrada. VMs disponÃ­veis: ${available.join(", ")}. Edite o card e selecione o nome correto.`
+        : `A VM "${configuredName}" nÃ£o foi encontrada e o Hyper-V nÃ£o retornou nenhuma VM.`
     );
   }
   const canonicalName = String(match.name).trim();
@@ -14357,8 +14656,8 @@ async function startAndWatchAgent(agent) {
       return;
     }
     agent = startedAgent;
-    // A tela da VM não pode depender do Agent: ela é justamente o caminho de
-    // recuperação quando o processo do Agent trava durante o logon do Windows.
+    // A tela da VM nÃ£o pode depender do Agent: ela Ã© justamente o caminho de
+    // recuperaÃ§Ã£o quando o processo do Agent trava durante o logon do Windows.
     setWorkspaceTab("agent-screen");
     setBusy("Inicializando tela da VM");
     let screenConnected = await openHypervVmScreenWhenReady(agent.vmName, {
@@ -14415,7 +14714,7 @@ async function startAndWatchAgent(agent) {
     return;
   }
   setWorkspaceTab("agent-screen");
-  state.remoteControl.remoteInputEnabled = true;
+  await setStudioRemoteMouseEnabled(false, { notify: false });
   if (!state.remoteControl.screenStreaming) {
     startStudioControlScreenStream();
   }
@@ -14788,7 +15087,7 @@ function renderAgents() {
     <button class="agent-launcher-add" type="button" data-agent-action="new">
       <span class="agent-launcher-add-icon">+</span>
       <strong>Novo Agent</strong>
-      <small>Clone a VM-base ou vincule uma máquina existente.</small>
+      <small>Clone a VM-base ou vincule uma mÃ¡quina existente.</small>
     </button>
   `;
   agentsList.innerHTML = [...availableVmCards, ...agentCards, addCard].join("");
@@ -14886,26 +15185,26 @@ function renderAgentScreenLiveBlocks() {
     current
       ? {
           tone: "is-current",
-          icon: "•",
+          icon: "Ã¢â‚¬Â¢",
           title: "Executando agora",
           text: `${studioControlEventTitle(current)} - ${studioControlEventSubtitle(current)}`,
         }
       : {
           tone: running ? "is-current" : "is-upcoming",
-          icon: "•",
+          icon: "Ã¢â‚¬Â¢",
           title: running ? "Executando" : "Aguardando",
           text: remote.progress.description || "Nenhuma automacao em execucao no momento.",
         },
     next
       ? {
           tone: "is-upcoming",
-          icon: "↳",
+          icon: "Ã¢â€ Â³",
           title: "Proximo passo",
           text: `${studioControlEventTitle(next)} - ${studioControlEventSubtitle(next)}`,
         }
       : {
           tone: "is-done",
-          icon: "✓",
+          icon: "Ã¢Å“â€œ",
           title: running ? "Fila quase concluida" : "Resumo",
           text: events.length ? `${doneCount}/${events.length} passos processados nesta automacao.` : "Sem passos carregados.",
         },
@@ -15185,7 +15484,7 @@ async function refreshStudioControlSpreadsheet(options = {}) {
     state.remoteControl.lastSheetRefreshAt = Date.now();
   } catch (error) {
     const errorText = String(error);
-    const friendlyMessage = errorText.includes("Endpoint nao encontrado") || errorText.includes("Endpoint não encontrado")
+    const friendlyMessage = errorText.includes("Endpoint nao encontrado") || errorText.includes("Endpoint nÃ£o encontrado")
       ? "O Agent conectado ainda nao tem a visualizacao de planilha. Feche e abra o Agent atualizado."
       : errorText;
     state.remoteControl.spreadsheetPreview = {
@@ -15396,7 +15695,6 @@ async function startStudioControlWebRtc() {
       studioControlScreenImage.hidden = true;
       studioControlScreenVideo.closest(".studio-control-screen-frame-wrap")?.classList.add("has-screen", "has-webrtc");
       remote.webrtcActive = true;
-      remote.remoteInputEnabled = true;
       if (studioControlScreenStatus) {
         studioControlScreenStatus.textContent = "WebRTC ativo. Recebendo video em tempo real do Agent.";
       }
@@ -16821,6 +17119,7 @@ function renderInsertRecognitionPanel(panel, order) {
           <div class="recognition-ocr-embedded-panel">
             ${renderOcrTextFields("data-insert-field", {
               texto: panel.ocrText,
+      ocr_target_layouts: panel.ocrTargetLayouts ?? [],
               acao: panel.ocrAction,
               confianca: panel.ocrConfidence,
               timeout: panel.ocrTimeout,
@@ -17113,13 +17412,13 @@ function renderInsertPanel(order) {
       title: "Loop da planilha",
       label: "Dados",
       description: "Para repetir um trecho usando as linhas de uma planilha.",
-      hint: selectedColumn ? `Vai começar usando a coluna ${selectedColumn}.` : "Importe uma planilha para configurar esse bloco.",
+      hint: selectedColumn ? `Vai comeÃ§ar usando a coluna ${selectedColumn}.` : "Importe uma planilha para configurar esse bloco.",
     },
     write_spreadsheet: {
       title: "Escrever na planilha",
       label: "Resultado",
       description: "Para marcar um status ou texto na linha atual do loop.",
-      hint: selectedColumn ? `Vai começar escrevendo na coluna ${selectedColumn}.` : "Importe uma planilha para configurar esse bloco.",
+      hint: selectedColumn ? `Vai comeÃ§ar escrevendo na coluna ${selectedColumn}.` : "Importe uma planilha para configurar esse bloco.",
     },
     spreadsheet_context: {
       title: "Loop de dados",
@@ -17289,6 +17588,7 @@ function renderInsertPanel(order) {
   } else if (panel.type === "ocr_text") {
     body = renderOcrTextFields("data-insert-field", {
       texto: panel.ocrText,
+      ocr_target_layouts: panel.ocrTargetLayouts ?? [],
       acao: panel.ocrAction,
       confianca: panel.ocrConfidence,
       timeout: panel.ocrTimeout,
@@ -17347,7 +17647,7 @@ function renderInsertPanel(order) {
             <input data-insert-field="chromeTargetValue" type="text" value="${escapeHtml(panel.chromeTargetValue ?? analysis?.alvo_recomendado?.valor ?? "")}" />
           </label>
           <label>
-            <span>Ação</span>
+            <span>AÃ§Ã£o</span>
             <select data-insert-field="chromeActionType">
               ${renderChromeActionOptions(chromeKindFromAnalysis(analysis), panel.chromeActionType ?? analysis?.acao_sugerida?.tipo ?? "clicar")}
             </select>
@@ -18394,7 +18694,8 @@ function formValuesFromCard(card) {
     failureSequenceDelay: normalizeTransitionDelay(get("failureSequenceDelay")?.value),
     retryCount: Math.max(1, Math.trunc(parseNumber(get("retryCount")?.value, 1))),
     retryInterval: parseNumber(get("retryInterval")?.value, 1),
-    ocrText: get("ocrText")?.value ?? "",
+    ocrTargetLayouts: ocrTargetLayoutsFromContainer(card),
+    ocrText: readOcrTargetText(card, "data-field"),
     ocrAction: get("ocrAction")?.value ?? "clicar",
     ocrConfidence: Math.max(0.3, Math.min(1, parseNumber(get("ocrConfidence")?.value, 0.72))),
     ocrTimeout: Math.max(0.5, parseNumber(get("ocrTimeout")?.value, 8)),
@@ -18538,7 +18839,8 @@ function treeValuesFromCard(card) {
     failureSequenceDelay: normalizeTransitionDelay(get("failureSequenceDelay")?.value),
     retryCount: Math.max(1, Math.trunc(parseNumber(get("retryCount")?.value, 1))),
     retryInterval: parseNumber(get("retryInterval")?.value, 1),
-    ocrText: get("ocrText")?.value ?? "",
+    ocrTargetLayouts: ocrTargetLayoutsFromContainer(card),
+    ocrText: readOcrTargetText(card, "data-tree-field"),
     ocrAction: get("ocrAction")?.value ?? "clicar",
     ocrConfidence: Math.max(0.3, Math.min(1, parseNumber(get("ocrConfidence")?.value, 0.72))),
     ocrTimeout: Math.max(0.5, parseNumber(get("ocrTimeout")?.value, 8)),
@@ -19669,7 +19971,8 @@ function insertValuesFromPanel(panelElement) {
     failureSequenceDelay: normalizeTransitionDelay(get("failureSequenceDelay")?.value ?? state.insertPanel?.failureSequenceDelay ?? 0),
     retryCount: Math.max(1, Math.trunc(parseNumber(get("retryCount")?.value, state.insertPanel?.retryCount ?? 1))),
     retryInterval: parseNumber(get("retryInterval")?.value, state.insertPanel?.retryInterval ?? 1),
-    ocrText: get("ocrText")?.value ?? state.insertPanel?.ocrText ?? "",
+    ocrTargetLayouts: ocrTargetLayoutsFromContainer(panelElement),
+    ocrText: readOcrTargetText(panelElement, "data-insert-field") || state.insertPanel?.ocrText || "",
     ocrAction: get("ocrAction")?.value ?? state.insertPanel?.ocrAction ?? "clicar",
     ocrConfidence: Math.max(0.3, Math.min(1, parseNumber(get("ocrConfidence")?.value, state.insertPanel?.ocrConfidence ?? 0.72))),
     ocrTimeout: Math.max(0.5, parseNumber(get("ocrTimeout")?.value, state.insertPanel?.ocrTimeout ?? 8)),
@@ -20028,6 +20331,14 @@ async function persistVisibleRecognitionDrafts() {
       areaBuscaAltura: 0,
       janelaAlvo: values.windowTitle?.trim() || null,
       textoOcrEsperado: values.expectedOcrText?.trim() || null,
+      modoReconhecimento: values.recognitionMode || "imagem",
+      textoOcrBusca: values.ocrText?.trim() || null,
+      acaoOcr: values.ocrAction || "clicar",
+      salvarOcrEm: values.ocrSaveAs?.trim() || null,
+      varreduraScroll: Boolean(values.ocrScrollEnabled),
+      varreduraScrollTentativas: values.ocrScrollAttempts,
+      varreduraScrollPixels: values.ocrScrollPixels,
+      varreduraScrollDirecao: values.ocrScrollDirection,
       ...relativeOcrInvokeArgs(values),
       clicar: recognitionClicksFromMode(values.recognitionClickMode, 1) > 0,
       clicks: recognitionClicksFromMode(values.recognitionClickMode, 1),
@@ -20601,7 +20912,7 @@ createHypervBaseButton?.addEventListener("click", async () => {
     hypervBasePanel.hidden = true;
     await refreshAgentVmList({ silent: true });
     setBusy("Pronto");
-    setMessage("VM-base criada. Instale o Windows e os aplicativos; depois desligue a VM para poder cloná-la.", "success");
+    setMessage("VM-base criada. Instale o Windows e os aplicativos; depois desligue a VM para poder clonÃ¡-la.", "success");
   } catch (error) {
     const detail = String(error);
     setBusy("Erro");
@@ -21625,14 +21936,9 @@ studioControlMeshLoadButton?.addEventListener("click", () => {
 });
 
 studioControlRemoteInputToggle?.addEventListener("change", () => {
-  state.remoteControl.remoteInputEnabled = Boolean(studioControlRemoteInputToggle.checked);
-  renderStudioControlScreenOnly();
-  setMessage(
-    state.remoteControl.remoteInputEnabled
-      ? "Controle remoto ativado: mouse e teclado serao enviados ao Agent."
-      : "Modo somente assistir ativado: mouse e teclado nao serao enviados.",
-    "success"
-  );
+  setStudioRemoteMouseEnabled(Boolean(studioControlRemoteInputToggle.checked)).catch((error) => {
+    setMessage(String(error), "error");
+  });
 });
 
 studioControlMeshEmbedButton?.addEventListener("click", () => {
@@ -22124,7 +22430,7 @@ deleteWorkbookButton?.addEventListener("click", async () => {
 
   const usedBlocks = countBlocksUsingWorkbook(workbook.id);
   const warning = usedBlocks
-    ? `\n\nAtenção: ${usedBlocks} bloco(s) usam essa planilha. Eles continuarão no mapa, mas ficarão sem o arquivo até você escolher outra planilha.`
+    ? `\n\nAtenÃ§Ã£o: ${usedBlocks} bloco(s) usam essa planilha. Eles continuarÃ£o no mapa, mas ficarÃ£o sem o arquivo atÃ© vocÃª escolher outra planilha.`
     : "";
   const confirmed = window.confirm(`Excluir a planilha "${workbook.file_name}" do projeto?${warning}`);
   if (!confirmed) {
@@ -22465,6 +22771,16 @@ timelineList.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "add-ocr-target") {
+    addOcrTargetRow(card, "data-field", "data-action");
+    return;
+  }
+
+  if (action === "remove-ocr-target") {
+    removeOcrTargetRow(button);
+    return;
+  }
+
   if (action === "select-image") {
     state.commandMapFocusOrder = order;
     openImagePicker({ scope: "update-editor", order });
@@ -22694,6 +23010,15 @@ commandMapList.addEventListener("change", (event) => {
     return;
   }
 
+  if (target.matches('[data-tree-field="ocrTarget"], [data-field="ocrTarget"]')) {
+    const card = target.closest(".command-tree-card, .flow-card");
+    updateRelativeOcrPreviewOverlay(card);
+    if (card?.classList.contains("command-tree-card")) {
+      syncCommandMapDraftFromCard(card);
+    }
+    return;
+  }
+
   if (target.matches('[data-tree-field^="relativeOcr"]')) {
     const card = target.closest(".command-tree-card");
     updateRelativeOcrPreviewOverlay(card);
@@ -22720,6 +23045,18 @@ commandMapList.addEventListener("change", (event) => {
   if (target.matches('[data-insert-field="expectedOcrText"]')) {
     if (state.insertPanel) {
       state.insertPanel.expectedOcrText = target.value;
+    }
+    return;
+  }
+
+  if (target.matches('[data-insert-field="ocrTarget"]')) {
+    const panel = target.closest(".insert-card-panel");
+    updateRelativeOcrPreviewOverlay(panel);
+    if (state.insertPanel && panel) {
+      state.insertPanel = {
+        ...state.insertPanel,
+        ...insertValuesFromPanel(panel),
+      };
     }
     return;
   }
@@ -23186,6 +23523,16 @@ commandMapList.addEventListener("click", async (event) => {
 
   const values = treeValuesFromCard(card);
 
+  if (action === "add-ocr-target") {
+    addOcrTargetRow(card, "data-tree-field", "data-tree-action");
+    return;
+  }
+
+  if (action === "remove-ocr-target") {
+    removeOcrTargetRow(button);
+    return;
+  }
+
   if (action === "select-image") {
     setCommandMapFocus(order);
     openImagePicker({ scope: "update-tree", order });
@@ -23522,6 +23869,24 @@ commandMapList.addEventListener("click", async (event) => {
 
   const action = button.dataset.insertAction;
   if (state.insertPanel.isSaving) {
+    return;
+  }
+
+  if (action === "add-ocr-target") {
+    state.insertPanel = {
+      ...state.insertPanel,
+      ...insertValuesFromPanel(panel),
+    };
+    addOcrTargetRow(panel, "data-insert-field", "data-insert-action");
+    return;
+  }
+
+  if (action === "remove-ocr-target") {
+    removeOcrTargetRow(button);
+    state.insertPanel = {
+      ...state.insertPanel,
+      ...insertValuesFromPanel(panel),
+    };
     return;
   }
 
@@ -24340,7 +24705,7 @@ commandMapList.addEventListener("click", async (event) => {
 async function boot() {
   try {
     // No modo dev o WebView pode recarregar sem reiniciar o processo Rust.
-    // Limpe superfícies HWND da sessão anterior para elas não cobrirem a UI nova.
+    // Limpe superfÃ­cies HWND da sessÃ£o anterior para elas nÃ£o cobrirem a UI nova.
     await invoke("close_native_hyperv_rdp").catch(() => null);
     await invoke("close_embedded_hyperv_console").catch(() => null);
     state.remoteControl.nativeRdpActive = false;
@@ -24382,11 +24747,11 @@ async function boot() {
         const kind = lowered.includes("erro")
           || lowered.includes("falha")
           || lowered.includes("nao encontrada")
-          || lowered.includes("não encontrada")
+          || lowered.includes("nÃ£o encontrada")
           ? "error"
           : lowered.includes("encontrada")
             || lowered.includes("confirmacao visual")
-            || lowered.includes("confirmação visual")
+            || lowered.includes("confirmaÃ§Ã£o visual")
             || lowered.includes("clique executado")
             ? "success"
             : "info";
@@ -24491,3 +24856,4 @@ applyLoginStateUI();
 });
 boot();
 }
+

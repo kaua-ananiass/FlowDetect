@@ -100,6 +100,7 @@ struct RuntimeState {
 }
 
 struct RecognitionWorker {
+    source_versions: Vec<Option<std::time::SystemTime>>,
     root: PathBuf,
     python_program: String,
     python_args: Vec<String>,
@@ -116,6 +117,7 @@ static MESHCENTRAL_STARTING: OnceLock<Arc<Mutex<bool>>> = OnceLock::new();
 static MESHCENTRAL_LAST_MESSAGE: OnceLock<Arc<Mutex<String>>> = OnceLock::new();
 static WEBRTC_SIGNAL_STATE: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
 static NATIVE_REMOTE_STATUS: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
+static AGENT_REMOTE_MOUSE_ENABLED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 static PYTHON_BOOTSTRAP_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 static PYTHON_DEPS_READY: AtomicBool = AtomicBool::new(false);
 
@@ -802,6 +804,11 @@ fn activate_native_hyperv_rdp(
 #[tauri::command]
 fn close_native_hyperv_rdp() -> Result<Value, String> {
     native_rdp::close()
+}
+
+#[tauri::command]
+fn set_native_hyperv_rdp_input_enabled(enabled: bool) -> Result<Value, String> {
+    native_rdp::set_input_enabled(enabled)
 }
 
 #[tauri::command]
@@ -2838,6 +2845,23 @@ fn webrtc_signal_store() -> Arc<Mutex<Value>> {
         .clone()
 }
 
+fn agent_remote_mouse_enabled_store() -> Arc<AtomicBool> {
+    AGENT_REMOTE_MOUSE_ENABLED
+        .get_or_init(|| Arc::new(AtomicBool::new(false)))
+        .clone()
+}
+
+fn agent_remote_mouse_enabled_payload() -> Value {
+    serde_json::json!({
+        "mouse_enabled": agent_remote_mouse_enabled_store().load(Ordering::SeqCst)
+    })
+}
+
+fn set_agent_remote_mouse_enabled_value(enabled: bool) -> Value {
+    agent_remote_mouse_enabled_store().store(enabled, Ordering::SeqCst);
+    agent_remote_mouse_enabled_payload()
+}
+
 fn native_remote_status_store() -> Arc<Mutex<Value>> {
     NATIVE_REMOTE_STATUS
         .get_or_init(|| {
@@ -3072,7 +3096,16 @@ pub(crate) fn handle_agent_remote_control_event(event: Value) -> Result<Value, S
     #[cfg(windows)]
     {
         match event.get("kind").and_then(Value::as_str).unwrap_or("") {
-            "mouse" => send_remote_mouse_event(&event)?,
+            "mouse" => {
+                if !agent_remote_mouse_enabled_store().load(Ordering::SeqCst) {
+                    return Ok(serde_json::json!({
+                        "ok": true,
+                        "ignored": true,
+                        "reason": "mouse_disabled"
+                    }));
+                }
+                send_remote_mouse_event(&event)?;
+            }
             "key" => send_remote_key_event(&event)?,
             _ => {}
         }
@@ -4542,6 +4575,16 @@ fn agent_webrtc_set_answer(session_id: String, answer: Value) -> Result<Value, S
 #[tauri::command]
 fn agent_webrtc_clear() -> Result<Value, String> {
     Ok(clear_webrtc_signal())
+}
+
+#[tauri::command]
+fn get_agent_mouse_control_state() -> Result<Value, String> {
+    Ok(agent_remote_mouse_enabled_payload())
+}
+
+#[tauri::command]
+fn set_agent_mouse_control_enabled(enabled: bool) -> Result<Value, String> {
+    Ok(set_agent_remote_mouse_enabled_value(enabled))
 }
 
 #[tauri::command]
@@ -6215,6 +6258,7 @@ fn add_image_click_block(
     leitura_relativa_offset_x: Option<i32>,
     leitura_relativa_offset_y: Option<i32>,
     leitura_relativa_salvar_em: Option<String>,
+    ocr_target_layouts: Option<String>,
     ao_nao_encontrar: String,
     sequencia_nao_encontrar: Option<String>,
     bloco_nao_encontrar: Option<i32>,
@@ -6278,6 +6322,8 @@ fn add_image_click_block(
         leitura_relativa_offset_y.unwrap_or(0).to_string(),
         "--leitura-relativa-salvar-em".into(),
         leitura_relativa_salvar_em.unwrap_or_default(),
+        "--ocr-target-layouts".into(),
+        ocr_target_layouts.unwrap_or_else(|| "[]".to_string()),
         "--ao-nao-encontrar".into(),
         ao_nao_encontrar,
     ]);
@@ -7224,6 +7270,7 @@ fn insert_image_click_block(
     leitura_relativa_offset_x: Option<i32>,
     leitura_relativa_offset_y: Option<i32>,
     leitura_relativa_salvar_em: Option<String>,
+    ocr_target_layouts: Option<String>,
     ao_nao_encontrar: String,
     sequencia_nao_encontrar: Option<String>,
     bloco_nao_encontrar: Option<i32>,
@@ -7291,6 +7338,8 @@ fn insert_image_click_block(
         leitura_relativa_offset_y.unwrap_or(0).to_string(),
         "--leitura-relativa-salvar-em".into(),
         leitura_relativa_salvar_em.unwrap_or_default(),
+        "--ocr-target-layouts".into(),
+        ocr_target_layouts.unwrap_or_else(|| "[]".to_string()),
         "--ao-nao-encontrar".into(),
         ao_nao_encontrar,
     ]);
@@ -8082,6 +8131,7 @@ fn update_image_click_block(
     leitura_relativa_offset_x: Option<i32>,
     leitura_relativa_offset_y: Option<i32>,
     leitura_relativa_salvar_em: Option<String>,
+    ocr_target_layouts: Option<String>,
     ao_nao_encontrar: String,
     sequencia_nao_encontrar: Option<String>,
     bloco_nao_encontrar: Option<i32>,
@@ -8146,6 +8196,8 @@ fn update_image_click_block(
         leitura_relativa_offset_y.unwrap_or(0).to_string(),
         "--leitura-relativa-salvar-em".into(),
         leitura_relativa_salvar_em.unwrap_or_default(),
+        "--ocr-target-layouts".into(),
+        ocr_target_layouts.unwrap_or_else(|| "[]".to_string()),
         "--ao-nao-encontrar".into(),
         ao_nao_encontrar,
     ]);
@@ -8888,13 +8940,20 @@ fn launch_legacy_capture(app: AppHandle) -> Result<String, String> {
     Ok("Captura avancada aberta em uma nova janela.".into())
 }
 
+fn recognition_source_versions(root: &PathBuf) -> Vec<Option<std::time::SystemTime>> {
+    ["executar_automacao.py", "reconhecimento_worker.py"].iter()
+        .map(|name| std::fs::metadata(root.join(name)).and_then(|m| m.modified()).ok())
+        .collect()
+}
+
 fn recognition_worker_matches(
     worker: &RecognitionWorker,
     root: &PathBuf,
     python_program: &str,
     python_args: &[String],
 ) -> bool {
-    worker.root == *root
+    worker.source_versions == recognition_source_versions(root)
+        && worker.root == *root
         && worker.python_program == python_program
         && worker.python_args == python_args
         && worker.child.id() > 0
@@ -8934,6 +8993,7 @@ fn start_recognition_worker(root: &PathBuf) -> Result<RecognitionWorker, String>
         .ok_or_else(|| "Worker de reconhecimento iniciou sem stdout.".to_string())?;
 
     Ok(RecognitionWorker {
+        source_versions: recognition_source_versions(root),
         root: root.to_path_buf(),
         python_program,
         python_args,
@@ -8961,6 +9021,10 @@ fn test_image_recognition_worker(
         None => true,
     };
     if precisa_reiniciar {
+        if let Some(mut previous) = guard.take() {
+            let _ = previous.child.kill();
+            let _ = previous.child.wait();
+        }
         *guard = Some(start_recognition_worker(root)?);
     }
 
@@ -9038,6 +9102,7 @@ fn test_image_recognition(
     leitura_relativa_offset_x: Option<i64>,
     leitura_relativa_offset_y: Option<i64>,
     leitura_relativa_salvar_em: Option<String>,
+    ocr_target_layouts: Option<String>,
 ) -> Result<String, String> {
     let root = workspace_root(&app);
     let script_path = root.join("executar_automacao.py");
@@ -9069,6 +9134,7 @@ fn test_image_recognition(
         "offset_x": leitura_relativa_offset_x.unwrap_or(0),
         "offset_y": leitura_relativa_offset_y.unwrap_or(0),
         "salvar_em": leitura_relativa_salvar_em.clone().unwrap_or_default(),
+        "ocr_target_layouts": serde_json::from_str::<Value>(ocr_target_layouts.as_deref().unwrap_or("[]")).unwrap_or_else(|_| serde_json::json!([])),
     });
     let worker_payload = serde_json::json!({
         "imagem": imagem.clone(),
@@ -9136,11 +9202,6 @@ fn test_image_recognition(
             });
         }
         Err(err) => {
-            if let Some(window) = main_window.as_ref() {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
             append_launcher_log(
                 &root,
                 format!("Worker de reconhecimento indisponivel. Usando modo antigo: {err}"),
@@ -9218,6 +9279,7 @@ fn test_image_recognition(
         .arg(leitura_relativa_offset_x.unwrap_or(0).to_string())
         .arg("--leitura-relativa-offset-y")
         .arg(leitura_relativa_offset_y.unwrap_or(0).to_string());
+    command.arg("--ocr-target-layouts").arg(ocr_target_layouts.unwrap_or_else(|| "[]".to_string()));
     if let Some(name) = leitura_relativa_salvar_em
         .as_ref()
         .map(|value| value.trim())
@@ -9226,11 +9288,6 @@ fn test_image_recognition(
         command.arg("--leitura-relativa-salvar-em").arg(name);
     }
     configure_no_window(&mut command);
-
-    let main_window = app.get_webview_window("main");
-    if let Some(window) = main_window.as_ref() {
-        let _ = window.minimize();
-    }
 
     let output = command
         .output()
@@ -10019,6 +10076,7 @@ pub fn run() {
             resize_native_hyperv_rdp,
             activate_native_hyperv_rdp,
             close_native_hyperv_rdp,
+            set_native_hyperv_rdp_input_enabled,
             open_hyperv_vm_console,
             open_embedded_hyperv_console,
             resize_embedded_hyperv_console,
@@ -10144,6 +10202,8 @@ pub fn run() {
             agent_webrtc_poll_offer,
             agent_webrtc_set_answer,
             agent_webrtc_clear,
+            get_agent_mouse_control_state,
+            set_agent_mouse_control_enabled,
             agent_remote_control_event,
             remote_agent_execute,
             remote_agent_stop,
