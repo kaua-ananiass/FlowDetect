@@ -49,6 +49,20 @@ class OcrAnchorTests(unittest.TestCase):
         self.assertIsNone(self.search(self.candidate([self.anchor])))
         self.executor.marcar_alvos_ocr_em_sequencia.assert_not_called()
 
+    def test_wrong_second_target_blocks_even_with_matching_image(self):
+        self.executor.procurar_imagem_por_template.return_value = dict(self.anchor)
+        self.assertIsNone(self.search(self.candidate([self.anchor, {**self.value, "texto": "136"}])))
+        self.executor.procurar_imagem_por_template.assert_not_called()
+
+    def test_similar_phrase_is_not_a_confirmed_anchor(self):
+        candidate = {**self.anchor, "texto": "um Perfil", "score": 0.99}
+        self.assertIsNone(self.search(candidate, "Meu Perfil", {}))
+
+    def test_single_target_also_allows_visual_failure(self):
+        local = self.search(self.anchor, "Meu Perfil", {})
+        self.assertTrue(local["ocr_anchor_confirmed"])
+        self.assertFalse(local["visual_confirmed"])
+
 
 if __name__ == "__main__":
     unittest.main()
