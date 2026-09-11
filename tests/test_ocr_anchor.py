@@ -1,0 +1,113 @@
+import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+import executar_automacao as motor
+
+
+class OcrAnchorTests(unittest.TestCase):
+    def setUp(self):
+        self.executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        self.executor.cancelamento_solicitado = Mock(return_value=False)
+        self.executor.limitar_regiao = Mock(side_effect=lambda region, **kwargs: region)
+        self.executor.marcar_alvos_ocr_em_sequencia = Mock()
+        self.executor.procurar_imagem_por_template = Mock(return_value=None)
+        self.executor.localizar_texto_por_ocr_screenshot = Mock(return_value=[])
+        self.executor.localizar_texto_composto_por_ocr_screenshot = Mock(return_value=[])
+        self.config = {
+            "largura": 160, "altura": 30, "offset_x": -20, "offset_y": -15,
+            "ocr_target_layouts": [{}, {"width": 40, "height": 20, "offsetX": 55, "offsetY": 15}],
+        }
+        self.anchor = {"left": 2000, "top": -5, "width": 120, "height": 20, "texto": "Meu Perfil"}
+        self.value = {"left": 2120, "top": 25, "width": 30, "height": 15, "texto": "135"}
+
+    def search(self, candidate, text="Meu Perfil => 135", config=None):
+        self.executor.localizar_texto_composto_por_ocr_screenshot.return_value = [candidate]
+        self.executor.localizar_texto_por_ocr_screenshot.return_value = [candidate]
+        with patch.object(motor, "OCR_DISPONIVEL", True):
+            return self.executor.localizar_referencia_hibrida_ocr_visual(
+                "reference.png", text, region=(1920, -100, 1920, 1080),
+                dimensoes_referencia=(240, 100),
+                leitura_relativa=self.config if config is None else config,
+            )
+
+    def candidate(self, bounds=None):
+        return {**self.anchor, "text": "Meu Perfil | 135", "score": 0.98,
+                "ocr_related_bounds": [self.anchor, self.value] if bounds is None else bounds}
+
+    def test_all_targets_allow_visual_failure_and_preserve_layout_dimensions(self):
+        local = self.search(self.candidate())
+        self.assertTrue(local["ocr_anchor_confirmed"])
+        self.assertFalse(local["visual_confirmed"])
+        self.assertEqual((local["left"], local["top"], local["width"], local["height"]),
+                         (1960, -30, 240, 100))
+        self.assertEqual(len(local["ocr_related_bounds"]), 2)
+        self.executor.marcar_alvos_ocr_em_sequencia.assert_called_once()
+        self.assertTrue(self.executor.ocr_hibrido_tem_todos_alvos(local, "Meu Perfil => 135", self.config))
+
+    def test_missing_second_target_blocks(self):
+        self.assertIsNone(self.search(self.candidate([self.anchor])))
+        self.executor.marcar_alvos_ocr_em_sequencia.assert_not_called()
+
+    def test_wrong_second_target_blocks_even_with_matching_image(self):
+        self.executor.procurar_imagem_por_template.return_value = dict(self.anchor)
+        self.assertIsNone(self.search(self.candidate([self.anchor, {**self.value, "texto": "136"}])))
+        self.executor.procurar_imagem_por_template.assert_not_called()
+
+    def test_similar_phrase_is_not_a_confirmed_anchor(self):
+        candidate = {**self.anchor, "texto": "um Perfil", "score": 0.99}
+        self.assertIsNone(self.search(candidate, "Meu Perfil", {}))
+
+    def test_single_target_also_allows_visual_failure(self):
+        local = self.search(self.anchor, "Meu Perfil", {})
+        self.assertTrue(local["ocr_anchor_confirmed"])
+        self.assertFalse(local["visual_confirmed"])
+
+    def test_visual_can_refine_position_after_ocr(self):
+        events = []
+        candidate = self.candidate()
+        self.executor.localizar_texto_composto_por_ocr_screenshot.side_effect = lambda *a, **k: events.append("ocr") or [candidate]
+        visual = {"left": 1980, "top": -10, "width": 240, "height": 100, "x": 2100, "y": 40}
+        self.executor.procurar_imagem_por_template.side_effect = lambda *a, **k: events.append("visual") or visual
+        local = self.search(candidate)
+        self.assertEqual(events, ["ocr", "visual"])
+        self.assertTrue(local["visual_confirmed"])
+        self.assertEqual(local["left"], 1980)
+
+    def test_unrelated_image_cannot_move_anchor(self):
+        self.executor.procurar_imagem_por_template.return_value = {
+            "left": 2300, "top": 30, "width": 100, "height": 40,
+        }
+        local = self.search(self.candidate())
+        self.assertFalse(local["visual_confirmed"])
+        self.assertEqual(local["left"], 1960)
+
+    def test_cancel_after_ocr_does_not_release_block(self):
+        self.executor.cancelamento_solicitado.return_value = True
+        self.assertIsNone(self.search(self.candidate()))
+        self.executor.procurar_imagem_por_template.assert_not_called()
+
+    def test_click_reuses_all_confirmed_targets_without_repeating_ocr(self):
+        local = self.search(self.candidate())
+        self.executor.resolver_imagem = Mock(return_value=(Path(__file__), "ref"))
+        self.executor.obter_dimensoes_imagem = Mock(return_value=(240, 100))
+        self.executor.esperar_imagem = Mock(return_value=local)
+        self.executor.salvar_variavel_contexto = Mock()
+        self.executor.confirmar_ocr_relativo = Mock(side_effect=AssertionError("OCR repetido"))
+        self.executor.marcar_regiao_ocr = Mock(side_effect=AssertionError("Marcador repetido"))
+        events = []
+        self.executor.marcar_area_reconhecida = Mock(side_effect=lambda *a, **k: events.append("visual"))
+        self.executor.clicar_area_reconhecida = Mock(side_effect=lambda *a, **k: events.append("clique") or {"x": 2087, "y": 29})
+        with patch.object(motor.time, "sleep"):
+            result = self.executor.clicar_imagem(
+                "reference.png", texto_ocr_esperado="Meu Perfil => 135",
+                leitura_relativa=self.config, offset_x=7, offset_y=9,
+            )
+        self.assertIsNotNone(result)
+        self.assertEqual(events, ["visual", "clique"])
+        self.executor.confirmar_ocr_relativo.assert_not_called()
+        self.assertEqual(self.executor.clicar_area_reconhecida.call_args.kwargs["offset_x"], 7)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -2095,42 +2095,6 @@ class ExecutorAutomacao:
                 flush=True,
             )
             return None
-        if quantidade_esperada > 1:
-            local_visual_previo = self.procurar_imagem_por_template(
-                caminho_referencia,
-                confianca=max(0.55, min(float(confianca_visual or 0.8), 0.9)),
-                region=region,
-                perfil_busca="fast",
-            )
-            if local_visual_previo:
-                confirmado_por_layout = self.confirmar_alvos_ocr_por_layout_visual(
-                    local_visual_previo,
-                    texto_esperado=esperado,
-                    leitura_relativa=leitura_relativa,
-                    dimensoes_referencia=dimensoes_referencia,
-                    caminho_referencia=caminho_referencia,
-                    marcar=True,
-                )
-                if confirmado_por_layout:
-                    info_template = self._ultima_busca_template_info or {}
-                    confirmado_por_layout["hybrid_score"] = float(info_template.get("score", local_visual_previo.get("score", 0.0)) or 0.0)
-                    safe_print(
-                        "Hibrido etapa 2/2: OCRs do layout confirmados e reconhecimento visual pronto "
-                        f"(alvos={quantidade_esperada}, score={float(confirmado_por_layout.get('hybrid_score', 0.0) or 0.0):.2f}).",
-                        flush=True,
-                    )
-                    return confirmado_por_layout
-                safe_print(
-                    "Hibrido: imagem apareceu, mas nem todos os alvos OCR do layout foram confirmados. "
-                    "O bloco nao vai clicar nesse candidato.",
-                    flush=True,
-                )
-                return None
-            safe_print(
-                "Hibrido: reconhecimento visual ainda nao encontrou a referencia para validar os OCRs do layout.",
-                flush=True,
-            )
-            return None
         layout_alvos = self.montar_layouts_alvos_ocr(
             leitura_relativa,
             dimensoes_referencia=dimensoes_referencia,
@@ -2161,123 +2125,89 @@ class ExecutorAutomacao:
         if not candidatos_ocr:
             return None
 
-        safe_print(
-            f"OCR encontrou {len(candidatos_ocr)} candidato(s) para '{esperado}'. Conferindo imagem ao redor...",
-            flush=True,
-        )
-        limite = region if region else None
-        margem_x = max(220, int(ref_largura * 1.25))
-        margem_y = max(140, int(ref_altura * 1.25))
-        melhor = None
-        melhor_score = 0.0
-        melhor_ocr = None
-        for indice, candidato in enumerate(candidatos_ocr, start=1):
+        partes = partes_compostas or [esperado]
+        for candidato in candidatos_ocr:
             if self.cancelamento_solicitado():
                 return None
-            esquerda, topo, largura, altura = self.bounds_reconhecimento(candidato)
-            if melhor_ocr is None or float(candidato.get("score", 0.0) or 0.0) > float(melhor_ocr.get("score", 0.0) or 0.0):
-                melhor_ocr = dict(candidato)
-            centro_x = esquerda + int(largura / 2)
-            centro_y = topo + int(altura / 2)
-            regiao_visual = self.limitar_regiao(
-                (
-                    centro_x - margem_x,
-                    centro_y - margem_y,
-                    margem_x * 2,
-                    margem_y * 2,
-                ),
-                limite=limite,
-            )
-            if not regiao_visual:
+            # A similaridade da busca gera candidatos; so texto confirmado libera o bloco.
+            bounds = candidato.get("ocr_related_bounds") or [candidato]
+            if len(bounds) < quantidade_esperada:
                 continue
-            safe_print(
-                f"Hibrido: candidato OCR {indice}/{len(candidatos_ocr)} "
-                f"'{candidato.get('text') or candidato.get('texto') or esperado}' em {self.formatar_regiao_log((esquerda, topo, largura, altura))}.",
-                flush=True,
+            if not all(
+                self.texto_ocr_confirma_alvo(
+                    parte, bound.get("texto") or bound.get("text") or "", limite_ratio=0.90
+                )
+                for parte, bound in zip(partes, bounds)
+            ):
+                continue
+
+            ancora = bounds[0]
+            ax, ay, aw, ah = self._retangulo_texto_ocr(ancora)
+            layouts = self.montar_layouts_alvos_ocr(
+                leitura_relativa, dimensoes_referencia, quantidade=quantidade_esperada
             )
-            local_visual = self.procurar_imagem_por_template(
+            # O retangulo do texto e menor que a caixa desenhada pelo usuario.
+            # Nao usar essa diferenca como escala: isso encolhia o preview e o clique.
+            esquerda = round(ax + aw / 2 - layouts[0]["offset_x"] - ref_largura / 2)
+            topo = round(ay + ah / 2 - layouts[0]["offset_y"] - ref_altura / 2)
+            local = {
+                "left": esquerda, "top": topo,
+                "width": ref_largura, "height": ref_altura,
+                "x": round(esquerda + ref_largura / 2),
+                "y": round(topo + ref_altura / 2),
+                "score": float(candidato.get("score", 0.0) or 0.0),
+            }
+            margem_x = max(40, round(ref_largura * 0.25))
+            margem_y = max(30, round(ref_altura * 0.25))
+            regiao_visual = self.limitar_regiao(
+                (esquerda - margem_x, topo - margem_y,
+                 ref_largura + margem_x * 2, ref_altura + margem_y * 2),
+                limite=region,
+            )
+            # A imagem apenas refina a geometria. Uma falha visual nao invalida os OCRs.
+            visual = self.procurar_imagem_por_template(
                 caminho_referencia,
                 confianca=max(0.55, min(float(confianca_visual or 0.8), 0.9)),
                 region=regiao_visual,
                 perfil_busca="fast",
-            )
-            if not local_visual:
-                continue
-            confirmado = local_visual
-            score_visual = float((self._ultima_busca_template_info or {}).get("score", confirmado.get("score", 0.0)) or 0.0)
-            score_ocr = float(candidato.get("score", 0.0) or 0.0)
-            score_total = (score_visual * 0.58) + (score_ocr * 0.42)
-            confirmado = dict(confirmado)
-            confirmado.update({
+            ) if regiao_visual else None
+            if self.cancelamento_solicitado():
+                return None
+            if visual:
+                vx, vy, vw, vh = self.bounds_reconhecimento(visual)
+                # Nao trocar a ancora por uma imagem semelhante ao lado.
+                if vx <= ax + aw / 2 <= vx + vw and vy <= ay + ah / 2 <= vy + vh:
+                    local = dict(visual)
+                else:
+                    visual = None
+            local.update({
                 "search_stage": "ocr_visual_hybrid",
                 "ocr_anchor_confirmed": True,
+                "visual_confirmed": bool(visual),
                 "ocr_text": str(candidato.get("text") or candidato.get("texto") or esperado),
-                "ocr_bounds": {
-                    "left": int(esquerda),
-                    "top": int(topo),
-                    "width": int(largura),
-                    "height": int(altura),
-                },
-                "hybrid_score": score_total,
+                "ocr_bounds": dict(ancora),
             })
-            for chave_extra in (
-                "ocr_composto",
-                "ocr_relacional",
-                "ocr_partes",
-                "ocr_textos",
-                "ocr_related_bounds",
-                "ocr_anchor_bounds",
-                "ocr_value_bounds",
-                "ocr_union_bounds",
-                "ocr_relation_score",
+            for chave in (
+                "ocr_composto", "ocr_relacional", "ocr_partes", "ocr_textos",
+                "ocr_related_bounds", "ocr_anchor_bounds", "ocr_value_bounds",
+                "ocr_union_bounds", "ocr_relation_score",
             ):
-                if chave_extra in candidato:
-                    confirmado[chave_extra] = candidato.get(chave_extra)
-            if score_total >= 0.82 or score_ocr >= 0.92:
-                melhor = confirmado
-                melhor_score = score_total
-                break
-            if score_total > melhor_score:
-                melhor_score = score_total
-                melhor = confirmado
-
-        if melhor:
-            if not self.ocr_hibrido_tem_todos_alvos(melhor, esperado, leitura_relativa):
-                quantidade = self.quantidade_alvos_ocr_esperados(esperado, leitura_relativa)
-                encontrados = len(melhor.get("ocr_related_bounds") or [])
-                safe_print(
-                    "Hibrido: imagem confirmou, mas o OCR obrigatorio ainda esta incompleto "
-                    f"({encontrados}/{quantidade} alvo(s)). O bloco nao vai clicar neste candidato.",
-                    flush=True,
-                )
+                if chave in candidato:
+                    local[chave] = candidato[chave]
+            if not self.ocr_hibrido_tem_todos_alvos(local, esperado, leitura_relativa):
+                continue
+            self.marcar_alvos_ocr_em_sequencia(local, leitura_relativa, dimensoes_referencia)
+            if self.cancelamento_solicitado():
                 return None
-            if not melhor.get("ocr_layout_targets_marked"):
-                self.marcar_alvos_ocr_em_sequencia(melhor, leitura_relativa, dimensoes_referencia)
+            local["ocr_layout_targets_marked"] = True
             safe_print(
-                "Hibrido etapa 2/2: reconhecimento visual confirmado "
-                f"(texto='{melhor.get('ocr_text', esperado)}', score={melhor_score:.2f}).",
+                f"OCR: todos os {quantidade_esperada} alvo(s) confirmados. "
+                + ("Imagem refinou a posicao da ancora." if visual else
+                   "Seguindo pela ancora OCR; imagem dispensada."),
                 flush=True,
             )
-            return melhor
-        if melhor_ocr:
-            esquerda, topo, largura, altura = self.bounds_reconhecimento(melhor_ocr)
-            self.marcar_regiao_absoluta(
-                int(esquerda),
-                int(topo),
-                int(largura),
-                int(altura),
-                tema="ocr_busca",
-                etiqueta="OCR",
-                duracao=0.28,
-                bloqueante=True,
-                margem=2,
-            )
-            safe_print(
-                "Hibrido: OCR encontrou texto parecido, mas a imagem de referencia nao confirmou. "
-                "O bloco nao vai clicar nesse candidato.",
-                flush=True,
-            )
-        safe_print("Hibrido: OCR encontrou texto, mas a imagem nao confirmou nenhum candidato.", flush=True)
+            return local
+        safe_print("OCR: nem todos os textos obrigatorios confirmaram; bloco aguardando.", flush=True)
         return None
 
     def localizar_referencia_por_recorte_ocr_visual(
@@ -6050,6 +5980,7 @@ class ExecutorAutomacao:
                 self.extrair_texto_ocr_imagem_pil(captura, config="--psm 7"),
             ]
         capturado = " ".join(str(item or "").strip() for item in textos if str(item or "").strip()).strip()
+        comparacao = self.comparar_texto_reconhecimento_preciso(texto_esperado, capturado)
         confirmado = self.texto_ocr_confirma_alvo(texto_esperado, capturado, limite_ratio=0.90)
         if not confirmado:
             return None
