@@ -87,6 +87,27 @@ class OcrAnchorTests(unittest.TestCase):
         self.assertIsNone(self.search(self.candidate()))
         self.executor.procurar_imagem_por_template.assert_not_called()
 
+    def test_click_reuses_all_confirmed_targets_without_repeating_ocr(self):
+        local = self.search(self.candidate())
+        self.executor.resolver_imagem = Mock(return_value=(Path(__file__), "ref"))
+        self.executor.obter_dimensoes_imagem = Mock(return_value=(240, 100))
+        self.executor.esperar_imagem = Mock(return_value=local)
+        self.executor.salvar_variavel_contexto = Mock()
+        self.executor.confirmar_ocr_relativo = Mock(side_effect=AssertionError("OCR repetido"))
+        self.executor.marcar_regiao_ocr = Mock(side_effect=AssertionError("Marcador repetido"))
+        events = []
+        self.executor.marcar_area_reconhecida = Mock(side_effect=lambda *a, **k: events.append("visual"))
+        self.executor.clicar_area_reconhecida = Mock(side_effect=lambda *a, **k: events.append("clique") or {"x": 2087, "y": 29})
+        with patch.object(motor.time, "sleep"):
+            result = self.executor.clicar_imagem(
+                "reference.png", texto_ocr_esperado="Meu Perfil => 135",
+                leitura_relativa=self.config, offset_x=7, offset_y=9,
+            )
+        self.assertIsNotNone(result)
+        self.assertEqual(events, ["visual", "clique"])
+        self.executor.confirmar_ocr_relativo.assert_not_called()
+        self.assertEqual(self.executor.clicar_area_reconhecida.call_args.kwargs["offset_x"], 7)
+
 
 if __name__ == "__main__":
     unittest.main()
