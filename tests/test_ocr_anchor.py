@@ -63,6 +63,30 @@ class OcrAnchorTests(unittest.TestCase):
         self.assertTrue(local["ocr_anchor_confirmed"])
         self.assertFalse(local["visual_confirmed"])
 
+    def test_visual_can_refine_position_after_ocr(self):
+        events = []
+        candidate = self.candidate()
+        self.executor.localizar_texto_composto_por_ocr_screenshot.side_effect = lambda *a, **k: events.append("ocr") or [candidate]
+        visual = {"left": 1980, "top": -10, "width": 240, "height": 100, "x": 2100, "y": 40}
+        self.executor.procurar_imagem_por_template.side_effect = lambda *a, **k: events.append("visual") or visual
+        local = self.search(candidate)
+        self.assertEqual(events, ["ocr", "visual"])
+        self.assertTrue(local["visual_confirmed"])
+        self.assertEqual(local["left"], 1980)
+
+    def test_unrelated_image_cannot_move_anchor(self):
+        self.executor.procurar_imagem_por_template.return_value = {
+            "left": 2300, "top": 30, "width": 100, "height": 40,
+        }
+        local = self.search(self.candidate())
+        self.assertFalse(local["visual_confirmed"])
+        self.assertEqual(local["left"], 1960)
+
+    def test_cancel_after_ocr_does_not_release_block(self):
+        self.executor.cancelamento_solicitado.return_value = True
+        self.assertIsNone(self.search(self.candidate()))
+        self.executor.procurar_imagem_por_template.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
