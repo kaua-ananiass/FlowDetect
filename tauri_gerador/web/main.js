@@ -1,4 +1,4 @@
-﻿const tauriCore = window.__TAURI__?.core ?? null;
+const tauriCore = window.__TAURI__?.core ?? null;
 const tauriEvent = window.__TAURI__?.event ?? null;
 const tauriDialog = window.__TAURI__?.dialog ?? null;
 window.__GENERATOR_MAIN_READY = true;
@@ -48,6 +48,24 @@ async function saveNativeFileDialog(options = {}) {
 if (!window.__FLOWDETECT_DESIGN_SYSTEM__) {
 const AGENTS_STORAGE_KEY = "flowdetect_agents_vms_v1";
 const AGENT_SCHEDULER_STORAGE_KEY = "flowdetect_agent_scheduler_v1";
+const COMMAND_MAP_TREE_LAYOUT_STORAGE_KEY = "flowdetect_command_map_tree_layout_v1";
+
+function loadCommandMapTreeLayouts() {
+  try {
+    const parsed = JSON.parse(window.localStorage?.getItem(COMMAND_MAP_TREE_LAYOUT_STORAGE_KEY) || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistCommandMapTreeLayouts() {
+  try {
+    window.localStorage?.setItem(COMMAND_MAP_TREE_LAYOUT_STORAGE_KEY, JSON.stringify(state.commandMapTreeLayouts || {}));
+  } catch (error) {
+    console.warn("Nao foi possivel salvar o layout manual da arvore.", error);
+  }
+}
 
 const state = {
   roadmap: null,
@@ -200,6 +218,7 @@ const state = {
   },
   commandMapZoom: 0.96,
   commandMapRequestedZoom: 0.96,
+  commandMapViewMode: "sequence",
   commandMapPageSequence: "principal",
   commandMapPageSequenceLock: null,
   commandMapFocusOrder: null,
@@ -213,6 +232,7 @@ const state = {
     dirty: false,
   },
   commandMapDrafts: {},
+  commandMapTreeLayouts: loadCommandMapTreeLayouts(),
   assist: {
     mode: "idle",
     current: 0,
@@ -301,6 +321,7 @@ const state = {
   recognitionPreviewCache: {},
   expandedTreeCardOrder: null,
   expandedTreeCardOrigin: null,
+  commandMapTreeNodeDrag: null,
   workbookSearch: "",
   composerWorkbookId: "",
   previewWorkbookId: "",
@@ -602,6 +623,7 @@ const mapZoomOutButton = document.getElementById("mapZoomOutButton");
 const mapZoomInButton = document.getElementById("mapZoomInButton");
 const mapZoomRange = document.getElementById("mapZoomRange");
 const mapZoomValue = document.getElementById("mapZoomValue");
+const commandMapViewButtons = Array.from(document.querySelectorAll("[data-command-map-view]"));
 const assistDelayInput = document.getElementById("assistDelayInput");
 const assistLoopStartInput = document.getElementById("assistLoopStartInput");
 const assistWindowModeSelect = document.getElementById("assistWindowModeSelect");
@@ -1567,6 +1589,372 @@ function renderCommandJumpPaths() {
   row.prepend(layer);
 }
 
+function clearCommandMapTreeReferenceLayer(tree) {
+  tree?.querySelectorAll(".command-map-tree-link-layer").forEach((layer) => layer.remove());
+}
+
+function renderCommandMapTreeReferenceLinks() {
+  if (!commandMapList || state.activeTab !== "commands") {
+    return;
+  }
+  const tree = commandMapList.querySelector(".command-map-tree");
+  if (!tree) {
+    return;
+  }
+  clearCommandMapTreeReferenceLayer(tree);
+  const stage = tree.querySelector(".command-map-tree-stage");
+  const edgeLabels = stage ? Array.from(stage.querySelectorAll("[data-tree-edge-source-order]")) : [];
+  if (stage && edgeLabels.length) {
+    const stageRect = stage.getBoundingClientRect();
+    const stageZoom = stage.offsetWidth ? Math.max(0.2, stageRect.width / stage.offsetWidth) : 1;
+    const stageWidth = Math.max(stage.scrollWidth, stage.offsetWidth, Math.round(stageRect.width), 1);
+    const stageHeight = Math.max(stage.scrollHeight, stage.offsetHeight, Math.round(stageRect.height), 1);
+    const layer = document.createElement("div");
+    layer.className = "command-map-tree-link-layer";
+    layer.style.width = `${Math.ceil(stageWidth)}px`;
+    layer.style.height = `${Math.ceil(stageHeight)}px`;
+
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "command-map-tree-link-svg");
+    svg.setAttribute("viewBox", `0 0 ${Math.ceil(stageWidth)} ${Math.ceil(stageHeight)}`);
+    svg.setAttribute("aria-hidden", "true");
+
+    const toStageRect = (element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: (rect.left - stageRect.left) / stageZoom,
+        right: (rect.right - stageRect.left) / stageZoom,
+        top: (rect.top - stageRect.top) / stageZoom,
+        bottom: (rect.bottom - stageRect.top) / stageZoom,
+        width: rect.width / stageZoom,
+        height: rect.height / stageZoom,
+        centerX: (rect.left - stageRect.left + rect.width / 2) / stageZoom,
+        centerY: (rect.top - stageRect.top + rect.height / 2) / stageZoom,
+      };
+    };
+    let dynamicStageHeight = stageHeight;
+
+    edgeLabels.forEach((label, index) => {
+      const sourceOrder = Number(label.dataset.treeEdgeSourceOrder || 0);
+      const isTerminalRoute = label.dataset.treeEdgeTerminalRoute === "true";
+      const targetOrder = isTerminalRoute ? 0 : Number(label.dataset.treeEdgeTargetOrder || 0);
+      const terminalId = String(label.dataset.treeEdgeTerminalId || "");
+      const sourceCard = stage.querySelector(`.command-tree-card[data-order="${sourceOrder}"]`);
+      let targetElement = targetOrder
+        ? stage.querySelector(`.command-tree-card[data-order="${targetOrder}"]`)
+        : terminalId
+          ? stage.querySelector(`[data-tree-terminal-id="${terminalId}"]`)
+          : null;
+      if (isTerminalRoute && !targetElement) {
+        targetElement = label;
+      }
+      if (!sourceCard || !targetElement) {
+        return;
+      }
+
+      const sourceRect = toStageRect(sourceCard);
+      let targetRect = toStageRect(targetElement);
+      const kind = String(label.dataset.treeEdgeKind || "success").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "success";
+      const isPrimaryNext = label.classList.contains("is-primary-next");
+      const isTerminal = isTerminalRoute || !targetOrder;
+      const labelRect = toStageRect(label);
+      const branchLaneIndex = Math.max(0, Number(label.dataset.treeEdgeBranchLane || 0));
+      const branchSide = String(label.dataset.treeEdgeSide || (isPrimaryNext ? "main" : "lower")).trim().toLowerCase();
+      const isUpperBranch = branchSide === "upper";
+      let laneY = Number(label.dataset.treeEdgeLaneY || 0) || sourceRect.centerY;
+      if (isPrimaryNext) {
+        const gap = targetRect.left - sourceRect.right;
+        const labelX = gap > labelRect.width + 28
+          ? sourceRect.right + (gap - labelRect.width) / 2
+          : sourceRect.right + 18;
+        label.style.left = `${Math.round(labelX)}px`;
+        label.style.top = `${Math.round(((sourceRect.centerY + targetRect.centerY) / 2) - (labelRect.height / 2))}px`;
+      } else if (isUpperBranch) {
+        const upperGap = 48 + branchLaneIndex * 58;
+        laneY = Math.max(54 + branchLaneIndex * 10, Math.min(sourceRect.top, isTerminal ? sourceRect.top : targetRect.top) - upperGap);
+        const upperLabelCenterX = isTerminal
+          ? sourceRect.centerX
+          : (sourceRect.centerX + targetRect.centerX) / 2;
+        const upperLabelX = Math.max(8, upperLabelCenterX - labelRect.width / 2);
+        label.style.left = `${Math.round(upperLabelX)}px`;
+        label.style.top = `${Math.round(laneY - (labelRect.height / 2))}px`;
+      } else {
+        const compactLaneOffset = branchLaneIndex * 46 + ((Math.abs(sourceOrder) + index) % 4) * 18;
+        const branchPortOffsetX = (branchLaneIndex - 0.5) * 44;
+        const lowerFailureAnchorX = sourceRect.left + Math.min(
+          sourceRect.width - 76,
+          Math.max(34, sourceRect.width * 0.12 + branchLaneIndex * 20)
+        );
+        const terminalFailureAnchorX = sourceRect.left + Math.min(
+          sourceRect.width - 34,
+          Math.max(104, sourceRect.width * 0.92)
+        );
+        const terminalPortRatio = kind === "failure" ? 0.78 : 0.58;
+        const terminalAnchorX = kind === "failure"
+          ? isTerminal ? terminalFailureAnchorX : lowerFailureAnchorX
+          : sourceRect.left + Math.min(
+              sourceRect.width - 42,
+              Math.max(56, sourceRect.width * terminalPortRatio)
+            );
+        laneY = Math.max(
+          sourceRect.bottom,
+          isTerminal ? sourceRect.bottom : targetRect.bottom
+        ) + 46 + compactLaneOffset;
+        const lowerTargetAnchorX = isTerminal
+          ? terminalAnchorX
+          : kind === "failure"
+            ? targetRect.centerX + branchPortOffsetX
+            : targetRect.centerX >= sourceRect.centerX ? targetRect.left : targetRect.right;
+        const lowerLabelCenterX = isTerminal
+          ? terminalAnchorX
+          : (terminalAnchorX + lowerTargetAnchorX) / 2;
+        const labelX = Math.max(8, lowerLabelCenterX - labelRect.width / 2);
+        label.style.left = `${Math.round(labelX)}px`;
+        label.style.top = `${Math.round(laneY - (labelRect.height / 2))}px`;
+        if (isTerminal && targetElement !== label) {
+          targetElement.style.left = `${Math.round(labelX + labelRect.width + 28)}px`;
+          targetElement.style.top = `${Math.round(laneY - targetRect.height / 2)}px`;
+        }
+        if (isTerminal) {
+          targetRect = toStageRect(targetElement);
+        }
+        dynamicStageHeight = Math.max(dynamicStageHeight, laneY + 96, targetRect.bottom + 72);
+      }
+      const isSelfLoop = targetOrder && targetOrder === sourceOrder;
+      const isForward = isTerminal || targetRect.left >= sourceRect.right || (targetOrder && targetOrder > sourceOrder);
+      const pathId = `commandTreeStage_${sourceOrder || "x"}_${targetOrder || terminalId || "end"}_${kind}_${index}`;
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("id", pathId);
+
+      if (!isPrimaryNext && isUpperBranch) {
+        const upperDirection = branchLaneIndex % 2 === 0 ? -1 : 1;
+        const upperStep = Math.floor(branchLaneIndex / 2) + 1;
+        const upperSourceOffsetX = upperDirection * (46 + upperStep * 34);
+        const upperTargetOffsetX = -upperSourceOffsetX;
+        const upperTargetRatios = [0.26, 0.74, 0.42, 0.58, 0.32, 0.68];
+        const upperTargetRatio = upperTargetRatios[branchLaneIndex % upperTargetRatios.length];
+        const startX = sourceRect.left + Math.min(
+          sourceRect.width - 30,
+          Math.max(30, sourceRect.width * 0.5 + upperSourceOffsetX)
+        );
+        const startY = sourceRect.top;
+        const endX = targetRect.left + Math.min(
+          targetRect.width - 30,
+          Math.max(30, targetRect.width * upperTargetRatio + upperTargetOffsetX * 0.22)
+        );
+        const endY = targetRect.top;
+        const goesRight = targetRect.centerX >= sourceRect.centerX;
+        const routePadding = 44 + branchLaneIndex * 24;
+        const departureX = startX + (goesRight ? routePadding : -routePadding);
+        const approachX = goesRight
+          ? Math.max(departureX + 28, targetRect.left - routePadding)
+          : Math.min(departureX - 28, targetRect.right + routePadding);
+        path.setAttribute("d", [
+          `M ${startX} ${startY}`,
+          `L ${startX} ${laneY}`,
+          `L ${departureX} ${laneY}`,
+          `L ${approachX} ${laneY}`,
+          `L ${endX} ${laneY}`,
+          `L ${endX} ${endY}`,
+        ].join(" "));
+      } else if (!isPrimaryNext) {
+        const lowerPortRatio = kind === "failure" ? 0.78 : 0.58;
+        const branchPortOffsetX = (branchLaneIndex - 0.5) * 44;
+        const lowerFailureAnchorX = sourceRect.left + Math.min(
+          sourceRect.width - 76,
+          Math.max(34, sourceRect.width * 0.12 + branchLaneIndex * 20)
+        );
+        const terminalFailureAnchorX = sourceRect.left + Math.min(
+          sourceRect.width - 34,
+          Math.max(104, sourceRect.width * 0.92)
+        );
+        const startX = kind === "failure"
+          ? isTerminal ? terminalFailureAnchorX : lowerFailureAnchorX
+          : sourceRect.left + Math.min(sourceRect.width - 42, Math.max(56, sourceRect.width * lowerPortRatio));
+        const startY = sourceRect.bottom;
+        const goesForward = isTerminal || targetRect.centerX >= sourceRect.centerX;
+        const endX = isTerminal
+          ? targetRect.left
+          : kind === "failure"
+            ? targetRect.centerX + branchPortOffsetX
+            : goesForward ? targetRect.left : targetRect.right;
+        const endY = isTerminal
+          ? targetRect.centerY
+          : kind === "failure"
+            ? targetRect.bottom
+            : targetRect.top + Math.min(targetRect.height * lowerPortRatio, targetRect.height - 42);
+        const sourceDropY = Math.min(laneY - 16, startY + 36);
+        const targetRiseY = isTerminal
+          ? laneY
+          : Math.min(laneY - 16, endY + 36);
+        if (isTerminal && kind === "failure") {
+          const routeLabelRect = toStageRect(label);
+          const verticalEndY = Math.max(startY + 18, routeLabelRect.top - 24);
+          path.setAttribute("d", [
+            `M ${startX} ${startY}`,
+            `C ${startX} ${sourceDropY} ${startX} ${sourceDropY} ${startX} ${verticalEndY}`,
+          ].join(" "));
+        } else {
+          path.setAttribute("d", [
+            `M ${startX} ${startY}`,
+            `C ${startX} ${sourceDropY} ${startX} ${sourceDropY} ${startX} ${laneY}`,
+            `L ${endX} ${laneY}`,
+            `C ${endX} ${targetRiseY} ${endX} ${targetRiseY} ${endX} ${endY}`,
+          ].join(" "));
+        }
+      } else if (isSelfLoop) {
+        const startX = sourceRect.right;
+        const endX = sourceRect.left;
+        const loopRight = sourceRect.right + 76;
+        const loopLeft = Math.max(8, sourceRect.left - 62);
+        path.setAttribute("d", [
+          `M ${startX} ${sourceRect.centerY}`,
+          `C ${loopRight} ${sourceRect.centerY} ${loopRight} ${laneY} ${sourceRect.right + 26} ${laneY}`,
+          `L ${loopLeft} ${laneY}`,
+          `C ${loopLeft} ${sourceRect.centerY} ${endX - 26} ${sourceRect.centerY} ${endX} ${sourceRect.centerY}`,
+        ].join(" "));
+      } else if (isPrimaryNext && isForward) {
+        const startX = sourceRect.right;
+        const endX = targetRect.left;
+        const delta = Math.max(38, Math.min(86, Math.abs(endX - startX) * 0.45));
+        path.setAttribute(
+          "d",
+          `M ${startX} ${sourceRect.centerY} C ${startX + delta} ${sourceRect.centerY} ${endX - delta} ${targetRect.centerY} ${endX} ${targetRect.centerY}`
+        );
+      } else if (isForward) {
+        const startX = sourceRect.right;
+        const endX = targetRect.left;
+        const firstTurn = startX + 54;
+        const lastTurn = Math.max(firstTurn + 20, endX - 54);
+        path.setAttribute("d", [
+          `M ${startX} ${sourceRect.centerY}`,
+          `C ${firstTurn} ${sourceRect.centerY} ${firstTurn} ${laneY} ${firstTurn + 20} ${laneY}`,
+          `L ${lastTurn} ${laneY}`,
+          `C ${endX - 24} ${laneY} ${endX - 24} ${targetRect.centerY} ${endX} ${targetRect.centerY}`,
+        ].join(" "));
+      } else {
+        const startX = sourceRect.left;
+        const endX = targetRect.right;
+        const firstTurn = Math.max(8, startX - 62);
+        const lastTurn = endX + 62;
+        path.setAttribute("d", [
+          `M ${startX} ${sourceRect.centerY}`,
+          `C ${firstTurn} ${sourceRect.centerY} ${firstTurn} ${laneY} ${firstTurn} ${laneY}`,
+          `L ${lastTurn} ${laneY}`,
+          `C ${lastTurn} ${targetRect.centerY} ${endX + 28} ${targetRect.centerY} ${endX} ${targetRect.centerY}`,
+        ].join(" "));
+      }
+
+      path.setAttribute("class", `command-map-tree-link-path is-${kind} ${isPrimaryNext ? "is-primary-next" : "is-branch-route"} is-${branchSide}`);
+      svg.appendChild(path);
+
+      const energy = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      energy.setAttribute("class", `command-map-tree-link-energy is-${kind}`);
+      energy.setAttribute("r", kind === "failure" ? "3.2" : "3");
+      const motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
+      motion.setAttribute("dur", kind === "failure" ? "1.8s" : "1.55s");
+      motion.setAttribute("repeatCount", "indefinite");
+      motion.setAttribute("rotate", "auto");
+      const mpath = document.createElementNS("http://www.w3.org/2000/svg", "mpath");
+      mpath.setAttribute("href", `#${pathId}`);
+      mpath.setAttributeNS("http://www.w3.org/1999/xlink", "href", `#${pathId}`);
+      motion.appendChild(mpath);
+      energy.appendChild(motion);
+      svg.appendChild(energy);
+    });
+
+    const finalStageHeight = Math.ceil(dynamicStageHeight);
+    stage.style.height = `${finalStageHeight}px`;
+    layer.style.height = `${finalStageHeight}px`;
+    svg.setAttribute("viewBox", `0 0 ${Math.ceil(stageWidth)} ${finalStageHeight}`);
+    layer.appendChild(svg);
+    stage.prepend(layer);
+    return;
+  }
+  const references = Array.from(tree.querySelectorAll("[data-tree-reference-target-order]"));
+  if (!references.length) {
+    return;
+  }
+
+  const treeRect = tree.getBoundingClientRect();
+  const treeZoom = tree.offsetWidth ? Math.max(0.2, treeRect.width / tree.offsetWidth) : 1;
+  const treeWidth = Math.max(tree.scrollWidth, tree.offsetWidth, Math.round(treeRect.width), 1);
+  const treeHeight = Math.max(tree.scrollHeight, tree.offsetHeight, Math.round(treeRect.height), 1);
+  const layer = document.createElement("div");
+  layer.className = "command-map-tree-link-layer";
+  layer.style.width = `${Math.ceil(treeWidth)}px`;
+  layer.style.height = `${Math.ceil(treeHeight)}px`;
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "command-map-tree-link-svg");
+  svg.setAttribute("viewBox", `0 0 ${Math.ceil(treeWidth)} ${Math.ceil(treeHeight)}`);
+  svg.setAttribute("aria-hidden", "true");
+
+  references.forEach((reference, index) => {
+    const targetOrder = Number(reference.dataset.treeReferenceTargetOrder || 0);
+    const sourceOrder = Number(reference.dataset.treeReferenceSourceOrder || 0);
+    if (!targetOrder) {
+      return;
+    }
+    const targetSegment = tree.querySelector(`.command-flow-segment[data-order="${targetOrder}"]`);
+    const targetCard = targetSegment?.querySelector(".command-tree-card");
+    if (!targetCard) {
+      return;
+    }
+
+    const referenceRect = reference.getBoundingClientRect();
+    const targetRect = targetCard.getBoundingClientRect();
+    const referenceX = (referenceRect.left - treeRect.left + referenceRect.width / 2) / treeZoom;
+    const referenceY = (referenceRect.top - treeRect.top + referenceRect.height / 2) / treeZoom;
+    const targetLeft = (targetRect.left - treeRect.left) / treeZoom;
+    const targetRight = (targetRect.right - treeRect.left) / treeZoom;
+    const targetY = (targetRect.top - treeRect.top + targetRect.height / 2) / treeZoom;
+    const goesBack = targetRight < referenceX || targetOrder <= sourceOrder;
+    const targetX = goesBack ? targetRight : targetLeft;
+    const lane = 34 + (index % 5) * 18;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const kind = String(reference.dataset.treeReferenceKind || "success").trim().toLowerCase();
+    const pathId = `commandTreeRef_${sourceOrder || "x"}_${targetOrder}_${kind}_${index}`;
+    path.setAttribute("id", pathId);
+    if (goesBack) {
+      const arcY = Math.max(14, Math.min(referenceY, targetY) - lane);
+      const startTurnX = referenceX + 34;
+      const targetTurnX = targetX + 34;
+      path.setAttribute("d", [
+        `M ${referenceX} ${referenceY}`,
+        `C ${startTurnX} ${referenceY} ${startTurnX} ${arcY} ${referenceX} ${arcY}`,
+        `L ${targetTurnX} ${arcY}`,
+        `C ${targetX} ${arcY} ${targetX} ${targetY} ${targetX} ${targetY}`,
+      ].join(" "));
+    } else {
+      const delta = Math.max(70, Math.abs(targetX - referenceX) * 0.42);
+      path.setAttribute(
+        "d",
+        `M ${referenceX} ${referenceY} C ${referenceX + delta} ${referenceY} ${targetX - delta} ${targetY} ${targetX} ${targetY}`
+      );
+    }
+    path.setAttribute("class", `command-map-tree-link-path is-${escapeHtml(kind || "success")} ${goesBack ? "is-back-reference" : "is-forward-reference"}`);
+    svg.appendChild(path);
+
+    const energy = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    energy.setAttribute("class", `command-map-tree-link-energy is-${escapeHtml(kind || "success")}`);
+    energy.setAttribute("r", kind === "failure" ? "3.2" : "3");
+    const motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
+    motion.setAttribute("dur", kind === "failure" ? "1.75s" : "1.55s");
+    motion.setAttribute("repeatCount", "indefinite");
+    motion.setAttribute("rotate", "auto");
+    const mpath = document.createElementNS("http://www.w3.org/2000/svg", "mpath");
+    mpath.setAttribute("href", `#${pathId}`);
+    mpath.setAttributeNS("http://www.w3.org/1999/xlink", "href", `#${pathId}`);
+    motion.appendChild(mpath);
+    energy.appendChild(motion);
+    svg.appendChild(energy);
+  });
+
+  layer.appendChild(svg);
+  tree.prepend(layer);
+}
+
 function scheduleCommandConnectorLayout(options = {}) {
   if (state.commandConnectorLayoutFrame) {
     cancelAnimationFrame(state.commandConnectorLayoutFrame);
@@ -1575,6 +1963,7 @@ function scheduleCommandConnectorLayout(options = {}) {
     state.commandConnectorLayoutFrame = 0;
     updateCommandConnectorPositions();
     renderCommandJumpPaths();
+    renderCommandMapTreeReferenceLinks();
   });
 
   const duration = Math.max(0, Number(options.burstMs || 0));
@@ -1590,9 +1979,11 @@ function scheduleCommandConnectorLayoutBurst(duration = 420) {
 
   updateCommandConnectorPositions();
   renderCommandJumpPaths();
+  renderCommandMapTreeReferenceLinks();
   window.setTimeout(() => {
     updateCommandConnectorPositions();
     renderCommandJumpPaths();
+    renderCommandMapTreeReferenceLinks();
   }, duration);
 }
 
@@ -4633,7 +5024,7 @@ function applyCommandMapFocus(behavior = "smooth", options = {}) {
     [visibleOrders[focusIndex - 1], visibleOrders[focusIndex + 1]].filter((order) => Number.isFinite(order))
   );
 
-  const row = commandMapList.querySelector(".command-flow-row");
+  const row = commandMapList.querySelector(".command-flow-row, .command-map-tree");
   if (!row) {
     updateCommandMapNavButtons();
     return;
@@ -5391,6 +5782,9 @@ async function moveCommandMapCardByStep(order, direction, options = {}) {
 function beginCardDrag(handle, pointerEvent) {
   if (state.commandMapReorderRunning) {
     setMessage("Finalizando a troca anterior. Tente novamente em um instante.", "info");
+    return;
+  }
+  if (normalizeCommandMapViewMode(state.commandMapViewMode) === "tree") {
     return;
   }
 
@@ -8493,6 +8887,7 @@ function ocrTargetLayoutsFromContainer(container) {
     }
   }
   return rows.map((row, index) => {
+    const targetField = row.querySelector("[data-ocr-target-field]");
     const offsetXField = row.querySelector("[data-ocr-target-offset-x]");
     const offsetYField = row.querySelector("[data-ocr-target-offset-y]");
     const widthField = row.querySelector("[data-ocr-target-width]");
@@ -8505,6 +8900,7 @@ function ocrTargetLayoutsFromContainer(container) {
       offsetY: hasOffset ? parseNumber(offsetYField?.value, 0) : null,
       width: hasSize ? parseNumber(widthField?.value, 140) : null,
       height: hasSize ? parseNumber(heightField?.value, 40) : null,
+      texto: String(targetField?.value || "").trim(),
     };
   });
 }
@@ -12407,18 +12803,9 @@ function scheduleNativeHypervRdpSync(liveResize = false) {
   }
   state.remoteControl.hypervResizeFollowupTimers = [];
   if (liveResize) {
-    // O framebuffer acelerado do MSTSC nao suporta dezenas de SetWindowPos
-    // durante o arraste. Oculte-o e aplique apenas a geometria final.
-    invoke("resize_native_hyperv_rdp", {
-      x: 0,
-      y: 0,
-      width: 320,
-      height: 240,
-      visible: false,
-    }).catch(() => null);
-    state.remoteControl.nativeRdpResizeReconnectTimer = window.setTimeout(
-      () => reopenNativeHypervRdpAfterResize().catch(() => null),
-      720,
+    state.remoteControl.hypervResizeTimer = window.setTimeout(
+      () => syncNativeHypervRdp().catch(() => null),
+      220,
     );
     return;
   }
@@ -14780,16 +15167,38 @@ async function stopAgentVm(agent) {
 
 async function openBaseVmForConfiguration(vmName = "") {
   const name = String(vmName || "").trim();
-  if (!name) throw new Error("Nome da VM-base nao informado.");
+  if (!name) throw new Error("Nome da VM nao informado.");
 
-  setBusy("Iniciando VM-base");
+  const isBase = /(?:^|[-_\s])base(?:$|[-_\s])/i.test(name);
+  const vmLabel = isBase ? "VM-base" : "VM";
+  setBusy(`Iniciando ${vmLabel}`);
+  setWorkspaceTab("agent-screen");
+  setVmScreenBootState({
+    active: true,
+    vmName: name,
+    label: `Iniciando ${name}`,
+    detail: "Enviando comando para o Hyper-V.",
+    percent: 12,
+  });
   await closeEmbeddedHypervConsole().catch(() => null);
   stopStudioControlScreenStream({ clear: true });
   state.remoteControl.connected = false;
   state.remoteControl.address = "";
   if (studioControlAddressInput) studioControlAddressInput.value = "";
-  await invoke("start_hyperv_vm", { vmName: name });
-  setWorkspaceTab("agent-screen");
+  try {
+    await invoke("start_hyperv_vm", { vmName: name });
+  } catch (error) {
+    const detail = String(error || "Falha ao iniciar a VM.").replace(/^Falha no Hyper-V:\s*/i, "");
+    setVmScreenBootState({
+      active: true,
+      vmName: name,
+      label: `Falha ao iniciar ${name}`,
+      detail,
+      percent: 100,
+    });
+    if (studioControlScreenStatus) studioControlScreenStatus.textContent = detail;
+    throw error;
+  }
   setBusy("Inicializando tela Hyper-V");
   const knownVm = (state.agents.vms || []).find((vm) => String(vm?.name || "").trim().toLowerCase() === name.toLowerCase());
   const wasAlreadyRunning = String(knownVm?.state || "").toLowerCase() === "running";
@@ -15989,7 +16398,7 @@ async function runStudioControlAutomation(id = "", options = {}) {
     startCompany: String(studioControlCompanyStartInput?.value || "").trim(),
     minimizeAgent: typeof options.minimizeAgent === "boolean"
       ? options.minimizeAgent
-      : String(studioControlAgentWindowMode?.value || "minimize") === "minimize",
+      : String(studioControlAgentWindowMode?.value || "normal") === "minimize",
     textOverrides: studioControlEditableTextOverridesJson(),
   });
   applyStudioControlStatus(result);
@@ -18197,6 +18606,877 @@ function renderTimeline() {
     .join("");
 }
 
+
+function normalizeCommandMapViewMode(mode = "sequence") {
+  return String(mode || "sequence").trim().toLowerCase() === "tree" ? "tree" : "sequence";
+}
+
+function commandMapTreeLayoutPageKey(pageSequence = state.commandMapPageSequence) {
+  return String(pageSequence || "principal").trim() || "principal";
+}
+
+function getCommandMapTreeManualPositions(pageSequence = state.commandMapPageSequence) {
+  const key = commandMapTreeLayoutPageKey(pageSequence);
+  const positions = state.commandMapTreeLayouts?.[key];
+  return positions && typeof positions === "object" && !Array.isArray(positions) ? positions : {};
+}
+
+function rememberCommandMapTreeNodePosition(order, x, y, pageSequence = state.commandMapPageSequence) {
+  const numericOrder = Number(order);
+  if (!Number.isFinite(numericOrder) || numericOrder <= 0) {
+    return;
+  }
+  const key = commandMapTreeLayoutPageKey(pageSequence);
+  const current = state.commandMapTreeLayouts && typeof state.commandMapTreeLayouts === "object"
+    ? state.commandMapTreeLayouts
+    : {};
+  const pageLayout = current[key] && typeof current[key] === "object" && !Array.isArray(current[key])
+    ? current[key]
+    : {};
+  state.commandMapTreeLayouts = {
+    ...current,
+    [key]: {
+      ...pageLayout,
+      [numericOrder]: {
+        x: Math.round(Math.max(16, Number(x) || 0)),
+        y: Math.round(Math.max(24, Number(y) || 0)),
+      },
+    },
+  };
+}
+
+function syncCommandMapViewModeControls() {
+  const mode = normalizeCommandMapViewMode(state.commandMapViewMode);
+  commandMapViewButtons.forEach((button) => {
+    const active = normalizeCommandMapViewMode(button.dataset.commandMapView) === mode;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  commandMapShell?.setAttribute("data-command-map-view", mode);
+  commandMapList?.classList.toggle("is-tree-view", mode === "tree");
+}
+
+function isCommandMapConditionalEvent(event) {
+  return ["clicar_imagem", "procurar_texto_ocr", "chrome_elemento_html", "comparar_planilha_tela"].includes(String(event?.type || ""));
+}
+
+function commandMapBranchDelayLabel(value = 0) {
+  const normalized = formatTransitionDelayValue(value ?? 0);
+  return `${normalized || "0"}s`;
+}
+
+function renderCommandMapCardSegment(event, index = 0, events = [], options = {}) {
+  const isFirstCard = index === 0;
+  const isLastCard = index === events.length - 1;
+  const hasRecordButton = event.type === "tecla" || event.type === "atalho";
+  const isRecognitionCard = event.type === "clicar_imagem";
+  const isOcrTextCard = event.type === "procurar_texto_ocr";
+  const isInlineExpanded = Number(state.expandedTreeCardOrder) === Number(event.order);
+  const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "comparar_planilha_tela";
+  const isLoopMarker = isLoopMarkerType(event.type);
+  const isRuntimeEditable = event.type === "texto_livre" && Boolean(event.details?.editavel_execucao);
+  const isNewlyCreated = Number(state.createdBlockAnimationOrder) === Number(event.order);
+  const primaryActionClass = isRecognitionCard
+    ? "has-recognition-button"
+    : hasRecordButton
+      ? "has-record-button"
+      : "";
+  const primaryActions = isRecognitionCard
+    ? `
+      <button class="tree-save-button" data-tree-action="save">Salvar</button>
+      <button class="tree-open-button" data-tree-action="test-image-recognition">Procurar</button>
+      <button class="tree-open-button" data-tree-action="capture-image">Capturar</button>
+    `
+    : isOcrTextCard
+      ? `
+        <button class="tree-save-button" data-tree-action="save">Salvar</button>
+        <button class="tree-open-button" data-tree-action="test-ocr-recognition">Testar</button>
+      `
+    : `
+      <button class="tree-save-button" data-tree-action="save">Salvar</button>
+      <button class="tree-open-button" data-tree-action="open-editor">Editor</button>
+      ${hasRecordButton ? '<button class="tree-open-button" data-tree-action="record-key">Gravar</button>' : ""}
+    `;
+  const wrapperClass = [
+    "command-flow-segment",
+    isRecognitionCard ? "visual-recognition-segment" : "",
+    isSpreadsheetCard ? "spreadsheet-segment" : "",
+    options.extraSegmentClass || "",
+  ].filter(Boolean).join(" ");
+  return `
+    <div class="${escapeHtml(wrapperClass)}" data-order="${escapeHtml(event.order)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" ${options.treeNode ? 'data-tree-node-segment="true"' : ""}>
+      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isInlineExpanded ? "is-inline-expanded" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarker ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""} ${isNewlyCreated ? "is-newly-created" : ""}" data-order="${escapeHtml(event.order)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
+        <div class="command-tree-top is-command-chip-top">
+          <div class="command-tree-main">
+            <span class="command-index">${String(event.order).padStart(2, "0")}</span>
+            <div>
+              ${event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "comparar_planilha_tela"
+                ? `
+                  <span class="command-title-row">
+                    <span class="type-chip ${escapeHtml(event.type)} command-title-chip">${escapeHtml(event.title)}</span>
+                    <span class="command-tree-loop-badge">${escapeHtml(event.type === "sequencia_planilha" ? getSpreadsheetLoopBadgeLabel(event) : "Linha atual")}</span>
+                  </span>
+                `
+                : `<span class="type-chip ${escapeHtml(event.type)} command-title-chip ${isRuntimeEditable ? "runtime-editable" : ""}">${escapeHtml(isRuntimeEditable ? "Bloco editavel" : event.title)}</span>`}
+            </div>
+          </div>
+          <div class="command-tree-side">
+            ${event.type === "texto_livre" ? `
+              <label class="runtime-edit-switch command-card-editable-switch" title="Bloco editavel na execucao">
+                <input data-tree-field="editableAtRun" type="checkbox" ${isRuntimeEditable ? "checked" : ""} />
+                <i></i>
+              </label>
+            ` : ""}
+            ${isInlineExpanded ? `<button class="tree-open-button inline-details-close" data-tree-action="close-card-details" type="button">Fechar</button>` : ""}
+            <button class="drag-handle" data-drag-handle="true" data-order="${escapeHtml(event.order)}" title="${escapeHtml(options.treeNode ? "Mover card no mapa" : "Arrastar card")}" type="button">
+              <span>${escapeHtml(options.treeNode ? "Mover" : "Arrastar")}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="command-tree-grid">
+          <div class="tree-editor">
+            ${isInlineExpanded ? renderTreeEditorFields(event) : renderCompactTreeEditorFields(event)}
+          </div>
+          <div class="tree-command-preview">${escapeHtml(event.command)}</div>
+        </div>
+
+
+        <div class="command-tree-actions">
+          <div class="command-action-group command-action-group-primary ${primaryActionClass}">
+            ${primaryActions}
+          </div>
+          <div class="command-action-group command-action-group-secondary">
+            <button class="micro-button" data-tree-action="insert-before">Antes</button>
+            <button class="micro-button" data-tree-action="insert-after">Depois</button>
+            <button class="micro-button" data-tree-action="remove">Excluir</button>
+          </div>
+          <div class="command-action-group command-action-group-reorder">
+            <button
+              class="tree-shift-button"
+              data-tree-action="up"
+              type="button"
+              title="Mover para a esquerda"
+              aria-label="Mover card para a esquerda"
+              ${isFirstCard ? "disabled" : ""}
+            >&larr;</button>
+            <button
+              class="tree-shift-button"
+              data-tree-action="down"
+              type="button"
+              title="Mover para a direita"
+              aria-label="Mover card para a direita"
+              ${isLastCard ? "disabled" : ""}
+            >&rarr;</button>
+          </div>
+        </div>
+      </article>
+    </div>
+  `;
+}
+
+function getCommandMapCompareDivergeRoute(event) {
+  if (String(event?.type || "") !== "comparar_planilha_tela") {
+    return null;
+  }
+  const details = event?.details || event?.detalhes || {};
+  const action = String(details.ao_divergir || "parar").trim().toLowerCase();
+  const sequence = optionalSequenceValue(details.sequencia_divergir || "");
+  const block = Number(details.bloco_divergir || 0);
+  const delay = Math.max(0, parseNumber(details.atraso_antes_sequencia_divergir, 0));
+  return {
+    action,
+    sequence: sequence || "",
+    block: Number.isFinite(block) && block > 0 ? block : null,
+    delay,
+  };
+}
+
+function resolveCommandMapTreeTarget(route, event, index, events, context) {
+  const action = String(route?.action || "continuar").trim().toLowerCase();
+  const nextEvent = events[index + 1] || null;
+  if (action === "continuar" || action === "pular") {
+    return nextEvent
+      ? {
+          targetEvent: nextEvent,
+          targetIndex: index + 1,
+          targetLabel: `Bloco ${nextEvent.order}`,
+          delay: parseNumber(nextEvent.delay, 0),
+          editableDelay: "next",
+          sourceOrder: Number(event.order || 0),
+          targetOrder: Number(nextEvent.order || 0),
+        }
+      : { terminal: true, targetLabel: "Fim da pagina", delay: 0 };
+  }
+  if (action === "tentar_novamente") {
+    return {
+      terminal: true,
+      isLoop: true,
+      targetLabel: `Tenta novamente o bloco ${event.order}`,
+      delay: Math.max(0, parseNumber(route.delay, 0)),
+      editableDelay: "route",
+      sourceOrder: Number(event.order || 0),
+      targetOrder: Number(event.order || 0),
+    };
+  }
+  if (action === "ir_para_bloco" && route.block) {
+    const targetEvent = context.orderToEvent.get(Number(route.block));
+    if (targetEvent) {
+      return {
+        targetEvent,
+        targetIndex: context.orderToIndex.get(Number(route.block)) ?? events.findIndex((item) => Number(item.order) === Number(route.block)),
+        targetLabel: `Bloco ${route.block}`,
+        delay: Math.max(0, parseNumber(route.delay, 0)),
+        editableDelay: "route",
+        sourceOrder: Number(event.order || 0),
+        targetOrder: Number(route.block || 0),
+      };
+    }
+    const externalEvent = getCommandMapEventByOrder(route.block);
+    const sequence = externalEvent ? getCommandMapEventSequenceByOrder(route.block) : "";
+    return {
+      terminal: true,
+      targetLabel: externalEvent
+        ? `Vai para ${getCommandMapPageLabel(sequence)} / bloco ${route.block}`
+        : `Vai para bloco ${route.block}`,
+      delay: Math.max(0, parseNumber(route.delay, 0)),
+      editableDelay: "route",
+      sourceOrder: Number(event.order || 0),
+      targetOrder: Number(route.block || 0),
+    };
+  }
+  if (action === "ir_para_sequencia" && route.sequence) {
+    const firstOrder = getCommandMapFirstOrderForSequence(route.sequence);
+    return {
+      terminal: true,
+      targetLabel: firstOrder
+        ? `Vai para ${getCommandMapPageLabel(route.sequence)} / bloco ${firstOrder}`
+        : `Vai para ${getCommandMapPageLabel(route.sequence)}`,
+      delay: Math.max(0, parseNumber(route.delay, 0)),
+      editableDelay: "route",
+      sourceOrder: Number(event.order || 0),
+      targetOrder: Number(firstOrder || 0),
+    };
+  }
+  if (action === "parar") {
+    return { terminal: true, targetLabel: "Para a automacao", delay: Math.max(0, parseNumber(route.delay, 0)) };
+  }
+  return { terminal: true, targetLabel: formatFlowActionLabel(action, route.block, route.sequence), delay: Math.max(0, parseNumber(route.delay, 0)) };
+}
+
+function getCommandMapTreeBranchTargetKey(branch) {
+  const targetOrder = Number(branch?.targetEvent?.order || branch?.targetOrder || 0);
+  if (Number.isFinite(targetOrder) && targetOrder > 0) {
+    return `block:${targetOrder}`;
+  }
+  const targetLabel = String(branch?.targetLabel || "").trim().toLowerCase();
+  if (targetLabel) {
+    return `terminal:${targetLabel}`;
+  }
+  return `branch:${String(branch?.kind || "success")}:${String(branch?.label || "")}`;
+}
+
+function mergeCommandMapTreeBranchLabels(firstLabel = "", secondLabel = "") {
+  const labels = String(`${firstLabel} / ${secondLabel}`)
+    .split("/")
+    .map((label) => label.trim())
+    .filter(Boolean);
+  return Array.from(new Set(labels)).join(" / ");
+}
+
+function mergeCommandMapTreeBranchDelays(existing, incoming) {
+  const delays = [existing?.delay, incoming?.delay]
+    .map((value) => formatTransitionDelayValue(value ?? 0))
+    .filter((value) => value !== "");
+  const uniqueDelays = Array.from(new Set(delays));
+  if (uniqueDelays.length > 1) {
+    existing.displayDelayLabel = uniqueDelays.map((value) => `${value}s`).join(" / ");
+    existing.editableDelay = "";
+  }
+}
+
+function dedupeCommandMapTreeBranches(branches = []) {
+  const filteredBranches = branches.filter((branch) => branch.targetEvent || branch.terminal);
+  const branchByTarget = new Map();
+  filteredBranches.forEach((branch) => {
+    const targetKey = getCommandMapTreeBranchTargetKey(branch);
+    const existing = branchByTarget.get(targetKey);
+    if (!existing) {
+      branchByTarget.set(targetKey, { ...branch });
+      return;
+    }
+    existing.label = mergeCommandMapTreeBranchLabels(existing.label, branch.label);
+    mergeCommandMapTreeBranchDelays(existing, branch);
+  });
+  return Array.from(branchByTarget.values());
+}
+
+function buildCommandMapTreeBranches(event, index, events, context) {
+  const conditional = isCommandMapConditionalEvent(event);
+  const successRoute = getCommandMapSuccessRoute(event);
+  const successTarget = resolveCommandMapTreeTarget(successRoute, event, index, events, context);
+  const branches = [];
+  if (successTarget.targetEvent || successTarget.terminal) {
+    branches.push({
+      kind: "success",
+      label: conditional ? "Se achar" : "Depois",
+      ...successTarget,
+    });
+  }
+
+  const failureRoute = getCommandMapFailureRoute(event);
+  if (shouldRenderCommandMapFailureBranch(event, failureRoute)) {
+    branches.push({
+      kind: "failure",
+      label: String(event?.type || "") === "chrome_elemento_html" ? "Se falhar" : "Se nao achar",
+      ...resolveCommandMapTreeTarget(failureRoute, event, index, events, context),
+    });
+  }
+
+  const divergeRoute = getCommandMapCompareDivergeRoute(event);
+  if (shouldRenderCommandMapDivergeBranch(divergeRoute)) {
+    branches.push({
+      kind: "diverge",
+      label: "Se divergir",
+      ...resolveCommandMapTreeTarget(divergeRoute, event, index, events, context),
+    });
+  }
+  return dedupeCommandMapTreeBranches(branches);
+}
+
+function renderCommandMapTreeTerminal(branch, extraClass = "") {
+  return `
+    <div class="command-map-tree-terminal ${escapeHtml(branch.kind || "")} ${escapeHtml(extraClass)}">
+      <span>${escapeHtml(branch.targetLabel || "Fim")}</span>
+    </div>
+  `;
+}
+
+function renderCommandMapTreeReferenceTarget(branch) {
+  const targetOrder = String(branch.targetOrder || "").trim();
+  return `
+    <div
+      class="command-map-tree-reference-target is-${escapeHtml(branch.kind || "success")}"
+      data-tree-reference-source-order="${escapeHtml(String(branch.sourceOrder || ""))}"
+      data-tree-reference-target-order="${escapeHtml(targetOrder)}"
+      data-tree-reference-kind="${escapeHtml(branch.kind || "success")}"
+      aria-label="Ligacao para bloco ${escapeHtml(targetOrder)}"
+    >
+      <span></span>
+      ${targetOrder ? `<strong>Bloco ${escapeHtml(targetOrder)}</strong>` : ""}
+    </div>
+  `;
+}
+
+function renderCommandMapTreeCardReference(branch, targetEvent, targetIndex, events) {
+  if (!targetEvent) {
+    return renderCommandMapTreeReferenceTarget(branch);
+  }
+  const card = renderCommandMapCardSegment(targetEvent, targetIndex, events, {
+    treeNode: true,
+    extraSegmentClass: "command-map-tree-card-segment command-map-tree-reference-card-segment",
+  });
+  return `
+    <div class="command-map-tree-card-reference is-${escapeHtml(branch.kind || "success")}" data-reference-order="${escapeHtml(String(targetEvent.order || branch.targetOrder || ""))}">
+      ${card}
+    </div>
+  `;
+}
+
+function renderCommandMapTreeBranch(branch, childHtml = "") {
+  const delayValue = formatTransitionDelayValue(branch.delay ?? 0);
+  const delayControl = branch.editableDelay === "next" && branch.targetOrder
+    ? `
+      <input
+        data-connector-delay="true"
+        data-order="${escapeHtml(String(branch.targetOrder))}"
+        type="number"
+        min="0"
+        step="0.1"
+        value="${escapeHtml(delayValue)}"
+      />
+      <strong>s</strong>
+    `
+    : branch.editableDelay === "route" && branch.sourceOrder
+      ? `
+        <input
+          data-jump-delay="true"
+          data-route-kind="${escapeHtml(branch.kind || "success")}"
+          data-source-order="${escapeHtml(String(branch.sourceOrder))}"
+          data-target-order="${escapeHtml(String(branch.targetOrder || ""))}"
+          type="number"
+          min="0"
+          step="0.1"
+          value="${escapeHtml(delayValue)}"
+        />
+        <strong>s</strong>
+      `
+      : `<strong>${escapeHtml(branch.displayDelayLabel || commandMapBranchDelayLabel(branch.delay))}</strong>`;
+  return `
+    <div class="command-map-tree-branch is-${escapeHtml(branch.kind || "success")}">
+      <div class="command-map-tree-branch-link">
+        <span>${escapeHtml(branch.label || "Rama")}</span>
+        <label class="command-map-tree-delay">
+          ${delayControl}
+        </label>
+      </div>
+      <div class="command-map-tree-branch-target">
+        ${childHtml || renderCommandMapTreeTerminal(branch)}
+      </div>
+    </div>
+  `;
+}
+
+function isCommandMapEmptyTerminalRoute(route) {
+  if (!route) {
+    return true;
+  }
+  const action = String(route.action || "parar").trim().toLowerCase();
+  return action === "parar"
+    && !String(route.sequence || "").trim()
+    && !Number(route.block || 0)
+    && parseNumber(route.delay, 0) <= 0;
+}
+
+function shouldRenderCommandMapFailureBranch(event, route) {
+  const eventType = String(event?.type || "");
+  if (!["clicar_imagem", "procurar_texto_ocr", "chrome_elemento_html"].includes(eventType)) {
+    return false;
+  }
+  return !isCommandMapEmptyTerminalRoute(route);
+}
+
+function shouldRenderCommandMapDivergeBranch(route) {
+  return !isCommandMapEmptyTerminalRoute(route);
+}
+
+
+function getCommandMapTreeStageConstants(events = []) {
+  const hasExpandedCard = events.some((event) => Number(state.expandedTreeCardOrder) === Number(event.order));
+  return {
+    paddingX: 72,
+    paddingY: 26,
+    rowTop: 176,
+    columnGap: 560,
+    mainLabelTop: 306,
+    upperBranchBaseY: 62,
+    upperBranchLaneGap: 62,
+    lowerBranchBaseY: hasExpandedCard ? 760 : 620,
+    lowerBranchLaneGap: 56,
+    minHeight: hasExpandedCard ? 980 : 820,
+    terminalOffsetX: 220,
+  };
+}
+
+function renderCommandMapTreeDelayControl(edge) {
+  const delayValue = formatTransitionDelayValue(edge.delay ?? 0);
+  if (edge.editableDelay === "next" && edge.targetOrder) {
+    return `
+      <input
+        data-connector-delay="true"
+        data-order="${escapeHtml(String(edge.targetOrder))}"
+        type="number"
+        min="0"
+        step="0.1"
+        value="${escapeHtml(delayValue)}"
+      />
+      <strong>s</strong>
+    `;
+  }
+  if (edge.editableDelay === "route" && edge.sourceOrder) {
+    return `
+      <input
+        data-jump-delay="true"
+        data-route-kind="${escapeHtml(edge.kind || "success")}"
+        data-source-order="${escapeHtml(String(edge.sourceOrder))}"
+        data-target-order="${escapeHtml(String(edge.targetOrder || ""))}"
+        type="number"
+        min="0"
+        step="0.1"
+        value="${escapeHtml(delayValue)}"
+      />
+      <strong>s</strong>
+    `;
+  }
+  return `<strong>${escapeHtml(edge.displayDelayLabel || commandMapBranchDelayLabel(edge.delay))}</strong>`;
+}
+
+function buildCommandMapTreeStageLayout(events, pageDefinition) {
+  const constants = getCommandMapTreeStageConstants(events);
+  const orderToEvent = new Map(events.map((event) => [Number(event.order), event]));
+  const orderToIndex = new Map(events.map((event, index) => [Number(event.order), index]));
+  const context = { orderToEvent, orderToIndex, seen: new Set() };
+  const nodes = events.map((event, index) => {
+    const order = Number(event.order || 0);
+    return {
+      event,
+      index,
+      order,
+      x: constants.paddingX + index * constants.columnGap,
+      y: constants.rowTop,
+    };
+  });
+  const manualPositions = getCommandMapTreeManualPositions(pageDefinition?.sequence);
+  nodes.forEach((node) => {
+    const manual = manualPositions[String(node.order)] || manualPositions[node.order];
+    const manualX = Number(manual?.x);
+    const manualY = Number(manual?.y);
+    if (Number.isFinite(manualX) && Number.isFinite(manualY)) {
+      node.x = Math.max(16, manualX);
+      node.y = Math.max(24, manualY);
+    }
+  });
+  const nodeByOrder = new Map(nodes.map((node) => [node.order, node]));
+  const edges = [];
+  const terminals = [];
+  let upperBranchLaneIndex = 0;
+  let maxY = nodes.reduce((max, node) => Math.max(max, node.y + 620), constants.minHeight);
+
+  events.forEach((event, index) => {
+    const sourceOrder = Number(event.order || 0);
+    const sourceNode = nodeByOrder.get(sourceOrder);
+    if (!sourceNode) {
+      return;
+    }
+    const branches = buildCommandMapTreeBranches(event, index, events, context);
+    branches.forEach((branch, branchIndex) => {
+      const targetOrder = Number(branch.targetEvent?.order || branch.targetOrder || 0);
+      const targetIndex = Number.isFinite(branch.targetIndex) ? branch.targetIndex : orderToIndex.get(targetOrder);
+      const isPrimaryNext = Boolean(branch.targetEvent)
+        && branch.kind === "success"
+        && Number(targetIndex) === index + 1;
+      const isUpperSuccessJump = !isPrimaryNext
+        && branch.kind === "success"
+        && Boolean(branch.targetEvent)
+        && Number(targetIndex) > index;
+      const branchSide = isPrimaryNext ? "main" : isUpperSuccessJump ? "upper" : "lower";
+      const currentBranchLaneIndex = branchSide === "upper"
+        ? upperBranchLaneIndex++
+        : branchSide === "lower"
+          ? Math.max(0, branchIndex)
+          : -1;
+      const laneY = isPrimaryNext
+        ? constants.rowTop + 118
+        : branchSide === "upper"
+          ? constants.upperBranchBaseY + currentBranchLaneIndex * constants.upperBranchLaneGap
+          : constants.lowerBranchBaseY + currentBranchLaneIndex * constants.lowerBranchLaneGap;
+
+      const edge = {
+        ...branch,
+        id: `edge_${sourceOrder}_${targetOrder || "terminal"}_${branch.kind || "success"}_${branchIndex}`,
+        sourceOrder,
+        targetOrder,
+        targetIndex,
+        terminalRoute: Boolean(branch.terminal && !branch.targetEvent && !branch.isLoop),
+        laneY,
+        branchLaneIndex: currentBranchLaneIndex,
+        branchSide,
+        isPrimaryNext,
+        labelX: isPrimaryNext
+          ? sourceNode.x + constants.columnGap - 116
+          : sourceNode.x + 28,
+        labelY: isPrimaryNext
+          ? constants.mainLabelTop
+          : laneY - 18,
+      };
+
+      if (branch.targetEvent || branch.isLoop) {
+        edges.push(edge);
+        if (branchSide === "lower") {
+          maxY = Math.max(maxY, laneY + 110);
+        }
+        return;
+      }
+
+      edges.push(edge);
+      maxY = Math.max(maxY, laneY + 86);
+    });
+  });
+
+  const maxNodeX = nodes.reduce((max, node) => Math.max(max, node.x + 520), 0);
+  const stageWidth = Math.max(
+    720,
+    constants.paddingX * 2 + Math.max(0, events.length - 1) * constants.columnGap + 280,
+    maxNodeX + constants.paddingX
+  );
+  return {
+    pageDefinition,
+    nodes,
+    edges,
+    terminals,
+    width: stageWidth,
+    height: maxY + constants.paddingY,
+  };
+}
+
+function renderCommandMapTreeStageNode(node, events) {
+  const shouldRenderInsert = state.insertPanel?.targetOrder === node.event.order;
+  const insertPanel = shouldRenderInsert
+    ? `<div class="command-map-tree-insert" data-insert-origin-order="${escapeHtml(node.event.order)}">${renderInsertPanel(node.event.order)}</div>`
+    : "";
+  const card = renderCommandMapCardSegment(node.event, node.index, events, {
+    treeNode: true,
+    extraSegmentClass: "command-map-tree-card-segment",
+  });
+  return `
+    <div
+      class="command-map-tree-node-slot"
+      data-tree-node-order="${escapeHtml(String(node.order))}"
+      style="left:${Math.round(node.x)}px;top:${Math.round(node.y)}px"
+    >
+      ${card}
+      ${insertPanel}
+    </div>
+  `;
+}
+
+function compactCommandMapTreeTerminalActionLabel(label = "") {
+  const raw = normalizeStringValue(label) || "Fim";
+  const normalized = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  let match = normalized.match(/^vai para pagina\s*(\d+)\s*\/\s*bloco\s*(\d+)$/);
+  if (match) {
+    return `P${match[1]}/B${match[2]}`;
+  }
+  match = normalized.match(/^vai para pagina\s*(\d+)$/);
+  if (match) {
+    return `P${match[1]}`;
+  }
+  match = normalized.match(/^vai para bloco\s*(\d+)$/);
+  if (match) {
+    return `B${match[1]}`;
+  }
+  match = normalized.match(/^tenta novamente o bloco\s*(\d+)$/);
+  if (match) {
+    return `Repete B${match[1]}`;
+  }
+  if (normalized === "para a automacao") {
+    return "Parar";
+  }
+  if (normalized === "fim da pagina") {
+    return "Fim";
+  }
+  const compact = raw
+    .replace(/^Vai para\s+/i, "")
+    .replace(/Pagina\s*/i, "P")
+    .replace(/\s*\/\s*bloco\s*/i, "/B")
+    .replace(/bloco\s*/i, "B")
+    .replace(/^Para a automacao$/i, "Parar");
+  return compact.length > 18 ? `${compact.slice(0, 15).trim()}...` : compact;
+}
+
+function renderCommandMapTreeStageEdgeLabel(edge) {
+  const fullActionLabel = normalizeStringValue(edge.targetLabel || "Fim");
+  const compactActionLabel = compactCommandMapTreeTerminalActionLabel(fullActionLabel);
+  return `
+    <label
+      class="command-map-tree-edge-label is-${escapeHtml(edge.kind || "success")} ${edge.isPrimaryNext ? "is-primary-next" : "is-branch-route"} is-branch-${escapeHtml(edge.branchSide || "main")} ${edge.terminalRoute ? "is-terminal-route" : ""}"
+      data-tree-edge-source-order="${escapeHtml(String(edge.sourceOrder || ""))}"
+      data-tree-edge-target-order="${escapeHtml(String(edge.targetOrder || ""))}"
+      data-tree-edge-terminal-id="${escapeHtml(String(edge.terminalId || ""))}"
+      data-tree-edge-terminal-route="${edge.terminalRoute ? "true" : "false"}"
+      data-tree-edge-kind="${escapeHtml(edge.kind || "success")}"
+      data-tree-edge-lane-y="${escapeHtml(String(Math.round(edge.laneY || 0)))}"
+      data-tree-edge-branch-lane="${escapeHtml(String(edge.branchLaneIndex ?? -1))}"
+      data-tree-edge-side="${escapeHtml(edge.branchSide || "main")}"
+      style="left:${Math.round(edge.labelX)}px;top:${Math.round(edge.labelY)}px"
+    >
+      <span>${escapeHtml(edge.label || "Rama")}</span>
+      <em>${renderCommandMapTreeDelayControl(edge)}</em>
+      ${edge.terminalRoute ? `<b class="command-map-tree-edge-action" title="${escapeHtml(fullActionLabel)}">${escapeHtml(compactActionLabel)}</b>` : ""}
+    </label>
+  `;
+}
+
+function renderCommandMapTreeStageTerminal(terminal) {
+  return `
+    <div
+      class="command-map-tree-terminal command-map-tree-terminal-node ${escapeHtml(terminal.kind || "success")}"
+      data-tree-terminal-id="${escapeHtml(String(terminal.id))}"
+      style="left:${Math.round(terminal.x)}px;top:${Math.round(terminal.y)}px"
+    >
+      <span>${escapeHtml(terminal.label || "Fim")}</span>
+    </div>
+  `;
+}
+
+function renderCommandMapTreeNode(event, index, events, context, path = [], depth = 0) {
+  const order = Number(event?.order || 0);
+  if (!order || depth > 80) {
+    return renderCommandMapTreeTerminal({ targetLabel: "Rota muito longa", kind: "warning" }, "is-warning");
+  }
+  context.seen.add(order);
+  const currentPath = [...path, order];
+  const card = renderCommandMapCardSegment(event, index, events, {
+    treeNode: true,
+    extraSegmentClass: "command-map-tree-card-segment",
+  });
+  const shouldRenderInsert = state.insertPanel?.targetOrder === event.order;
+  const insertPanel = shouldRenderInsert
+    ? `<div class="command-map-tree-insert" data-insert-origin-order="${escapeHtml(event.order)}">${renderInsertPanel(event.order)}</div>`
+    : "";
+  const branches = buildCommandMapTreeBranches(event, index, events, context)
+    .map((branch) => {
+      const targetOrder = Number(branch.targetEvent?.order || branch.targetOrder || 0);
+      if (branch.targetEvent) {
+        const targetIndex = Number.isFinite(branch.targetIndex) ? branch.targetIndex : context.orderToIndex.get(targetOrder) ?? 0;
+        if (currentPath.includes(targetOrder) || context.seen.has(targetOrder)) {
+          return renderCommandMapTreeBranch(branch, renderCommandMapTreeReferenceTarget(branch));
+        }
+        return renderCommandMapTreeBranch(
+          branch,
+          renderCommandMapTreeNode(
+            branch.targetEvent,
+            targetIndex,
+            events,
+            context,
+            currentPath,
+            depth + 1,
+          )
+        );
+      }
+      if (branch.isLoop && branch.targetOrder) {
+        return renderCommandMapTreeBranch(branch, renderCommandMapTreeReferenceTarget(branch));
+      }
+      return renderCommandMapTreeBranch(branch);
+    })
+    .join("");
+  const nodeClass = branches ? "command-map-tree-node has-branches" : "command-map-tree-node is-terminal-node";
+  return `
+    <div class="${nodeClass}" data-order="${escapeHtml(order)}" style="--tree-depth:${depth}">
+      <div class="command-map-tree-card-wrap">
+        ${card}
+        ${insertPanel}
+      </div>
+      ${branches ? `<div class="command-map-tree-branches">${branches}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderCommandMapTreeView(events, pageDefinition) {
+  const layout = buildCommandMapTreeStageLayout(events, pageDefinition);
+  return `
+    <div class="command-map-tree" role="tree" aria-label="Arvore da ${escapeHtml(pageDefinition.label.toLowerCase())}">
+      <div class="command-map-tree-header-card">
+        <span>Workflow</span>
+        <strong>${escapeHtml(pageDefinition.label)} - ${events.length} bloco(s)</strong>
+        <small>Arraste os cards pelo botao superior. As ligacoes seguem os destinos configurados.</small>
+      </div>
+      <div
+        class="command-map-tree-stage"
+        style="width:${Math.ceil(layout.width)}px;height:${Math.ceil(layout.height)}px"
+      >
+        ${layout.edges.map((edge) => renderCommandMapTreeStageEdgeLabel(edge)).join("")}
+        ${layout.terminals.map((terminal) => renderCommandMapTreeStageTerminal(terminal)).join("")}
+        ${layout.nodes.map((node) => renderCommandMapTreeStageNode(node, events)).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function commandMapTreeStageMetrics(stage) {
+  const rect = stage.getBoundingClientRect();
+  const zoom = stage.offsetWidth ? Math.max(0.2, rect.width / stage.offsetWidth) : 1;
+  return { rect, zoom };
+}
+
+function expandCommandMapTreeStageForNode(stage, nodeSlot, x, y) {
+  if (!stage || !nodeSlot) {
+    return;
+  }
+  const nextWidth = Math.ceil(Math.max(stage.offsetWidth, x + nodeSlot.offsetWidth + 220));
+  const nextHeight = Math.ceil(Math.max(stage.offsetHeight, y + nodeSlot.offsetHeight + 220));
+  stage.style.width = `${nextWidth}px`;
+  stage.style.height = `${nextHeight}px`;
+}
+
+function startCommandMapTreeNodeDrag(event, handle) {
+  if (!handle || event.button !== 0 || normalizeCommandMapViewMode(state.commandMapViewMode) !== "tree") {
+    return false;
+  }
+  const nodeSlot = handle.closest(".command-map-tree-node-slot");
+  const stage = nodeSlot?.closest(".command-map-tree-stage");
+  const order = Number(nodeSlot?.dataset.treeNodeOrder || handle.dataset.order);
+  if (!nodeSlot || !stage || !Number.isFinite(order) || order <= 0) {
+    return false;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  const { rect, zoom } = commandMapTreeStageMetrics(stage);
+  const currentX = Number.parseFloat(nodeSlot.style.left) || 0;
+  const currentY = Number.parseFloat(nodeSlot.style.top) || 0;
+  const pointerStageX = (event.clientX - rect.left) / zoom;
+  const pointerStageY = (event.clientY - rect.top) / zoom;
+  state.commandMapTreeNodeDrag = {
+    pointerId: event.pointerId,
+    order,
+    nodeSlot,
+    stage,
+    offsetX: pointerStageX - currentX,
+    offsetY: pointerStageY - currentY,
+    latestX: currentX,
+    latestY: currentY,
+    frame: 0,
+  };
+  nodeSlot.classList.add("is-tree-position-dragging");
+  builderShell?.classList.add("is-map-dragging");
+  handle.setPointerCapture?.(event.pointerId);
+  setCommandMapFocus(order, "auto", { skipConnectorLayout: true, suppressScroll: true });
+  return true;
+}
+
+function updateCommandMapTreeNodeDrag(event) {
+  const drag = state.commandMapTreeNodeDrag;
+  if (!drag || drag.pointerId !== event.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  const { rect, zoom } = commandMapTreeStageMetrics(drag.stage);
+  const pointerStageX = (event.clientX - rect.left) / zoom;
+  const pointerStageY = (event.clientY - rect.top) / zoom;
+  const maxX = Math.max(16, drag.stage.offsetWidth - Math.min(120, drag.nodeSlot.offsetWidth * 0.35));
+  const maxY = Math.max(24, drag.stage.offsetHeight - Math.min(120, drag.nodeSlot.offsetHeight * 0.35));
+  drag.latestX = Math.min(maxX, Math.max(16, pointerStageX - drag.offsetX));
+  drag.latestY = Math.min(maxY, Math.max(24, pointerStageY - drag.offsetY));
+  if (drag.frame) {
+    return;
+  }
+  drag.frame = requestAnimationFrame(() => {
+    drag.frame = 0;
+    if (state.commandMapTreeNodeDrag !== drag) {
+      return;
+    }
+    drag.nodeSlot.style.left = `${Math.round(drag.latestX)}px`;
+    drag.nodeSlot.style.top = `${Math.round(drag.latestY)}px`;
+    expandCommandMapTreeStageForNode(drag.stage, drag.nodeSlot, drag.latestX, drag.latestY);
+    rememberCommandMapTreeNodePosition(drag.order, drag.latestX, drag.latestY);
+    scheduleCommandConnectorLayout();
+  });
+}
+
+function stopCommandMapTreeNodeDrag(event, commit = true) {
+  const drag = state.commandMapTreeNodeDrag;
+  if (!drag || drag.pointerId !== event.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  if (drag.frame) {
+    cancelAnimationFrame(drag.frame);
+    drag.frame = 0;
+  }
+  drag.nodeSlot.style.left = `${Math.round(drag.latestX)}px`;
+  drag.nodeSlot.style.top = `${Math.round(drag.latestY)}px`;
+  expandCommandMapTreeStageForNode(drag.stage, drag.nodeSlot, drag.latestX, drag.latestY);
+  rememberCommandMapTreeNodePosition(drag.order, drag.latestX, drag.latestY);
+  if (commit) {
+    persistCommandMapTreeLayouts();
+  }
+  drag.nodeSlot.classList.remove("is-tree-position-dragging");
+  builderShell?.classList.remove("is-map-dragging");
+  state.commandMapTreeNodeDrag = null;
+  scheduleCommandConnectorLayout({ burstMs: 220 });
+}
+
 function renderCommandMap(options = {}) {
   const {
     layoutSnapshot = null,
@@ -18217,6 +19497,7 @@ function renderCommandMap(options = {}) {
   builderShell?.classList.toggle("has-insert-panel", Boolean(state.insertPanel));
   updateCommandMapHeaderSummary();
   renderCommandMapPageTabs();
+  syncCommandMapViewModeControls();
   if (!events.length) {
     state.expandedTreeCardOrder = null;
     commandMapList.innerHTML = renderEmptyCommandMapStarter();
@@ -18251,106 +19532,7 @@ function renderCommandMap(options = {}) {
 
   const segments = events.map((event, index) => {
     const nextEvent = events[index + 1];
-    const isFirstCard = index === 0;
-    const isLastCard = index === events.length - 1;
-    const hasRecordButton = event.type === "tecla" || event.type === "atalho";
-    const isRecognitionCard = event.type === "clicar_imagem";
-    const isOcrTextCard = event.type === "procurar_texto_ocr";
-    const isInlineExpanded = Number(state.expandedTreeCardOrder) === Number(event.order);
-    const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "comparar_planilha_tela";
-    const isLoopMarkerCard = isLoopMarkerType(event.type);
-    const isRuntimeEditable = event.type === "texto_livre" && Boolean(event.details?.editavel_execucao);
-    const isNewlyCreated = Number(state.createdBlockAnimationOrder) === Number(event.order);
-    const primaryActionClass = isRecognitionCard
-      ? "has-recognition-button"
-      : hasRecordButton
-        ? "has-record-button"
-        : "";
-    const primaryActions = isRecognitionCard
-      ? `
-        <button class="tree-save-button" data-tree-action="save">Salvar</button>
-        <button class="tree-open-button" data-tree-action="test-image-recognition">Procurar</button>
-        <button class="tree-open-button" data-tree-action="capture-image">Capturar</button>
-      `
-      : isOcrTextCard
-        ? `
-          <button class="tree-save-button" data-tree-action="save">Salvar</button>
-          <button class="tree-open-button" data-tree-action="test-ocr-recognition">Testar</button>
-        `
-      : `
-        <button class="tree-save-button" data-tree-action="save">Salvar</button>
-        <button class="tree-open-button" data-tree-action="open-editor">Editor</button>
-        ${hasRecordButton ? '<button class="tree-open-button" data-tree-action="record-key">Gravar</button>' : ""}
-      `;
-    const card = `
-      <div class="command-flow-segment ${isRecognitionCard ? "visual-recognition-segment" : ""} ${isSpreadsheetCard ? "spreadsheet-segment" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}">
-      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isInlineExpanded ? "is-inline-expanded" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarkerCard ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""} ${isNewlyCreated ? "is-newly-created" : ""}" data-order="${event.order}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
-        <div class="command-tree-top is-command-chip-top">
-          <div class="command-tree-main">
-            <span class="command-index">${String(event.order).padStart(2, "0")}</span>
-            <div>
-              ${event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "comparar_planilha_tela"
-                ? `
-                  <span class="command-title-row">
-                    <span class="type-chip ${escapeHtml(event.type)} command-title-chip">${escapeHtml(event.title)}</span>
-                    <span class="command-tree-loop-badge">${escapeHtml(event.type === "sequencia_planilha" ? getSpreadsheetLoopBadgeLabel(event) : "Linha atual")}</span>
-                  </span>
-                `
-                : `<span class="type-chip ${escapeHtml(event.type)} command-title-chip ${isRuntimeEditable ? "runtime-editable" : ""}">${escapeHtml(isRuntimeEditable ? "Bloco editavel" : event.title)}</span>`}
-            </div>
-          </div>
-          <div class="command-tree-side">
-            ${event.type === "texto_livre" ? `
-              <label class="runtime-edit-switch command-card-editable-switch" title="Bloco editavel na execucao">
-                <input data-tree-field="editableAtRun" type="checkbox" ${isRuntimeEditable ? "checked" : ""} />
-                <i></i>
-              </label>
-            ` : ""}
-            ${isInlineExpanded ? `<button class="tree-open-button inline-details-close" data-tree-action="close-card-details" type="button">Fechar</button>` : ""}
-            <button class="drag-handle" data-drag-handle="true" data-order="${event.order}" title="Arrastar card" type="button">
-              <span>Arrastar</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="command-tree-grid">
-          <div class="tree-editor">
-            ${isInlineExpanded ? renderTreeEditorFields(event) : renderCompactTreeEditorFields(event)}
-          </div>
-          <div class="tree-command-preview">${escapeHtml(event.command)}</div>
-        </div>
-
-        <div class="command-tree-actions">
-          <div class="command-action-group command-action-group-primary ${primaryActionClass}">
-            ${primaryActions}
-          </div>
-          <div class="command-action-group command-action-group-secondary">
-            <button class="micro-button" data-tree-action="insert-before">Antes</button>
-            <button class="micro-button" data-tree-action="insert-after">Depois</button>
-            <button class="micro-button" data-tree-action="remove">Excluir</button>
-          </div>
-          <div class="command-action-group command-action-group-reorder">
-            <button
-              class="tree-shift-button"
-              data-tree-action="up"
-              type="button"
-              title="Mover para a esquerda"
-              aria-label="Mover card para a esquerda"
-              ${isFirstCard ? "disabled" : ""}
-            >&larr;</button>
-            <button
-              class="tree-shift-button"
-              data-tree-action="down"
-              type="button"
-              title="Mover para a direita"
-              aria-label="Mover card para a direita"
-              ${isLastCard ? "disabled" : ""}
-            >&rarr;</button>
-          </div>
-        </div>
-      </article>
-      </div>
-    `;
+    const card = renderCommandMapCardSegment(event, index, events);
     const shouldRenderInsert = state.insertPanel?.targetOrder === event.order;
     const insertDelayValue = state.insertPanel?.delay ?? 0.3;
     const insertSegment = shouldRenderInsert ? renderInsertSegment(event.order) : "";
@@ -18412,12 +19594,18 @@ function renderCommandMap(options = {}) {
     state.expandedTreeCardOrder = null;
   }
 
-  commandMapList.innerHTML = `<div class="command-flow-row">${events
-    .map((event, index) => {
-      const zone = `<div class="command-drop-zone" data-target-index="${event.order}" aria-label="Soltar antes do bloco ${event.order}"></div>`;
-      return `${zone}${segments[index]}`;
-    })
-    .join("")}<div class="command-drop-zone command-drop-zone-end" data-target-index="${Number(events.at(-1)?.order ?? 0) + 1}" aria-label="Soltar no final de ${escapeHtml(pageDefinition.label.toLowerCase())}"></div></div>`;
+  const viewMode = normalizeCommandMapViewMode(state.commandMapViewMode);
+  syncCommandMapViewModeControls();
+  if (viewMode === "tree") {
+    commandMapList.innerHTML = renderCommandMapTreeView(events, pageDefinition);
+  } else {
+    commandMapList.innerHTML = `<div class="command-flow-row">${events
+      .map((event, index) => {
+        const zone = `<div class="command-drop-zone" data-target-index="${event.order}" aria-label="Soltar antes do bloco ${event.order}"></div>`;
+        return `${zone}${segments[index]}`;
+      })
+      .join("")}<div class="command-drop-zone command-drop-zone-end" data-target-index="${Number(events.at(-1)?.order ?? 0) + 1}" aria-label="Soltar no final de ${escapeHtml(pageDefinition.label.toLowerCase())}"></div></div>`;
+  }
   if (preserveScroll) {
     commandMapList.scrollLeft = previousScrollLeft ?? commandMapList.scrollLeft;
     commandMapList.scrollTop = previousScrollTop ?? commandMapList.scrollTop;
@@ -19062,10 +20250,12 @@ function setCommandCardRouteDelay(card, routeKind, delayValue) {
     return false;
   }
   const normalizedDelay = formatTransitionDelayValue(normalizeTransitionDelay(delayValue));
-  const normalizedKind = routeKind === "failure" ? "failure" : "success";
-  const selector = normalizedKind === "failure"
-    ? '[data-tree-field="failureSequenceDelay"], [data-tree-field="chromeFailureSequenceDelay"]'
-    : '[data-tree-field="successSequenceDelay"], [data-tree-field="chromeSuccessSequenceDelay"]';
+  const normalizedKind = routeKind === "failure" || routeKind === "diverge" ? routeKind : "success";
+  const selector = normalizedKind === "diverge"
+    ? '[data-tree-field="compareDivergeSequenceDelay"]'
+    : normalizedKind === "failure"
+      ? '[data-tree-field="failureSequenceDelay"], [data-tree-field="chromeFailureSequenceDelay"]'
+      : '[data-tree-field="successSequenceDelay"], [data-tree-field="chromeSuccessSequenceDelay"]';
   const delayField = card.querySelector(selector);
   if (!delayField) {
     return false;
@@ -19082,8 +20272,12 @@ function setRoadmapEventRouteDelay(sourceOrder, routeKind, delayValue) {
   const details = event.details || event.detalhes || {};
   event.details = details;
   const normalizedDelay = normalizeTransitionDelay(delayValue);
-  const normalizedKind = routeKind === "failure" ? "failure" : "success";
+  const normalizedKind = routeKind === "failure" || routeKind === "diverge" ? routeKind : "success";
 
+  if (normalizedKind === "diverge") {
+    details.atraso_antes_sequencia_divergir = normalizedDelay;
+    return true;
+  }
   if (normalizedKind === "failure") {
     if (event.type === "chrome_elemento_html") {
       details.atraso_antes_sequencia_falha = normalizedDelay;
@@ -19099,7 +20293,8 @@ function setRoadmapEventRouteDelay(sourceOrder, routeKind, delayValue) {
 
 function saveCommandJumpDelayFromInput(input) {
   const sourceOrder = Number(input?.dataset?.sourceOrder || 0);
-  const routeKind = input?.dataset?.routeKind === "failure" ? "failure" : "success";
+  const rawKind = String(input?.dataset?.routeKind || "").trim().toLowerCase();
+  const routeKind = rawKind === "failure" || rawKind === "diverge" ? rawKind : "success";
   if (!sourceOrder) {
     return;
   }
@@ -20408,6 +21603,19 @@ mapZoomInButton.addEventListener("click", () => {
   setCommandMapZoom(Math.round((state.commandMapZoom + 0.05) * 100) / 100);
 });
 
+commandMapViewButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const nextMode = normalizeCommandMapViewMode(button.dataset.commandMapView);
+    if (nextMode === normalizeCommandMapViewMode(state.commandMapViewMode)) {
+      return;
+    }
+    state.commandMapViewMode = nextMode;
+    state.insertPanel = null;
+    renderCommandMap({ preserveScroll: false, skipAutoFit: true, suppressFocusScroll: true });
+    applyCommandMapFocus("auto", { suppressScroll: false, animateFocusPulse: true });
+  });
+});
+
 window.addEventListener("resize", () => {
   if (state.activeTab === "commands") {
     scheduleCommandMapAutoFit();
@@ -21230,7 +22438,7 @@ agentScreenExecuteButton?.addEventListener("click", async () => {
       await stopStudioControlAutomation();
     } else {
       setBusy("Executando no Agent");
-      await runStudioControlAutomation(agentScreenAutomationSelect?.value || "", { minimizeAgent: true });
+      await runStudioControlAutomation(agentScreenAutomationSelect?.value || "");
     }
     setBusy("Pronto");
   } catch (error) {
@@ -23201,6 +24409,10 @@ commandMapList.addEventListener("pointerdown", (event) => {
   }
 
   const handle = event.target.closest("[data-drag-handle]");
+  if (handle && normalizeCommandMapViewMode(state.commandMapViewMode) === "tree") {
+    startCommandMapTreeNodeDrag(event, handle);
+    return;
+  }
   if (handle && event.button === 0) {
     event.preventDefault();
     state.pendingDrag = {
@@ -23233,6 +24445,9 @@ commandMapList.addEventListener("pointerdown", (event) => {
 window.addEventListener("pointermove", moveRecognitionVisualDrag);
 window.addEventListener("pointerup", stopRecognitionVisualDrag);
 window.addEventListener("pointercancel", stopRecognitionVisualDrag);
+window.addEventListener("pointermove", updateCommandMapTreeNodeDrag);
+window.addEventListener("pointerup", (event) => stopCommandMapTreeNodeDrag(event, true));
+window.addEventListener("pointercancel", (event) => stopCommandMapTreeNodeDrag(event, false));
 
 commandMapList.addEventListener("focusin", (event) => {
   if (event.target.closest("[data-drag-handle]")) {
