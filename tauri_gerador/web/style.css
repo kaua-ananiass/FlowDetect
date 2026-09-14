@@ -9142,6 +9142,30 @@ label span {
   box-shadow: 0 0 0 4px var(--command-page-accent-muted);
 }
 
+.command-map-tree-edge-label[data-tree-layout-key],
+.command-map-tree-terminal-node[data-tree-layout-key] {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.command-map-tree-edge-label input,
+.command-map-tree-terminal-node input {
+  cursor: text;
+  user-select: auto;
+}
+
+.command-map-tree-edge-label.is-tree-position-dragging,
+.command-map-tree-terminal-node.is-tree-position-dragging {
+  z-index: 14;
+  cursor: grabbing;
+  opacity: 0.98;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.36),
+    0 0 0 1px var(--command-page-accent-muted),
+    0 0 22px var(--command-page-accent-glow);
+}
+
 .command-map-tree-edge-label.is-primary-next {
   min-width: 76px;
   min-height: 36px;
