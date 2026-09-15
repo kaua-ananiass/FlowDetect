@@ -19599,7 +19599,7 @@ function startCommandMapTreePan(event) {
     !commandMapList
     || event.button !== 0
     || !isCommandMapTreeModeActive()
-    || event.target.closest("button, input, textarea, select, a, [data-drag-handle], [data-recognition-drag-target], .command-map-tree-node-slot, .command-map-tree-edge-label, .command-map-tree-terminal-node")
+    || event.target.closest("button, input, textarea, select, a, label, [contenteditable='true'], [data-drag-handle], [data-recognition-drag-target], [data-recognition-preview-card], [data-recognition-preview-stage], [data-recognition-preview-image-map], .command-tree-card, .command-flow-segment, .insert-card-panel, .command-map-tree-node-slot, .command-map-tree-edge-label, .command-map-tree-terminal-node")
   ) {
     return false;
   }

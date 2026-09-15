@@ -8853,6 +8853,15 @@ label span {
   cursor: grab;
 }
 
+.command-map-list.is-tree-view .command-tree-card,
+.command-map-list.is-tree-view .command-tree-card *,
+.command-map-list.is-tree-view .command-flow-segment,
+.command-map-list.is-tree-view .insert-card-panel,
+.command-map-list.is-tree-view .command-map-tree-edge-label,
+.command-map-list.is-tree-view .command-map-tree-terminal-node {
+  cursor: auto;
+}
+
 .command-map-list.is-tree-view.is-tree-panning,
 .command-map-list.is-tree-view.is-tree-panning * {
   cursor: grabbing !important;
