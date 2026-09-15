@@ -19615,8 +19615,11 @@ function startCommandMapTreePan(event) {
     pointerId: event.pointerId,
     startX: event.clientX,
     startY: event.clientY,
+    latestX: event.clientX,
+    latestY: event.clientY,
     scrollLeft: commandMapList.scrollLeft,
     scrollTop: commandMapList.scrollTop,
+    frame: 0,
   };
   commandMapList.classList.add("is-tree-panning");
   builderShell?.classList.add("is-map-dragging");
@@ -19630,8 +19633,19 @@ function updateCommandMapTreePan(event) {
     return;
   }
   event.preventDefault();
-  commandMapList.scrollLeft = Math.max(0, pan.scrollLeft - (event.clientX - pan.startX));
-  commandMapList.scrollTop = Math.max(0, pan.scrollTop - (event.clientY - pan.startY));
+  pan.latestX = event.clientX;
+  pan.latestY = event.clientY;
+  if (pan.frame) {
+    return;
+  }
+  pan.frame = requestAnimationFrame(() => {
+    pan.frame = 0;
+    if (state.commandMapTreePan !== pan || !commandMapList) {
+      return;
+    }
+    commandMapList.scrollLeft = Math.max(0, pan.scrollLeft - (pan.latestX - pan.startX));
+    commandMapList.scrollTop = Math.max(0, pan.scrollTop - (pan.latestY - pan.startY));
+  });
 }
 
 function stopCommandMapTreePan(event) {
@@ -19640,6 +19654,14 @@ function stopCommandMapTreePan(event) {
     return;
   }
   event.preventDefault();
+  if (pan.frame) {
+    cancelAnimationFrame(pan.frame);
+    pan.frame = 0;
+  }
+  if (commandMapList) {
+    commandMapList.scrollLeft = Math.max(0, pan.scrollLeft - (pan.latestX - pan.startX));
+    commandMapList.scrollTop = Math.max(0, pan.scrollTop - (pan.latestY - pan.startY));
+  }
   commandMapList?.classList.remove("is-tree-panning");
   builderShell?.classList.remove("is-map-dragging");
   state.commandMapTreePan = null;
