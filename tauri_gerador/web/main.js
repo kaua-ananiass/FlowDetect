@@ -1829,12 +1829,29 @@ function renderCommandMapTreeReferenceLinks() {
         ].join(" "));
       } else if (isPrimaryNext && isForward) {
         const startX = sourceRect.right;
+        const startY = sourceRect.centerY;
         const endX = targetRect.left;
-        const delta = Math.max(38, Math.min(86, Math.abs(endX - startX) * 0.45));
-        path.setAttribute(
-          "d",
-          `M ${startX} ${sourceRect.centerY} C ${startX + delta} ${sourceRect.centerY} ${endX - delta} ${targetRect.centerY} ${endX} ${targetRect.centerY}`
-        );
+        const endY = targetRect.centerY;
+        if (hasManualLabelPosition) {
+          const labelX = labelRect.centerX;
+          const labelY = labelRect.centerY;
+          const firstDelta = Math.max(34, Math.min(92, Math.abs(labelX - startX) * 0.42));
+          const secondDelta = Math.max(34, Math.min(92, Math.abs(endX - labelX) * 0.42));
+          path.setAttribute(
+            "d",
+            [
+              `M ${startX} ${startY}`,
+              `C ${startX + firstDelta} ${startY} ${labelX - firstDelta} ${labelY} ${labelX} ${labelY}`,
+              `C ${labelX + secondDelta} ${labelY} ${endX - secondDelta} ${endY} ${endX} ${endY}`,
+            ].join(" ")
+          );
+        } else {
+          const delta = Math.max(38, Math.min(86, Math.abs(endX - startX) * 0.45));
+          path.setAttribute(
+            "d",
+            `M ${startX} ${startY} C ${startX + delta} ${startY} ${endX - delta} ${endY} ${endX} ${endY}`
+          );
+        }
       } else if (isForward) {
         const startX = sourceRect.right;
         const endX = targetRect.left;
