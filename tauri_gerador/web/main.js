@@ -225,6 +225,7 @@ const state = {
   commandMapOrderCache: [],
   commandMapAutoFitFrame: 0,
   commandConnectorLayoutFrame: 0,
+  commandMapTreePan: null,
   commandMapSave: {
     running: false,
     percent: 0,
@@ -2025,12 +2026,33 @@ function scheduleCommandMapAutoFit() {
   });
 }
 
-function setCommandMapZoom(nextZoom) {
+function setCommandMapZoom(nextZoom, options = {}) {
+  const previousZoom = Math.max(0.01, Number(state.commandMapZoom) || 1);
+  const point = options.preservePoint && commandMapList
+    ? {
+        x: Number(options.preservePoint.x),
+        y: Number(options.preservePoint.y),
+      }
+    : null;
+  const anchor = point && Number.isFinite(point.x) && Number.isFinite(point.y)
+    ? {
+        x: (commandMapList.scrollLeft + point.x) / previousZoom,
+        y: (commandMapList.scrollTop + point.y) / previousZoom,
+      }
+    : null;
   state.commandMapRequestedZoom = Math.min(1.4, Math.max(0.6, Number(nextZoom) || 1));
   state.commandMapZoom = state.commandMapRequestedZoom;
   applyCommandMapZoom();
-  scheduleCommandMapAutoFit();
-  if (state.activeTab === "commands" && state.commandMapFocusOrder) {
+  if (anchor) {
+    commandMapList.scrollLeft = Math.max(0, anchor.x * state.commandMapZoom - point.x);
+    commandMapList.scrollTop = Math.max(0, anchor.y * state.commandMapZoom - point.y);
+  }
+  if (options.skipAutoFit) {
+    scheduleCommandConnectorLayout({ burstMs: 120 });
+  } else {
+    scheduleCommandMapAutoFit();
+  }
+  if (!options.suppressFocusCenter && state.activeTab === "commands" && state.commandMapFocusOrder) {
     requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
   }
 }
@@ -19564,6 +19586,92 @@ function stopCommandMapTreeNodeDrag(event, commit = true) {
   scheduleCommandConnectorLayout({ burstMs: 220 });
 }
 
+function isCommandMapTreeModeActive() {
+  return state.activeTab === "commands"
+    && normalizeCommandMapViewMode(state.commandMapViewMode) === "tree"
+    && Boolean(commandMapList?.querySelector(".command-map-tree"));
+}
+
+function startCommandMapTreePan(event) {
+  if (
+    !commandMapList
+    || event.button !== 0
+    || !isCommandMapTreeModeActive()
+    || event.target.closest("button, input, textarea, select, a, [data-drag-handle], [data-recognition-drag-target], .command-map-tree-node-slot, .command-map-tree-edge-label, .command-map-tree-terminal-node")
+  ) {
+    return false;
+  }
+  const treeSurface = event.target.closest(".command-map-tree-stage, .command-map-tree, .command-map-tree-link-layer, .command-map-tree-link-svg");
+  if (!treeSurface) {
+    return false;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  state.commandMapTreePan = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    scrollLeft: commandMapList.scrollLeft,
+    scrollTop: commandMapList.scrollTop,
+  };
+  commandMapList.classList.add("is-tree-panning");
+  builderShell?.classList.add("is-map-dragging");
+  commandMapList.setPointerCapture?.(event.pointerId);
+  return true;
+}
+
+function updateCommandMapTreePan(event) {
+  const pan = state.commandMapTreePan;
+  if (!pan || pan.pointerId !== event.pointerId || !commandMapList) {
+    return;
+  }
+  event.preventDefault();
+  commandMapList.scrollLeft = Math.max(0, pan.scrollLeft - (event.clientX - pan.startX));
+  commandMapList.scrollTop = Math.max(0, pan.scrollTop - (event.clientY - pan.startY));
+}
+
+function stopCommandMapTreePan(event) {
+  const pan = state.commandMapTreePan;
+  if (!pan || pan.pointerId !== event.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  commandMapList?.classList.remove("is-tree-panning");
+  builderShell?.classList.remove("is-map-dragging");
+  state.commandMapTreePan = null;
+  scheduleCommandConnectorLayout({ burstMs: 120 });
+}
+
+function handleCommandMapTreeWheelZoom(event) {
+  if (
+    !commandMapList
+    || !isCommandMapTreeModeActive()
+    || event.target.closest("input, textarea, select, button, a")
+    || !event.target.closest(".command-map-tree, .command-map-tree-stage")
+  ) {
+    return;
+  }
+  const delta = Number(event.deltaY || 0);
+  if (!delta) {
+    return;
+  }
+
+  event.preventDefault();
+  const listRect = commandMapList.getBoundingClientRect();
+  const currentZoom = Math.max(0.01, Number(state.commandMapZoom) || 0.96);
+  const zoomFactor = delta > 0 ? 0.92 : 1.08;
+  const nextZoom = Math.round(currentZoom * zoomFactor * 100) / 100;
+  setCommandMapZoom(nextZoom, {
+    preservePoint: {
+      x: event.clientX - listRect.left,
+      y: event.clientY - listRect.top,
+    },
+    skipAutoFit: true,
+    suppressFocusCenter: true,
+  });
+}
+
 function renderCommandMap(options = {}) {
   const {
     layoutSnapshot = null,
@@ -24510,6 +24618,11 @@ commandMapList.addEventListener("pointerdown", (event) => {
     startCommandMapTreeNodeDrag(event, handle);
     return;
   }
+
+  if (startCommandMapTreePan(event)) {
+    return;
+  }
+
   if (handle && event.button === 0) {
     event.preventDefault();
     state.pendingDrag = {
@@ -24545,6 +24658,10 @@ window.addEventListener("pointercancel", stopRecognitionVisualDrag);
 window.addEventListener("pointermove", updateCommandMapTreeNodeDrag);
 window.addEventListener("pointerup", (event) => stopCommandMapTreeNodeDrag(event, true));
 window.addEventListener("pointercancel", (event) => stopCommandMapTreeNodeDrag(event, false));
+window.addEventListener("pointermove", updateCommandMapTreePan);
+window.addEventListener("pointerup", stopCommandMapTreePan);
+window.addEventListener("pointercancel", stopCommandMapTreePan);
+commandMapList.addEventListener("wheel", handleCommandMapTreeWheelZoom, { passive: false });
 
 commandMapList.addEventListener("focusin", (event) => {
   if (event.target.closest("[data-drag-handle]")) {

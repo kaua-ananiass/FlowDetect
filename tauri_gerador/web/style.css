@@ -8849,6 +8849,16 @@ label span {
   padding: 18px 18px 34px 0;
 }
 
+.command-map-list.is-tree-view .command-map-tree-stage {
+  cursor: grab;
+}
+
+.command-map-list.is-tree-view.is-tree-panning,
+.command-map-list.is-tree-view.is-tree-panning * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
 .builder-shell.has-insert-panel .command-map-list {
   align-items: center;
   padding-top: 18px;
