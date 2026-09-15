@@ -1830,25 +1830,11 @@ function renderCommandMapTreeReferenceLinks() {
       } else if (isPrimaryNext && isForward) {
         const startX = sourceRect.right;
         const endX = targetRect.left;
-        if (hasManualLabelPosition) {
-          const labelTurnX = Math.max(
-            Math.min(startX, endX) + 18,
-            Math.min(Math.max(startX, endX) - 18, labelRect.centerX)
-          );
-          path.setAttribute("d", [
-            `M ${startX} ${sourceRect.centerY}`,
-            `L ${labelTurnX} ${sourceRect.centerY}`,
-            `L ${labelTurnX} ${labelRect.centerY}`,
-            `L ${endX} ${labelRect.centerY}`,
-            `L ${endX} ${targetRect.centerY}`,
-          ].join(" "));
-        } else {
-          const delta = Math.max(38, Math.min(86, Math.abs(endX - startX) * 0.45));
-          path.setAttribute(
-            "d",
-            `M ${startX} ${sourceRect.centerY} C ${startX + delta} ${sourceRect.centerY} ${endX - delta} ${targetRect.centerY} ${endX} ${targetRect.centerY}`
-          );
-        }
+        const delta = Math.max(38, Math.min(86, Math.abs(endX - startX) * 0.45));
+        path.setAttribute(
+          "d",
+          `M ${startX} ${sourceRect.centerY} C ${startX + delta} ${sourceRect.centerY} ${endX - delta} ${targetRect.centerY} ${endX} ${targetRect.centerY}`
+        );
       } else if (isForward) {
         const startX = sourceRect.right;
         const endX = targetRect.left;
