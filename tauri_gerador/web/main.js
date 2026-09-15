@@ -1594,6 +1594,21 @@ function clearCommandMapTreeReferenceLayer(tree) {
   tree?.querySelectorAll(".command-map-tree-link-layer").forEach((layer) => layer.remove());
 }
 
+function createCommandMapTreeLinkEnergy(pathData, kind = "success", duration = 1.55) {
+  const normalizedKind = String(kind || "success").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "success";
+  const normalizedPath = String(pathData || "").trim();
+  if (!normalizedPath) {
+    return null;
+  }
+  const energy = document.createElement("span");
+  energy.className = `command-map-tree-link-energy is-${normalizedKind}`;
+  energy.setAttribute("aria-hidden", "true");
+  energy.style.setProperty("--tree-energy-duration", `${duration}s`);
+  energy.style.offsetPath = `path("${normalizedPath.replace(/"/g, "'")}")`;
+  energy.style.offsetRotate = "0deg";
+  return energy;
+}
+
 function renderCommandMapTreeReferenceLinks() {
   if (!commandMapList || state.activeTab !== "commands") {
     return;
@@ -1619,6 +1634,7 @@ function renderCommandMapTreeReferenceLinks() {
     svg.setAttribute("class", "command-map-tree-link-svg");
     svg.setAttribute("viewBox", `0 0 ${Math.ceil(stageWidth)} ${Math.ceil(stageHeight)}`);
     svg.setAttribute("aria-hidden", "true");
+    const energyDots = [];
 
     const toStageRect = (element) => {
       const rect = element.getBoundingClientRect();
@@ -1878,20 +1894,10 @@ function renderCommandMapTreeReferenceLinks() {
 
       path.setAttribute("class", `command-map-tree-link-path is-${kind} ${isPrimaryNext ? "is-primary-next" : "is-branch-route"} is-${branchSide}`);
       svg.appendChild(path);
-
-      const energy = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      energy.setAttribute("class", `command-map-tree-link-energy is-${kind}`);
-      energy.setAttribute("r", kind === "failure" ? "3.2" : "3");
-      const motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
-      motion.setAttribute("dur", kind === "failure" ? "1.8s" : "1.55s");
-      motion.setAttribute("repeatCount", "indefinite");
-      motion.setAttribute("rotate", "auto");
-      const mpath = document.createElementNS("http://www.w3.org/2000/svg", "mpath");
-      mpath.setAttribute("href", `#${pathId}`);
-      mpath.setAttributeNS("http://www.w3.org/1999/xlink", "href", `#${pathId}`);
-      motion.appendChild(mpath);
-      energy.appendChild(motion);
-      svg.appendChild(energy);
+      const energy = createCommandMapTreeLinkEnergy(path.getAttribute("d"), kind, kind === "failure" ? 1.8 : 1.55);
+      if (energy) {
+        energyDots.push(energy);
+      }
     });
 
     const finalStageHeight = Math.ceil(dynamicStageHeight);
@@ -1899,6 +1905,7 @@ function renderCommandMapTreeReferenceLinks() {
     layer.style.height = `${finalStageHeight}px`;
     svg.setAttribute("viewBox", `0 0 ${Math.ceil(stageWidth)} ${finalStageHeight}`);
     layer.appendChild(svg);
+    energyDots.forEach((energy) => layer.appendChild(energy));
     stage.prepend(layer);
     return;
   }
@@ -1920,6 +1927,7 @@ function renderCommandMapTreeReferenceLinks() {
   svg.setAttribute("class", "command-map-tree-link-svg");
   svg.setAttribute("viewBox", `0 0 ${Math.ceil(treeWidth)} ${Math.ceil(treeHeight)}`);
   svg.setAttribute("aria-hidden", "true");
+  const energyDots = [];
 
   references.forEach((reference, index) => {
     const targetOrder = Number(reference.dataset.treeReferenceTargetOrder || 0);
@@ -1966,23 +1974,14 @@ function renderCommandMapTreeReferenceLinks() {
     }
     path.setAttribute("class", `command-map-tree-link-path is-${escapeHtml(kind || "success")} ${goesBack ? "is-back-reference" : "is-forward-reference"}`);
     svg.appendChild(path);
-
-    const energy = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    energy.setAttribute("class", `command-map-tree-link-energy is-${escapeHtml(kind || "success")}`);
-    energy.setAttribute("r", kind === "failure" ? "3.2" : "3");
-    const motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
-    motion.setAttribute("dur", kind === "failure" ? "1.75s" : "1.55s");
-    motion.setAttribute("repeatCount", "indefinite");
-    motion.setAttribute("rotate", "auto");
-    const mpath = document.createElementNS("http://www.w3.org/2000/svg", "mpath");
-    mpath.setAttribute("href", `#${pathId}`);
-    mpath.setAttributeNS("http://www.w3.org/1999/xlink", "href", `#${pathId}`);
-    motion.appendChild(mpath);
-    energy.appendChild(motion);
-    svg.appendChild(energy);
+    const energy = createCommandMapTreeLinkEnergy(path.getAttribute("d"), kind, kind === "failure" ? 1.75 : 1.55);
+    if (energy) {
+      energyDots.push(energy);
+    }
   });
 
   layer.appendChild(svg);
+  energyDots.forEach((energy) => layer.appendChild(energy));
   tree.prepend(layer);
 }
 

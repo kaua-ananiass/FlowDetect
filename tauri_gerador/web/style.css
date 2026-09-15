@@ -9631,18 +9631,40 @@ label span {
 }
 
 .command-map-tree-link-energy {
-  fill: var(--command-page-accent-soft);
-  filter: drop-shadow(0 0 7px var(--command-page-accent-glow));
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 999px;
+  background: var(--command-page-accent-soft);
+  box-shadow: 0 0 9px var(--command-page-accent-glow);
+  offset-distance: 0%;
+  pointer-events: none;
+  will-change: offset-distance;
+  animation: command-map-tree-energy-flow var(--tree-energy-duration, 1.55s) linear infinite;
 }
 
 .command-map-tree-link-energy.is-failure {
-  fill: rgba(254, 202, 202, 0.94);
-  filter: drop-shadow(0 0 7px rgba(248, 113, 113, 0.28));
+  background: rgba(254, 202, 202, 0.94);
+  box-shadow: 0 0 9px rgba(248, 113, 113, 0.28);
 }
 
 .command-map-tree-link-energy.is-diverge {
-  fill: rgba(221, 214, 254, 0.95);
-  filter: drop-shadow(0 0 7px rgba(167, 139, 250, 0.28));
+  background: rgba(221, 214, 254, 0.95);
+  box-shadow: 0 0 9px rgba(167, 139, 250, 0.28);
+}
+
+@keyframes command-map-tree-energy-flow {
+  from {
+    offset-distance: 0%;
+  }
+
+  to {
+    offset-distance: 100%;
+  }
 }
 
 .command-map-tree-terminal {
