@@ -19918,7 +19918,7 @@ function startCommandMapTreePan(event) {
 
   event.preventDefault();
   event.stopPropagation();
-  closeCommandMapSelectionMenu();
+  clearCommandMapCardSelection();
   state.commandMapTreePan = {
     pointerId: event.pointerId,
     startX: event.clientX,
