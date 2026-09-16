@@ -8584,22 +8584,25 @@ class ExecutorAutomacao:
         if regiao_teste is None and titulo_janela:
             regiao_teste = self.obter_regiao_busca(titulo_janela)
 
-        # Ao usar o botao Procurar, o FlowDetect e minimizado antes do worker
-        # iniciar. Sem uma janela configurada, a janela que ficou em primeiro
-        # plano costuma ser exatamente o sistema que deve ser reconhecido. Fazemos
-        # uma tentativa curta nela para evitar OCR da tela inteira; se nao achar,
-        # a busca normal ainda cobre todos os monitores.
+        # Ao usar o botao Procurar, o Studio e minimizado antes do worker
+        # iniciar. O elemento pode estar em um modal cujo titulo nao coincide
+        # com a janela gravada no bloco. Para o teste isolado, os pixels visiveis
+        # sao a fonte de verdade: priorizamos a janela externa em primeiro plano
+        # sem ativa-la, move-la ou depender do titulo antigo.
         if (
             bool(getattr(self, "modo_teste_reconhecimento", False))
-            and not titulo_janela
             and self.normalizar_modo_area_busca(modo_area_busca) == "target_window"
         ):
             janela_ativa_teste = self.obter_janela_ativa()
             if (
                 isinstance(janela_ativa_teste, dict)
+                and not self.janela_parece_interface_flowdetect(janela_ativa_teste)
                 and int(janela_ativa_teste.get("width", 0) or 0) >= 260
                 and int(janela_ativa_teste.get("height", 0) or 0) >= 180
             ):
+                titulo_janela = str(janela_ativa_teste.get("title") or titulo_janela or "").strip()
+                self.janela_alvo = titulo_janela
+                janela_teste = janela_ativa_teste
                 area_teste = {
                     "x": int(janela_ativa_teste.get("left", 0) or 0),
                     "y": int(janela_ativa_teste.get("top", 0) or 0),
@@ -8609,7 +8612,7 @@ class ExecutorAutomacao:
                 modo_area_teste = "custom_area"
                 regiao_teste = self.construir_regiao_personalizada(area_teste)
                 safe_print(
-                    "Teste rapido: procurando primeiro na janela em primeiro plano "
+                    "Teste rapido: usando a janela externa em primeiro plano "
                     f"({janela_ativa_teste.get('title', 'janela atual')}).",
                     flush=True,
                 )
