@@ -226,7 +226,6 @@ const state = {
   commandMapSelectionSequence: "",
   commandMapMoveTargetSequence: "",
   commandMapMarqueeSelection: null,
-  commandMapPanShortcut: false,
   commandMapOrderCache: [],
   commandMapAutoFitFrame: 0,
   commandConnectorLayoutFrame: 0,
@@ -10672,7 +10671,7 @@ function startCommandMapMarqueeSelection(event) {
     !commandMapList
     || event.button !== 0
     || state.activeTab !== "commands"
-    || state.commandMapPanShortcut
+    || !(event.ctrlKey || event.metaKey)
     || event.target.closest("button, input, textarea, select, label, a, [contenteditable='true'], .command-tree-card, .insert-card-panel, .command-map-tree-edge-label, .command-map-tree-terminal-node")
     || !event.target.closest(".command-flow-row, .command-map-tree, .command-map-tree-stage, .command-map-list")
   ) {
@@ -19906,7 +19905,7 @@ function isCommandMapTreeModeActive() {
 function startCommandMapTreePan(event) {
   if (
     !commandMapList
-    || !((event.button === 1) || (event.button === 0 && state.commandMapPanShortcut))
+    || event.button !== 0
     || !isCommandMapTreeModeActive()
     || event.target.closest("button, input, textarea, select, a, label, [contenteditable='true'], [data-drag-handle], [data-recognition-drag-target], [data-recognition-preview-card], [data-recognition-preview-stage], [data-recognition-preview-image-map], .command-tree-card, .command-flow-segment, .insert-card-panel, .command-map-tree-node-slot, .command-map-tree-edge-label, .command-map-tree-terminal-node")
   ) {
@@ -24419,21 +24418,6 @@ mapSelectionMenuTargets?.addEventListener("click", (event) => {
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && mapSelectionMenu && !mapSelectionMenu.hidden) {
     closeCommandMapSelectionMenu();
-    return;
-  }
-  if (
-    event.code === "Space"
-    && state.activeTab === "commands"
-    && !event.target.closest?.("input, textarea, select, button, [contenteditable='true']")
-  ) {
-    state.commandMapPanShortcut = true;
-    event.preventDefault();
-  }
-});
-
-window.addEventListener("keyup", (event) => {
-  if (event.code === "Space") {
-    state.commandMapPanShortcut = false;
   }
 });
 
