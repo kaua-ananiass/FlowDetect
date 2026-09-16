@@ -2034,8 +2034,10 @@ class ExecutorAutomacao:
                 y = round(topo + altura / 2 + oy * scale_y - h / 2)
             else:
                 x, y, w, h = self.bounds_reconhecimento(detected)
+            # Mantem a confirmacao visivel, mas sem introduzir quase meio
+            # segundo de espera para cada OCR de um bloco composto.
             self.marcar_regiao_absoluta(x, y, w, h, tema=f"ocr_busca_{min(index + 1, 4)}",
-                                       etiqueta=f"OCR {index + 1}", duracao=0.42,
+                                       etiqueta=f"OCR {index + 1}", duracao=0.18,
                                        bloqueante=True, margem=0)
 
     def regioes_alvos_ocr_por_layout(self, local, leitura_relativa=None, dimensoes_referencia=None, quantidade=0):
@@ -7835,8 +7837,18 @@ class ExecutorAutomacao:
                         int(janela_companheira_hibrida.get("height", 0) or 0),
                     ),
                     "target_companion",
-                    fallback=True,
+                    fallback=False,
                 )
+                # Em fluxos fiscais o alvo normalmente aparece em um dialogo
+                # modal do mesmo programa (por exemplo, SPED Reinf). A busca
+                # anterior examinava primeiro a janela principal inteira e so
+                # depois o dialogo menor que ja esta visivel. Priorizar esse
+                # dialogo reduz muito o OCR/template sem ativar ou mover janela;
+                # a janela principal permanece como alternativa na mesma rodada.
+                if hibrido_ocr_visual_obrigatorio:
+                    regioes_busca.sort(
+                        key=lambda entrada: 0 if entrada.get("stage") == "target_companion" else 1
+                    )
             elif modo_area_busca == "custom_area" and regiao_personalizada:
                 adicionar_regiao_busca(regioes_busca, regiao_personalizada, "custom_area", fallback=bool(regiao_historica))
 
@@ -8382,7 +8394,9 @@ class ExecutorAutomacao:
                 flush=True,
             )
             return None
-        self.marcar_area_reconhecida(local, duracao=0.75, bloqueante=True, etiqueta="Reconhecimento")
+        # A borda verde continua informando a confirmacao, so que com uma
+        # exibicao curta para nao atrasar cada proximo bloco da automacao.
+        self.marcar_area_reconhecida(local, duracao=0.28, bloqueante=True, etiqueta="Reconhecimento")
         offset_click_x, offset_click_y = self.escalar_offset_referencia(
             local,
             offset_x=offset_x,
@@ -8397,7 +8411,7 @@ class ExecutorAutomacao:
                 flush=True,
             )
         if clicar:
-            time.sleep(0.12)
+            time.sleep(0.04)
             destino_click_x, destino_click_y = self.centro_area_reconhecida(
                 local,
                 offset_x=offset_click_x,
@@ -8408,7 +8422,7 @@ class ExecutorAutomacao:
                 int(destino_click_y) - 9,
                 18,
                 18,
-                duracao=0.38,
+                duracao=0.12,
                 bloqueante=True,
                 tema="visual",
                 etiqueta="Clique",
