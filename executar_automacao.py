@@ -1145,6 +1145,41 @@ class ExecutorAutomacao:
         self._janela_fixada = janela
         return janela
 
+    def adotar_janela_visivel_passiva_para_ocr(self):
+        """Escolhe passivamente a janela externa mais proxima do topo para OCR.
+
+        E um ultimo contexto seguro quando a execucao foi iniciada sem alvo.
+        Nunca ativa, maximiza ou altera a ordem das janelas: apenas impede que
+        o Tesseract precise analisar toda a area de trabalho para encontrar um
+        dialogo pequeno.
+        """
+        if self.alvo_execucao_ativo() or self.janela_alvo or self._janela_contexto:
+            return None
+        try:
+            candidatas = [
+                janela
+                for janela in self.listar_janelas_visiveis()
+                if not self.janela_parece_interface_flowdetect(janela)
+                and int(janela.get("hwnd", 0) or 0) > 0
+                and int(janela.get("width", 0) or 0) >= 260
+                and int(janela.get("height", 0) or 0) >= 180
+            ]
+        except Exception:
+            candidatas = []
+        if not candidatas:
+            return None
+        # EnumWindows preserva a ordem Z: a primeira janela valida e a mais
+        # proxima do usuario. Nao usamos tamanho para evitar capturar outro
+        # programa grande que esteja atras do sistema automatizado.
+        candidata = candidatas[0]
+        if not self.memorizar_contexto_visual_passivo(candidata):
+            return None
+        safe_print(
+            f"OCR passivo adotou a janela visivel: {candidata.get('title', 'janela atual')}",
+            flush=True,
+        )
+        return candidata
+
     def memorizar_contexto_visual_passivo(self, janela=None):
         """Guarda a primeira janela visual valida sem ativar ou mover nada.
 
@@ -4127,15 +4162,19 @@ class ExecutorAutomacao:
                     if 0.50 <= float(valor) <= 2.00
                 )
             ) or (1.0,)
-            if perfil_busca != "fast":
-                escalas_guiadas_por_ocr = tuple(
-                    round(escala_referencia * ajuste, 4)
-                    for ajuste in (1.0, 0.96, 1.04, 0.91, 1.09)
-                )
-                # A escala vem da geometria de varios OCRs confirmados. Ela e mais
-                # confiavel que uma varredura cega e evita testar dezenas de tamanhos
-                # no monitor inteiro durante um reconhecimento hibrido.
-                escalas_fallback = escalas_guiadas_por_ocr
+            ajustes_guiados = (
+                (0.90, 0.96, 1.04, 1.10)
+                if perfil_busca == "fast"
+                else (1.0, 0.96, 1.04, 0.91, 1.09)
+            )
+            escalas_guiadas_por_ocr = tuple(
+                round(escala_referencia * ajuste, 4)
+                for ajuste in ajustes_guiados
+            )
+            # A escala vem da geometria dos OCRs confirmados. Mesmo no perfil
+            # rapido testamos quatro ajustes proximos: isso cobre DPI/zoom de
+            # outra maquina sem esperar o timeout mudar para "balanced".
+            escalas_fallback = escalas_guiadas_por_ocr
 
         limite_escala_minima = 0.50 if escala_referencia is not None else 0.75
         limite_escala_maxima = 2.00 if escala_referencia is not None else 1.35
@@ -7702,6 +7741,13 @@ class ExecutorAutomacao:
         ):
             candidata_ativa = self.obter_janela_ativa()
             if (
+                not isinstance(candidata_ativa, dict)
+                or self.janela_parece_interface_flowdetect(candidata_ativa)
+                or int(candidata_ativa.get("width", 0) or 0) < 260
+                or int(candidata_ativa.get("height", 0) or 0) < 180
+            ):
+                candidata_ativa = self.adotar_janela_visivel_passiva_para_ocr()
+            if (
                 isinstance(candidata_ativa, dict)
                 and not self.janela_parece_interface_flowdetect(candidata_ativa)
                 and int(candidata_ativa.get("width", 0) or 0) >= 260
@@ -7710,7 +7756,7 @@ class ExecutorAutomacao:
                 janela_ativa_hibrida = candidata_ativa
                 self.memorizar_contexto_visual_passivo(candidata_ativa)
                 safe_print(
-                    "Hibrido OCR + imagem: lendo somente a janela que ja esta em primeiro plano, sem altera-la.",
+                    "Hibrido OCR + imagem: lendo somente a janela visivel do sistema, sem altera-la.",
                     flush=True,
                 )
 
@@ -7748,9 +7794,19 @@ class ExecutorAutomacao:
             if perfil_busca == "fast":
                 perfil_iteracao = "fast"
             elif perfil_busca == "balanced":
-                perfil_iteracao = "fast" if tempo_decorrido < (timeout_total * 0.68) else "balanced"
+                # Depois que os OCRs delimitaram uma area pequena, nao faz
+                # sentido aguardar 68% do timeout para ampliar a validacao
+                # visual. Esse atraso era o motivo dos blocos apos SPED
+                # demorarem 8--10 segundos apesar de o texto ja estar lido.
+                limite_fast_balanceado = timeout_total * 0.68
+                if hibrido_ocr_visual_obrigatorio:
+                    limite_fast_balanceado = min(1.10, max(0.35, timeout_total * 0.18))
+                perfil_iteracao = "fast" if tempo_decorrido < limite_fast_balanceado else "balanced"
             else:
-                perfil_iteracao = "fast" if tempo_decorrido < (timeout_total * 0.40) else "precise"
+                limite_fast_preciso = timeout_total * 0.40
+                if hibrido_ocr_visual_obrigatorio:
+                    limite_fast_preciso = min(1.30, max(0.40, timeout_total * 0.22))
+                perfil_iteracao = "fast" if tempo_decorrido < limite_fast_preciso else "precise"
             intervalo_reativacao = 2.4 if perfil_busca == "fast" else (1.8 if perfil_busca == "balanced" else 1.0)
             if usando_alvo_execucao:
                 janela_info_cache = self.obter_janela_alvo_execucao_atual(obrigatoria=True)
@@ -10191,10 +10247,19 @@ def main():
         time.sleep(atraso)
 
     if args.modo != "reconhecimento" and not executor.janela_alvo and not executor.alvo_execucao_ativo():
-        safe_print(
-            "Nenhuma janela alvo selecionada. Captura e reconhecimento vao usar a tela inteira.",
-            flush=True,
-        )
+        janela_passiva = executor.adotar_janela_ativa_para_ocr()
+        if janela_passiva is None:
+            janela_passiva = executor.adotar_janela_visivel_passiva_para_ocr()
+        if janela_passiva:
+            safe_print(
+                f"Execucao sem alvo fixo: OCR limitado passivamente a {janela_passiva.get('title', 'janela visivel')}.",
+                flush=True,
+            )
+        else:
+            safe_print(
+                "Nenhuma janela alvo selecionada. Captura e reconhecimento vao usar a tela inteira.",
+                flush=True,
+            )
     elif args.modo == "reconhecimento" and not executor.janela_alvo and not executor.alvo_execucao_ativo():
         safe_print(
             "Teste de reconhecimento sem janela alvo fixa. Procurando a referencia na tela inteira.",
