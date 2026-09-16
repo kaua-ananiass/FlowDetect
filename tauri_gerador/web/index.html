@@ -89,8 +89,8 @@
               <label>
                 <span>Janela do FlowDetect</span>
                 <select id="testWindowModeSelect">
-                  <option value="normal" selected>Manter aberta</option>
-                  <option value="minimize">Minimizar ao executar</option>
+                  <option value="normal">Manter aberta</option>
+                  <option value="minimize" selected>Minimizar ao executar</option>
                 </select>
               </label>
             </div>
@@ -792,8 +792,8 @@
               <label>
                 <span>Janela do FlowDetect</span>
                 <select id="assistWindowModeSelect">
-                  <option value="normal" selected>Manter aberta</option>
-                  <option value="minimize">Minimizar ao executar</option>
+                  <option value="normal">Manter aberta</option>
+                  <option value="minimize" selected>Minimizar ao executar</option>
                 </select>
               </label>
               <button id="assistQuickButton" class="soft-button" type="button">Executar</button>
@@ -929,6 +929,10 @@
             <div class="command-map-side-stack">
               <div class="map-zoom-controls">
                 <div id="commandMapPageTabs" class="command-page-tabs" aria-label="Paginas do mapa"></div>
+                <div class="map-view-controls" role="group" aria-label="Modo de visualizacao do mapa">
+                  <button class="micro-button map-view-button is-active" data-command-map-view="sequence" type="button" aria-pressed="true">Sequencia</button>
+                  <button class="micro-button map-view-button" data-command-map-view="tree" type="button" aria-pressed="false">Arvore</button>
+                </div>
                 <div class="map-zoom-cluster">
                   <button id="mapZoomOutButton" class="micro-button" type="button" aria-label="Diminuir zoom">-</button>
                   <input id="mapZoomRange" class="map-zoom-range" type="range" min="72" max="140" step="4" value="96" />
@@ -1132,8 +1136,8 @@
               <label class="studio-control-minimize-option">
                 <span>Janela do Agent</span>
                 <select id="studioControlAgentWindowMode">
-                  <option value="normal">Manter aberta</option>
-                  <option value="minimize" selected>Minimizar ao executar</option>
+                  <option value="normal" selected>Manter aberta</option>
+                  <option value="minimize">Minimizar ao executar</option>
                 </select>
               </label>
               <label class="studio-control-run-option">

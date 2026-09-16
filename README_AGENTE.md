@@ -431,6 +431,22 @@ Ao mexer:
 - testar mudanca de posicao;
 - validar marcador verde e marcador azul.
 
+### Padrao base atual: OCR hibrido rapido e confirmado
+
+Este e o comportamento aprovado para reconhecimento de imagem com OCR. Deve ser a base para alteracoes futuras.
+
+- Capturar somente a janela alvo ou o modal visivel do mesmo programa; tela inteira fica como ultimo recurso.
+- Em execucao assistida, priorizar o modal externo que estiver em primeiro plano sem ativar, mover ou trazer janelas para frente.
+- Primeiro rodar OCR em escala nativa no dialogo. Uma captura deve servir a todos os textos OCR do mesmo bloco.
+- Se um rotulo pequeno nao for lido ou vier apenas parcialmente confirmado, fazer uma unica releitura do mesmo dialogo em escala ampliada (`1.35`). Nao executar varreduras em varias regioes como fallback do fluxo hibrido.
+- Confirmar todos os alvos OCR configurados e so entao confirmar a imagem na regiao estimada pelos OCRs. OCR isolado nunca libera clique ou avancar no fluxo.
+- A busca visual deve comecar na regiao exata estimada pelos OCRs e depois ampliar somente ao redor dela.
+- Limitar a frequencia de novas leituras OCR para evitar uso continuo de CPU e travamento do mouse. O log deve registrar `OCR screenshot concluido em ...ms`.
+- No botao **Procurar**, usar a janela externa que ficou visivel depois que o Studio minimiza, mesmo se o titulo gravado no bloco for da janela principal.
+- Preservar os marcadores: OCR em azul e imagem confirmada em verde. Eles devem ser curtos para nao adicionar atraso perceptivel.
+
+Validacao minima: executar `python -m unittest discover -s tests -v`, testar **Procurar** e testar a mesma sequencia pela **Execucao assistida** em um modal real.
+
 ## 10. Regras de UX/design
 
 Preferencias do usuario:

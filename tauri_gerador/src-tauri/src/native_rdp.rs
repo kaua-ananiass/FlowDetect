@@ -685,7 +685,7 @@ fn open_vmconnect(
     let user_name = std::env::var("USERNAME").unwrap_or_default();
     let username = format!(r"{}\{}", user_domain, user_name);
     let rdp = format!(
-        "full address:s:{host}\r\nserver port:i:2179\r\npcb:s:{vm_id};EnhancedMode=1\r\nsawvmconnect:i:1\r\nauthentication level:i:2\r\nnegotiate security layer:i:0\r\nenablecredsspsupport:i:1\r\nusername:s:{username}\r\nprompt for credentials:i:0\r\npromptcredentialonce:i:0\r\nscreen mode id:i:1\r\ndesktopwidth:i:{}\r\ndesktopheight:i:{}\r\nsmart sizing:i:1\r\ndynamic resolution:i:1\r\nredirectclipboard:i:0\r\nredirectprinters:i:0\r\nredirectsmartcards:i:0\r\nredirectwebauthn:i:0\r\nredirectcomports:i:0\r\nredirectposdevices:i:0\r\nredirectdirectx:i:0\r\naudiocapturemode:i:0\r\naudiomode:i:2\r\ndevicestoredirect:s:\r\ndrivestoredirect:s:\r\nusbdevicestoredirect:s:\r\n", width.max(640), height.max(480)
+        "full address:s:{host}\r\nserver port:i:2179\r\npcb:s:{vm_id};EnhancedMode=1\r\nsawvmconnect:i:1\r\nauthentication level:i:2\r\nnegotiate security layer:i:0\r\nenablecredsspsupport:i:1\r\nusername:s:{username}\r\nprompt for credentials:i:0\r\npromptcredentialonce:i:0\r\nscreen mode id:i:1\r\ndesktopwidth:i:{}\r\ndesktopheight:i:{}\r\nsmart sizing:i:1\r\ndynamic resolution:i:0\r\nredirectclipboard:i:0\r\nredirectprinters:i:0\r\nredirectsmartcards:i:0\r\nredirectwebauthn:i:0\r\nredirectcomports:i:0\r\nredirectposdevices:i:0\r\nredirectdirectx:i:0\r\naudiocapturemode:i:0\r\naudiomode:i:2\r\ndevicestoredirect:s:\r\ndrivestoredirect:s:\r\nusbdevicestoredirect:s:\r\n", width.max(640), height.max(480)
     );
     fs::write(&rdp_path, rdp)
         .map_err(|error| format!("Falha ao criar a sessao RDP da VM: {error}"))?;
@@ -1104,14 +1104,20 @@ pub fn resize(x: i32, y: i32, width: i32, height: i32, visible: bool) -> Result<
                     RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW,
                 );
             } else {
-                next_block_bounds = Some((x, y, width.max(320), height.max(240)));
+                let available_width = width.max(320);
+                let available_height = height.max(240);
+                let host_width = available_width.min(session.surface_width.max(320));
+                let host_height = available_height.min(session.surface_height.max(240));
+                let host_x = x + (available_width - host_width) / 2;
+                let host_y = y + (available_height - host_height) / 2;
+                next_block_bounds = Some((host_x, host_y, host_width, host_height));
                 SetWindowPos(
                     hwnd,
                     None,
-                    x,
-                    y,
-                    width.max(320),
-                    height.max(240),
+                    host_x,
+                    host_y,
+                    host_width,
+                    host_height,
                     SWP_NOACTIVATE,
                 )
                 .map_err(|error| error.to_string())?;

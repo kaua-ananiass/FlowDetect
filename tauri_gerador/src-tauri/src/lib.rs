@@ -567,6 +567,10 @@ Set-VMHost -EnableEnhancedSessionMode $true;
 Get-VMIntegrationService -VM $vm | Where-Object {{ $_.Name -match 'Guest|Convidado' }} | Enable-VMIntegrationService -ErrorAction SilentlyContinue;
 Set-VM -VM $vm -EnhancedSessionTransportType VMBus -ErrorAction SilentlyContinue;
 if ($vm.State -eq 'Off') {{
+  if (-not $vm.DynamicMemoryEnabled -and [int64]$vm.MemoryStartup -gt 6GB) {{
+    Set-VMMemory -VM $vm -DynamicMemoryEnabled $true -MinimumBytes 2048MB -StartupBytes 4096MB -MaximumBytes ([int64]$vm.MemoryStartup);
+    $vm=Get-VM -Name $vm.Name;
+  }}
   $targetDisks=@(Get-VMHardDiskDrive -VM $vm | ForEach-Object {{ $_.Path }} | Where-Object {{ $_ }});
   $targetKeys=@($targetDisks | ForEach-Object {{
     try {{ [System.IO.Path]::GetFullPath($_).ToLowerInvariant() }} catch {{ $_.ToString().ToLowerInvariant() }}
@@ -4718,35 +4722,21 @@ fn fit_target_window_to_agent_area(_app: AppHandle, hwnd: i64) -> Result<Value, 
         return Err("Janela alvo invalida.".to_string());
     }
 
-    #[cfg(windows)]
-    {
-        let window = HWND(hwnd as isize as *mut std::ffi::c_void);
-        fit_window_to_agent_safe_area(window, hwnd, "Janela alvo")
-    }
-
-    #[cfg(not(windows))]
-    {
-        Err("Ajuste de janela alvo disponivel apenas no Windows.".to_string())
-    }
+    Ok(serde_json::json!({
+        "ok": true,
+        "adjusted": false,
+        "hwnd": hwnd,
+        "mode": "preserve_window"
+    }))
 }
 
 #[tauri::command]
 fn fit_active_window_to_agent_area(_app: AppHandle) -> Result<Value, String> {
-    #[cfg(windows)]
-    {
-        unsafe {
-            let window = GetForegroundWindow();
-            if window.0.is_null() || !IsWindow(window).as_bool() {
-                return Err("Nenhuma janela ativa valida para ajustar.".to_string());
-            }
-            fit_window_to_agent_safe_area(window, window.0 as isize as i64, "Janela ativa")
-        }
-    }
-
-    #[cfg(not(windows))]
-    {
-        Err("Ajuste de janela ativa disponivel apenas no Windows.".to_string())
-    }
+    Ok(serde_json::json!({
+        "ok": true,
+        "adjusted": false,
+        "mode": "preserve_window"
+    }))
 }
 
 #[cfg(windows)]
@@ -9516,13 +9506,85 @@ fn get_test_loop_data(app: AppHandle) -> Result<Value, String> {
         .map_err(|err| format!("Falha ao interpretar os dados do loop: {err}"))
 }
 
+/// Hides only FlowDetect's own window before launching an on-screen automation.
+///
+/// The executor reads the pixels currently visible on the desktop.  Keeping the
+/// full-screen launcher over the target application makes a valid target look
+/// absent, so the default is to minimize it.  This deliberately does not focus,
+/// raise, move, or reorder any target window.
+fn minimize_flowdetect_for_execution(
+    app: &AppHandle,
+    root: &Path,
+    minimize_window: Option<bool>,
+) -> bool {
+    if !minimize_window.unwrap_or(true) {
+        append_launcher_log(
+            root,
+            "Janela do FlowDetect mantida aberta por configuracao da execucao.",
+        );
+        return false;
+    }
+
+    let Some(window) = app.get_webview_window("main") else {
+        append_launcher_log(
+            root,
+            "Janela principal do FlowDetect nao encontrada; a execucao seguira sem minimiza-la.",
+        );
+        return false;
+    };
+
+    if window.is_minimized().unwrap_or(false) {
+        append_launcher_log(
+            root,
+            "Janela do FlowDetect ja estava minimizada para a execucao.",
+        );
+        return false;
+    }
+
+    match window.minimize() {
+        Ok(()) => {
+            append_launcher_log(
+                root,
+                "Janela do FlowDetect minimizada para deixar a janela-alvo visivel.",
+            );
+            // Let Windows remove the launcher from the composited desktop before
+            // the Python executor starts taking screenshots.
+            thread::sleep(Duration::from_millis(350));
+            true
+        }
+        Err(err) => {
+            append_launcher_log(
+                root,
+                format!(
+                    "Nao foi possivel minimizar a janela do FlowDetect; a execucao seguira sem alterar a janela-alvo: {err}"
+                ),
+            );
+            false
+        }
+    }
+}
+
+/// Restores FlowDetect only when launching the executor itself failed.  No focus
+/// call is made, so a target application is never activated or reordered here.
+fn restore_flowdetect_after_launch_failure(app: &AppHandle, was_minimized_here: bool) {
+    if !was_minimized_here {
+        return;
+    }
+
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+    }
+}
+
 #[tauri::command]
 fn launch_quick_test(
     app: AppHandle,
     state: State<'_, RuntimeState>,
     delay: f64,
     window_title: Option<String>,
-    _minimize_window: Option<bool>,
+    target_context: Option<String>,
+    minimize_window: Option<bool>,
     text_overrides: Option<String>,
 ) -> Result<String, String> {
     let root = workspace_root(&app);
@@ -9576,6 +9638,13 @@ fn launch_quick_test(
     {
         command.arg("--janela-alvo").arg(title);
     }
+    if let Some(context) = target_context
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        command.arg("--target-context").arg(context);
+    }
     if let Some(value) = text_overrides
         .as_ref()
         .map(|value| value.trim())
@@ -9584,7 +9653,8 @@ fn launch_quick_test(
         command.arg("--text-overrides").arg(value);
     }
 
-    spawn_test_process(
+    let minimized_for_execution = minimize_flowdetect_for_execution(&app, &root, minimize_window);
+    let result = spawn_test_process(
         &app,
         &state,
         command,
@@ -9593,7 +9663,11 @@ fn launch_quick_test(
             delay.max(0.0),
         ),
         "o teste simples",
-    )
+    );
+    if result.is_err() {
+        restore_flowdetect_after_launch_failure(&app, minimized_for_execution);
+    }
+    result
 }
 
 #[tauri::command]
@@ -9602,9 +9676,19 @@ fn launch_assisted_quick_test(
     state: State<'_, RuntimeState>,
     delay: f64,
     window_title: Option<String>,
+    target_context: Option<String>,
+    minimize_window: Option<bool>,
     text_overrides: Option<String>,
 ) -> Result<String, String> {
-    launch_quick_test(app, state, delay, window_title, Some(false), text_overrides)
+    launch_quick_test(
+        app,
+        state,
+        delay,
+        window_title,
+        target_context,
+        minimize_window,
+        text_overrides,
+    )
 }
 
 #[tauri::command]
@@ -9614,7 +9698,8 @@ fn launch_test_automation(
     delay: f64,
     loop_start: i32,
     window_title: Option<String>,
-    _minimize_window: Option<bool>,
+    target_context: Option<String>,
+    minimize_window: Option<bool>,
     text_overrides: Option<String>,
 ) -> Result<String, String> {
     let root = workspace_root(&app);
@@ -9674,6 +9759,13 @@ fn launch_test_automation(
     {
         command.arg("--janela-alvo").arg(title);
     }
+    if let Some(context) = target_context
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        command.arg("--target-context").arg(context);
+    }
     if let Some(value) = text_overrides
         .as_ref()
         .map(|value| value.trim())
@@ -9682,7 +9774,8 @@ fn launch_test_automation(
         command.arg("--text-overrides").arg(value);
     }
 
-    spawn_test_process(
+    let minimized_for_execution = minimize_flowdetect_for_execution(&app, &root, minimize_window);
+    let result = spawn_test_process(
         &app,
         &state,
         command,
@@ -9692,7 +9785,11 @@ fn launch_test_automation(
             delay.max(0.0),
         ),
         "o teste direto com loop",
-    )
+    );
+    if result.is_err() {
+        restore_flowdetect_after_launch_failure(&app, minimized_for_execution);
+    }
+    result
 }
 
 #[tauri::command]
@@ -9702,6 +9799,8 @@ fn launch_assisted_loop_test(
     delay: f64,
     loop_start: i32,
     window_title: Option<String>,
+    target_context: Option<String>,
+    minimize_window: Option<bool>,
     text_overrides: Option<String>,
 ) -> Result<String, String> {
     launch_test_automation(
@@ -9710,7 +9809,8 @@ fn launch_assisted_loop_test(
         delay,
         loop_start,
         window_title,
-        Some(false),
+        target_context,
+        minimize_window,
         text_overrides,
     )
 }
