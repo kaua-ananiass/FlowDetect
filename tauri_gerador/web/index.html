@@ -933,13 +933,7 @@
                   <button class="micro-button map-view-button is-active" data-command-map-view="sequence" type="button" aria-pressed="true">Sequencia</button>
                   <button class="micro-button map-view-button" data-command-map-view="tree" type="button" aria-pressed="false">Arvore</button>
                 </div>
-                <div class="map-card-move-controls" aria-label="Mover cards entre paginas">
-                  <span id="mapCardSelectionCount" class="map-card-selection-count">0 cards</span>
-                  <button id="mapSelectAllCardsButton" class="micro-button map-card-select-button" type="button">Todos</button>
-                  <button id="mapClearCardSelectionButton" class="micro-button map-card-select-button" type="button">Limpar</button>
-                  <select id="mapMoveCardsTargetSelect" aria-label="Pagina de destino dos cards"></select>
-                  <button id="mapMoveSelectedCardsButton" class="micro-button map-card-move-button" type="button" disabled>Mover</button>
-                </div>
+                <button id="mapMoveSelectedCardsButton" class="micro-button map-card-move-button" type="button" hidden disabled>Mover</button>
                 <div class="map-zoom-cluster">
                   <button id="mapZoomOutButton" class="micro-button" type="button" aria-label="Diminuir zoom">-</button>
                   <input id="mapZoomRange" class="map-zoom-range" type="range" min="72" max="140" step="4" value="96" />
@@ -1475,6 +1469,22 @@
     </main>
 
     <button id="tutorialReplayButton" class="tutorial-replay-button" type="button" hidden>Tutorial</button>
+
+    <section id="mapMoveCardsDialog" class="map-card-move-dialog" role="dialog" aria-modal="true" aria-labelledby="mapMoveCardsDialogTitle" hidden>
+      <article class="map-card-move-modal">
+        <p class="panel-kicker">Organizar cards</p>
+        <h2 id="mapMoveCardsDialogTitle">Mover cards selecionados</h2>
+        <p id="mapMoveCardsDialogCount">Escolha a pagina de destino.</p>
+        <label class="map-card-move-field">
+          <span>Enviar para</span>
+          <select id="mapMoveCardsDialogTargetSelect" aria-label="Pagina de destino"></select>
+        </label>
+        <div class="map-card-move-dialog-actions">
+          <button id="mapMoveCardsDialogCancelButton" class="ghost-button" type="button">Cancelar</button>
+          <button id="mapMoveCardsDialogConfirmButton" class="primary-button" type="button">Confirmar</button>
+        </div>
+      </article>
+    </section>
 
     <section id="studioTutorialOverlay" class="studio-tutorial-overlay" aria-modal="true" role="dialog" aria-labelledby="studioTutorialTitle" hidden>
       <div id="studioTutorialSpotlight" class="studio-tutorial-spotlight" aria-hidden="true"></div>

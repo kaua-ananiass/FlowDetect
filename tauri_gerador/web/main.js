@@ -441,11 +441,12 @@ const timelineMeta = document.getElementById("timelineMeta");
 const commandMapMeta = document.getElementById("commandMapMeta");
 const commandMapStepBadge = document.getElementById("commandMapStepBadge");
 const commandMapPageTabs = document.getElementById("commandMapPageTabs");
-const mapCardSelectionCount = document.getElementById("mapCardSelectionCount");
-const mapSelectAllCardsButton = document.getElementById("mapSelectAllCardsButton");
-const mapClearCardSelectionButton = document.getElementById("mapClearCardSelectionButton");
-const mapMoveCardsTargetSelect = document.getElementById("mapMoveCardsTargetSelect");
 const mapMoveSelectedCardsButton = document.getElementById("mapMoveSelectedCardsButton");
+const mapMoveCardsDialog = document.getElementById("mapMoveCardsDialog");
+const mapMoveCardsDialogCount = document.getElementById("mapMoveCardsDialogCount");
+const mapMoveCardsDialogTargetSelect = document.getElementById("mapMoveCardsDialogTargetSelect");
+const mapMoveCardsDialogCancelButton = document.getElementById("mapMoveCardsDialogCancelButton");
+const mapMoveCardsDialogConfirmButton = document.getElementById("mapMoveCardsDialogConfirmButton");
 const commandMapPageModeSelect = document.getElementById("commandMapPageModeSelect");
 const commandMapPageAfterLoopSelect = document.getElementById("commandMapPageAfterLoopSelect");
 const commandMapPageModeHint = document.getElementById("commandMapPageModeHint");
@@ -10556,6 +10557,7 @@ function commandMapCardClientKey(event) {
 function clearCommandMapCardSelection({ render = false } = {}) {
   state.commandMapSelectedCardKeys = new Set();
   state.commandMapSelectionSequence = "";
+  closeCommandMapMoveDialog();
   if (render) {
     renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
     return;
@@ -10600,30 +10602,49 @@ function syncCommandMapCardSelectionVisuals() {
 }
 
 function syncCommandMapCardMoveControls(events = getCommandMapEvents()) {
-  if (!mapCardSelectionCount || !mapMoveCardsTargetSelect || !mapMoveSelectedCardsButton) {
+  if (!mapMoveSelectedCardsButton) {
     return;
   }
   pruneCommandMapCardSelection(events);
   const selected = selectedCommandMapEvents(events);
+  const hasDestination = getCommandMapPageDefinitions()
+    .some((page) => page.sequence !== normalizeSequenceName(state.commandMapPageSequence));
+  mapMoveSelectedCardsButton.hidden = !selected.length;
+  mapMoveSelectedCardsButton.disabled = !selected.length || !hasDestination;
+  mapMoveSelectedCardsButton.textContent = "Mover";
+  mapMoveSelectedCardsButton.setAttribute(
+    "aria-label",
+    selected.length ? `Mover ${selected.length} card${selected.length === 1 ? "" : "s"} selecionado(s)` : "Mover cards selecionados"
+  );
+}
+
+function closeCommandMapMoveDialog() {
+  if (mapMoveCardsDialog) {
+    mapMoveCardsDialog.hidden = true;
+  }
+}
+
+function openCommandMapMoveDialog() {
+  const selected = selectedCommandMapEvents();
   const sourceSequence = normalizeSequenceName(state.commandMapPageSequence);
   const destinations = getCommandMapPageDefinitions()
     .filter((page) => page.sequence !== sourceSequence);
-  const requestedTarget = normalizeSequenceName(state.commandMapMoveTargetSequence || mapMoveCardsTargetSelect.value);
+  if (!selected.length || !destinations.length || !mapMoveCardsDialog || !mapMoveCardsDialogTargetSelect) {
+    setMessage("Selecione cards e tenha outra pagina disponivel para mover.", "error");
+    return;
+  }
+  const requestedTarget = normalizeSequenceName(state.commandMapMoveTargetSequence);
   const target = destinations.some((page) => page.sequence === requestedTarget)
     ? requestedTarget
-    : (destinations[0]?.sequence || "");
+    : destinations[0].sequence;
   state.commandMapMoveTargetSequence = target;
-
-  mapCardSelectionCount.textContent = `${selected.length} card${selected.length === 1 ? "" : "s"}`;
-  mapMoveCardsTargetSelect.innerHTML = destinations.length
-    ? destinations.map((page) => `<option value="${escapeHtml(page.sequence)}">${escapeHtml(page.label)}</option>`).join("")
-    : '<option value="">Sem outra pagina</option>';
-  mapMoveCardsTargetSelect.value = target;
-  mapMoveCardsTargetSelect.disabled = !destinations.length;
-  mapSelectAllCardsButton && (mapSelectAllCardsButton.disabled = !events.length);
-  mapClearCardSelectionButton && (mapClearCardSelectionButton.disabled = !selected.length);
-  mapMoveSelectedCardsButton.disabled = !selected.length || !target;
-  mapMoveSelectedCardsButton.textContent = selected.length ? `Mover ${selected.length}` : "Mover";
+  mapMoveCardsDialogCount.textContent = `${selected.length} card${selected.length === 1 ? "" : "s"} sera(ao) movido(s).`;
+  mapMoveCardsDialogTargetSelect.innerHTML = destinations
+    .map((page) => `<option value="${escapeHtml(page.sequence)}">${escapeHtml(page.label)}</option>`)
+    .join("");
+  mapMoveCardsDialogTargetSelect.value = target;
+  mapMoveCardsDialog.hidden = false;
+  requestAnimationFrame(() => mapMoveCardsDialogTargetSelect.focus());
 }
 
 function toggleCommandMapCardSelection(clientKey, selected) {
@@ -10650,14 +10671,14 @@ function toggleCommandMapCardSelection(clientKey, selected) {
   syncCommandMapCardSelectionVisuals();
 }
 
-async function moveSelectedCommandMapCards() {
+async function moveSelectedCommandMapCards(destination = "") {
   const sourceSequence = normalizeSequenceName(state.commandMapPageSequence);
   let selected = selectedCommandMapEvents();
   if (!selected.length) {
     setMessage("Selecione um ou mais cards para mover.", "error");
     return;
   }
-  const destinationSequence = normalizeSequenceName(mapMoveCardsTargetSelect?.value || state.commandMapMoveTargetSequence);
+  const destinationSequence = normalizeSequenceName(destination || state.commandMapMoveTargetSequence);
   if (!destinationSequence || destinationSequence === sourceSequence) {
     setMessage("Escolha outra pagina como destino dos cards.", "error");
     return;
@@ -10681,6 +10702,7 @@ async function moveSelectedCommandMapCards() {
     });
     const destinationLabel = getCommandMapPageLabel(destinationSequence, roadmap);
     const movedCount = selected.length;
+    closeCommandMapMoveDialog();
     clearCommandMapCardSelection();
     state.commandMapMoveTargetSequence = destinationSequence;
     state.commandMapPageSequence = destinationSequence;
@@ -24311,25 +24333,30 @@ mapApplyBulkDelayButton?.addEventListener("click", async () => {
   await applyBulkDelayToAllBlocks("map");
 });
 
-mapSelectAllCardsButton?.addEventListener("click", () => {
-  const events = getCommandMapEvents().map((event) => applyCommandMapDraftToEvent(event));
-  state.commandMapSelectedCardKeys = new Set(events.map(commandMapCardClientKey).filter(Boolean));
-  state.commandMapSelectionSequence = normalizeSequenceName(state.commandMapPageSequence);
-  syncCommandMapCardMoveControls(events);
-  syncCommandMapCardSelectionVisuals();
-});
-
-mapClearCardSelectionButton?.addEventListener("click", () => {
-  clearCommandMapCardSelection();
-});
-
-mapMoveCardsTargetSelect?.addEventListener("change", () => {
-  state.commandMapMoveTargetSequence = normalizeSequenceName(mapMoveCardsTargetSelect.value);
-  syncCommandMapCardMoveControls();
-});
-
 mapMoveSelectedCardsButton?.addEventListener("click", () => {
-  void moveSelectedCommandMapCards();
+  openCommandMapMoveDialog();
+});
+
+mapMoveCardsDialogTargetSelect?.addEventListener("change", () => {
+  state.commandMapMoveTargetSequence = normalizeSequenceName(mapMoveCardsDialogTargetSelect.value);
+});
+
+mapMoveCardsDialogCancelButton?.addEventListener("click", closeCommandMapMoveDialog);
+
+mapMoveCardsDialogConfirmButton?.addEventListener("click", () => {
+  void moveSelectedCommandMapCards(mapMoveCardsDialogTargetSelect?.value || "");
+});
+
+mapMoveCardsDialog?.addEventListener("click", (event) => {
+  if (event.target === mapMoveCardsDialog) {
+    closeCommandMapMoveDialog();
+  }
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && mapMoveCardsDialog && !mapMoveCardsDialog.hidden) {
+    closeCommandMapMoveDialog();
+  }
 });
 
 
