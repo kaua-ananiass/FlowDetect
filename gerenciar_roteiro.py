@@ -3999,6 +3999,39 @@ def comando_atualizar_sequencia_inicial(args):
     return salvar_e_retornar(payload)
 
 
+def comando_mover_blocos_para_sequencia(args):
+    """Move cards entre paginas sem alterar sua ordem nem os destinos do fluxo."""
+    payload = carregar_e_normalizar()
+    sequencia_destino = normalizar_nome_sequencia(args.sequencia)
+    ordens = []
+    for valor in args.orders or []:
+        try:
+            ordem = int(valor)
+        except (TypeError, ValueError):
+            continue
+        if ordem > 0 and ordem not in ordens:
+            ordens.append(ordem)
+
+    if not ordens:
+        raise ValueError("Selecione pelo menos um bloco para mover.")
+
+    eventos_por_ordem = {
+        int(evento.get("ordem", 0)): evento
+        for evento in payload.get("eventos", [])
+        if str(evento.get("ordem", "")).strip()
+    }
+    ausentes = [ordem for ordem in ordens if ordem not in eventos_por_ordem]
+    if ausentes:
+        raise ValueError(f"Bloco(s) nao encontrado(s): {', '.join(map(str, ausentes))}.")
+
+    for ordem in ordens:
+        eventos_por_ordem[ordem]["sequencia"] = sequencia_destino
+
+    # A ordem global e as referencias por bloco continuam as mesmas. Assim,
+    # ligacoes como "ir para bloco" nao apontam para outro card ao trocar de pagina.
+    return salvar_e_retornar(payload)
+
+
 def comando_sincronizar_planilhas(_args):
     payload = carregar_e_normalizar()
     return salvar_e_retornar(payload)
@@ -4627,6 +4660,10 @@ def build_parser():
     update_initial_sequence = subparsers.add_parser("update-initial-sequence")
     update_initial_sequence.add_argument("--sequencia", required=True)
 
+    move_to_sequence = subparsers.add_parser("move-to-sequence")
+    move_to_sequence.add_argument("--orders", nargs="+", required=True)
+    move_to_sequence.add_argument("--sequencia", required=True)
+
     subparsers.add_parser("sync-spreadsheets")
 
     move = subparsers.add_parser("move")
@@ -4701,6 +4738,7 @@ COMANDOS = {
     "update-delay-all": comando_atualizar_atraso_global,
     "update-sequence-settings": comando_atualizar_configuracao_sequencia,
     "update-initial-sequence": comando_atualizar_sequencia_inicial,
+    "move-to-sequence": comando_mover_blocos_para_sequencia,
     "sync-spreadsheets": comando_sincronizar_planilhas,
     "move": comando_mover,
     "reorder": comando_reordenar,

@@ -933,6 +933,13 @@
                   <button class="micro-button map-view-button is-active" data-command-map-view="sequence" type="button" aria-pressed="true">Sequencia</button>
                   <button class="micro-button map-view-button" data-command-map-view="tree" type="button" aria-pressed="false">Arvore</button>
                 </div>
+                <div class="map-card-move-controls" aria-label="Mover cards entre paginas">
+                  <span id="mapCardSelectionCount" class="map-card-selection-count">0 cards</span>
+                  <button id="mapSelectAllCardsButton" class="micro-button map-card-select-button" type="button">Todos</button>
+                  <button id="mapClearCardSelectionButton" class="micro-button map-card-select-button" type="button">Limpar</button>
+                  <select id="mapMoveCardsTargetSelect" aria-label="Pagina de destino dos cards"></select>
+                  <button id="mapMoveSelectedCardsButton" class="micro-button map-card-move-button" type="button" disabled>Mover</button>
+                </div>
                 <div class="map-zoom-cluster">
                   <button id="mapZoomOutButton" class="micro-button" type="button" aria-label="Diminuir zoom">-</button>
                   <input id="mapZoomRange" class="map-zoom-range" type="range" min="72" max="140" step="4" value="96" />

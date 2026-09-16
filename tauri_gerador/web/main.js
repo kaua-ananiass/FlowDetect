@@ -222,6 +222,9 @@ const state = {
   commandMapPageSequence: "principal",
   commandMapPageSequenceLock: null,
   commandMapFocusOrder: null,
+  commandMapSelectedCardKeys: new Set(),
+  commandMapSelectionSequence: "",
+  commandMapMoveTargetSequence: "",
   commandMapOrderCache: [],
   commandMapAutoFitFrame: 0,
   commandConnectorLayoutFrame: 0,
@@ -438,6 +441,11 @@ const timelineMeta = document.getElementById("timelineMeta");
 const commandMapMeta = document.getElementById("commandMapMeta");
 const commandMapStepBadge = document.getElementById("commandMapStepBadge");
 const commandMapPageTabs = document.getElementById("commandMapPageTabs");
+const mapCardSelectionCount = document.getElementById("mapCardSelectionCount");
+const mapSelectAllCardsButton = document.getElementById("mapSelectAllCardsButton");
+const mapClearCardSelectionButton = document.getElementById("mapClearCardSelectionButton");
+const mapMoveCardsTargetSelect = document.getElementById("mapMoveCardsTargetSelect");
+const mapMoveSelectedCardsButton = document.getElementById("mapMoveSelectedCardsButton");
 const commandMapPageModeSelect = document.getElementById("commandMapPageModeSelect");
 const commandMapPageAfterLoopSelect = document.getElementById("commandMapPageAfterLoopSelect");
 const commandMapPageModeHint = document.getElementById("commandMapPageModeHint");
@@ -10541,6 +10549,155 @@ function renderCommandMapPageTabs() {
     .join("");
 }
 
+function commandMapCardClientKey(event) {
+  return String(event?.clientKey || "").trim();
+}
+
+function clearCommandMapCardSelection({ render = false } = {}) {
+  state.commandMapSelectedCardKeys = new Set();
+  state.commandMapSelectionSequence = "";
+  if (render) {
+    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    return;
+  }
+  syncCommandMapCardMoveControls();
+  syncCommandMapCardSelectionVisuals();
+}
+
+function selectedCommandMapEvents(events = getCommandMapEvents()) {
+  const selectedKeys = state.commandMapSelectedCardKeys instanceof Set
+    ? state.commandMapSelectedCardKeys
+    : new Set();
+  return events.filter((event) => selectedKeys.has(commandMapCardClientKey(event)));
+}
+
+function pruneCommandMapCardSelection(events = getCommandMapEvents()) {
+  const currentSequence = normalizeSequenceName(state.commandMapPageSequence);
+  if (state.commandMapSelectionSequence && state.commandMapSelectionSequence !== currentSequence) {
+    state.commandMapSelectedCardKeys = new Set();
+    state.commandMapSelectionSequence = "";
+    return;
+  }
+  const availableKeys = new Set(events.map(commandMapCardClientKey).filter(Boolean));
+  state.commandMapSelectedCardKeys = new Set(
+    Array.from(state.commandMapSelectedCardKeys || []).filter((key) => availableKeys.has(key))
+  );
+  if (!state.commandMapSelectedCardKeys.size) {
+    state.commandMapSelectionSequence = "";
+  }
+}
+
+function syncCommandMapCardSelectionVisuals() {
+  const selectedKeys = state.commandMapSelectedCardKeys || new Set();
+  commandMapList?.querySelectorAll(".command-tree-card[data-client-key]").forEach((card) => {
+    const selected = selectedKeys.has(String(card.dataset.clientKey || ""));
+    card.classList.toggle("is-selected-for-move", selected);
+    const input = card.querySelector("[data-card-selection]");
+    if (input) {
+      input.checked = selected;
+    }
+  });
+}
+
+function syncCommandMapCardMoveControls(events = getCommandMapEvents()) {
+  if (!mapCardSelectionCount || !mapMoveCardsTargetSelect || !mapMoveSelectedCardsButton) {
+    return;
+  }
+  pruneCommandMapCardSelection(events);
+  const selected = selectedCommandMapEvents(events);
+  const sourceSequence = normalizeSequenceName(state.commandMapPageSequence);
+  const destinations = getCommandMapPageDefinitions()
+    .filter((page) => page.sequence !== sourceSequence);
+  const requestedTarget = normalizeSequenceName(state.commandMapMoveTargetSequence || mapMoveCardsTargetSelect.value);
+  const target = destinations.some((page) => page.sequence === requestedTarget)
+    ? requestedTarget
+    : (destinations[0]?.sequence || "");
+  state.commandMapMoveTargetSequence = target;
+
+  mapCardSelectionCount.textContent = `${selected.length} card${selected.length === 1 ? "" : "s"}`;
+  mapMoveCardsTargetSelect.innerHTML = destinations.length
+    ? destinations.map((page) => `<option value="${escapeHtml(page.sequence)}">${escapeHtml(page.label)}</option>`).join("")
+    : '<option value="">Sem outra pagina</option>';
+  mapMoveCardsTargetSelect.value = target;
+  mapMoveCardsTargetSelect.disabled = !destinations.length;
+  mapSelectAllCardsButton && (mapSelectAllCardsButton.disabled = !events.length);
+  mapClearCardSelectionButton && (mapClearCardSelectionButton.disabled = !selected.length);
+  mapMoveSelectedCardsButton.disabled = !selected.length || !target;
+  mapMoveSelectedCardsButton.textContent = selected.length ? `Mover ${selected.length}` : "Mover";
+}
+
+function toggleCommandMapCardSelection(clientKey, selected) {
+  const key = String(clientKey || "").trim();
+  if (!key) {
+    return;
+  }
+  const currentSequence = normalizeSequenceName(state.commandMapPageSequence);
+  if (state.commandMapSelectionSequence && state.commandMapSelectionSequence !== currentSequence) {
+    state.commandMapSelectedCardKeys = new Set();
+  }
+  state.commandMapSelectionSequence = currentSequence;
+  const next = new Set(state.commandMapSelectedCardKeys || []);
+  if (selected) {
+    next.add(key);
+  } else {
+    next.delete(key);
+  }
+  state.commandMapSelectedCardKeys = next;
+  if (!next.size) {
+    state.commandMapSelectionSequence = "";
+  }
+  syncCommandMapCardMoveControls();
+  syncCommandMapCardSelectionVisuals();
+}
+
+async function moveSelectedCommandMapCards() {
+  const sourceSequence = normalizeSequenceName(state.commandMapPageSequence);
+  let selected = selectedCommandMapEvents();
+  if (!selected.length) {
+    setMessage("Selecione um ou mais cards para mover.", "error");
+    return;
+  }
+  const destinationSequence = normalizeSequenceName(mapMoveCardsTargetSelect?.value || state.commandMapMoveTargetSequence);
+  if (!destinationSequence || destinationSequence === sourceSequence) {
+    setMessage("Escolha outra pagina como destino dos cards.", "error");
+    return;
+  }
+
+  try {
+    const prepared = await autoSaveCommandMapPageSwitch();
+    if (!prepared) {
+      return;
+    }
+    selected = selectedCommandMapEvents();
+    if (!selected.length) {
+      setMessage("A selecao mudou antes da transferencia. Selecione os cards novamente.", "error");
+      return;
+    }
+
+    setBusy("Movendo cards");
+    const roadmap = await invoke("move_blocks_to_sequence", {
+      orders: selected.map((event) => Number(event.order)).filter((order) => Number.isFinite(order) && order > 0),
+      sequence: destinationSequence,
+    });
+    const destinationLabel = getCommandMapPageLabel(destinationSequence, roadmap);
+    const movedCount = selected.length;
+    clearCommandMapCardSelection();
+    state.commandMapMoveTargetSequence = destinationSequence;
+    state.commandMapPageSequence = destinationSequence;
+    state.commandMapFocusOrder = getCommandMapEvents(destinationSequence, roadmap)
+      .find((event) => selected.some((item) => commandMapCardClientKey(item) === commandMapCardClientKey(event)))?.order
+      ?? getCommandMapEvents(destinationSequence, roadmap)[0]?.order
+      ?? null;
+    applyRoadmap(roadmap, { preserveCommandMapSequence: destinationSequence });
+    await refreshAutomationLibrary();
+    setBusy("Pronto");
+    setMessage(`${movedCount} card${movedCount === 1 ? "" : "s"} movido(s) para ${destinationLabel}.`, "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+}
+
 function switchCommandMapPage(sequenceName, options = {}) {
   const { skipAutoSave = false } = options;
   const nextSequence = normalizeSequenceName(sequenceName);
@@ -10556,6 +10713,7 @@ function switchCommandMapPage(sequenceName, options = {}) {
   state.insertPanel = null;
   state.expandedTreeCardOrder = null;
   state.expandedTreeCardOrigin = null;
+  clearCommandMapCardSelection();
   state.commandMapPageSequenceLock = null;
   state.commandMapPageSequence = nextSequence;
   syncCommandMapPageTheme();
@@ -18807,6 +18965,7 @@ function renderCommandMapCardSegment(event, index = 0, events = [], options = {}
   const isLoopMarker = isLoopMarkerType(event.type);
   const isRuntimeEditable = event.type === "texto_livre" && Boolean(event.details?.editavel_execucao);
   const isNewlyCreated = Number(state.createdBlockAnimationOrder) === Number(event.order);
+  const isSelectedForMove = state.commandMapSelectedCardKeys?.has(commandMapCardClientKey(event));
   const primaryActionClass = isRecognitionCard
     ? "has-recognition-button"
     : hasRecordButton
@@ -18836,7 +18995,7 @@ function renderCommandMapCardSegment(event, index = 0, events = [], options = {}
   ].filter(Boolean).join(" ");
   return `
     <div class="${escapeHtml(wrapperClass)}" data-order="${escapeHtml(event.order)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" ${options.treeNode ? 'data-tree-node-segment="true"' : ""}>
-      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isInlineExpanded ? "is-inline-expanded" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarker ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""} ${isNewlyCreated ? "is-newly-created" : ""}" data-order="${escapeHtml(event.order)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
+      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isInlineExpanded ? "is-inline-expanded" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarker ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""} ${isNewlyCreated ? "is-newly-created" : ""} ${isSelectedForMove ? "is-selected-for-move" : ""}" data-order="${escapeHtml(event.order)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
         <div class="command-tree-top is-command-chip-top">
           <div class="command-tree-main">
             <span class="command-index">${String(event.order).padStart(2, "0")}</span>
@@ -18852,6 +19011,10 @@ function renderCommandMapCardSegment(event, index = 0, events = [], options = {}
             </div>
           </div>
           <div class="command-tree-side">
+            <label class="command-card-select" title="Selecionar card para mover entre paginas">
+              <input data-card-selection="true" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" type="checkbox" ${isSelectedForMove ? "checked" : ""} aria-label="Selecionar bloco ${escapeHtml(event.order)} para mover" />
+              <i aria-hidden="true"></i>
+            </label>
             ${event.type === "texto_livre" ? `
               <label class="runtime-edit-switch command-card-editable-switch" title="Bloco editavel na execucao">
                 <input data-tree-field="editableAtRun" type="checkbox" ${isRuntimeEditable ? "checked" : ""} />
@@ -19765,6 +19928,8 @@ function renderCommandMap(options = {}) {
   const previousScrollLeft = preserveScroll ? commandMapList.scrollLeft : null;
   const previousScrollTop = preserveScroll ? commandMapList.scrollTop : null;
   const events = getCommandMapEvents().map((event) => applyCommandMapDraftToEvent(event));
+  pruneCommandMapCardSelection(events);
+  syncCommandMapCardMoveControls(events);
   state.commandMapOrderCache = events
     .map((event) => Number(event.order))
     .filter((order) => Number.isFinite(order));
@@ -19886,6 +20051,7 @@ function renderCommandMap(options = {}) {
     commandMapList.scrollTop = previousScrollTop ?? commandMapList.scrollTop;
   }
   hydrateRecognitionPreviewCards(commandMapList);
+  syncCommandMapCardSelectionVisuals();
   applyCommandMapZoom();
   if (skipAutoFit) {
     scheduleCommandConnectorLayout({ burstMs: layoutSnapshot ? 440 : 0 });
@@ -24145,6 +24311,27 @@ mapApplyBulkDelayButton?.addEventListener("click", async () => {
   await applyBulkDelayToAllBlocks("map");
 });
 
+mapSelectAllCardsButton?.addEventListener("click", () => {
+  const events = getCommandMapEvents().map((event) => applyCommandMapDraftToEvent(event));
+  state.commandMapSelectedCardKeys = new Set(events.map(commandMapCardClientKey).filter(Boolean));
+  state.commandMapSelectionSequence = normalizeSequenceName(state.commandMapPageSequence);
+  syncCommandMapCardMoveControls(events);
+  syncCommandMapCardSelectionVisuals();
+});
+
+mapClearCardSelectionButton?.addEventListener("click", () => {
+  clearCommandMapCardSelection();
+});
+
+mapMoveCardsTargetSelect?.addEventListener("change", () => {
+  state.commandMapMoveTargetSequence = normalizeSequenceName(mapMoveCardsTargetSelect.value);
+  syncCommandMapCardMoveControls();
+});
+
+mapMoveSelectedCardsButton?.addEventListener("click", () => {
+  void moveSelectedCommandMapCards();
+});
+
 
 document.getElementById("exportButton").addEventListener("click", async () => {
   const automationName = exportNameInput.value.trim();
@@ -24386,6 +24573,11 @@ timelineList.addEventListener("click", (event) => {
 
 commandMapList.addEventListener("change", (event) => {
   const target = event.target;
+  if (target.matches("[data-card-selection]")) {
+    toggleCommandMapCardSelection(target.dataset.clientKey, Boolean(target.checked));
+    return;
+  }
+
   if (
     target.matches('[data-tree-field="editableAtRun"], [data-field="editableAtRun"], [data-insert-field="editableAtRun"]')
   ) {
@@ -24763,6 +24955,23 @@ commandMapList.addEventListener("focusin", (event) => {
       setCommandMapFocus(order, "smooth");
     }
   }
+});
+
+commandMapList.addEventListener("click", (event) => {
+  if (!(event.ctrlKey || event.metaKey)) {
+    return;
+  }
+  if (event.target.closest("button, input, textarea, select, label, a, [contenteditable='true']")) {
+    return;
+  }
+  const card = event.target.closest(".command-tree-card[data-client-key]");
+  if (!card) {
+    return;
+  }
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const key = String(card.dataset.clientKey || "");
+  toggleCommandMapCardSelection(key, !state.commandMapSelectedCardKeys?.has(key));
 });
 
 commandMapList.addEventListener("click", async (event) => {

@@ -5311,6 +5311,26 @@ fn get_test_execution_state(
 }
 
 #[tauri::command]
+fn move_blocks_to_sequence(
+    app: AppHandle,
+    orders: Vec<i32>,
+    sequence: String,
+) -> Result<Value, String> {
+    if orders.is_empty() {
+        return Err("Selecione pelo menos um bloco para mover.".into());
+    }
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "move-to-sequence".into(),
+        "--sequencia".into(),
+        sequence,
+        "--orders".into(),
+    ];
+    args.extend(orders.into_iter().map(|order| order.to_string()));
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn get_roadmap(app: AppHandle) -> Result<Value, String> {
     let root = workspace_root(&app);
     run_helper_json(&root, &[String::from("list")])
@@ -10262,6 +10282,7 @@ pub fn run() {
             update_compare_spreadsheet_block,
             update_sequence_settings,
             update_initial_sequence,
+            move_blocks_to_sequence,
             update_block_delay,
             update_all_blocks_delay,
             move_block,
