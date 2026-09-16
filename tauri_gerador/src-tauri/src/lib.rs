@@ -1407,6 +1407,33 @@ fn list_virtualbox_vms() -> Result<Value, String> {
 
 fn local_python_candidates(root: &Path) -> Vec<PathBuf> {
     let mut local_candidates = Vec::<PathBuf>::new();
+    // O Agent reutiliza este runtime do Studio. Em desenvolvimento, `root`
+    // aponta para a raiz do repositorio, enquanto o Python portatil esta no
+    // suporte do instalador (ou no target do Agent), nao ao lado dos scripts.
+    // Inclua esses caminhos antes de procurar um Python global do Windows.
+    local_candidates.push(
+        root.join("tauri_gerador")
+            .join("src-tauri")
+            .join("installer_support")
+            .join("python_runtime_prebuilt")
+            .join("python.exe"),
+    );
+    for profile in ["debug", "release"] {
+        local_candidates.push(
+            root.join("flowdetect_agent")
+                .join("target")
+                .join(profile)
+                .join("python_runtime")
+                .join("python.exe"),
+        );
+        local_candidates.push(
+            root.join("tauri_gerador")
+                .join("target")
+                .join(profile)
+                .join("python_runtime")
+                .join("python.exe"),
+        );
+    }
     local_candidates.push(root.join("python_runtime").join("python.exe"));
     local_candidates.push(
         root.join("resources")
