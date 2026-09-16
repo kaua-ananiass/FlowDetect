@@ -6996,7 +6996,14 @@ class ExecutorAutomacao:
             area_captura = max(1, int(captura.width or 0) * int(captura.height or 0))
             captura_grande = area_captura >= 900000
             if retornar_candidatos:
-                fator_ocr = 1.15 if captura_grande else 1.55
+                # O caminho hibrido usa esta leitura unica para localizar todos
+                # os textos do bloco. Ampliar um dialogo inteiro para 155% fazia
+                # o Tesseract gastar 8--10s antes de devolver a primeira palavra.
+                # Formularios desktop ja sao capturados com texto legivel; ler a
+                # resolucao nativa preserva as coordenadas e reduz muito a area
+                # que o motor precisa analisar. As rotas de OCR de recorte ainda
+                # usam ampliacao quando o texto realmente for pequeno.
+                fator_ocr = 1.0 if area_captura >= 180000 else 1.25
                 variantes = self.gerar_variantes_imagem_ocr(captura, fator=fator_ocr, incluir_cor=False)[:1]
             else:
                 fator_ocr = 1.35 if captura_grande else 2
@@ -7022,6 +7029,7 @@ class ExecutorAutomacao:
             ]
         for nome_variante, imagem in variantes:
             for config in configs:
+                inicio_leitura_ocr = time.perf_counter()
                 try:
                     dados = pytesseract.image_to_data(imagem, config=config, output_type=pytesseract.Output.DICT)
                 except Exception as erro:
@@ -7040,6 +7048,11 @@ class ExecutorAutomacao:
                         self._ocr_indisponivel_logado = True
                     continue
 
+                safe_print(
+                    f"OCR screenshot concluido em {(time.perf_counter() - inicio_leitura_ocr) * 1000.0:.0f}ms "
+                    f"(escala={fator_ocr:.2f}, psm={config.split()[1] if len(config.split()) > 1 else 'auto'}).",
+                    flush=True,
+                )
                 total = len(dados.get("text", []))
                 for indice in range(total):
                     bruto = str(dados.get("text", [""])[indice] or "").strip()
