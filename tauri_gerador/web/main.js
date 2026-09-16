@@ -225,6 +225,7 @@ const state = {
   commandMapOrderCache: [],
   commandMapAutoFitFrame: 0,
   commandConnectorLayoutFrame: 0,
+  commandMapTreePan: null,
   commandMapSave: {
     running: false,
     percent: 0,
@@ -1593,6 +1594,21 @@ function clearCommandMapTreeReferenceLayer(tree) {
   tree?.querySelectorAll(".command-map-tree-link-layer").forEach((layer) => layer.remove());
 }
 
+function createCommandMapTreeLinkEnergy(pathData, kind = "success", duration = 1.55) {
+  const normalizedKind = String(kind || "success").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "success";
+  const normalizedPath = String(pathData || "").trim();
+  if (!normalizedPath) {
+    return null;
+  }
+  const energy = document.createElement("span");
+  energy.className = `command-map-tree-link-energy is-${normalizedKind}`;
+  energy.setAttribute("aria-hidden", "true");
+  energy.style.setProperty("--tree-energy-duration", `${duration}s`);
+  energy.style.offsetPath = `path("${normalizedPath.replace(/"/g, "'")}")`;
+  energy.style.offsetRotate = "0deg";
+  return energy;
+}
+
 function renderCommandMapTreeReferenceLinks() {
   if (!commandMapList || state.activeTab !== "commands") {
     return;
@@ -1618,6 +1634,7 @@ function renderCommandMapTreeReferenceLinks() {
     svg.setAttribute("class", "command-map-tree-link-svg");
     svg.setAttribute("viewBox", `0 0 ${Math.ceil(stageWidth)} ${Math.ceil(stageHeight)}`);
     svg.setAttribute("aria-hidden", "true");
+    const energyDots = [];
 
     const toStageRect = (element) => {
       const rect = element.getBoundingClientRect();
@@ -1828,24 +1845,27 @@ function renderCommandMapTreeReferenceLinks() {
         ].join(" "));
       } else if (isPrimaryNext && isForward) {
         const startX = sourceRect.right;
+        const startY = sourceRect.centerY;
         const endX = targetRect.left;
+        const endY = targetRect.centerY;
         if (hasManualLabelPosition) {
-          const labelTurnX = Math.max(
-            Math.min(startX, endX) + 18,
-            Math.min(Math.max(startX, endX) - 18, labelRect.centerX)
+          const labelX = labelRect.centerX;
+          const labelY = labelRect.centerY;
+          const firstDelta = Math.max(34, Math.min(92, Math.abs(labelX - startX) * 0.42));
+          const secondDelta = Math.max(34, Math.min(92, Math.abs(endX - labelX) * 0.42));
+          path.setAttribute(
+            "d",
+            [
+              `M ${startX} ${startY}`,
+              `C ${startX + firstDelta} ${startY} ${labelX - firstDelta} ${labelY} ${labelX} ${labelY}`,
+              `C ${labelX + secondDelta} ${labelY} ${endX - secondDelta} ${endY} ${endX} ${endY}`,
+            ].join(" ")
           );
-          path.setAttribute("d", [
-            `M ${startX} ${sourceRect.centerY}`,
-            `L ${labelTurnX} ${sourceRect.centerY}`,
-            `L ${labelTurnX} ${labelRect.centerY}`,
-            `L ${endX} ${labelRect.centerY}`,
-            `L ${endX} ${targetRect.centerY}`,
-          ].join(" "));
         } else {
           const delta = Math.max(38, Math.min(86, Math.abs(endX - startX) * 0.45));
           path.setAttribute(
             "d",
-            `M ${startX} ${sourceRect.centerY} C ${startX + delta} ${sourceRect.centerY} ${endX - delta} ${targetRect.centerY} ${endX} ${targetRect.centerY}`
+            `M ${startX} ${startY} C ${startX + delta} ${startY} ${endX - delta} ${endY} ${endX} ${endY}`
           );
         }
       } else if (isForward) {
@@ -1874,20 +1894,10 @@ function renderCommandMapTreeReferenceLinks() {
 
       path.setAttribute("class", `command-map-tree-link-path is-${kind} ${isPrimaryNext ? "is-primary-next" : "is-branch-route"} is-${branchSide}`);
       svg.appendChild(path);
-
-      const energy = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      energy.setAttribute("class", `command-map-tree-link-energy is-${kind}`);
-      energy.setAttribute("r", kind === "failure" ? "3.2" : "3");
-      const motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
-      motion.setAttribute("dur", kind === "failure" ? "1.8s" : "1.55s");
-      motion.setAttribute("repeatCount", "indefinite");
-      motion.setAttribute("rotate", "auto");
-      const mpath = document.createElementNS("http://www.w3.org/2000/svg", "mpath");
-      mpath.setAttribute("href", `#${pathId}`);
-      mpath.setAttributeNS("http://www.w3.org/1999/xlink", "href", `#${pathId}`);
-      motion.appendChild(mpath);
-      energy.appendChild(motion);
-      svg.appendChild(energy);
+      const energy = createCommandMapTreeLinkEnergy(path.getAttribute("d"), kind, kind === "failure" ? 1.8 : 1.55);
+      if (energy) {
+        energyDots.push(energy);
+      }
     });
 
     const finalStageHeight = Math.ceil(dynamicStageHeight);
@@ -1895,6 +1905,7 @@ function renderCommandMapTreeReferenceLinks() {
     layer.style.height = `${finalStageHeight}px`;
     svg.setAttribute("viewBox", `0 0 ${Math.ceil(stageWidth)} ${finalStageHeight}`);
     layer.appendChild(svg);
+    energyDots.forEach((energy) => layer.appendChild(energy));
     stage.prepend(layer);
     return;
   }
@@ -1916,6 +1927,7 @@ function renderCommandMapTreeReferenceLinks() {
   svg.setAttribute("class", "command-map-tree-link-svg");
   svg.setAttribute("viewBox", `0 0 ${Math.ceil(treeWidth)} ${Math.ceil(treeHeight)}`);
   svg.setAttribute("aria-hidden", "true");
+  const energyDots = [];
 
   references.forEach((reference, index) => {
     const targetOrder = Number(reference.dataset.treeReferenceTargetOrder || 0);
@@ -1962,23 +1974,14 @@ function renderCommandMapTreeReferenceLinks() {
     }
     path.setAttribute("class", `command-map-tree-link-path is-${escapeHtml(kind || "success")} ${goesBack ? "is-back-reference" : "is-forward-reference"}`);
     svg.appendChild(path);
-
-    const energy = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    energy.setAttribute("class", `command-map-tree-link-energy is-${escapeHtml(kind || "success")}`);
-    energy.setAttribute("r", kind === "failure" ? "3.2" : "3");
-    const motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
-    motion.setAttribute("dur", kind === "failure" ? "1.75s" : "1.55s");
-    motion.setAttribute("repeatCount", "indefinite");
-    motion.setAttribute("rotate", "auto");
-    const mpath = document.createElementNS("http://www.w3.org/2000/svg", "mpath");
-    mpath.setAttribute("href", `#${pathId}`);
-    mpath.setAttributeNS("http://www.w3.org/1999/xlink", "href", `#${pathId}`);
-    motion.appendChild(mpath);
-    energy.appendChild(motion);
-    svg.appendChild(energy);
+    const energy = createCommandMapTreeLinkEnergy(path.getAttribute("d"), kind, kind === "failure" ? 1.75 : 1.55);
+    if (energy) {
+      energyDots.push(energy);
+    }
   });
 
   layer.appendChild(svg);
+  energyDots.forEach((energy) => layer.appendChild(energy));
   tree.prepend(layer);
 }
 
@@ -2025,12 +2028,33 @@ function scheduleCommandMapAutoFit() {
   });
 }
 
-function setCommandMapZoom(nextZoom) {
+function setCommandMapZoom(nextZoom, options = {}) {
+  const previousZoom = Math.max(0.01, Number(state.commandMapZoom) || 1);
+  const point = options.preservePoint && commandMapList
+    ? {
+        x: Number(options.preservePoint.x),
+        y: Number(options.preservePoint.y),
+      }
+    : null;
+  const anchor = point && Number.isFinite(point.x) && Number.isFinite(point.y)
+    ? {
+        x: (commandMapList.scrollLeft + point.x) / previousZoom,
+        y: (commandMapList.scrollTop + point.y) / previousZoom,
+      }
+    : null;
   state.commandMapRequestedZoom = Math.min(1.4, Math.max(0.6, Number(nextZoom) || 1));
   state.commandMapZoom = state.commandMapRequestedZoom;
   applyCommandMapZoom();
-  scheduleCommandMapAutoFit();
-  if (state.activeTab === "commands" && state.commandMapFocusOrder) {
+  if (anchor) {
+    commandMapList.scrollLeft = Math.max(0, anchor.x * state.commandMapZoom - point.x);
+    commandMapList.scrollTop = Math.max(0, anchor.y * state.commandMapZoom - point.y);
+  }
+  if (options.skipAutoFit) {
+    scheduleCommandConnectorLayout({ burstMs: 120 });
+  } else {
+    scheduleCommandMapAutoFit();
+  }
+  if (!options.suppressFocusCenter && state.activeTab === "commands" && state.commandMapFocusOrder) {
     requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
   }
 }
@@ -19564,6 +19588,114 @@ function stopCommandMapTreeNodeDrag(event, commit = true) {
   scheduleCommandConnectorLayout({ burstMs: 220 });
 }
 
+function isCommandMapTreeModeActive() {
+  return state.activeTab === "commands"
+    && normalizeCommandMapViewMode(state.commandMapViewMode) === "tree"
+    && Boolean(commandMapList?.querySelector(".command-map-tree"));
+}
+
+function startCommandMapTreePan(event) {
+  if (
+    !commandMapList
+    || event.button !== 0
+    || !isCommandMapTreeModeActive()
+    || event.target.closest("button, input, textarea, select, a, label, [contenteditable='true'], [data-drag-handle], [data-recognition-drag-target], [data-recognition-preview-card], [data-recognition-preview-stage], [data-recognition-preview-image-map], .command-tree-card, .command-flow-segment, .insert-card-panel, .command-map-tree-node-slot, .command-map-tree-edge-label, .command-map-tree-terminal-node")
+  ) {
+    return false;
+  }
+  const treeSurface = event.target.closest(".command-map-tree-stage, .command-map-tree, .command-map-tree-link-layer, .command-map-tree-link-svg");
+  if (!treeSurface) {
+    return false;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  state.commandMapTreePan = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    latestX: event.clientX,
+    latestY: event.clientY,
+    scrollLeft: commandMapList.scrollLeft,
+    scrollTop: commandMapList.scrollTop,
+    frame: 0,
+  };
+  commandMapList.classList.add("is-tree-panning");
+  builderShell?.classList.add("is-map-dragging");
+  commandMapList.setPointerCapture?.(event.pointerId);
+  return true;
+}
+
+function updateCommandMapTreePan(event) {
+  const pan = state.commandMapTreePan;
+  if (!pan || pan.pointerId !== event.pointerId || !commandMapList) {
+    return;
+  }
+  event.preventDefault();
+  pan.latestX = event.clientX;
+  pan.latestY = event.clientY;
+  if (pan.frame) {
+    return;
+  }
+  pan.frame = requestAnimationFrame(() => {
+    pan.frame = 0;
+    if (state.commandMapTreePan !== pan || !commandMapList) {
+      return;
+    }
+    commandMapList.scrollLeft = Math.max(0, pan.scrollLeft - (pan.latestX - pan.startX));
+    commandMapList.scrollTop = Math.max(0, pan.scrollTop - (pan.latestY - pan.startY));
+  });
+}
+
+function stopCommandMapTreePan(event) {
+  const pan = state.commandMapTreePan;
+  if (!pan || pan.pointerId !== event.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  if (pan.frame) {
+    cancelAnimationFrame(pan.frame);
+    pan.frame = 0;
+  }
+  if (commandMapList) {
+    commandMapList.scrollLeft = Math.max(0, pan.scrollLeft - (pan.latestX - pan.startX));
+    commandMapList.scrollTop = Math.max(0, pan.scrollTop - (pan.latestY - pan.startY));
+  }
+  commandMapList?.classList.remove("is-tree-panning");
+  builderShell?.classList.remove("is-map-dragging");
+  state.commandMapTreePan = null;
+  scheduleCommandConnectorLayout({ burstMs: 120 });
+}
+
+function handleCommandMapTreeWheelZoom(event) {
+  if (
+    !commandMapList
+    || !isCommandMapTreeModeActive()
+    || event.target.closest("input, textarea, select, button, a")
+    || !event.target.closest(".command-map-tree, .command-map-tree-stage")
+  ) {
+    return;
+  }
+  const delta = Number(event.deltaY || 0);
+  if (!delta) {
+    return;
+  }
+
+  event.preventDefault();
+  const listRect = commandMapList.getBoundingClientRect();
+  const currentZoom = Math.max(0.01, Number(state.commandMapZoom) || 0.96);
+  const zoomFactor = delta > 0 ? 0.92 : 1.08;
+  const nextZoom = Math.round(currentZoom * zoomFactor * 100) / 100;
+  setCommandMapZoom(nextZoom, {
+    preservePoint: {
+      x: event.clientX - listRect.left,
+      y: event.clientY - listRect.top,
+    },
+    skipAutoFit: true,
+    suppressFocusCenter: true,
+  });
+}
+
 function renderCommandMap(options = {}) {
   const {
     layoutSnapshot = null,
@@ -24510,6 +24642,11 @@ commandMapList.addEventListener("pointerdown", (event) => {
     startCommandMapTreeNodeDrag(event, handle);
     return;
   }
+
+  if (startCommandMapTreePan(event)) {
+    return;
+  }
+
   if (handle && event.button === 0) {
     event.preventDefault();
     state.pendingDrag = {
@@ -24545,6 +24682,10 @@ window.addEventListener("pointercancel", stopRecognitionVisualDrag);
 window.addEventListener("pointermove", updateCommandMapTreeNodeDrag);
 window.addEventListener("pointerup", (event) => stopCommandMapTreeNodeDrag(event, true));
 window.addEventListener("pointercancel", (event) => stopCommandMapTreeNodeDrag(event, false));
+window.addEventListener("pointermove", updateCommandMapTreePan);
+window.addEventListener("pointerup", stopCommandMapTreePan);
+window.addEventListener("pointercancel", stopCommandMapTreePan);
+commandMapList.addEventListener("wheel", handleCommandMapTreeWheelZoom, { passive: false });
 
 commandMapList.addEventListener("focusin", (event) => {
   if (event.target.closest("[data-drag-handle]")) {
