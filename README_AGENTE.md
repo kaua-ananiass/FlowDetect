@@ -441,7 +441,7 @@ Este e o comportamento aprovado para reconhecimento de imagem com OCR. Deve ser 
 - Se um rotulo pequeno nao for lido ou vier apenas parcialmente confirmado, fazer uma unica releitura do mesmo dialogo em escala ampliada (`1.35`). Nao executar varreduras em varias regioes como fallback do fluxo hibrido.
 - Confirmar todos os alvos OCR configurados e so entao confirmar a imagem na regiao estimada pelos OCRs. OCR isolado nunca libera clique ou avancar no fluxo.
 - A busca visual deve comecar na regiao exata estimada pelos OCRs e depois ampliar somente ao redor dela.
-- Espa?ar novas leituras OCR para evitar uso continuo de CPU e travamento do mouse. O log deve registrar `OCR screenshot concluido em ...ms`.
+- Limitar a frequencia de novas leituras OCR para evitar uso continuo de CPU e travamento do mouse. O log deve registrar `OCR screenshot concluido em ...ms`.
 - No botao **Procurar**, usar a janela externa que ficou visivel depois que o Studio minimiza, mesmo se o titulo gravado no bloco for da janela principal.
 - Preservar os marcadores: OCR em azul e imagem confirmada em verde. Eles devem ser curtos para nao adicionar atraso perceptivel.
 
