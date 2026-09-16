@@ -2454,6 +2454,7 @@ class ExecutorAutomacao:
         perfil_busca="balanced",
         leitura_relativa=None,
         ocr_confirmado=None,
+        _escala_ocr=None,
     ):
         esperado = str(texto_ocr_esperado or "").strip()
         if not esperado or not OCR_DISPONIVEL or not dimensoes_referencia:
@@ -2506,6 +2507,8 @@ class ExecutorAutomacao:
                     marcar_candidatos=False,
                     limite_candidatos=3 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 6,
                     layout_alvos=layout_alvos,
+                    _escala_ocr=_escala_ocr,
+                    _tentativa_ampliada=bool(_escala_ocr is not None),
                 )
             else:
                 candidatos_ocr = self.localizar_texto_por_ocr_screenshot(
@@ -2516,6 +2519,8 @@ class ExecutorAutomacao:
                     retornar_candidatos=True,
                     marcar_candidatos=False,
                     limite_candidatos=3 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 6,
+                    _escala_ocr=_escala_ocr,
+                    _tentativa_ampliada=bool(_escala_ocr is not None),
                 )
         if not candidatos_ocr:
             return None
@@ -2697,6 +2702,27 @@ class ExecutorAutomacao:
                 flush=True,
             )
             return local
+        # A leitura nativa e muito mais rapida, mas labels pequenos podem
+        # gerar um candidato parecido sem atingir a confirmacao estrita. Nesse
+        # caso fazemos uma unica releitura ampliada antes de repetir o ciclo;
+        # nao deixamos o Tesseract rodar continuamente e travar o mouse.
+        if _escala_ocr is None:
+            safe_print(
+                "OCR candidato parcial; conferindo uma vez a mesma janela ampliada.",
+                flush=True,
+            )
+            return self.localizar_referencia_hibrida_ocr_visual(
+                caminho_referencia,
+                texto_ocr_esperado=texto_ocr_esperado,
+                region=region,
+                dimensoes_referencia=dimensoes_referencia,
+                confianca_ocr=confianca_ocr,
+                confianca_visual=confianca_visual,
+                perfil_busca=perfil_busca,
+                leitura_relativa=leitura_relativa,
+                ocr_confirmado=None,
+                _escala_ocr=1.35,
+            )
         safe_print("OCR: nem todos os textos obrigatorios confirmaram; bloco aguardando.", flush=True)
         return None
 
@@ -6690,6 +6716,8 @@ class ExecutorAutomacao:
         marcar_candidatos=False,
         limite_candidatos=8,
         layout_alvos=None,
+        _escala_ocr=None,
+        _tentativa_ampliada=False,
     ):
         partes = [str(parte or "").strip() for parte in (spec or {}).get("partes", []) if str(parte or "").strip()]
         if len(partes) < 2:
@@ -6707,6 +6735,8 @@ class ExecutorAutomacao:
                 marcar_candidatos=False,
                 limite_candidatos=limite_por_parte,
                 _permitir_composto=False,
+                _escala_ocr=_escala_ocr,
+                _tentativa_ampliada=_tentativa_ampliada,
             )
             encontrados = [
                 candidato
@@ -7138,6 +7168,8 @@ class ExecutorAutomacao:
                     retornar_candidatos=retornar_candidatos,
                     marcar_candidatos=marcar_candidatos,
                     limite_candidatos=limite_candidatos,
+                    _escala_ocr=_escala_ocr,
+                    _tentativa_ampliada=_tentativa_ampliada,
                 )
         texto_alvo = self.normalizar_texto_ocr(texto)
         if not texto_alvo:
@@ -8010,9 +8042,13 @@ class ExecutorAutomacao:
             # na mesma tentativa passiva.
             executar_hibrido_neste_ciclo = True
             if hibrido_ocr_visual_obrigatorio and OCR_DISPONIVEL:
-                intervalo_hibrido = 0.05 if (
+                # Cada OCR de dialogo leva centenas de milissegundos. Repetir
+                # imediatamente ao terminar mantinha um nucleo em 100% e deixava
+                # o cursor lento. A proxima rodada usa o cache ou uma captura
+                # nova depois deste intervalo curto e previsivel.
+                intervalo_hibrido = 0.38 if (
                     perfil_busca == "fast" or bool(getattr(self, "modo_teste_reconhecimento", False))
-                ) else 0.18
+                ) else 0.58
                 agora_hibrido = time.perf_counter()
                 executar_hibrido_neste_ciclo = agora_hibrido - ultima_tentativa_ocr >= intervalo_hibrido
                 if executar_hibrido_neste_ciclo:
