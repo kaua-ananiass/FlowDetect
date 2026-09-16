@@ -813,55 +813,21 @@ async function fitSelectedTargetToSafeArea({ log = false } = {}) {
   if (!state.selectedTarget?.hwnd) {
     return null;
   }
-  const result = await invoke("fit_target_window_to_agent_area", {
-    hwnd: Number(state.selectedTarget.hwnd),
-  });
-  if (result?.safe_area) {
-    state.selectedTarget = {
-      ...state.selectedTarget,
-      left: Number(result.safe_area.left || state.selectedTarget.left || 0),
-      top: Number(result.safe_area.top || state.selectedTarget.top || 0),
-      width: Number(result.safe_area.width || state.selectedTarget.width || 0),
-      height: Number(result.safe_area.height || state.selectedTarget.height || 0),
-    };
-    renderTarget();
-  }
   if (log) {
-    pushLog(`Janela alvo encaixada na area segura: ${state.selectedTarget.title} / hwnd ${state.selectedTarget.hwnd}`, "success", "Area segura");
+    pushLog(`Janela alvo fixada sem redimensionar: ${state.selectedTarget.title} / hwnd ${state.selectedTarget.hwnd}`, "success", "Janela alvo");
   }
-  return result;
+  return { ok: true, adjusted: false, hwnd: Number(state.selectedTarget.hwnd), mode: "preserve_window" };
 }
 
 async function fitActiveWindowToSafeArea() {
-  return invoke("fit_active_window_to_agent_area").catch(() => null);
+  return { ok: true, adjusted: false, mode: "preserve_window" };
 }
 
 async function protectAgentSafeArea() {
-  if (!state.running || state.safeAreaBusy) {
-    return;
-  }
-  state.safeAreaBusy = true;
-  try {
-    if (state.selectedTarget?.hwnd) {
-      await fitSelectedTargetToSafeArea();
-    } else {
-      await fitActiveWindowToSafeArea();
-    }
-  } finally {
-    state.safeAreaBusy = false;
-  }
+  return null;
 }
 
 function syncSafeAreaGuard() {
-  if (state.running) {
-    if (!state.safeAreaTimer) {
-      state.safeAreaTimer = window.setInterval(() => {
-        protectAgentSafeArea().catch(() => {});
-      }, 4000);
-    }
-    protectAgentSafeArea().catch(() => {});
-    return;
-  }
   if (state.safeAreaTimer) {
     window.clearInterval(state.safeAreaTimer);
     state.safeAreaTimer = null;
@@ -1387,7 +1353,7 @@ async function setSelectedTarget(windowItem) {
     title: windowItem?.title || "",
   });
   state.selectedTarget = normalizeWindow(result?.target || windowItem);
-  await fitSelectedTargetToSafeArea({ log: true }).catch((error) => pushLog(String(error), "error", "Area segura"));
+  await fitSelectedTargetToSafeArea({ log: true }).catch((error) => pushLog(String(error), "error", "Janela alvo"));
   renderTarget();
 }
 
@@ -1425,9 +1391,6 @@ async function runAutomation(id = "") {
   const automation = selectedAutomation();
   const delay = Number(elements.delayInput?.value || 0);
   const loopStart = Number(elements.loopStartInput?.value || 1);
-
-  await (state.selectedTarget?.hwnd ? fitSelectedTargetToSafeArea() : fitActiveWindowToSafeArea())
-    .catch((error) => pushLog(String(error), "error", "Area segura"));
 
   const message = await invoke("execute_saved_automation", {
     id: targetId,

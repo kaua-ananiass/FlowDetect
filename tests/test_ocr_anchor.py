@@ -571,8 +571,9 @@ class OcrAnchorTests(unittest.TestCase):
 
         self.assertTrue(encontrado["visual_confirmed"])
         regioes = [chamada.kwargs["region"] for chamada in executor.localizar_referencia_hibrida_ocr_visual.call_args_list]
-        self.assertEqual(regioes[0], (530, 116, 604, 690))
-        self.assertIn((1089, 124, 610, 703), regioes)
+        # O dialogo modal visivel e menor e contem o alvo; ao confirma-lo a
+        # busca encerra sem gastar uma segunda varredura na janela principal.
+        self.assertEqual(regioes, [(1089, 124, 610, 703)])
         executor.ativar_janela_alvo.assert_not_called()
         executor.localizar_janela_alvo.assert_not_called()
         self.assertEqual(executor.contexto_execucao_alvo["target_hwnd"], 4421)

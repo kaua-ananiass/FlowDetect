@@ -282,7 +282,7 @@ const state = {
     users: [],
     selectedUser: null,
   },
-  executionWindowMode: "normal",
+  executionWindowMode: "minimize",
   testLaunchPending: false,
   insertPanel: null,
   createdBlockAnimationOrder: null,
@@ -2166,7 +2166,7 @@ function syncTestInputsFrom(source) {
 }
 
 function normalizeExecutionWindowMode(value) {
-  return String(value || "").trim().toLowerCase() === "minimize" ? "minimize" : "normal";
+  return String(value || "").trim().toLowerCase() === "normal" ? "normal" : "minimize";
 }
 
 function syncExecutionWindowModeFrom(source) {
@@ -2184,6 +2184,24 @@ function syncExecutionWindowModeFrom(source) {
 
 function shouldMinimizeExecutionWindow() {
   return normalizeExecutionWindowMode(state.executionWindowMode) === "minimize";
+}
+
+function serializeAssistTargetContext(target) {
+  if (!target?.hwnd || !target?.title) {
+    return undefined;
+  }
+  return JSON.stringify({
+    target_enabled: true,
+    target_hwnd: Number(target.hwnd),
+    target_title: String(target.title).trim(),
+    target_class: String(target.className || "").trim(),
+    target_rect: {
+      left: Number(target.left || 0),
+      top: Number(target.top || 0),
+      width: Number(target.width || 0),
+      height: Number(target.height || 0),
+    },
+  });
 }
 
 function surfaceAssistExecutionMessage(message, kind = "info") {
@@ -2516,7 +2534,7 @@ async function runImageRecognitionTest(values, options = {}) {
     setBusy("Testando reconhecimento");
     setMessage(
       options.inheritWindowFallback === false
-        ? "Testando o bloco no estado atual da tela, usando apenas os dados dele."
+        ? "Ocultando o FlowDetect por instantes para procurar o bloco na tela externa."
         : "Testando somente o bloco de reconhecimento...",
       "info"
     );
@@ -3023,15 +3041,8 @@ async function applyAssistTargetWindow(item) {
   }
 
   const result = await invoke("show_target_window_overlay", {
-    target: {
-      hwnd: target.hwnd,
-      title: target.title,
-      className: target.className,
-      left: target.left,
-      top: target.top,
-      width: target.width,
-      height: target.height,
-    },
+    hwnd: target.hwnd,
+    title: target.title,
   });
   const applied = normalizeAssistTargetWindow(result?.target || target);
   state.assistTarget = {
@@ -3834,6 +3845,7 @@ async function startQuickTestExecution(forceAssist = false) {
 
     const delay = parseNumber(fromAssist ? assistDelayInput.value : testDelayInput.value, 0);
     const minimizeWindow = shouldMinimizeExecutionWindow();
+    const targetContext = serializeAssistTargetContext(activeTarget);
     const textOverrides = editableTextOverridesJson();
     syncTestInputsFrom(fromAssist ? "assist" : "top");
     state.testLaunchPending = true;
@@ -3852,9 +3864,24 @@ async function startQuickTestExecution(forceAssist = false) {
     if (textOverrides) {
       pushAssistLog("Textos editaveis aplicados para esta execucao.", "info");
     }
+    if (activeTarget) {
+      await invoke("hide_target_window_overlay", { clearTarget: false }).catch(() => null);
+    }
     const result = fromAssist
-      ? await invoke("launch_assisted_quick_test", { delay, minimizeWindow, textOverrides })
-      : await invoke("launch_quick_test", { delay, minimizeWindow, textOverrides });
+      ? await invoke("launch_assisted_quick_test", {
+          delay,
+          windowTitle: activeTarget?.title || undefined,
+          targetContext,
+          minimizeWindow,
+          textOverrides,
+        })
+      : await invoke("launch_quick_test", {
+          delay,
+          windowTitle: activeTarget?.title || undefined,
+          targetContext,
+          minimizeWindow,
+          textOverrides,
+        });
     triggerSuccessPulse(fromAssist ? assistQuickButton : testOnceButton);
     setBusy("Pronto");
     setMessage(normalizeExecutionFeedbackMessage(result), "success");
@@ -3914,6 +3941,7 @@ async function startLoopTestExecution(forceAssist = false) {
 
     const delay = parseNumber(fromAssist ? assistDelayInput.value : testDelayInput.value, 0);
     const minimizeWindow = shouldMinimizeExecutionWindow();
+    const targetContext = serializeAssistTargetContext(activeTarget);
     const textOverrides = editableTextOverridesJson();
     const loopStart = Math.max(
       1,
@@ -3937,16 +3965,23 @@ async function startLoopTestExecution(forceAssist = false) {
     if (textOverrides) {
       pushAssistLog("Textos editaveis aplicados para esta execucao.", "info");
     }
+    if (activeTarget) {
+      await invoke("hide_target_window_overlay", { clearTarget: false }).catch(() => null);
+    }
     const result = fromAssist
       ? await invoke("launch_assisted_loop_test", {
           delay,
           loopStart,
+          windowTitle: activeTarget?.title || undefined,
+          targetContext,
           minimizeWindow,
           textOverrides,
         })
       : await invoke("launch_test_automation", {
           delay,
           loopStart,
+          windowTitle: activeTarget?.title || undefined,
+          targetContext,
           minimizeWindow,
           textOverrides,
         });
@@ -8693,6 +8728,13 @@ function renderRecognitionTreeHiddenFields(details = {}, currentOrder = null) {
   const clickMode = recognitionClickModeFromDetails(details);
   const relativeOcr = recognitionRelativeOcrDetails(details);
   const clickTarget = recognitionClickTargetDetails(details);
+  const hiddenOcrTargets = String(details.modo_reconhecimento ?? "imagem") === "texto_ocr"
+    ? splitOcrTargetText(details.texto_ocr_busca ?? "")
+        .map((target) => String(target || "").trim())
+        .filter(Boolean)
+        .map((target) => `<input data-tree-field="ocrTarget" data-ocr-target-field type="hidden" value="${escapeHtml(target)}" />`)
+        .join("")
+    : "";
   const successAction = String(details.ao_sucesso ?? "continuar");
   const successBlock = String(details.bloco_sucesso ?? "");
   const successSequence = String(details.sequencia_sucesso ?? "");
@@ -8709,6 +8751,7 @@ function renderRecognitionTreeHiddenFields(details = {}, currentOrder = null) {
     <input data-tree-field="searchProfile" type="hidden" value="${escapeHtml(normalizeRecognitionProfile(details.perfil_busca, "balanced"))}" />
     <input data-tree-field="expectedOcrText" type="hidden" value="${escapeHtml(details.texto_ocr_esperado ?? "")}" />
     <input data-tree-field="ocrText" type="hidden" value="${escapeHtml(details.texto_ocr_busca ?? "")}" />
+    ${hiddenOcrTargets}
     <input data-ocr-target-layouts type="hidden" value="${escapeHtml(JSON.stringify(details.ocr_target_layouts ?? []))}" />
     <input data-tree-field="ocrAction" type="hidden" value="${escapeHtml(details.acao_ocr ?? "clicar")}" />
     <input data-tree-field="ocrSaveAs" type="hidden" value="${escapeHtml(details.salvar_ocr_em ?? "")}" />
@@ -19291,11 +19334,19 @@ function buildCommandMapTreeStageLayout(events, pageDefinition) {
 
   const maxNodeX = nodes.reduce((max, node) => Math.max(max, node.x + 520), 0);
   const maxEdgeX = edges.reduce((max, edge) => Math.max(max, Number(edge.labelX || 0) + 300), 0);
+  const insertPreviewNode = nodes.find(
+    (node) => Number(state.insertPanel?.targetOrder) === Number(node.order)
+      && state.insertPanel?.position === "after"
+  );
+  // A pre-visualizacao abre na frente do card. Reserve a largura dela no
+  // palco para que o ultimo bloco tambem continue acessivel pelo scroll.
+  const insertPreviewRight = insertPreviewNode ? insertPreviewNode.x + 680 : 0;
   const stageWidth = Math.max(
     720,
     constants.paddingX * 2 + Math.max(0, events.length - 1) * constants.columnGap + 280,
     maxNodeX + constants.paddingX,
-    maxEdgeX + constants.paddingX
+    maxEdgeX + constants.paddingX,
+    insertPreviewRight + constants.paddingX
   );
   return {
     pageDefinition,
@@ -19310,7 +19361,7 @@ function buildCommandMapTreeStageLayout(events, pageDefinition) {
 function renderCommandMapTreeStageNode(node, events) {
   const shouldRenderInsert = state.insertPanel?.targetOrder === node.event.order;
   const insertPanel = shouldRenderInsert
-    ? `<div class="command-map-tree-insert" data-insert-origin-order="${escapeHtml(node.event.order)}">${renderInsertPanel(node.event.order)}</div>`
+    ? `<div class="command-map-tree-insert is-${escapeHtml(state.insertPanel?.position || "after")}" data-insert-origin-order="${escapeHtml(node.event.order)}">${renderInsertPanel(node.event.order)}</div>`
     : "";
   const card = renderCommandMapCardSegment(node.event, node.index, events, {
     treeNode: true,
@@ -19414,7 +19465,7 @@ function renderCommandMapTreeNode(event, index, events, context, path = [], dept
   });
   const shouldRenderInsert = state.insertPanel?.targetOrder === event.order;
   const insertPanel = shouldRenderInsert
-    ? `<div class="command-map-tree-insert" data-insert-origin-order="${escapeHtml(event.order)}">${renderInsertPanel(event.order)}</div>`
+    ? `<div class="command-map-tree-insert is-${escapeHtml(state.insertPanel?.position || "after")}" data-insert-origin-order="${escapeHtml(event.order)}">${renderInsertPanel(event.order)}</div>`
     : "";
   const branches = buildCommandMapTreeBranches(event, index, events, context)
     .map((branch) => {
@@ -19668,6 +19719,11 @@ function stopCommandMapTreePan(event) {
 }
 
 function handleCommandMapTreeWheelZoom(event) {
+  // O card aberto tem rolagem propria. Deixar o evento seguir seu fluxo nativo
+  // permite rolar os detalhes sem alterar a escala do mapa por tras dele.
+  if (event.target.closest(".command-tree-card.is-inline-expanded")) {
+    return;
+  }
   if (
     !commandMapList
     || !isCommandMapTreeModeActive()

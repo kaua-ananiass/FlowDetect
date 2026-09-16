@@ -1145,6 +1145,41 @@ class ExecutorAutomacao:
         self._janela_fixada = janela
         return janela
 
+    def adotar_janela_visivel_passiva_para_ocr(self):
+        """Escolhe passivamente a janela externa mais proxima do topo para OCR.
+
+        E um ultimo contexto seguro quando a execucao foi iniciada sem alvo.
+        Nunca ativa, maximiza ou altera a ordem das janelas: apenas impede que
+        o Tesseract precise analisar toda a area de trabalho para encontrar um
+        dialogo pequeno.
+        """
+        if self.alvo_execucao_ativo() or self.janela_alvo or self._janela_contexto:
+            return None
+        try:
+            candidatas = [
+                janela
+                for janela in self.listar_janelas_visiveis()
+                if not self.janela_parece_interface_flowdetect(janela)
+                and int(janela.get("hwnd", 0) or 0) > 0
+                and int(janela.get("width", 0) or 0) >= 260
+                and int(janela.get("height", 0) or 0) >= 180
+            ]
+        except Exception:
+            candidatas = []
+        if not candidatas:
+            return None
+        # EnumWindows preserva a ordem Z: a primeira janela valida e a mais
+        # proxima do usuario. Nao usamos tamanho para evitar capturar outro
+        # programa grande que esteja atras do sistema automatizado.
+        candidata = candidatas[0]
+        if not self.memorizar_contexto_visual_passivo(candidata):
+            return None
+        safe_print(
+            f"OCR passivo adotou a janela visivel: {candidata.get('title', 'janela atual')}",
+            flush=True,
+        )
+        return candidata
+
     def memorizar_contexto_visual_passivo(self, janela=None):
         """Guarda a primeira janela visual valida sem ativar ou mover nada.
 
@@ -2034,8 +2069,10 @@ class ExecutorAutomacao:
                 y = round(topo + altura / 2 + oy * scale_y - h / 2)
             else:
                 x, y, w, h = self.bounds_reconhecimento(detected)
+            # Mantem a confirmacao visivel, mas sem introduzir quase meio
+            # segundo de espera para cada OCR de um bloco composto.
             self.marcar_regiao_absoluta(x, y, w, h, tema=f"ocr_busca_{min(index + 1, 4)}",
-                                       etiqueta=f"OCR {index + 1}", duracao=0.42,
+                                       etiqueta=f"OCR {index + 1}", duracao=0.18,
                                        bloqueante=True, margem=0)
 
     def regioes_alvos_ocr_por_layout(self, local, leitura_relativa=None, dimensoes_referencia=None, quantidade=0):
@@ -2417,6 +2454,7 @@ class ExecutorAutomacao:
         perfil_busca="balanced",
         leitura_relativa=None,
         ocr_confirmado=None,
+        _escala_ocr=None,
     ):
         esperado = str(texto_ocr_esperado or "").strip()
         if not esperado or not OCR_DISPONIVEL or not dimensoes_referencia:
@@ -2469,6 +2507,8 @@ class ExecutorAutomacao:
                     marcar_candidatos=False,
                     limite_candidatos=3 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 6,
                     layout_alvos=layout_alvos,
+                    _escala_ocr=_escala_ocr,
+                    _tentativa_ampliada=bool(_escala_ocr is not None),
                 )
             else:
                 candidatos_ocr = self.localizar_texto_por_ocr_screenshot(
@@ -2479,6 +2519,8 @@ class ExecutorAutomacao:
                     retornar_candidatos=True,
                     marcar_candidatos=False,
                     limite_candidatos=3 if bool(getattr(self, "modo_teste_reconhecimento", False)) else 6,
+                    _escala_ocr=_escala_ocr,
+                    _tentativa_ampliada=bool(_escala_ocr is not None),
                 )
         if not candidatos_ocr:
             return None
@@ -2660,6 +2702,27 @@ class ExecutorAutomacao:
                 flush=True,
             )
             return local
+        # A leitura nativa e muito mais rapida, mas labels pequenos podem
+        # gerar um candidato parecido sem atingir a confirmacao estrita. Nesse
+        # caso fazemos uma unica releitura ampliada antes de repetir o ciclo;
+        # nao deixamos o Tesseract rodar continuamente e travar o mouse.
+        if _escala_ocr is None:
+            safe_print(
+                "OCR candidato parcial; conferindo uma vez a mesma janela ampliada.",
+                flush=True,
+            )
+            return self.localizar_referencia_hibrida_ocr_visual(
+                caminho_referencia,
+                texto_ocr_esperado=texto_ocr_esperado,
+                region=region,
+                dimensoes_referencia=dimensoes_referencia,
+                confianca_ocr=confianca_ocr,
+                confianca_visual=confianca_visual,
+                perfil_busca=perfil_busca,
+                leitura_relativa=leitura_relativa,
+                ocr_confirmado=None,
+                _escala_ocr=1.35,
+            )
         safe_print("OCR: nem todos os textos obrigatorios confirmaram; bloco aguardando.", flush=True)
         return None
 
@@ -4125,15 +4188,19 @@ class ExecutorAutomacao:
                     if 0.50 <= float(valor) <= 2.00
                 )
             ) or (1.0,)
-            if perfil_busca != "fast":
-                escalas_guiadas_por_ocr = tuple(
-                    round(escala_referencia * ajuste, 4)
-                    for ajuste in (1.0, 0.96, 1.04, 0.91, 1.09)
-                )
-                # A escala vem da geometria de varios OCRs confirmados. Ela e mais
-                # confiavel que uma varredura cega e evita testar dezenas de tamanhos
-                # no monitor inteiro durante um reconhecimento hibrido.
-                escalas_fallback = escalas_guiadas_por_ocr
+            ajustes_guiados = (
+                (0.90, 0.96, 1.04, 1.10)
+                if perfil_busca == "fast"
+                else (1.0, 0.96, 1.04, 0.91, 1.09)
+            )
+            escalas_guiadas_por_ocr = tuple(
+                round(escala_referencia * ajuste, 4)
+                for ajuste in ajustes_guiados
+            )
+            # A escala vem da geometria dos OCRs confirmados. Mesmo no perfil
+            # rapido testamos quatro ajustes proximos: isso cobre DPI/zoom de
+            # outra maquina sem esperar o timeout mudar para "balanced".
+            escalas_fallback = escalas_guiadas_por_ocr
 
         limite_escala_minima = 0.50 if escala_referencia is not None else 0.75
         limite_escala_maxima = 2.00 if escala_referencia is not None else 1.35
@@ -6649,6 +6716,8 @@ class ExecutorAutomacao:
         marcar_candidatos=False,
         limite_candidatos=8,
         layout_alvos=None,
+        _escala_ocr=None,
+        _tentativa_ampliada=False,
     ):
         partes = [str(parte or "").strip() for parte in (spec or {}).get("partes", []) if str(parte or "").strip()]
         if len(partes) < 2:
@@ -6666,6 +6735,8 @@ class ExecutorAutomacao:
                 marcar_candidatos=False,
                 limite_candidatos=limite_por_parte,
                 _permitir_composto=False,
+                _escala_ocr=_escala_ocr,
+                _tentativa_ampliada=_tentativa_ampliada,
             )
             encontrados = [
                 candidato
@@ -6905,7 +6976,13 @@ class ExecutorAutomacao:
                 continue
         return melhor
 
-    def capturar_itens_ocr_screenshot(self, janela_alvo=None, region=None, retornar_candidatos=False):
+    def capturar_itens_ocr_screenshot(
+        self,
+        janela_alvo=None,
+        region=None,
+        retornar_candidatos=False,
+        escala_ocr=None,
+    ):
         """Lê uma captura uma vez e devolve as palavras reconhecidas com posição.
 
         Um bloco hibrido com vários OCRs chama a busca de cada texto em sequência.
@@ -6924,7 +7001,11 @@ class ExecutorAutomacao:
             return None
 
         modo_teste = bool(getattr(self, "modo_teste_reconhecimento", False))
-        chave_cache = (chave_regiao, bool(retornar_candidatos), modo_teste)
+        try:
+            escala_cache = round(float(escala_ocr), 2) if escala_ocr is not None else None
+        except (TypeError, ValueError):
+            escala_cache = None
+        chave_cache = (chave_regiao, bool(retornar_candidatos), modo_teste, escala_cache)
         cache_itens = getattr(self, "_cache_ocr_screenshot", None)
         cache = cache_itens.get(chave_cache) if isinstance(cache_itens, dict) else None
         if cache and time.perf_counter() - float(cache.get("em", 0.0) or 0.0) <= 1.25:
@@ -6955,7 +7036,19 @@ class ExecutorAutomacao:
             area_captura = max(1, int(captura.width or 0) * int(captura.height or 0))
             captura_grande = area_captura >= 900000
             if retornar_candidatos:
-                fator_ocr = 1.15 if captura_grande else 1.55
+                # O caminho hibrido usa esta leitura unica para localizar todos
+                # os textos do bloco. Ampliar um dialogo inteiro para 155% fazia
+                # o Tesseract gastar 8--10s antes de devolver a primeira palavra.
+                # Formularios desktop ja sao capturados com texto legivel; ler a
+                # resolucao nativa preserva as coordenadas e reduz muito a area
+                # que o motor precisa analisar. As rotas de OCR de recorte ainda
+                # usam ampliacao quando o texto realmente for pequeno.
+                fator_padrao = 1.0 if area_captura >= 180000 else 1.25
+                try:
+                    fator_solicitado = float(escala_ocr) if escala_ocr is not None else fator_padrao
+                except (TypeError, ValueError):
+                    fator_solicitado = fator_padrao
+                fator_ocr = max(0.85, min(1.45, fator_solicitado))
                 variantes = self.gerar_variantes_imagem_ocr(captura, fator=fator_ocr, incluir_cor=False)[:1]
             else:
                 fator_ocr = 1.35 if captura_grande else 2
@@ -6981,6 +7074,7 @@ class ExecutorAutomacao:
             ]
         for nome_variante, imagem in variantes:
             for config in configs:
+                inicio_leitura_ocr = time.perf_counter()
                 try:
                     dados = pytesseract.image_to_data(imagem, config=config, output_type=pytesseract.Output.DICT)
                 except Exception as erro:
@@ -6999,6 +7093,11 @@ class ExecutorAutomacao:
                         self._ocr_indisponivel_logado = True
                     continue
 
+                safe_print(
+                    f"OCR screenshot concluido em {(time.perf_counter() - inicio_leitura_ocr) * 1000.0:.0f}ms "
+                    f"(escala={fator_ocr:.2f}, psm={config.split()[1] if len(config.split()) > 1 else 'auto'}).",
+                    flush=True,
+                )
                 total = len(dados.get("text", []))
                 for indice in range(total):
                     bruto = str(dados.get("text", [""])[indice] or "").strip()
@@ -7046,6 +7145,8 @@ class ExecutorAutomacao:
         marcar_candidatos=False,
         limite_candidatos=8,
         _permitir_composto=True,
+        _escala_ocr=None,
+        _tentativa_ampliada=False,
     ):
         if not OCR_DISPONIVEL or pytesseract is None:
             if not self._ocr_indisponivel_logado:
@@ -7067,6 +7168,8 @@ class ExecutorAutomacao:
                     retornar_candidatos=retornar_candidatos,
                     marcar_candidatos=marcar_candidatos,
                     limite_candidatos=limite_candidatos,
+                    _escala_ocr=_escala_ocr,
+                    _tentativa_ampliada=_tentativa_ampliada,
                 )
         texto_alvo = self.normalizar_texto_ocr(texto)
         if not texto_alvo:
@@ -7075,6 +7178,7 @@ class ExecutorAutomacao:
             janela_alvo=janela_alvo,
             region=region,
             retornar_candidatos=retornar_candidatos,
+            escala_ocr=_escala_ocr,
         )
         if not leitura_ocr:
             return [] if retornar_candidatos else None
@@ -7147,7 +7251,31 @@ class ExecutorAutomacao:
             if amostras:
                 safe_print(f"OCR leu, mas nao bateu com o texto esperado. Amostra: {amostras}", flush=True)
         if not candidatos:
-            if not bool(getattr(self, "modo_teste_reconhecimento", False)):
+            # R?tulos pequenos como "Selecionar" podem sumir na leitura nativa.
+            # Antes disso disparava uma fila de ate dez recortes, cada um com
+            # varias variantes/PSM, que prendia a execucao por muitos segundos.
+            # Uma unica leitura ampliada do mesmo dialogo e previsivel e mantem
+            # a busca hibrida responsiva.
+            if retornar_candidatos and not _tentativa_ampliada:
+                safe_print(
+                    "OCR rapido nao encontrou o texto; conferindo uma vez o dialogo ampliado.",
+                    flush=True,
+                )
+                resultado_ampliado = self.localizar_texto_por_ocr_screenshot(
+                    texto,
+                    confianca=confianca,
+                    janela_alvo=janela_alvo,
+                    region=region,
+                    retornar_candidatos=True,
+                    marcar_candidatos=marcar_candidatos,
+                    limite_candidatos=limite_candidatos,
+                    _permitir_composto=False,
+                    _escala_ocr=1.35,
+                    _tentativa_ampliada=True,
+                )
+                if resultado_ampliado:
+                    return resultado_ampliado
+            if not retornar_candidatos and not bool(getattr(self, "modo_teste_reconhecimento", False)):
                 resultado_varredura = self.localizar_texto_por_ocr_em_regioes(
                     captura,
                     texto_alvo,
@@ -7156,8 +7284,6 @@ class ExecutorAutomacao:
                     base_top=base_top,
                 )
                 if resultado_varredura:
-                    if retornar_candidatos:
-                        return [resultado_varredura]
                     return resultado_varredura
             chave_diag = f"{texto_alvo}|{int(base_left)}|{int(base_top)}|{getattr(captura, 'width', 0)}|{getattr(captura, 'height', 0)}"
             if chave_diag not in self._diagnosticos_ocr_salvos:
@@ -7700,6 +7826,13 @@ class ExecutorAutomacao:
         ):
             candidata_ativa = self.obter_janela_ativa()
             if (
+                not isinstance(candidata_ativa, dict)
+                or self.janela_parece_interface_flowdetect(candidata_ativa)
+                or int(candidata_ativa.get("width", 0) or 0) < 260
+                or int(candidata_ativa.get("height", 0) or 0) < 180
+            ):
+                candidata_ativa = self.adotar_janela_visivel_passiva_para_ocr()
+            if (
                 isinstance(candidata_ativa, dict)
                 and not self.janela_parece_interface_flowdetect(candidata_ativa)
                 and int(candidata_ativa.get("width", 0) or 0) >= 260
@@ -7708,7 +7841,7 @@ class ExecutorAutomacao:
                 janela_ativa_hibrida = candidata_ativa
                 self.memorizar_contexto_visual_passivo(candidata_ativa)
                 safe_print(
-                    "Hibrido OCR + imagem: lendo somente a janela que ja esta em primeiro plano, sem altera-la.",
+                    "Hibrido OCR + imagem: lendo somente a janela visivel do sistema, sem altera-la.",
                     flush=True,
                 )
 
@@ -7746,9 +7879,19 @@ class ExecutorAutomacao:
             if perfil_busca == "fast":
                 perfil_iteracao = "fast"
             elif perfil_busca == "balanced":
-                perfil_iteracao = "fast" if tempo_decorrido < (timeout_total * 0.68) else "balanced"
+                # Depois que os OCRs delimitaram uma area pequena, nao faz
+                # sentido aguardar 68% do timeout para ampliar a validacao
+                # visual. Esse atraso era o motivo dos blocos apos SPED
+                # demorarem 8--10 segundos apesar de o texto ja estar lido.
+                limite_fast_balanceado = timeout_total * 0.68
+                if hibrido_ocr_visual_obrigatorio:
+                    limite_fast_balanceado = min(1.10, max(0.35, timeout_total * 0.18))
+                perfil_iteracao = "fast" if tempo_decorrido < limite_fast_balanceado else "balanced"
             else:
-                perfil_iteracao = "fast" if tempo_decorrido < (timeout_total * 0.40) else "precise"
+                limite_fast_preciso = timeout_total * 0.40
+                if hibrido_ocr_visual_obrigatorio:
+                    limite_fast_preciso = min(1.30, max(0.40, timeout_total * 0.22))
+                perfil_iteracao = "fast" if tempo_decorrido < limite_fast_preciso else "precise"
             intervalo_reativacao = 2.4 if perfil_busca == "fast" else (1.8 if perfil_busca == "balanced" else 1.0)
             if usando_alvo_execucao:
                 janela_info_cache = self.obter_janela_alvo_execucao_atual(obrigatoria=True)
@@ -7835,8 +7978,18 @@ class ExecutorAutomacao:
                         int(janela_companheira_hibrida.get("height", 0) or 0),
                     ),
                     "target_companion",
-                    fallback=True,
+                    fallback=False,
                 )
+                # Em fluxos fiscais o alvo normalmente aparece em um dialogo
+                # modal do mesmo programa (por exemplo, SPED Reinf). A busca
+                # anterior examinava primeiro a janela principal inteira e so
+                # depois o dialogo menor que ja esta visivel. Priorizar esse
+                # dialogo reduz muito o OCR/template sem ativar ou mover janela;
+                # a janela principal permanece como alternativa na mesma rodada.
+                if hibrido_ocr_visual_obrigatorio:
+                    regioes_busca.sort(
+                        key=lambda entrada: 0 if entrada.get("stage") == "target_companion" else 1
+                    )
             elif modo_area_busca == "custom_area" and regiao_personalizada:
                 adicionar_regiao_busca(regioes_busca, regiao_personalizada, "custom_area", fallback=bool(regiao_historica))
 
@@ -7889,9 +8042,13 @@ class ExecutorAutomacao:
             # na mesma tentativa passiva.
             executar_hibrido_neste_ciclo = True
             if hibrido_ocr_visual_obrigatorio and OCR_DISPONIVEL:
-                intervalo_hibrido = 0.05 if (
+                # Cada OCR de dialogo leva centenas de milissegundos. Repetir
+                # imediatamente ao terminar mantinha um nucleo em 100% e deixava
+                # o cursor lento. A proxima rodada usa o cache ou uma captura
+                # nova depois deste intervalo curto e previsivel.
+                intervalo_hibrido = 0.38 if (
                     perfil_busca == "fast" or bool(getattr(self, "modo_teste_reconhecimento", False))
-                ) else 0.18
+                ) else 0.58
                 agora_hibrido = time.perf_counter()
                 executar_hibrido_neste_ciclo = agora_hibrido - ultima_tentativa_ocr >= intervalo_hibrido
                 if executar_hibrido_neste_ciclo:
@@ -8382,7 +8539,9 @@ class ExecutorAutomacao:
                 flush=True,
             )
             return None
-        self.marcar_area_reconhecida(local, duracao=0.75, bloqueante=True, etiqueta="Reconhecimento")
+        # A borda verde continua informando a confirmacao, so que com uma
+        # exibicao curta para nao atrasar cada proximo bloco da automacao.
+        self.marcar_area_reconhecida(local, duracao=0.28, bloqueante=True, etiqueta="Reconhecimento")
         offset_click_x, offset_click_y = self.escalar_offset_referencia(
             local,
             offset_x=offset_x,
@@ -8397,7 +8556,7 @@ class ExecutorAutomacao:
                 flush=True,
             )
         if clicar:
-            time.sleep(0.12)
+            time.sleep(0.04)
             destino_click_x, destino_click_y = self.centro_area_reconhecida(
                 local,
                 offset_x=offset_click_x,
@@ -8408,7 +8567,7 @@ class ExecutorAutomacao:
                 int(destino_click_y) - 9,
                 18,
                 18,
-                duracao=0.38,
+                duracao=0.12,
                 bloqueante=True,
                 tema="visual",
                 etiqueta="Clique",
@@ -8461,22 +8620,25 @@ class ExecutorAutomacao:
         if regiao_teste is None and titulo_janela:
             regiao_teste = self.obter_regiao_busca(titulo_janela)
 
-        # Ao usar o botao Procurar, o FlowDetect e minimizado antes do worker
-        # iniciar. Sem uma janela configurada, a janela que ficou em primeiro
-        # plano costuma ser exatamente o sistema que deve ser reconhecido. Fazemos
-        # uma tentativa curta nela para evitar OCR da tela inteira; se nao achar,
-        # a busca normal ainda cobre todos os monitores.
+        # Ao usar o botao Procurar, o Studio e minimizado antes do worker
+        # iniciar. O elemento pode estar em um modal cujo titulo nao coincide
+        # com a janela gravada no bloco. Para o teste isolado, os pixels visiveis
+        # sao a fonte de verdade: priorizamos a janela externa em primeiro plano
+        # sem ativa-la, move-la ou depender do titulo antigo.
         if (
             bool(getattr(self, "modo_teste_reconhecimento", False))
-            and not titulo_janela
             and self.normalizar_modo_area_busca(modo_area_busca) == "target_window"
         ):
             janela_ativa_teste = self.obter_janela_ativa()
             if (
                 isinstance(janela_ativa_teste, dict)
+                and not self.janela_parece_interface_flowdetect(janela_ativa_teste)
                 and int(janela_ativa_teste.get("width", 0) or 0) >= 260
                 and int(janela_ativa_teste.get("height", 0) or 0) >= 180
             ):
+                titulo_janela = str(janela_ativa_teste.get("title") or titulo_janela or "").strip()
+                self.janela_alvo = titulo_janela
+                janela_teste = janela_ativa_teste
                 area_teste = {
                     "x": int(janela_ativa_teste.get("left", 0) or 0),
                     "y": int(janela_ativa_teste.get("top", 0) or 0),
@@ -8486,7 +8648,7 @@ class ExecutorAutomacao:
                 modo_area_teste = "custom_area"
                 regiao_teste = self.construir_regiao_personalizada(area_teste)
                 safe_print(
-                    "Teste rapido: procurando primeiro na janela em primeiro plano "
+                    "Teste rapido: usando a janela externa em primeiro plano "
                     f"({janela_ativa_teste.get('title', 'janela atual')}).",
                     flush=True,
                 )
@@ -10177,10 +10339,19 @@ def main():
         time.sleep(atraso)
 
     if args.modo != "reconhecimento" and not executor.janela_alvo and not executor.alvo_execucao_ativo():
-        safe_print(
-            "Nenhuma janela alvo selecionada. Captura e reconhecimento vao usar a tela inteira.",
-            flush=True,
-        )
+        janela_passiva = executor.adotar_janela_ativa_para_ocr()
+        if janela_passiva is None:
+            janela_passiva = executor.adotar_janela_visivel_passiva_para_ocr()
+        if janela_passiva:
+            safe_print(
+                f"Execucao sem alvo fixo: OCR limitado passivamente a {janela_passiva.get('title', 'janela visivel')}.",
+                flush=True,
+            )
+        else:
+            safe_print(
+                "Nenhuma janela alvo selecionada. Captura e reconhecimento vao usar a tela inteira.",
+                flush=True,
+            )
     elif args.modo == "reconhecimento" and not executor.janela_alvo and not executor.alvo_execucao_ativo():
         safe_print(
             "Teste de reconhecimento sem janela alvo fixa. Procurando a referencia na tela inteira.",
