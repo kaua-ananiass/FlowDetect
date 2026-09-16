@@ -6946,7 +6946,13 @@ class ExecutorAutomacao:
                 continue
         return melhor
 
-    def capturar_itens_ocr_screenshot(self, janela_alvo=None, region=None, retornar_candidatos=False):
+    def capturar_itens_ocr_screenshot(
+        self,
+        janela_alvo=None,
+        region=None,
+        retornar_candidatos=False,
+        escala_ocr=None,
+    ):
         """Lê uma captura uma vez e devolve as palavras reconhecidas com posição.
 
         Um bloco hibrido com vários OCRs chama a busca de cada texto em sequência.
@@ -6965,7 +6971,11 @@ class ExecutorAutomacao:
             return None
 
         modo_teste = bool(getattr(self, "modo_teste_reconhecimento", False))
-        chave_cache = (chave_regiao, bool(retornar_candidatos), modo_teste)
+        try:
+            escala_cache = round(float(escala_ocr), 2) if escala_ocr is not None else None
+        except (TypeError, ValueError):
+            escala_cache = None
+        chave_cache = (chave_regiao, bool(retornar_candidatos), modo_teste, escala_cache)
         cache_itens = getattr(self, "_cache_ocr_screenshot", None)
         cache = cache_itens.get(chave_cache) if isinstance(cache_itens, dict) else None
         if cache and time.perf_counter() - float(cache.get("em", 0.0) or 0.0) <= 1.25:
@@ -7003,7 +7013,12 @@ class ExecutorAutomacao:
                 # resolucao nativa preserva as coordenadas e reduz muito a area
                 # que o motor precisa analisar. As rotas de OCR de recorte ainda
                 # usam ampliacao quando o texto realmente for pequeno.
-                fator_ocr = 1.0 if area_captura >= 180000 else 1.25
+                fator_padrao = 1.0 if area_captura >= 180000 else 1.25
+                try:
+                    fator_solicitado = float(escala_ocr) if escala_ocr is not None else fator_padrao
+                except (TypeError, ValueError):
+                    fator_solicitado = fator_padrao
+                fator_ocr = max(0.85, min(1.45, fator_solicitado))
                 variantes = self.gerar_variantes_imagem_ocr(captura, fator=fator_ocr, incluir_cor=False)[:1]
             else:
                 fator_ocr = 1.35 if captura_grande else 2
@@ -7100,6 +7115,8 @@ class ExecutorAutomacao:
         marcar_candidatos=False,
         limite_candidatos=8,
         _permitir_composto=True,
+        _escala_ocr=None,
+        _tentativa_ampliada=False,
     ):
         if not OCR_DISPONIVEL or pytesseract is None:
             if not self._ocr_indisponivel_logado:
@@ -7129,6 +7146,7 @@ class ExecutorAutomacao:
             janela_alvo=janela_alvo,
             region=region,
             retornar_candidatos=retornar_candidatos,
+            escala_ocr=_escala_ocr,
         )
         if not leitura_ocr:
             return [] if retornar_candidatos else None
@@ -7201,7 +7219,31 @@ class ExecutorAutomacao:
             if amostras:
                 safe_print(f"OCR leu, mas nao bateu com o texto esperado. Amostra: {amostras}", flush=True)
         if not candidatos:
-            if not bool(getattr(self, "modo_teste_reconhecimento", False)):
+            # R?tulos pequenos como "Selecionar" podem sumir na leitura nativa.
+            # Antes disso disparava uma fila de ate dez recortes, cada um com
+            # varias variantes/PSM, que prendia a execucao por muitos segundos.
+            # Uma unica leitura ampliada do mesmo dialogo e previsivel e mantem
+            # a busca hibrida responsiva.
+            if retornar_candidatos and not _tentativa_ampliada:
+                safe_print(
+                    "OCR rapido nao encontrou o texto; conferindo uma vez o dialogo ampliado.",
+                    flush=True,
+                )
+                resultado_ampliado = self.localizar_texto_por_ocr_screenshot(
+                    texto,
+                    confianca=confianca,
+                    janela_alvo=janela_alvo,
+                    region=region,
+                    retornar_candidatos=True,
+                    marcar_candidatos=marcar_candidatos,
+                    limite_candidatos=limite_candidatos,
+                    _permitir_composto=False,
+                    _escala_ocr=1.35,
+                    _tentativa_ampliada=True,
+                )
+                if resultado_ampliado:
+                    return resultado_ampliado
+            if not retornar_candidatos and not bool(getattr(self, "modo_teste_reconhecimento", False)):
                 resultado_varredura = self.localizar_texto_por_ocr_em_regioes(
                     captura,
                     texto_alvo,
@@ -7210,8 +7252,6 @@ class ExecutorAutomacao:
                     base_top=base_top,
                 )
                 if resultado_varredura:
-                    if retornar_candidatos:
-                        return [resultado_varredura]
                     return resultado_varredura
             chave_diag = f"{texto_alvo}|{int(base_left)}|{int(base_top)}|{getattr(captura, 'width', 0)}|{getattr(captura, 'height', 0)}"
             if chave_diag not in self._diagnosticos_ocr_salvos:
