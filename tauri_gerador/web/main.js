@@ -1316,10 +1316,23 @@ function applyCommandMapChromeMode() {
 }
 
 function applyCommandMapZoom() {
-  const zoomPercent = Math.round(state.commandMapZoom * 100);
+function normalizeCommandMapZoom(value, fallback = 1) {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  const normalizedFallback = Number(fallback);
+  return Number.isFinite(normalizedFallback) && normalizedFallback > 0 ? normalizedFallback : 1;
+}
+
+  const zoomPercent = Math.max(0.1, Math.round(state.commandMapZoom * 1000) / 10);
   commandMapList.style.setProperty("--command-map-zoom", String(state.commandMapZoom));
   if (mapZoomRange) {
     mapZoomRange.value = String(zoomPercent);
+    // O controle acompanha a escala atual para nunca limitar o zoom escolhido
+    // pelo mouse ou pelos botões.
+    mapZoomRange.min = String(Math.max(0.1, Math.min(10, Math.floor(zoomPercent / 1.6))));
+    mapZoomRange.max = String(Math.max(500, Math.ceil(zoomPercent * 1.6)));
   }
   if (mapZoomValue) {
     mapZoomValue.textContent = `${zoomPercent}%`;
@@ -1330,35 +1343,8 @@ function autoFitCommandMapZoom() {
   if (!commandMapList || state.activeTab !== "commands") {
     return;
   }
-
-  const cards = Array.from(commandMapList.querySelectorAll(".command-tree-card"));
-  if (!cards.length) {
-    state.commandMapZoom = Math.min(1.4, Math.max(0.6, Number(state.commandMapRequestedZoom) || 0.96));
-    applyCommandMapZoom();
-    return;
-  }
-
-  const requestedZoom = Math.min(1.4, Math.max(0.6, Number(state.commandMapRequestedZoom) || 0.96));
-  const currentZoom = Math.max(0.01, Number(state.commandMapZoom) || requestedZoom || 0.96);
-  const availableHeight = Math.max(220, commandMapList.clientHeight - 24);
-
-  let tallestNaturalHeight = 0;
-  cards.forEach((card) => {
-    const rect = card.getBoundingClientRect();
-    if (!rect.height) {
-      return;
-    }
-    tallestNaturalHeight = Math.max(tallestNaturalHeight, rect.height / currentZoom);
-  });
-
-  if (!tallestNaturalHeight) {
-    state.commandMapZoom = requestedZoom;
-    applyCommandMapZoom();
-    return;
-  }
-
-  const fitZoom = Math.min(1.4, Math.max(0.6, availableHeight / tallestNaturalHeight));
-  state.commandMapZoom = Math.min(requestedZoom, fitZoom);
+  state.commandMapRequestedZoom = normalizeCommandMapZoom(state.commandMapRequestedZoom, state.commandMapZoom || 0.96);
+  state.commandMapZoom = state.commandMapRequestedZoom;
   applyCommandMapZoom();
 }
 
@@ -1397,8 +1383,6 @@ function updateCommandConnectorPositions() {
       return;
     }
 
-    const rowRect = row.getBoundingClientRect();
-    const rowZoom = row.offsetWidth ? Math.max(0.2, rowRect.width / row.offsetWidth) : 1;
     connector.style.setProperty("--connector-inline-top", "var(--command-connector-line-top)");
   });
 }
@@ -1499,9 +1483,11 @@ function renderCommandJumpPaths() {
   const maxLane = preparedRoutes.reduce((max, route) => Math.max(max, route.lane || 0), 0);
   row.style.setProperty("--jump-route-lanes", String(maxLane));
   const rowRect = row.getBoundingClientRect();
-  const rowZoom = row.offsetWidth ? Math.max(0.2, rowRect.width / row.offsetWidth) : 1;
-  const rowWidth = Math.max(row.scrollWidth, row.offsetWidth, Math.round(rowRect.width), 1);
-  const rowHeight = Math.max(row.scrollHeight, row.offsetHeight, Math.round(rowRect.height), 1);
+  const rowZoom = row.offsetWidth ? Math.max(0.01, rowRect.width / row.offsetWidth) : 1;
+  // A camada tambem recebe CSS zoom. Usar as medidas de layout evita aplicar
+  // a escala duas vezes e deixar os caminhos desconectados dos cartoes.
+  const rowWidth = Math.max(row.scrollWidth, row.offsetWidth, 1);
+  const rowHeight = Math.max(row.scrollHeight, row.offsetHeight, 1);
   const layer = document.createElement("div");
   layer.className = "command-jump-layer";
   layer.style.width = `${Math.ceil(rowWidth)}px`;
@@ -1629,9 +1615,9 @@ function renderCommandMapTreeReferenceLinks() {
   const edgeLabels = stage ? Array.from(stage.querySelectorAll("[data-tree-edge-source-order]")) : [];
   if (stage && edgeLabels.length) {
     const stageRect = stage.getBoundingClientRect();
-    const stageZoom = stage.offsetWidth ? Math.max(0.2, stageRect.width / stage.offsetWidth) : 1;
-    const stageWidth = Math.max(stage.scrollWidth, stage.offsetWidth, Math.round(stageRect.width), 1);
-    const stageHeight = Math.max(stage.scrollHeight, stage.offsetHeight, Math.round(stageRect.height), 1);
+    const stageZoom = stage.offsetWidth ? Math.max(0.01, stageRect.width / stage.offsetWidth) : 1;
+    const stageWidth = Math.max(stage.scrollWidth, stage.offsetWidth, 1);
+    const stageHeight = Math.max(stage.scrollHeight, stage.offsetHeight, 1);
     const layer = document.createElement("div");
     layer.className = "command-map-tree-link-layer";
     layer.style.width = `${Math.ceil(stageWidth)}px`;
@@ -1922,9 +1908,9 @@ function renderCommandMapTreeReferenceLinks() {
   }
 
   const treeRect = tree.getBoundingClientRect();
-  const treeZoom = tree.offsetWidth ? Math.max(0.2, treeRect.width / tree.offsetWidth) : 1;
-  const treeWidth = Math.max(tree.scrollWidth, tree.offsetWidth, Math.round(treeRect.width), 1);
-  const treeHeight = Math.max(tree.scrollHeight, tree.offsetHeight, Math.round(treeRect.height), 1);
+  const treeZoom = tree.offsetWidth ? Math.max(0.01, treeRect.width / tree.offsetWidth) : 1;
+  const treeWidth = Math.max(tree.scrollWidth, tree.offsetWidth, 1);
+  const treeHeight = Math.max(tree.scrollHeight, tree.offsetHeight, 1);
   const layer = document.createElement("div");
   layer.className = "command-map-tree-link-layer";
   layer.style.width = `${Math.ceil(treeWidth)}px`;
@@ -2036,7 +2022,7 @@ function scheduleCommandMapAutoFit() {
 }
 
 function setCommandMapZoom(nextZoom, options = {}) {
-  const previousZoom = Math.max(0.01, Number(state.commandMapZoom) || 1);
+  const previousZoom = normalizeCommandMapZoom(state.commandMapZoom, 1);
   const point = options.preservePoint && commandMapList
     ? {
         x: Number(options.preservePoint.x),
@@ -19785,7 +19771,7 @@ function renderCommandMapTreeView(events, pageDefinition) {
 
 function commandMapTreeStageMetrics(stage) {
   const rect = stage.getBoundingClientRect();
-  const zoom = stage.offsetWidth ? Math.max(0.2, rect.width / stage.offsetWidth) : 1;
+  const zoom = stage.offsetWidth ? Math.max(0.01, rect.width / stage.offsetWidth) : 1;
   return { rect, zoom };
 }
 
@@ -19997,7 +19983,7 @@ function handleCommandMapTreeWheelZoom(event) {
 
   event.preventDefault();
   const listRect = commandMapList.getBoundingClientRect();
-  const currentZoom = Math.max(0.01, Number(state.commandMapZoom) || 0.96);
+  const currentZoom = normalizeCommandMapZoom(state.commandMapZoom, 0.96);
   const zoomFactor = delta > 0 ? 0.92 : 1.08;
   const nextZoom = Math.round(currentZoom * zoomFactor * 100) / 100;
   setCommandMapZoom(nextZoom, {
@@ -22132,7 +22118,7 @@ mapZoomRange.addEventListener("input", (event) => {
 });
 
 mapZoomOutButton.addEventListener("click", () => {
-  setCommandMapZoom(Math.round((state.commandMapZoom - 0.05) * 100) / 100);
+  setCommandMapZoom(normalizeCommandMapZoom(state.commandMapZoom, 0.96) * 0.9);
 });
 
 mapZoomInButton.addEventListener("click", () => {
@@ -25433,9 +25419,6 @@ commandMapList.addEventListener("click", async (event) => {
     const layoutSnapshot = captureCommandMapCardPositions();
     setCommandMapFocus(order);
     state.insertPanel = createInsertPanelState(order, action === "insert-before" ? "before" : "after");
-    if (state.commandMapZoom > 1) {
-      setCommandMapZoom(1);
-    }
     commandMapList.scrollTop = 0;
     renderCommandMap({
       layoutSnapshot,
