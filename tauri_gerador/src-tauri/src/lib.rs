@@ -1885,6 +1885,61 @@ fn python_command(root: &PathBuf) -> Result<(String, Vec<String>), String> {
     Err("Nenhum interpretador Python compativel foi encontrado.".to_string())
 }
 
+fn python_command_for_visual_feedback(root: &PathBuf) -> Result<(String, Vec<String>), String> {
+    fn supports_capture_ui(root: &Path, program: &str, args: &[String]) -> bool {
+        python_module_available(root, program, args, "tkinter")
+            && python_module_available(root, program, args, "PIL.ImageTk")
+            && python_module_available(root, program, args, "pyautogui")
+            && python_module_available(root, program, args, "openpyxl")
+    }
+
+    if let Ok((program, args)) = python_command(root) {
+        if supports_capture_ui(root, &program, &args) {
+            return Ok((program, args));
+        }
+    }
+
+    let mut checked = std::collections::HashSet::<PathBuf>::new();
+    let mut try_local_candidates = || -> Option<(String, Vec<String>)> {
+        for candidate in local_python_candidates(root) {
+            if !candidate.exists() || !checked.insert(candidate.clone()) {
+                continue;
+            }
+            let program = candidate.to_string_lossy().to_string();
+            if supports_capture_ui(root, &program, &[]) {
+                return Some((program, Vec::new()));
+            }
+        }
+        None
+    };
+
+    if let Some(command) = try_local_candidates() {
+        return Ok(command);
+    }
+
+    for (program, args) in [
+        ("python".to_string(), Vec::<String>::new()),
+        ("py".to_string(), vec!["-3".to_string()]),
+    ] {
+        if supports_capture_ui(root, &program, &args) {
+            return Ok((program, args));
+        }
+    }
+
+    if python_installer_candidates(root).into_iter().any(|path| path.exists()) {
+        try_bootstrap_local_python(root)?;
+        if let Some(command) = try_local_candidates() {
+            return Ok(command);
+        }
+    }
+
+    Err(
+        "O feedback visual precisa de um Python com suporte a interface grafica (Tk). \
+         Instale ou repare o runtime Python do FlowDetect e tente novamente."
+            .to_string(),
+    )
+}
+
 fn bundled_python_script_bytes(script_name: &str) -> Option<&'static [u8]> {
     match script_name.replace('\\', "/").as_str() {
         "capturar_cliques.py" => Some(BUNDLED_CAPTURAR_CLIQUES),
@@ -2125,6 +2180,41 @@ fn run_script_json(root: &PathBuf, script_name: &str, args: &[String]) -> Result
         return Err(message.to_string());
     }
 
+    Ok(parsed)
+}
+
+fn run_screen_capture_script_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
+    let script_name = "capturar_imagem_tela.py";
+    let script_path = ensure_python_script_integrity(root, script_name)?;
+    let (python_program, python_args) = python_command_for_visual_feedback(root)?;
+    let mut command = Command::new(&python_program);
+    command
+        .current_dir(root)
+        .args(&python_args)
+        .arg(&script_path)
+        .args(args);
+    configure_no_window(&mut command);
+    let output = command
+        .output()
+        .map_err(|err| format!("Falha ao executar {script_name}: {err}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let message = if !stderr.is_empty() { stderr } else { stdout };
+        return Err(if message.is_empty() {
+            format!("Falha ao executar {script_name}.")
+        } else {
+            message
+        });
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let parsed: Value = serde_json::from_str(&raw)
+        .map_err(|err| format!("Falha ao interpretar retorno de {script_name}: {err}"))?;
+    if let Some(message) = parsed.get("erro").and_then(Value::as_str) {
+        return Err(message.to_string());
+    }
     Ok(parsed)
 }
 
@@ -2472,7 +2562,7 @@ fn capture_image_asset(app: AppHandle, base_name_hint: Option<String>) -> Result
         thread::sleep(Duration::from_millis(450));
     }
 
-    let result = run_script_json(&root, "capturar_imagem_tela.py", &args);
+    let result = run_screen_capture_script_json(&root, &args);
 
     if let Some(window) = main_window.as_ref() {
         let _ = window.unminimize();
@@ -9005,7 +9095,9 @@ fn start_recognition_worker(root: &PathBuf) -> Result<RecognitionWorker, String>
         ));
     }
 
-    let (python_program_path, python_args) = python_command(root)?;
+    // O botao Procurar tambem mostra as bordas dos OCRs; portanto o worker
+    // precisa de um Python com Tk, como a execucao assistida.
+    let (python_program_path, python_args) = python_command_for_visual_feedback(root)?;
     let python_program = python_program_path.clone();
     let mut command = Command::new(&python_program_path);
     command
@@ -9044,7 +9136,7 @@ fn test_image_recognition_worker(
     root: &PathBuf,
     payload: Value,
 ) -> Result<(bool, String, String), String> {
-    let (python_program_path, python_args) = python_command(root)?;
+    let (python_program_path, python_args) = python_command_for_visual_feedback(root)?;
     let python_program = python_program_path.clone();
     let mut guard = RECOGNITION_WORKER
         .lock()
@@ -9227,11 +9319,13 @@ fn test_image_recognition(
                     stdout
                 });
             }
-            let message = if !stderr.trim().is_empty() {
-                stderr
-            } else {
-                stdout
-            };
+            // Keep the per-OCR validation report even when Python also emits
+            // an error on stderr. The Studio reads that report from stdout.
+            let message = [stdout.trim(), stderr.trim()]
+                .into_iter()
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
             return Err(if message.trim().is_empty() {
                 "Falha ao testar o reconhecimento.".into()
             } else {
@@ -9246,7 +9340,14 @@ fn test_image_recognition(
         }
     }
 
-    let (python_program, python_args) = python_command(&root)?;
+    let (python_program, python_args) = python_command_for_visual_feedback(&root).map_err(|err| {
+        if let Some(window) = main_window.as_ref() {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        err
+    })?;
     let mut command = Command::new(&python_program);
     command
         .current_dir(&root)
@@ -9326,15 +9427,15 @@ fn test_image_recognition(
     }
     configure_no_window(&mut command);
 
-    let output = command
-        .output()
-        .map_err(|err| format!("Falha ao iniciar o teste de reconhecimento: {err}"))?;
+    let output = command.output();
 
     if let Some(window) = main_window.as_ref() {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
+    let output = output
+        .map_err(|err| format!("Falha ao iniciar o teste de reconhecimento: {err}"))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -9360,7 +9461,11 @@ fn test_image_recognition(
         });
     }
 
-    let message = if !stderr.is_empty() { stderr } else { stdout };
+    let message = [stdout.as_str(), stderr.as_str()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
     Err(if message.is_empty() {
         "Falha ao testar o reconhecimento.".into()
     } else {
@@ -9653,11 +9758,12 @@ fn launch_quick_test(
         ));
     }
 
-    let (python_program, python_args) = python_command(&root)?;
+    // Mantem os marcadores de OCR visiveis no teste assistido simples.
+    let (python_program, python_args) = python_command_for_visual_feedback(&root)?;
     append_launcher_log(
         &root,
         format!(
-            "Python detectado: {} {}",
+            "Python com feedback visual detectado: {} {}",
             python_program,
             python_args.join(" ")
         ),
@@ -9772,11 +9878,13 @@ fn launch_test_automation(
         ));
     }
 
-    let (python_program, python_args) = python_command(&root)?;
+    // A execucao assistida precisa do Tk para desenhar as bordas azul/verde
+    // sobre os OCRs e reconhecimentos, inclusive durante o loop por planilha.
+    let (python_program, python_args) = python_command_for_visual_feedback(&root)?;
     append_launcher_log(
         &root,
         format!(
-            "Python detectado: {} {}",
+            "Python com feedback visual detectado: {} {}",
             python_program,
             python_args.join(" ")
         ),

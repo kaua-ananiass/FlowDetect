@@ -39,10 +39,12 @@ def main():
             modo_reconhecimento = str(request.get("modo_reconhecimento") or "").strip().lower()
             texto_ocr = str(request.get("texto_ocr_busca") or request.get("texto_ocr_esperado") or "").strip()
             timeout_solicitado = float(request.get("timeout", 10) or 10)
-            # Um hibrido com varios OCRs precisa de tempo para confirmar cada
-            # texto e ainda comparar a imagem. O teste deve respeitar o timeout
-            # configurado no bloco, em vez de ser interrompido em quatro segundos.
-            limite_teste = 10.0 if modo_reconhecimento == "texto_ocr" and texto_ocr else 2.5
+            # Um bloco OCR + Visual tambem pode ter varios textos alvo. Antes
+            # apenas o OCR sem imagem recebia o tempo completo e o botao
+            # Procurar encerrava o hibrido em 2,5s, antes de chegar aos OCRs
+            # seguintes. Sempre que houver texto OCR, respeitamos o timeout
+            # configurado pelo card para testar todos os alvos em sequencia.
+            limite_teste = 10.0 if texto_ocr else 2.5
             timeout_teste = min(max(0.1, timeout_solicitado), limite_teste)
             with contextlib.redirect_stdout(logs):
                 sucesso = executor.testar_reconhecimento(
