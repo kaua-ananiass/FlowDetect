@@ -9301,6 +9301,51 @@ label span {
   color: rgba(221, 214, 254, 0.95);
 }
 
+.command-map-tree-edge-label.is-ocr-azul,
+.command-map-tree-link-path.is-ocr-azul,
+.command-map-tree-link-energy.is-ocr-azul { --ocr-route-color: #38bdf8; }
+
+.command-map-tree-edge-label.is-ocr-roxo,
+.command-map-tree-link-path.is-ocr-roxo,
+.command-map-tree-link-energy.is-ocr-roxo { --ocr-route-color: #a78bfa; }
+
+.command-map-tree-edge-label.is-ocr-verde,
+.command-map-tree-link-path.is-ocr-verde,
+.command-map-tree-link-energy.is-ocr-verde { --ocr-route-color: #4ade80; }
+
+.command-map-tree-edge-label.is-ocr-rosa,
+.command-map-tree-link-path.is-ocr-rosa,
+.command-map-tree-link-energy.is-ocr-rosa { --ocr-route-color: #f472b6; }
+
+.command-map-tree-edge-label.is-ocr-laranja,
+.command-map-tree-link-path.is-ocr-laranja,
+.command-map-tree-link-energy.is-ocr-laranja { --ocr-route-color: #fb923c; }
+
+.command-map-tree-edge-label.is-ocr-ciano,
+.command-map-tree-link-path.is-ocr-ciano,
+.command-map-tree-link-energy.is-ocr-ciano { --ocr-route-color: #2dd4bf; }
+
+.command-map-tree-edge-label[class*="is-ocr-"] {
+  border-color: color-mix(in srgb, var(--ocr-route-color) 48%, transparent);
+  background:
+    radial-gradient(circle at top, color-mix(in srgb, var(--ocr-route-color) 18%, transparent), transparent 70%),
+    rgba(7, 14, 24, 0.95);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--ocr-route-color) 12%, transparent),
+    0 8px 16px rgba(0, 0, 0, 0.24),
+    0 0 13px color-mix(in srgb, var(--ocr-route-color) 24%, transparent);
+}
+
+.command-map-tree-edge-label[class*="is-ocr-"]::before {
+  border-color: color-mix(in srgb, var(--ocr-route-color) 72%, white 28%);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--ocr-route-color) 48%, transparent);
+}
+
+.command-map-tree-edge-label[class*="is-ocr-"] span,
+.command-map-tree-edge-label[class*="is-ocr-"] em {
+  color: color-mix(in srgb, var(--ocr-route-color) 62%, white 38%);
+}
+
 .command-map-tree-node {
   position: relative;
   display: flex;
@@ -9738,6 +9783,21 @@ label span {
 .command-map-tree-link-energy.is-diverge {
   background: rgba(221, 214, 254, 0.95);
   box-shadow: 0 0 9px rgba(167, 139, 250, 0.28);
+}
+
+.command-map-tree-link-path[class*="is-ocr-"] {
+  stroke: var(--ocr-route-color);
+  stroke-width: 1.8;
+  stroke-dasharray: 6 7;
+  opacity: 0.94;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--ocr-route-color) 42%, transparent));
+}
+
+.command-map-tree-link-energy[class*="is-ocr-"] {
+  width: 7px;
+  height: 7px;
+  background: var(--ocr-route-color);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--ocr-route-color) 62%, transparent);
 }
 
 @keyframes command-map-tree-energy-flow {
@@ -11199,6 +11259,119 @@ label span {
   white-space: nowrap;
 }
 
+.recognition-card-compact-ocr-rules {
+  display: grid;
+  gap: 5px;
+}
+
+.recognition-validation {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: rgba(5, 15, 26, 0.75);
+  font-size: 0.57rem;
+  line-height: 1.35;
+}
+
+.recognition-validation[hidden] { display: none; }
+
+.recognition-validation-heading {
+  color: rgba(230, 247, 255, 0.86);
+  font-size: 0.57rem;
+}
+
+.recognition-validation-targets {
+  display: grid;
+  gap: 5px;
+  max-height: 180px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.recognition-validation-target {
+  --ocr-result-color: #38bdf8;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 6px;
+  padding-left: 5px;
+  border-left: 2px solid var(--ocr-result-color);
+}
+
+.recognition-validation-target[data-ocr-target-color="roxo"] { --ocr-result-color: #a78bfa; }
+.recognition-validation-target[data-ocr-target-color="verde"] { --ocr-result-color: #86efac; }
+.recognition-validation-target[data-ocr-target-color="rosa"] { --ocr-result-color: #f0abfc; }
+.recognition-validation-target[data-ocr-target-color="laranja"] { --ocr-result-color: #fdba74; }
+.recognition-validation-target[data-ocr-target-color="ciano"] { --ocr-result-color: #67e8f9; }
+
+.recognition-validation-target b { color: var(--ocr-result-color); }
+.recognition-validation .is-confirmed { color: rgba(210, 240, 229, 0.88); }
+.recognition-validation .is-failed { color: #fda4af; }
+.recognition-validation-image { padding-top: 4px; border-top: 1px solid rgba(148, 163, 184, 0.15); }
+
+.recognition-card-compact-ocr-rule {
+  --ocr-rule-color: #38bdf8;
+  display: grid;
+  gap: 4px;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--ocr-rule-color) 34%, transparent);
+  border-radius: 11px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--ocr-rule-color) 12%, transparent), rgba(8, 22, 37, 0.6));
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ocr-rule-color) 72%, transparent);
+}
+
+.recognition-card-compact-ocr-rule[data-ocr-target-color="roxo"] { --ocr-rule-color: #a78bfa; }
+.recognition-card-compact-ocr-rule[data-ocr-target-color="verde"] { --ocr-rule-color: #86efac; }
+.recognition-card-compact-ocr-rule[data-ocr-target-color="rosa"] { --ocr-rule-color: #f0abfc; }
+.recognition-card-compact-ocr-rule[data-ocr-target-color="laranja"] { --ocr-rule-color: #fdba74; }
+.recognition-card-compact-ocr-rule[data-ocr-target-color="ciano"] { --ocr-rule-color: #67e8f9; }
+
+.recognition-card-compact-ocr-rule > strong {
+  color: color-mix(in srgb, var(--ocr-rule-color) 60%, white 40%);
+  font-size: 0.54rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.recognition-card-compact-ocr-rule > span {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+}
+
+.recognition-card-compact-ocr-rule small {
+  color: color-mix(in srgb, var(--ocr-rule-color) 72%, white 28%);
+  font-size: 0.43rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.recognition-card-compact-ocr-rule b {
+  min-width: 0;
+  color: rgba(230, 247, 255, 0.82);
+  font-size: 0.5rem;
+  font-weight: 750;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.recognition-card-compact-ocr-test {
+  margin-top: 1px;
+  padding-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--ocr-rule-color) 30%, transparent);
+}
+
+.recognition-card-compact-ocr-test[hidden] { display: none; }
+.recognition-card-compact-ocr-test b.is-confirmed { color: var(--ocr-rule-color); }
+.recognition-card-compact-ocr-test b.is-failed { color: #fda4af; }
+
 .recognition-card-compact-pills {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -11392,7 +11565,7 @@ label span {
 }
 
 .command-tree-card.is-visual-recognition .recognition-card-tabs.has-preview {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .command-tree-card.is-visual-recognition .recognition-card-tab {
@@ -11420,6 +11593,183 @@ label span {
 
 .recognition-card-panel[hidden] {
   display: none;
+}
+
+.recognition-ocr-actions-panel {
+  gap: 8px;
+}
+
+.ocr-target-actions-card,
+.ocr-target-action-row {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border-radius: 13px;
+  border: 1px solid rgba(18, 181, 203, 0.16);
+  background: linear-gradient(150deg, rgba(9, 27, 37, 0.68), rgba(11, 18, 30, 0.82));
+}
+
+.ocr-target-actions-card {
+  border-color: rgba(137, 108, 255, 0.18);
+  background: linear-gradient(150deg, rgba(27, 19, 55, 0.42), rgba(9, 18, 29, 0.84));
+}
+
+.ocr-target-action-list {
+  display: grid;
+  gap: 7px;
+}
+
+.ocr-target-action-row {
+  gap: 6px;
+  padding: 8px;
+  border-color: rgba(230, 247, 255, 0.09);
+  background: rgba(4, 11, 19, 0.46);
+}
+
+.ocr-target-action-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(232, 248, 255, 0.92);
+  font-size: 0.56rem;
+}
+
+.ocr-target-action-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ocr-target-action-preview .recognition-preview-card {
+  padding: 5px;
+  border-radius: 10px;
+}
+
+.ocr-target-action-preview .recognition-preview-stage {
+  min-height: 98px;
+}
+
+.ocr-target-action-preview .recognition-preview-image {
+  max-height: 112px;
+}
+
+.recognition-ocr-map-overlay-static {
+  z-index: 6;
+  pointer-events: none;
+}
+
+.recognition-ocr-map-overlay-static .recognition-ocr-target-box {
+  z-index: 5;
+  opacity: 1;
+  border-width: 2px;
+  cursor: default;
+}
+
+.recognition-ocr-map-overlay-static .recognition-click-target-point {
+  z-index: 6;
+}
+
+.ocr-target-action-preview .recognition-ocr-map-overlay-static {
+  pointer-events: none;
+}
+
+.ocr-target-action-preview .recognition-preview-image-map {
+  /* Tambem corrige previews abertas antes da atualizacao, que podiam ter
+     recebido visibility:hidden pelo antigo mecanismo de recorte. */
+  visibility: visible !important;
+}
+
+/* Cada card da aba Acoes por OCR mantem a mesma imagem de referencia, mas
+   evidencia somente o OCR daquela linha. A borda usa a cor do alvo mesmo
+   quando o card compacto aplica suas regras gerais de reconhecimento. */
+.ocr-target-action-preview .recognition-ocr-target-box {
+  z-index: 8;
+  border: 2px solid var(--ocr-preview-color, #38bdf8) !important;
+  background: color-mix(in srgb, var(--ocr-preview-color, #38bdf8) 18%, transparent) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--ocr-preview-color, #38bdf8) 40%, transparent),
+    0 0 15px color-mix(in srgb, var(--ocr-preview-color, #38bdf8) 56%, transparent) !important;
+}
+
+.ocr-target-action-preview .recognition-click-target-point {
+  z-index: 9;
+}
+
+.ocr-target-decision {
+  display: grid;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid rgba(230, 247, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(7, 17, 31, 0.56);
+}
+
+.ocr-target-decision.is-success {
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.ocr-target-decision.is-failure {
+  border-color: rgba(251, 146, 60, 0.2);
+}
+
+.ocr-target-decision-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ocr-target-decision-heading strong {
+  color: rgba(230, 247, 255, 0.88);
+  font-size: 0.5rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ocr-target-decision-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.ocr-target-decision.is-success .ocr-target-decision-button:last-child {
+  grid-column: 1 / -1;
+}
+
+.ocr-target-decision-button {
+  min-height: 27px;
+  padding: 5px 6px;
+  border: 1px solid rgba(230, 247, 255, 0.1);
+  border-radius: 8px;
+  color: rgba(230, 247, 255, 0.72);
+  background: rgba(230, 247, 255, 0.035);
+  font: inherit;
+  font-size: 0.49rem;
+  font-weight: 800;
+  line-height: 1.15;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.ocr-target-decision-button:hover {
+  border-color: rgba(94, 234, 212, 0.48);
+  color: #eafff8;
+}
+
+.ocr-target-decision.is-success .ocr-target-decision-button.is-active {
+  border-color: rgba(34, 197, 94, 0.68);
+  color: #eafff1;
+  background: rgba(34, 197, 94, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.1), 0 0 12px rgba(34, 197, 94, 0.1);
+}
+
+.ocr-target-decision.is-failure .ocr-target-decision-button.is-active {
+  border-color: rgba(251, 146, 60, 0.72);
+  color: #fff1df;
+  background: rgba(251, 146, 60, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(251, 146, 60, 0.08), 0 0 12px rgba(251, 146, 60, 0.1);
 }
 
 .recognition-preview-card {
@@ -11706,6 +12056,10 @@ label span {
 
 .recognition-cell-full {
   grid-column: 1 / -1;
+}
+
+.ocr-target-action-row .is-ocr-target-action-hidden {
+  display: none !important;
 }
 
 .recognition-panel-grid-actions {
@@ -12335,6 +12689,16 @@ label span {
 .recognition-ocr-target-box[data-ocr-target-color="rosa"] { --ocr-preview-color: #f0abfc; }
 .recognition-ocr-target-box[data-ocr-target-color="laranja"] { --ocr-preview-color: #fdba74; }
 .recognition-ocr-target-box[data-ocr-target-color="ciano"] { --ocr-preview-color: #67e8f9; }
+
+/* A miniatura principal do card tambem precisa conservar as cores de cada
+   alvo. A borda mais forte impede que o estilo compacto deixe todos azuis. */
+.recognition-card-compact-preview .recognition-ocr-target-box {
+  border: 2px solid var(--ocr-preview-color, #38bdf8) !important;
+  background: color-mix(in srgb, var(--ocr-preview-color, #38bdf8) 20%, transparent) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--ocr-preview-color, #38bdf8) 34%, transparent),
+    0 0 12px color-mix(in srgb, var(--ocr-preview-color, #38bdf8) 48%, transparent) !important;
+}
 
 .recognition-ocr-target-box:not([data-ocr-target-index="0"]) {
   cursor: grab;

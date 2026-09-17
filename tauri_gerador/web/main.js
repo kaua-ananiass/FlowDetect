@@ -1,4 +1,4 @@
-const tauriCore = window.__TAURI__?.core ?? null;
+﻿const tauriCore = window.__TAURI__?.core ?? null;
 const tauriEvent = window.__TAURI__?.event ?? null;
 const tauriDialog = window.__TAURI__?.dialog ?? null;
 window.__GENERATOR_MAIN_READY = true;
@@ -69,6 +69,7 @@ function persistCommandMapTreeLayouts() {
 
 const state = {
   roadmap: null,
+  captureImageInProgress: false,
   workbook: null,
   workbookPreview: null,
   workbookExternalEditOpenedAt: 0,
@@ -1315,10 +1316,23 @@ function applyCommandMapChromeMode() {
   builderShell?.classList.remove("is-command-map-chrome-collapsed");
 }
 
+function normalizeCommandMapZoom(value, fallback = 1) {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  const normalizedFallback = Number(fallback);
+  return Number.isFinite(normalizedFallback) && normalizedFallback > 0 ? normalizedFallback : 1;
+}
+
 function applyCommandMapZoom() {
-  const zoomPercent = Math.round(state.commandMapZoom * 100);
+  const zoomPercent = Math.max(0.1, Math.round(state.commandMapZoom * 1000) / 10);
   commandMapList.style.setProperty("--command-map-zoom", String(state.commandMapZoom));
   if (mapZoomRange) {
+    // O controle acompanha a escala atual para nunca limitar o zoom escolhido
+    // pelo mouse ou pelos botões.
+    mapZoomRange.min = String(Math.max(0.1, Math.min(10, Math.floor(zoomPercent / 1.6))));
+    mapZoomRange.max = String(Math.max(500, Math.ceil(zoomPercent * 1.6)));
     mapZoomRange.value = String(zoomPercent);
   }
   if (mapZoomValue) {
@@ -1330,35 +1344,8 @@ function autoFitCommandMapZoom() {
   if (!commandMapList || state.activeTab !== "commands") {
     return;
   }
-
-  const cards = Array.from(commandMapList.querySelectorAll(".command-tree-card"));
-  if (!cards.length) {
-    state.commandMapZoom = Math.min(1.4, Math.max(0.6, Number(state.commandMapRequestedZoom) || 0.96));
-    applyCommandMapZoom();
-    return;
-  }
-
-  const requestedZoom = Math.min(1.4, Math.max(0.6, Number(state.commandMapRequestedZoom) || 0.96));
-  const currentZoom = Math.max(0.01, Number(state.commandMapZoom) || requestedZoom || 0.96);
-  const availableHeight = Math.max(220, commandMapList.clientHeight - 24);
-
-  let tallestNaturalHeight = 0;
-  cards.forEach((card) => {
-    const rect = card.getBoundingClientRect();
-    if (!rect.height) {
-      return;
-    }
-    tallestNaturalHeight = Math.max(tallestNaturalHeight, rect.height / currentZoom);
-  });
-
-  if (!tallestNaturalHeight) {
-    state.commandMapZoom = requestedZoom;
-    applyCommandMapZoom();
-    return;
-  }
-
-  const fitZoom = Math.min(1.4, Math.max(0.6, availableHeight / tallestNaturalHeight));
-  state.commandMapZoom = Math.min(requestedZoom, fitZoom);
+  state.commandMapRequestedZoom = normalizeCommandMapZoom(state.commandMapRequestedZoom, state.commandMapZoom || 0.96);
+  state.commandMapZoom = state.commandMapRequestedZoom;
   applyCommandMapZoom();
 }
 
@@ -1397,8 +1384,6 @@ function updateCommandConnectorPositions() {
       return;
     }
 
-    const rowRect = row.getBoundingClientRect();
-    const rowZoom = row.offsetWidth ? Math.max(0.2, rowRect.width / row.offsetWidth) : 1;
     connector.style.setProperty("--connector-inline-top", "var(--command-connector-line-top)");
   });
 }
@@ -1499,9 +1484,11 @@ function renderCommandJumpPaths() {
   const maxLane = preparedRoutes.reduce((max, route) => Math.max(max, route.lane || 0), 0);
   row.style.setProperty("--jump-route-lanes", String(maxLane));
   const rowRect = row.getBoundingClientRect();
-  const rowZoom = row.offsetWidth ? Math.max(0.2, rowRect.width / row.offsetWidth) : 1;
-  const rowWidth = Math.max(row.scrollWidth, row.offsetWidth, Math.round(rowRect.width), 1);
-  const rowHeight = Math.max(row.scrollHeight, row.offsetHeight, Math.round(rowRect.height), 1);
+  const rowZoom = row.offsetWidth ? Math.max(0.01, rowRect.width / row.offsetWidth) : 1;
+  // A camada tambem recebe CSS zoom. Usar as medidas de layout evita aplicar
+  // a escala duas vezes e deixar os caminhos desconectados dos cartoes.
+  const rowWidth = Math.max(row.scrollWidth, row.offsetWidth, 1);
+  const rowHeight = Math.max(row.scrollHeight, row.offsetHeight, 1);
   const layer = document.createElement("div");
   layer.className = "command-jump-layer";
   layer.style.width = `${Math.ceil(rowWidth)}px`;
@@ -1629,9 +1616,9 @@ function renderCommandMapTreeReferenceLinks() {
   const edgeLabels = stage ? Array.from(stage.querySelectorAll("[data-tree-edge-source-order]")) : [];
   if (stage && edgeLabels.length) {
     const stageRect = stage.getBoundingClientRect();
-    const stageZoom = stage.offsetWidth ? Math.max(0.2, stageRect.width / stage.offsetWidth) : 1;
-    const stageWidth = Math.max(stage.scrollWidth, stage.offsetWidth, Math.round(stageRect.width), 1);
-    const stageHeight = Math.max(stage.scrollHeight, stage.offsetHeight, Math.round(stageRect.height), 1);
+    const stageZoom = stage.offsetWidth ? Math.max(0.01, stageRect.width / stage.offsetWidth) : 1;
+    const stageWidth = Math.max(stage.scrollWidth, stage.offsetWidth, 1);
+    const stageHeight = Math.max(stage.scrollHeight, stage.offsetHeight, 1);
     const layer = document.createElement("div");
     layer.className = "command-map-tree-link-layer";
     layer.style.width = `${Math.ceil(stageWidth)}px`;
@@ -1679,6 +1666,7 @@ function renderCommandMapTreeReferenceLinks() {
       const sourceRect = toStageRect(sourceCard);
       let targetRect = toStageRect(targetElement);
       const kind = String(label.dataset.treeEdgeKind || "success").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "success";
+      const ocrColor = String(label.dataset.treeEdgeOcrColor || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
       const isPrimaryNext = label.classList.contains("is-primary-next");
       const isTerminal = isTerminalRoute || !targetOrder;
       const labelRect = toStageRect(label);
@@ -1720,22 +1708,27 @@ function renderCommandMapTreeReferenceLinks() {
           sourceRect.width - 34,
           Math.max(104, sourceRect.width * 0.92)
         );
+        const isOcrAction = kind === "ocr_action";
         const terminalPortRatio = kind === "failure" ? 0.78 : 0.58;
-        const terminalAnchorX = kind === "failure"
-          ? isTerminal ? terminalFailureAnchorX : lowerFailureAnchorX
-          : sourceRect.left + Math.min(
-              sourceRect.width - 42,
-              Math.max(56, sourceRect.width * terminalPortRatio)
-            );
+        const terminalAnchorX = isOcrAction
+          ? sourceRect.centerX
+          : kind === "failure"
+            ? isTerminal ? terminalFailureAnchorX : lowerFailureAnchorX
+            : sourceRect.left + Math.min(
+                sourceRect.width - 42,
+                Math.max(56, sourceRect.width * terminalPortRatio)
+              );
         laneY = Math.max(
           sourceRect.bottom,
           isTerminal ? sourceRect.bottom : targetRect.bottom
         ) + 46 + compactLaneOffset;
         const lowerTargetAnchorX = isTerminal
           ? terminalAnchorX
-          : kind === "failure"
-            ? targetRect.centerX + branchPortOffsetX
-            : targetRect.centerX >= sourceRect.centerX ? targetRect.left : targetRect.right;
+          : isOcrAction
+            ? targetRect.centerX
+            : kind === "failure"
+              ? targetRect.centerX + branchPortOffsetX
+              : targetRect.centerX >= sourceRect.centerX ? targetRect.left : targetRect.right;
         const lowerLabelCenterX = isTerminal
           ? terminalAnchorX
           : (terminalAnchorX + lowerTargetAnchorX) / 2;
@@ -1803,19 +1796,24 @@ function renderCommandMapTreeReferenceLinks() {
           sourceRect.width - 34,
           Math.max(104, sourceRect.width * 0.92)
         );
-        const startX = kind === "failure"
-          ? isTerminal ? terminalFailureAnchorX : lowerFailureAnchorX
-          : sourceRect.left + Math.min(sourceRect.width - 42, Math.max(56, sourceRect.width * lowerPortRatio));
+        const isOcrAction = kind === "ocr_action";
+        const startX = isOcrAction
+          ? sourceRect.centerX
+          : kind === "failure"
+            ? isTerminal ? terminalFailureAnchorX : lowerFailureAnchorX
+            : sourceRect.left + Math.min(sourceRect.width - 42, Math.max(56, sourceRect.width * lowerPortRatio));
         const startY = sourceRect.bottom;
         const goesForward = isTerminal || targetRect.centerX >= sourceRect.centerX;
         const endX = isTerminal
           ? targetRect.left
-          : kind === "failure"
-            ? targetRect.centerX + branchPortOffsetX
-            : goesForward ? targetRect.left : targetRect.right;
+          : isOcrAction
+            ? targetRect.centerX
+            : kind === "failure"
+              ? targetRect.centerX + branchPortOffsetX
+              : goesForward ? targetRect.left : targetRect.right;
         const endY = isTerminal
           ? targetRect.centerY
-          : kind === "failure"
+          : isOcrAction || kind === "failure"
             ? targetRect.bottom
             : targetRect.top + Math.min(targetRect.height * lowerPortRatio, targetRect.height - 42);
         const sourceDropY = Math.min(laneY - 16, startY + 36);
@@ -1899,10 +1897,11 @@ function renderCommandMapTreeReferenceLinks() {
         ].join(" "));
       }
 
-      path.setAttribute("class", `command-map-tree-link-path is-${kind} ${isPrimaryNext ? "is-primary-next" : "is-branch-route"} is-${branchSide}`);
+      path.setAttribute("class", `command-map-tree-link-path is-${kind} ${ocrColor ? `is-ocr-${ocrColor}` : ""} ${isPrimaryNext ? "is-primary-next" : "is-branch-route"} is-${branchSide}`);
       svg.appendChild(path);
       const energy = createCommandMapTreeLinkEnergy(path.getAttribute("d"), kind, kind === "failure" ? 1.8 : 1.55);
       if (energy) {
+        if (ocrColor) energy.classList.add(`is-ocr-${ocrColor}`);
         energyDots.push(energy);
       }
     });
@@ -1922,9 +1921,9 @@ function renderCommandMapTreeReferenceLinks() {
   }
 
   const treeRect = tree.getBoundingClientRect();
-  const treeZoom = tree.offsetWidth ? Math.max(0.2, treeRect.width / tree.offsetWidth) : 1;
-  const treeWidth = Math.max(tree.scrollWidth, tree.offsetWidth, Math.round(treeRect.width), 1);
-  const treeHeight = Math.max(tree.scrollHeight, tree.offsetHeight, Math.round(treeRect.height), 1);
+  const treeZoom = tree.offsetWidth ? Math.max(0.01, treeRect.width / tree.offsetWidth) : 1;
+  const treeWidth = Math.max(tree.scrollWidth, tree.offsetWidth, 1);
+  const treeHeight = Math.max(tree.scrollHeight, tree.offsetHeight, 1);
   const layer = document.createElement("div");
   layer.className = "command-map-tree-link-layer";
   layer.style.width = `${Math.ceil(treeWidth)}px`;
@@ -2036,7 +2035,7 @@ function scheduleCommandMapAutoFit() {
 }
 
 function setCommandMapZoom(nextZoom, options = {}) {
-  const previousZoom = Math.max(0.01, Number(state.commandMapZoom) || 1);
+  const previousZoom = normalizeCommandMapZoom(state.commandMapZoom, 1);
   const point = options.preservePoint && commandMapList
     ? {
         x: Number(options.preservePoint.x),
@@ -2049,18 +2048,14 @@ function setCommandMapZoom(nextZoom, options = {}) {
         y: (commandMapList.scrollTop + point.y) / previousZoom,
       }
     : null;
-  state.commandMapRequestedZoom = Math.min(1.4, Math.max(0.6, Number(nextZoom) || 1));
+  state.commandMapRequestedZoom = normalizeCommandMapZoom(nextZoom, previousZoom);
   state.commandMapZoom = state.commandMapRequestedZoom;
   applyCommandMapZoom();
   if (anchor) {
     commandMapList.scrollLeft = Math.max(0, anchor.x * state.commandMapZoom - point.x);
     commandMapList.scrollTop = Math.max(0, anchor.y * state.commandMapZoom - point.y);
   }
-  if (options.skipAutoFit) {
-    scheduleCommandConnectorLayout({ burstMs: 120 });
-  } else {
-    scheduleCommandMapAutoFit();
-  }
+  scheduleCommandConnectorLayout({ burstMs: 180 });
   if (!options.suppressFocusCenter && state.activeTab === "commands" && state.commandMapFocusOrder) {
     requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
   }
@@ -2480,6 +2475,7 @@ async function submitDevAdminLogin() {
 async function runImageRecognitionTest(values, options = {}) {
   const recognitionMode = String(values?.recognitionMode || "imagem");
   const imagePath = String(values?.imagePath || "").trim();
+  const hybridOcrText = hybridOcrTextForRecognition(values);
   if (recognitionMode === "texto_ocr" && !imagePath) {
     const ocrText = String(values?.ocrText || "").trim();
     const statusKey = `ocr:${ocrText}`;
@@ -2539,6 +2535,9 @@ async function runImageRecognitionTest(values, options = {}) {
 
   try {
     setBusy("Testando reconhecimento");
+    if (Number.isFinite(Number(options.recognitionOrder))) {
+      setRecognitionTestStatusForOrder(Number(options.recognitionOrder), imagePath, false, null, true);
+    }
     setMessage(
       options.inheritWindowFallback === false
         ? "Ocultando o FlowDetect por instantes para procurar o bloco na tela externa."
@@ -2558,25 +2557,28 @@ async function runImageRecognitionTest(values, options = {}) {
       janelaAlvo: (values.ocrWindowTitle || values.windowTitle)?.trim() || null,
       modoReconhecimento: recognitionMode,
       textoOcrBusca: recognitionMode === "texto_ocr"
-        ? values.ocrText?.trim() || null
+        ? hybridOcrText || null
         : null,
-      textoOcrEsperado: recognitionMode === "texto_ocr"
-        ? values.ocrText?.trim() || values.expectedOcrText?.trim() || null
-        : values.expectedOcrText?.trim() || null,
+      // No OCR + Visual, os textos podem estar somente nos alvos da aba
+      // "Acoes por OCR". O teste precisa levar essa mesma lista ao worker.
+      textoOcrEsperado: hybridOcrText || null,
       ...relativeOcrInvokeArgs(values),
     });
-    setBusy("Pronto");
+    const validation = parseOcrValidationResult(result);
+    const succeeded = validation.report ? validation.report.success : true;
+    setBusy(succeeded ? "Pronto" : "Erro");
     if (Number.isFinite(Number(options.recognitionOrder))) {
-      setRecognitionTestStatusForOrder(Number(options.recognitionOrder), imagePath, true);
+      setRecognitionTestStatusForOrder(Number(options.recognitionOrder), imagePath, succeeded, validation.report);
     }
-    setMessage(result || "Reconhecimento testado com sucesso.", "success");
-    return true;
+    setMessage(recognitionValidationMessage(validation, "Reconhecimento testado com sucesso."), succeeded ? "success" : "error");
+    return succeeded;
   } catch (error) {
     setBusy("Erro");
+    const validation = parseOcrValidationResult(error);
     if (Number.isFinite(Number(options.recognitionOrder))) {
-      setRecognitionTestStatusForOrder(Number(options.recognitionOrder), imagePath, false);
+      setRecognitionTestStatusForOrder(Number(options.recognitionOrder), imagePath, false, validation.report);
     }
-    const message = String(error || "");
+    const message = recognitionValidationMessage(validation, "Nao foi possivel concluir o teste de reconhecimento.");
     const diagnosticHint = message.toLowerCase().includes("diagnostico")
       ? " Veja a pasta diagnosticos_reconhecimento para comparar a captura usada no teste."
       : "";
@@ -4600,7 +4602,7 @@ function renderRecognitionPreviewCardState({ status = "empty", imagePath = "", s
           class="recognition-preview-image"
           src="${escapeHtml(src)}"
           alt="Preview da referencia ${escapeHtml(fileName || normalizedPath)}"
-          loading="lazy"
+          loading="eager"
         />
         ${overlay || ""}
       </div>
@@ -4726,6 +4728,21 @@ async function hydrateRecognitionPreviewCard(previewCard, overridePath = null) {
       imagePath,
       src: preview.src,
     });
+    // A imagem pode vir pronta do cache e nao disparar um novo evento load.
+    // Reaplica as guias depois do frame para a preview principal e as previews
+    // individuais compartilharem a mesma geometria.
+    const syncPreviewGeometry = () => {
+      const container = previewCard.closest(".command-tree-card, .insert-card-panel, .flow-card");
+      updateRelativeOcrPreviewOverlay(container);
+    };
+    requestAnimationFrame(syncPreviewGeometry);
+    const previewImage = previewCard.querySelector(".recognition-preview-image");
+    previewImage?.addEventListener("load", syncPreviewGeometry, { once: true });
+    if (typeof previewImage?.decode === "function") {
+      previewImage.decode().catch(() => null).finally(syncPreviewGeometry);
+    } else {
+      setTimeout(syncPreviewGeometry, 180);
+    }
   } catch (error) {
     if (previewCard.dataset.recognitionPreviewRequestId !== requestId) {
       return;
@@ -4766,7 +4783,99 @@ function syncRecognitionTestStatusWithRoadmap(roadmap) {
   );
 }
 
-function setRecognitionTestStatusForOrder(order, imagePath, tested) {
+function parseOcrValidationResult(output) {
+  let report = null;
+  const lines = String(output ?? "").split(/\r?\n/);
+  const message = lines.filter((line) => {
+    const marker = line.indexOf("OCR_VALIDATION_JSON|");
+    if (marker < 0) return true;
+    try {
+      const payload = JSON.parse(line.slice(marker + "OCR_VALIDATION_JSON|".length).trim());
+      if (!Array.isArray(payload?.targets)) return false;
+      const targets = new Map();
+      payload.targets.forEach((target) => {
+        const index = Number(target?.index);
+        if (!Number.isInteger(index) || index < 0 || !["confirmed", "not_found", "visual_failed"].includes(target?.status)) return;
+        targets.set(index, { index, text: String(target.text ?? ""), status: target.status });
+      });
+      report = {
+        targets: [...targets.values()].sort((a, b) => a.index - b.index),
+        visualConfirmed: payload.visual_confirmed === true,
+        success: payload.success === true,
+      };
+    } catch {
+      // Uma linha incompleta de diagnostico nao deve ocultar o erro original.
+    }
+    return false;
+  }).join("\n").trim();
+  return { report, message };
+}
+
+function recognitionValidationMessage(validation, fallback = "") {
+  const failed = validation.report?.targets.filter((target) => target.status !== "confirmed") || [];
+  const summary = failed.length
+    ? `Falha em ${failed.map((target) => `OCR ${target.index + 1}`).join(", ")}. Veja o resultado no bloco.`
+    : "";
+  return [summary, validation.message || fallback].filter(Boolean).join("\n");
+}
+
+function renderRecognitionValidationDetails(status) {
+  if (status?.pending) {
+    return '<strong class="recognition-validation-heading">Testando OCRs em sequencia...</strong>';
+  }
+  const report = status?.validation;
+  if (!report) return "";
+  const labels = {
+    confirmed: "Confirmado",
+    not_found: "Falha: texto nao encontrado",
+    visual_failed: "Falha: imagem nao confirmou",
+  };
+  return `
+    <strong class="recognition-validation-heading">Ultimo teste</strong>
+    <ul class="recognition-validation-targets">
+      ${report.targets.map((target) => `
+        <li class="recognition-validation-target ${target.status === "confirmed" ? "is-confirmed" : "is-failed"}" data-ocr-target-color="${escapeHtml(OCR_TARGET_COLORS[target.index % OCR_TARGET_COLORS.length])}" title="${escapeHtml(target.text)}">
+          <b>OCR ${target.index + 1}</b><span>${escapeHtml(labels[target.status])}</span>
+        </li>
+      `).join("")}
+    </ul>
+    <span class="recognition-validation-image ${report.visualConfirmed ? "is-confirmed" : "is-failed"}">Imagem: ${report.visualConfirmed ? "confirmada" : "nao confirmou"}</span>
+  `;
+}
+
+function renderRecognitionOcrRuleTestResult(status, index) {
+  if (status?.pending) {
+    return '<small>Teste</small><b>Testando...</b>';
+  }
+  const target = status?.validation?.targets?.find((item) => item.index === index);
+  if (!target) {
+    return "";
+  }
+  const labels = {
+    confirmed: "Confirmado",
+    not_found: "Texto nao encontrado",
+    visual_failed: "Imagem nao confirmou",
+  };
+  const resultClass = target.status === "confirmed" ? "is-confirmed" : "is-failed";
+  return `<small>Teste</small><b class="${resultClass}" title="${escapeHtml(target.text)}">${escapeHtml(labels[target.status] || "Falhou")}</b>`;
+}
+
+function recognitionTestStatusForEvent(event, overrideImagePath = null) {
+  const status = state.recognitionTestStatus?.[String(event?.clientKey || "").trim()];
+  const imagePath = normalizeRecognitionImagePath(overrideImagePath ?? event?.details?.imagem ?? "");
+  return status?.imagePath === imagePath ? status : null;
+}
+
+function renderRecognitionValidationPanel(event) {
+  if (event?.type !== "clicar_imagem") return "";
+  const hasIndividualOcrRules = Boolean(recognitionOcrTargetRuleSummary(event.details)?.length);
+  const content = hasIndividualOcrRules
+    ? ""
+    : renderRecognitionValidationDetails(recognitionTestStatusForEvent(event));
+  return `<section class="recognition-validation" data-recognition-validation="true" aria-label="Resultado do teste de OCR" aria-live="polite" ${content ? "" : "hidden"}>${content}</section>`;
+}
+
+function setRecognitionTestStatusForOrder(order, imagePath, tested, validation = null, pending = false) {
   const event = findRecognitionRoadmapEventByOrder(order, "clicar_imagem");
   const clientKey = String(event?.clientKey || "").trim();
   if (!clientKey) {
@@ -4785,6 +4894,8 @@ function setRecognitionTestStatusForOrder(order, imagePath, tested) {
     [clientKey]: {
       imagePath: normalizedImagePath,
       tested: Boolean(tested),
+      validation,
+      pending,
     },
   };
   updateRecognitionStatusUIForOrder(order, normalizedImagePath);
@@ -4855,7 +4966,28 @@ function updateRecognitionStatusUIForOrder(order, overrideImagePath = null) {
         testEl.classList.toggle("is-tested", tested);
         testEl.classList.toggle("is-pending", !tested);
       }
+
+      const validationEl = card.querySelector('[data-recognition-validation="true"]');
+      if (validationEl) {
+        const hasIndividualOcrRules = Boolean(recognitionOcrTargetRuleSummary(event.details)?.length);
+        const content = hasIndividualOcrRules
+          ? ""
+          : renderRecognitionValidationDetails(recognitionTestStatusForEvent(event, overrideImagePath));
+        validationEl.innerHTML = content;
+        validationEl.hidden = !content;
+      }
+
+      const testStatus = recognitionTestStatusForEvent(event, overrideImagePath);
+      card.querySelectorAll("[data-recognition-ocr-test-index]").forEach((resultEl) => {
+        const index = Number(resultEl.dataset.recognitionOcrTestIndex);
+        const content = Number.isInteger(index)
+          ? renderRecognitionOcrRuleTestResult(testStatus, index)
+          : "";
+        resultEl.innerHTML = content;
+        resultEl.hidden = !content;
+      });
     });
+  scheduleCommandConnectorLayout();
 }
 
 function showCaptureOverlay(text) {
@@ -8004,6 +8136,9 @@ function normalizeRecognitionDetailTab(tabName) {
   if (["action", "advanced", "behavior"].includes(normalized)) {
     return "behavior";
   }
+  if (["ocr_actions", "ocr-acoes", "acoes_ocr", "acoes"].includes(normalized)) {
+    return "ocr_actions";
+  }
   if (["data", "dado", "ler_dado", "ler-dado"].includes(normalized)) {
     return "visual";
   }
@@ -8045,6 +8180,15 @@ function relativeOcrInvokeArgs(values = {}) {
   };
 }
 
+function hybridOcrTextForRecognition(values = {}) {
+  const configuredTargets = (Array.isArray(values?.ocrTargetLayouts) ? values.ocrTargetLayouts : [])
+    .map((target) => String(target?.texto ?? target?.text ?? target?.ocrText ?? "").trim())
+    .filter(Boolean);
+  return configuredTargets.join("\n")
+    || String(values?.ocrText || "").trim()
+    || String(values?.expectedOcrText || "").trim();
+}
+
 function clickTargetChanged(values = {}, details = {}) {
   const current = recognitionClickTargetDetails(details);
   return (
@@ -8073,10 +8217,14 @@ function recognitionPreviewImageMetrics(element) {
   const rect = image?.getBoundingClientRect?.();
   const naturalWidth = Number(image?.naturalWidth || 0);
   const naturalHeight = Number(image?.naturalHeight || 0);
-  if (!rect || rect.width <= 0 || rect.height <= 0 || naturalWidth <= 0 || naturalHeight <= 0) {
+  if (naturalWidth <= 0 || naturalHeight <= 0) {
     return null;
   }
-  return { image, rect, naturalWidth, naturalHeight };
+  // Uma aba oculta nao possui dimensoes na tela, mas a imagem continua com
+  // tamanho natural. As previews individuais usam esse mesmo tamanho para
+  // manter as bordas exatamente iguais a aba Busca.
+  const visibleRect = rect && rect.width > 0 && rect.height > 0 ? rect : null;
+  return { image, rect: visibleRect, naturalWidth, naturalHeight };
 }
 
 function offsetToPreviewPercent(offset, naturalSize, fallbackDivisor = 3) {
@@ -8125,6 +8273,30 @@ function clickTargetOverlayStyle(clickTarget = {}, metrics = null) {
   return `--click-left:${left}%;--click-top:${top}%;`;
 }
 
+function ocrTargetRelativeFromLayout(relativeOcr = {}, layouts = [], index = 0) {
+  const targetIndex = Math.max(0, Math.trunc(parseNumber(index, 0)));
+  const layout = Array.isArray(layouts) && typeof layouts[targetIndex] === "object" && layouts[targetIndex]
+    ? layouts[targetIndex]
+    : {};
+  const hasOwnOffset = targetIndex > 0
+    && layout.offsetX !== null && layout.offsetX !== undefined
+    && layout.offsetY !== null && layout.offsetY !== undefined;
+  const hasOwnSize = targetIndex > 0
+    && layout.width !== null && layout.width !== undefined
+    && layout.height !== null && layout.height !== undefined;
+  return targetIndex > 0
+    ? {
+        ...relativeOcr,
+        side: hasOwnOffset ? "livre" : relativeOcr.side,
+        offsetX: hasOwnOffset ? layout.offsetX : relativeOcr.offsetX,
+        offsetY: hasOwnOffset ? layout.offsetY : relativeOcr.offsetY,
+        width: hasOwnSize ? layout.width : 140,
+        height: hasOwnSize ? layout.height : 40,
+        stackIndex: hasOwnOffset ? 0 : targetIndex,
+      }
+    : { ...relativeOcr, stackIndex: 0 };
+}
+
 function renderRelativeOcrPreviewOverlay(relativeOcr = {}, clickTarget = {}, targetCount = 1, targetLayouts = []) {
   const side = ["direita", "esquerda", "abaixo", "acima", "centro", "livre"].includes(relativeOcr.side)
     ? relativeOcr.side
@@ -8132,23 +8304,10 @@ function renderRelativeOcrPreviewOverlay(relativeOcr = {}, clickTarget = {}, tar
   const count = Math.max(1, Math.min(6, Math.trunc(parseNumber(targetCount, 1))));
   const ocrTargets = Array.from({ length: count }, (_item, index) => {
     const color = OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length];
-    const layout = Array.isArray(targetLayouts) ? targetLayouts[index] : null;
-    const hasOwnOffset = index > 0 && layout && layout.offsetX !== null && layout.offsetY !== null;
-    const hasOwnSize = index > 0 && layout && layout.width !== null && layout.height !== null;
-    const targetRelativeOcr = index > 0
-      ? {
-          ...relativeOcr,
-          side: hasOwnOffset ? "livre" : relativeOcr.side,
-          offsetX: hasOwnOffset ? layout.offsetX : relativeOcr.offsetX,
-          offsetY: hasOwnOffset ? layout.offsetY : relativeOcr.offsetY,
-          width: hasOwnSize ? layout.width : 140,
-          height: hasOwnSize ? layout.height : 40,
-          stackIndex: hasOwnOffset ? 0 : index,
-        }
-      : { ...relativeOcr, stackIndex: 0 };
+    const targetRelativeOcr = ocrTargetRelativeFromLayout(relativeOcr, targetLayouts, index);
     return `
       <div
-        class="recognition-ocr-target-box is-${escapeHtml(side)} is-target-${index + 1}"
+        class="recognition-ocr-target-box is-${escapeHtml(targetRelativeOcr.side || side)} is-target-${index + 1}"
         data-relative-ocr-target="true"
         data-ocr-target-index="${index}"
         data-ocr-target-color="${escapeHtml(color)}"
@@ -8218,6 +8377,53 @@ function renderFailureFlowFields(
   `;
 }
 
+function syncOcrActionPreviewGeometryFromMain(container) {
+  if (!container) return;
+  const get = (field) => container.querySelector(`[data-tree-field="${field}"], [data-field="${field}"], [data-insert-field="${field}"]`);
+  const relativeOcr = {
+    side: get("relativeOcrSide")?.value || "livre",
+    width: parseNumber(get("relativeOcrWidth")?.value, 140),
+    height: parseNumber(get("relativeOcrHeight")?.value, 40),
+    offsetX: get("relativeOcrOffsetX")?.value || 0,
+    offsetY: get("relativeOcrOffsetY")?.value || 0,
+  };
+  const clickTarget = {
+    offsetX: get("clickOffsetX")?.value || 0,
+    offsetY: get("clickOffsetY")?.value || 0,
+  };
+  const layouts = ocrTargetLayoutsFromContainer(container);
+
+  container.querySelectorAll("[data-ocr-target-action-row]").forEach((actionRow) => {
+    const index = Math.max(0, Math.trunc(parseNumber(actionRow.dataset.ocrTargetActionIndex, 0)));
+    const previewMap = actionRow.querySelector(".ocr-target-action-preview [data-recognition-preview-image-map]");
+    if (!previewMap) return;
+    // A preview de uma acao sempre mostra a imagem inteira. Apenas a guia do
+    // OCR daquela linha e renderizada nela, em vez de copiar/redimensionar a
+    // camada da aba Busca. Isso preserva a proporcao em qualquer tamanho.
+    previewMap.style.visibility = "";
+    const template = document.createElement("template");
+    template.innerHTML = renderOcrTargetOnlyPreview(relativeOcr, clickTarget, layouts, index).trim();
+    const overlay = template.content.firstElementChild;
+    const currentOverlay = previewMap.querySelector("[data-relative-ocr-map]");
+    if (currentOverlay) {
+      currentOverlay.replaceWith(overlay);
+    } else {
+      previewMap.appendChild(overlay);
+    }
+    const metrics = recognitionPreviewImageMetrics(previewMap);
+    const previewTarget = overlay.querySelector("[data-relative-ocr-target]");
+    const previewClick = overlay.querySelector("[data-click-target-point]");
+    const targetRelativeOcr = ocrTargetRelativeFromLayout(relativeOcr, layouts, index);
+    if (previewTarget) {
+      previewTarget.className = `recognition-ocr-target-box is-${targetRelativeOcr.side || "livre"} is-target-${index + 1}`;
+      previewTarget.setAttribute("style", relativeOcrOverlayStyle(targetRelativeOcr, metrics));
+    }
+    if (previewClick) {
+      previewClick.setAttribute("style", clickTargetOverlayStyle(clickTarget, metrics));
+    }
+  });
+}
+
 function updateRelativeOcrPreviewOverlay(container) {
   if (!container) {
     return;
@@ -8243,6 +8449,9 @@ function updateRelativeOcrPreviewOverlay(container) {
     targetLayouts
   );
   container.querySelectorAll("[data-recognition-preview-card]").forEach((previewCard) => {
+    if (previewCard.closest(".ocr-target-action-preview")) {
+      return;
+    }
     previewCard.dataset.recognitionPreviewOverlay = overlayMarkup;
     if (previewCard.dataset.recognitionPreviewMarkers === "false") {
       previewCard.querySelectorAll("[data-relative-ocr-map]").forEach((overlay) => overlay.remove());
@@ -8262,27 +8471,38 @@ function updateRelativeOcrPreviewOverlay(container) {
       }
     }
   });
-  container.querySelectorAll("[data-relative-ocr-target]").forEach((target) => {
+  Array.from(container.querySelectorAll("[data-relative-ocr-target]"))
+    .filter((target) => !target.closest(".ocr-target-action-preview"))
+    .forEach((target) => {
     const metrics = recognitionPreviewImageMetrics(target);
     const index = Math.max(0, Math.trunc(parseNumber(target.dataset.ocrTargetIndex, 0)));
-    const layout = targetLayouts[index];
-    const hasOwnOffset = index > 0 && layout && layout.offsetX !== null && layout.offsetY !== null;
-    const targetRelativeOcr = {
-      ...relativeOcr,
-      side: hasOwnOffset ? "livre" : relativeOcr.side,
-      offsetX: hasOwnOffset ? layout.offsetX : relativeOcr.offsetX,
-      offsetY: hasOwnOffset ? layout.offsetY : relativeOcr.offsetY,
-      width: index > 0 ? (layout?.width ?? 140) : relativeOcr.width,
-      height: index > 0 ? (layout?.height ?? 40) : relativeOcr.height,
-      stackIndex: hasOwnOffset ? 0 : index,
-    };
-    target.className = `recognition-ocr-target-box is-${relativeOcr.side} is-target-${index + 1}`;
+    const targetRelativeOcr = ocrTargetRelativeFromLayout(relativeOcr, targetLayouts, index);
+    target.className = `recognition-ocr-target-box is-${targetRelativeOcr.side || "livre"} is-target-${index + 1}`;
     target.setAttribute("style", relativeOcrOverlayStyle(targetRelativeOcr, metrics));
+    });
+  Array.from(container.querySelectorAll("[data-click-target-point]"))
+    .filter((clickTarget) => !clickTarget.closest(".ocr-target-action-preview"))
+    .forEach((clickTarget) => {
+      const metrics = recognitionPreviewImageMetrics(clickTarget);
+      clickTarget.setAttribute("style", clickTargetOverlayStyle(clickData, metrics));
+    });
+
+  container.querySelectorAll("[data-ocr-target-action-row]").forEach((actionRow) => {
+    const index = Math.max(0, Math.trunc(parseNumber(actionRow.dataset.ocrTargetActionIndex, 0)));
+    const previewTarget = actionRow.querySelector(".ocr-target-action-preview [data-relative-ocr-target]");
+    const previewClick = actionRow.querySelector(".ocr-target-action-preview [data-click-target-point]");
+    const targetRelativeOcr = ocrTargetRelativeFromLayout(relativeOcr, targetLayouts, index);
+    if (previewTarget) {
+      const metrics = recognitionPreviewImageMetrics(previewTarget);
+      previewTarget.className = `recognition-ocr-target-box is-${targetRelativeOcr.side || "livre"} is-target-${index + 1}`;
+      previewTarget.setAttribute("style", relativeOcrOverlayStyle(targetRelativeOcr, metrics));
+    }
+    if (previewClick) {
+      const metrics = recognitionPreviewImageMetrics(previewClick);
+      previewClick.setAttribute("style", clickTargetOverlayStyle(clickData, metrics));
+    }
   });
-  container.querySelectorAll("[data-click-target-point]").forEach((clickTarget) => {
-    const metrics = recognitionPreviewImageMetrics(clickTarget);
-    clickTarget.setAttribute("style", clickTargetOverlayStyle(clickData, metrics));
-  });
+  syncOcrActionPreviewGeometryFromMain(container);
 }
 
 function setRecognitionVisualOffsetFromPointer(container, dragTarget, clientX, clientY) {
@@ -8589,7 +8809,9 @@ function setRecognitionTreeTab(order, tabName) {
   commandMapList.querySelectorAll(`.command-tree-card[data-order="${order}"]`).forEach((card) => {
     applyRecognitionTreeTabState(card, activeTab);
     hydrateRecognitionPreviewCards(card);
-    requestAnimationFrame(() => updateRelativeOcrPreviewOverlay(card));
+    requestAnimationFrame(() => {
+      updateRelativeOcrPreviewOverlay(card);
+    });
   });
   scheduleCommandConnectorLayout();
 }
@@ -8791,6 +9013,36 @@ function renderRecognitionTreeHiddenFields(details = {}, currentOrder = null) {
   `;
 }
 
+function recognitionOcrTargetRuleSummary(details = {}) {
+  const layouts = Array.isArray(details.ocr_target_layouts) ? details.ocr_target_layouts : [];
+  const targets = splitOcrTargetText(details.texto_ocr_busca ?? details.texto_ocr_esperado ?? "");
+  const total = Math.max(targets.length, layouts.length);
+  if (!total || !layouts.some((layout) => layout && typeof layout === "object" && ("action" in layout || "failureAction" in layout || "failure_action" in layout))) {
+    return null;
+  }
+  const rules = [];
+  for (let index = 0; index < total; index += 1) {
+    const layout = layouts[index] && typeof layouts[index] === "object" ? layouts[index] : {};
+    const action = normalizeOcrTargetAction(layout.action);
+    const failureAction = normalizeOcrTargetFailureAction(layout.failureAction ?? layout.failure_action);
+    const targetBlock = String(layout.block ?? "").trim();
+    const next = index + 1 < total ? `OCR ${index + 2}` : "Continuar";
+    let success = next;
+    if (action === "clicar_ir_para_bloco") {
+      success = targetBlock ? `Clique > Bloco ${targetBlock}` : "Clique";
+    } else if (action === "confirmar_ir_para_bloco") {
+      success = targetBlock ? `Confirma > Bloco ${targetBlock}` : "Confirma";
+    }
+    rules.push({
+      label: `OCR ${index + 1}`,
+      success,
+      failure: failureAction === "parar" ? "Parar" : next,
+      color: OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length],
+    });
+  }
+  return rules;
+}
+
 function renderRecognitionCompactTreeEditor(event) {
   const details = event.details ?? {};
   const recognitionMode = String(details.modo_reconhecimento ?? "imagem");
@@ -8807,6 +9059,8 @@ function renderRecognitionCompactTreeEditor(event) {
   const failureAction = String(details.ao_nao_encontrar ?? "parar");
   const visibleSuccessAction = successAction === "ir_para_sequencia" ? "continuar" : successAction;
   const visibleFailureAction = failureAction === "ir_para_sequencia" ? "parar" : failureAction;
+  const ocrTargetRules = recognitionOcrTargetRuleSummary(details);
+  const ocrTestStatus = recognitionTestStatusForEvent(event);
   const nextLabel = visibleSuccessAction === "ir_para_bloco" && details.bloco_sucesso
     ? `Vai para bloco ${details.bloco_sucesso}`
     : "Continua";
@@ -8849,10 +9103,26 @@ function renderRecognitionCompactTreeEditor(event) {
           <strong>${escapeHtml(relativeOcr.saveAs || "valor_lido")}</strong>
         </div>
       ` : ""}
-      <div class="recognition-card-compact-flow">
-        <span><small>Se achar</small><strong>${escapeHtml(clickLabel)} e ${escapeHtml(nextLabel.toLowerCase())}</strong></span>
-        <span><small>Se nao achar</small><strong>${escapeHtml(failureLabel)}</strong></span>
-      </div>
+      ${ocrTargetRules ? `
+        <div class="recognition-card-compact-ocr-rules">
+          ${ocrTargetRules.map((rule, index) => {
+            const testResult = renderRecognitionOcrRuleTestResult(ocrTestStatus, index);
+            return `
+            <section class="recognition-card-compact-ocr-rule" data-ocr-target-color="${escapeHtml(rule.color)}">
+              <strong>${escapeHtml(rule.label)}</strong>
+              <span><small>Achou</small><b>${escapeHtml(rule.success)}</b></span>
+              <span><small>Falhou</small><b>${escapeHtml(rule.failure)}</b></span>
+              <span class="recognition-card-compact-ocr-test" data-recognition-ocr-test-index="${index}" ${testResult ? "" : "hidden"}>${testResult}</span>
+            </section>
+          `;
+          }).join("")}
+        </div>
+      ` : `
+        <div class="recognition-card-compact-flow">
+          <span><small>Se achar</small><strong>${escapeHtml(`${clickLabel} e ${nextLabel.toLowerCase()}`)}</strong></span>
+          <span><small>Se nao achar</small><strong>${escapeHtml(failureLabel)}</strong></span>
+        </div>
+      `}
       <button class="tree-open-button recognition-card-details-button" data-tree-action="open-card-details" type="button">Ver detalhes</button>
     </div>
   `;
@@ -8977,6 +9247,25 @@ function ocrTargetCountFromContainer(container) {
   return Math.max(ocrTargetCountFromText(fallback), ocrTargetLayoutsFromContainer(container).length);
 }
 
+function normalizeOcrTargetAction(value = "continuar") {
+  const normalized = String(value || "continuar").trim().toLowerCase();
+  if (["clicar_ir_para_bloco", "clicar_e_ir_para_bloco", "click_and_jump", "click_goto"].includes(normalized)) return "clicar_ir_para_bloco";
+  if (["confirmar_ir_para_bloco", "confirmar_e_ir_para_bloco", "confirm_and_jump", "confirm_goto"].includes(normalized)) return "confirmar_ir_para_bloco";
+  // Valores antigos continuam sendo entendidos para nao alterar automacoes ja salvas.
+  if (["clicar", "click", "clique"].includes(normalized)) return "clicar";
+  if (["ir_para_bloco", "bloco", "navegar"].includes(normalized)) return "confirmar_ir_para_bloco";
+  return "continuar";
+}
+
+function normalizeOcrTargetFailureAction(value = "continuar") {
+  const normalized = String(value || "continuar").trim().toLowerCase();
+  return ["parar", "stop", "interromper"].includes(normalized) ? "parar" : "continuar";
+}
+
+function ocrTargetMatchNeedsBlock(action = "continuar") {
+  return ["clicar_ir_para_bloco", "confirmar_ir_para_bloco", "clicar"].includes(normalizeOcrTargetAction(action));
+}
+
 function ocrTargetLayoutsFromContainer(container) {
   const rows = Array.from(container?.querySelectorAll("[data-ocr-target-row]") || []);
   if (!rows.length) {
@@ -8993,6 +9282,9 @@ function ocrTargetLayoutsFromContainer(container) {
     const offsetYField = row.querySelector("[data-ocr-target-offset-y]");
     const widthField = row.querySelector("[data-ocr-target-width]");
     const heightField = row.querySelector("[data-ocr-target-height]");
+    const actionField = row.querySelector("[data-ocr-target-action]");
+    const blockField = row.querySelector("[data-ocr-target-block]");
+    const clicksField = row.querySelector("[data-ocr-target-clicks]");
     const hasOffset = String(offsetXField?.value ?? "").trim() !== "" || String(offsetYField?.value ?? "").trim() !== "";
     const hasSize = String(widthField?.value ?? "").trim() !== "" || String(heightField?.value ?? "").trim() !== "";
     return {
@@ -9002,6 +9294,10 @@ function ocrTargetLayoutsFromContainer(container) {
       width: hasSize ? parseNumber(widthField?.value, 140) : null,
       height: hasSize ? parseNumber(heightField?.value, 40) : null,
       texto: String(targetField?.value || "").trim(),
+      action: normalizeOcrTargetAction(actionField?.value),
+      block: String(blockField?.value || "").trim(),
+      clicks: Math.max(1, Math.trunc(parseNumber(clicksField?.value, 1))),
+      failureAction: normalizeOcrTargetFailureAction(row.querySelector("[data-ocr-target-failure-action]")?.value),
     };
   });
 }
@@ -9026,6 +9322,10 @@ function renderOcrTargetRows(fieldAttr, actionAttr, text = "", layouts = []) {
               <input ${fieldAttr}="ocrTargetOffsetY" data-ocr-target-offset-y type="hidden" value="${escapeHtml(layouts?.[index]?.offsetY ?? "")}" />
               <input ${fieldAttr}="ocrTargetWidth" data-ocr-target-width type="hidden" value="${escapeHtml(layouts?.[index]?.width ?? "")}" />
               <input ${fieldAttr}="ocrTargetHeight" data-ocr-target-height type="hidden" value="${escapeHtml(layouts?.[index]?.height ?? "")}" />
+              <input ${fieldAttr}="ocrTargetAction" data-ocr-target-action type="hidden" value="${escapeHtml(normalizeOcrTargetAction(layouts?.[index]?.action))}" />
+              <input ${fieldAttr}="ocrTargetBlock" data-ocr-target-block type="hidden" value="${escapeHtml(layouts?.[index]?.block ?? "")}" />
+              <input ${fieldAttr}="ocrTargetClicks" data-ocr-target-clicks type="hidden" value="${escapeHtml(Math.max(1, Math.trunc(parseNumber(layouts?.[index]?.clicks, 1))))}" />
+              <input ${fieldAttr}="ocrTargetFailureAction" data-ocr-target-failure-action type="hidden" value="${escapeHtml(normalizeOcrTargetFailureAction(layouts?.[index]?.failureAction ?? layouts?.[index]?.failure_action))}" />
             </label>
             <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo" ${targets.length <= 1 ? "disabled" : ""}>&times;</button>
           </div>
@@ -9065,12 +9365,17 @@ function addOcrTargetRow(container, fieldAttr, actionAttr, value = "") {
       <input ${fieldAttr}="ocrTargetOffsetY" data-ocr-target-offset-y type="hidden" value="" />
       <input ${fieldAttr}="ocrTargetWidth" data-ocr-target-width type="hidden" value="" />
       <input ${fieldAttr}="ocrTargetHeight" data-ocr-target-height type="hidden" value="" />
+      <input ${fieldAttr}="ocrTargetAction" data-ocr-target-action type="hidden" value="continuar" />
+      <input ${fieldAttr}="ocrTargetBlock" data-ocr-target-block type="hidden" value="" />
+      <input ${fieldAttr}="ocrTargetClicks" data-ocr-target-clicks type="hidden" value="1" />
+      <input ${fieldAttr}="ocrTargetFailureAction" data-ocr-target-failure-action type="hidden" value="continuar" />
     </label>
     <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo">&times;</button>
   `;
   list.appendChild(row);
   refreshOcrTargetRows(container);
   updateRelativeOcrPreviewOverlay(container);
+  refreshOcrTargetActionRows(container);
   row.querySelector("[data-ocr-target-field]")?.focus();
 }
 
@@ -9083,8 +9388,219 @@ function removeOcrTargetRow(button) {
   row.remove();
   refreshOcrTargetRows(container);
   updateRelativeOcrPreviewOverlay(container);
+  refreshOcrTargetActionRows(container);
   const nextRows = Array.from(container.querySelectorAll("[data-ocr-target-row]"));
   nextRows[Math.min(focusIndex, nextRows.length - 1)]?.querySelector("[data-ocr-target-field]")?.focus();
+}
+
+function ocrTargetActionLayout(layouts = [], index = 0) {
+  const layout = layouts?.[index] && typeof layouts[index] === "object" ? layouts[index] : {};
+  return {
+    action: normalizeOcrTargetAction(layout.action),
+    block: String(layout.block ?? "").trim(),
+    clicks: Math.max(1, Math.trunc(parseNumber(layout.clicks, 1))),
+    failureAction: normalizeOcrTargetFailureAction(layout.failureAction ?? layout.failure_action),
+  };
+}
+
+function renderOcrTargetOnlyPreview(relativeOcr = {}, clickTarget = {}, layouts = [], index = 0) {
+  const target = ocrTargetRelativeFromLayout(relativeOcr, layouts, index);
+  const color = OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length];
+  return `
+    <div class="recognition-ocr-map-overlay recognition-ocr-map-overlay-static" data-relative-ocr-map="true">
+      <div
+        class="recognition-ocr-target-box is-${escapeHtml(target.side || "livre")} is-target-${index + 1}"
+        data-relative-ocr-target="true"
+        data-ocr-target-index="${index}"
+        data-ocr-target-color="${escapeHtml(color)}"
+        style="${escapeHtml(relativeOcrOverlayStyle(target))}"
+      ></div>
+      <div class="recognition-click-target-point recognition-static-ocr-click" data-click-target-point="true" style="${escapeHtml(clickTargetOverlayStyle(clickTarget))}">
+        <span>Clique</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderOcrTargetActionRows(details = {}, currentOrder = null) {
+  const targets = splitOcrTargetText(details.texto_ocr_busca ?? details.texto ?? "");
+  const layouts = Array.isArray(details.ocr_target_layouts) ? details.ocr_target_layouts : [];
+  const relativeOcr = details.relativeOcr || recognitionRelativeOcrDetails(details);
+  const clickTarget = details.clickTarget || recognitionClickTargetDetails(details);
+  return `
+    <div class="ocr-target-action-list" data-ocr-target-action-list>
+      ${targets.map((target, index) => {
+        const targetAction = ocrTargetActionLayout(layouts, index);
+        const hasNextTarget = index < targets.length - 1;
+        const visibleAction = targetAction.action === "clicar" ? "clicar_ir_para_bloco" : targetAction.action;
+        const nextTargetLabel = hasNextTarget ? `Continuar para OCR ${index + 2}` : "Continuar automacao";
+        const failureContinueLabel = hasNextTarget ? `Procurar OCR ${index + 2}` : "Continuar automacao";
+        return `
+          <section class="ocr-target-action-row" data-ocr-target-action-row data-ocr-target-action-index="${index}">
+            <div class="ocr-target-action-heading">
+              <span class="ocr-target-color-dot" data-ocr-target-color="${escapeHtml(OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length])}" aria-hidden="true"></span>
+              <strong data-ocr-action-target-label>OCR ${index + 1}: ${escapeHtml(compactText(target, "Texto ainda nao definido"))}</strong>
+            </div>
+            <div class="ocr-target-action-preview">
+              ${renderRecognitionPreviewPanel(details.imagem ?? "", {
+                overlay: renderOcrTargetOnlyPreview(relativeOcr, clickTarget, layouts, index),
+                markersVisible: true,
+              })}
+            </div>
+            <input data-ocr-target-action-control="action" type="hidden" value="${escapeHtml(targetAction.action)}" />
+            <input data-ocr-target-action-control="failureAction" type="hidden" value="${escapeHtml(targetAction.failureAction)}" />
+            <input data-ocr-target-action-control="clicks" type="hidden" value="${targetAction.clicks}" />
+            <section class="ocr-target-decision is-success" aria-label="Quando encontrar este OCR">
+              <div class="ocr-target-decision-heading"><strong>Se encontrar</strong></div>
+              <div class="ocr-target-decision-choices">
+                <button class="ocr-target-decision-button ${visibleAction === "clicar_ir_para_bloco" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="clicar_ir_para_bloco" type="button">Clicar e ir ao bloco</button>
+                <button class="ocr-target-decision-button ${visibleAction === "confirmar_ir_para_bloco" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="confirmar_ir_para_bloco" type="button">Confirmar e ir ao bloco</button>
+                <button class="ocr-target-decision-button ${visibleAction === "continuar" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="continuar" type="button">${escapeHtml(nextTargetLabel)}</button>
+              </div>
+            </section>
+            <label class="recognition-cell recognition-cell-full ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "is-ocr-target-action-hidden"}" data-ocr-target-action-fields="block" ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "hidden"}>
+              <span>Ir para este bloco</span>
+              <select data-ocr-target-action-control="block">
+                ${blockTargetOptions(targetAction.block, currentOrder, "Escolha o bloco")}
+              </select>
+            </label>
+            <section class="ocr-target-decision is-failure" aria-label="Quando nao encontrar este OCR">
+              <div class="ocr-target-decision-heading"><strong>Se nao encontrar</strong></div>
+              <div class="ocr-target-decision-choices">
+                <button class="ocr-target-decision-button ${targetAction.failureAction === "continuar" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="continuar" type="button">${escapeHtml(failureContinueLabel)}</button>
+                <button class="ocr-target-decision-button ${targetAction.failureAction === "parar" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="parar" type="button">Parar automacao</button>
+              </div>
+            </section>
+          </section>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function applyOcrTargetActionVisibility(row) {
+  if (!row) return;
+  const action = normalizeOcrTargetAction(row.querySelector('[data-ocr-target-action-control="action"]')?.value);
+  const failureAction = normalizeOcrTargetFailureAction(row.querySelector('[data-ocr-target-action-control="failureAction"]')?.value);
+  row.querySelectorAll("[data-ocr-target-action-fields]").forEach((field) => {
+    const shouldShow = field.dataset.ocrTargetActionFields === "block" && ocrTargetMatchNeedsBlock(action);
+    field.hidden = !shouldShow;
+    // Alguns layouts dos cards usam `display:grid`, que pode sobrepor o
+    // comportamento padrao de [hidden]. A classe deixa a regra explicita.
+    field.classList.toggle("is-ocr-target-action-hidden", !shouldShow);
+    field.setAttribute("aria-hidden", String(!shouldShow));
+  });
+  row.querySelectorAll('[data-ocr-target-action-choice="action"]').forEach((button) => {
+    const choice = String(button.dataset.ocrTargetActionValue || "");
+    button.classList.toggle("is-active", choice === (action === "clicar" ? "clicar_ir_para_bloco" : action));
+  });
+  row.querySelectorAll('[data-ocr-target-action-choice="failureAction"]').forEach((button) => {
+    button.classList.toggle("is-active", String(button.dataset.ocrTargetActionValue || "") === failureAction);
+  });
+}
+
+function syncOcrTargetActionRows(container) {
+  const sourceRows = Array.from(container?.querySelectorAll("[data-ocr-target-row]") || []);
+  container?.querySelectorAll("[data-ocr-target-action-row]").forEach((actionRow, index) => {
+    const source = sourceRows[index];
+    const target = String(source?.querySelector("[data-ocr-target-field]")?.value || "").trim();
+    const label = actionRow.querySelector("[data-ocr-action-target-label]");
+    if (label) label.textContent = `OCR ${index + 1}: ${compactText(target, "Texto ainda nao definido")}`;
+    const action = source?.querySelector("[data-ocr-target-action]")?.value || "continuar";
+    const block = source?.querySelector("[data-ocr-target-block]")?.value || "";
+    const clicks = source?.querySelector("[data-ocr-target-clicks]")?.value || "1";
+    const failureAction = source?.querySelector("[data-ocr-target-failure-action]")?.value || "continuar";
+    const actionControl = actionRow.querySelector('[data-ocr-target-action-control="action"]');
+    if (actionControl) actionControl.value = normalizeOcrTargetAction(action);
+    const blockControl = actionRow.querySelector('[data-ocr-target-action-control="block"]');
+    if (blockControl) blockControl.value = block;
+    const clicksControl = actionRow.querySelector('[data-ocr-target-action-control="clicks"]');
+    if (clicksControl) clicksControl.value = clicks;
+    const failureControl = actionRow.querySelector('[data-ocr-target-action-control="failureAction"]');
+    if (failureControl) failureControl.value = normalizeOcrTargetFailureAction(failureAction);
+    applyOcrTargetActionVisibility(actionRow);
+  });
+}
+
+function syncOcrTargetActionControlToSource(target) {
+  if (!target?.matches?.("[data-ocr-target-action-control]")) return false;
+  const actionRow = target.closest("[data-ocr-target-action-row]");
+  const container = target.closest(".command-tree-card, .flow-card, .insert-card-panel");
+  const index = Number(actionRow?.dataset.ocrTargetActionIndex);
+  if (!container || !Number.isInteger(index) || index < 0) return false;
+  const source = ocrTargetRowByIndex(container, index);
+  const fieldMap = {
+    action: "[data-ocr-target-action]",
+    block: "[data-ocr-target-block]",
+    clicks: "[data-ocr-target-clicks]",
+    failureAction: "[data-ocr-target-failure-action]",
+  };
+  const destination = source?.querySelector(fieldMap[target.dataset.ocrTargetActionControl]);
+  if (!destination) return false;
+  const control = target.dataset.ocrTargetActionControl;
+  const nextValue = control === "action"
+    ? normalizeOcrTargetAction(target.value)
+    : control === "failureAction"
+      ? normalizeOcrTargetFailureAction(target.value)
+      : target.value;
+  const changed = String(destination.value ?? "") !== String(nextValue ?? "");
+  if (changed) destination.value = nextValue;
+  if (["action", "failureAction"].includes(control)) {
+    applyOcrTargetActionVisibility(actionRow);
+  }
+  if (container.classList.contains("command-tree-card")) {
+    // As escolhas sao campos internos do card. Atualiza o rascunho, mas nao
+    // reconstrói o mapa inteiro e nem desloca o usuario enquanto ele decide.
+    // As linhas da arvore sao atualizadas na proxima renderizacao normal
+    // (salvar, trocar pagina, mover card etc.).
+    if (changed) syncCommandMapDraftFromCard(container);
+  } else if (container.classList.contains("insert-card-panel") && state.insertPanel) {
+    if (changed) state.insertPanel = { ...state.insertPanel, ...insertValuesFromPanel(container) };
+  }
+  return changed;
+}
+
+function applyOcrTargetActionChoice(button) {
+  if (!button?.matches?.("[data-ocr-target-action-choice]")) return false;
+  const actionRow = button.closest("[data-ocr-target-action-row]");
+  const control = String(button.dataset.ocrTargetActionChoice || "");
+  const value = String(button.dataset.ocrTargetActionValue || "");
+  const hiddenControl = actionRow?.querySelector(`[data-ocr-target-action-control="${control}"]`);
+  if (!hiddenControl || !value) return false;
+  const normalizedValue = control === "action"
+    ? normalizeOcrTargetAction(value)
+    : control === "failureAction"
+      ? normalizeOcrTargetFailureAction(value)
+      : value;
+  if (String(hiddenControl.value ?? "") === String(normalizedValue)) {
+    applyOcrTargetActionVisibility(actionRow);
+    return false;
+  }
+  hiddenControl.value = value;
+  return syncOcrTargetActionControlToSource(hiddenControl);
+}
+
+function refreshOcrTargetActionRows(container) {
+  const host = container?.querySelector("[data-ocr-target-actions-host]");
+  if (!host) return;
+  const rows = Array.from(container.querySelectorAll("[data-ocr-target-row]"));
+  const details = {
+    imagem: container.querySelector('[data-tree-field="imagePath"], [data-field="imagePath"], [data-insert-field="imagePath"]')?.value || "",
+    texto_ocr_busca: rows.map((row) => row.querySelector("[data-ocr-target-field]")?.value || "").join("\n"),
+    ocr_target_layouts: ocrTargetLayoutsFromContainer(container),
+    relativeOcr: {
+      side: container.querySelector('[data-tree-field="relativeOcrSide"], [data-field="relativeOcrSide"], [data-insert-field="relativeOcrSide"]')?.value || "livre",
+      width: parseNumber(container.querySelector('[data-tree-field="relativeOcrWidth"], [data-field="relativeOcrWidth"], [data-insert-field="relativeOcrWidth"]')?.value, 140),
+      height: parseNumber(container.querySelector('[data-tree-field="relativeOcrHeight"], [data-field="relativeOcrHeight"], [data-insert-field="relativeOcrHeight"]')?.value, 40),
+      offsetX: parseNumber(container.querySelector('[data-tree-field="relativeOcrOffsetX"], [data-field="relativeOcrOffsetX"], [data-insert-field="relativeOcrOffsetX"]')?.value, 0),
+      offsetY: parseNumber(container.querySelector('[data-tree-field="relativeOcrOffsetY"], [data-field="relativeOcrOffsetY"], [data-insert-field="relativeOcrOffsetY"]')?.value, 0),
+    },
+    clickTarget: {
+      offsetX: parseNumber(container.querySelector('[data-tree-field="clickOffsetX"], [data-field="clickOffsetX"], [data-insert-field="clickOffsetX"]')?.value, 0),
+      offsetY: parseNumber(container.querySelector('[data-tree-field="clickOffsetY"], [data-field="clickOffsetY"], [data-insert-field="clickOffsetY"]')?.value, 0),
+    },
+  };
+  host.innerHTML = renderOcrTargetActionRows(details, Number(host.dataset.ocrTargetActionsOrder) || null);
 }
 
 function renderOcrTextFields(fieldAttr, details = {}, currentOrder = null, options = {}) {
@@ -9465,12 +9981,18 @@ function renderCompactTreeEditorFields(event) {
 
 function renderRecognitionExpandedTreeEditor(event) {
   const details = event.details ?? {};
-  const activeRecognitionTab = normalizeRecognitionDetailTab(state.recognitionTreeTabs?.[event.order] ?? "visual");
+  let activeRecognitionTab = normalizeRecognitionDetailTab(state.recognitionTreeTabs?.[event.order] ?? "visual");
   const imageName = String(details.imagem || "").split(/[\\/]/).pop() || "Nenhuma imagem escolhida";
   const relativeOcr = recognitionRelativeOcrDetails(details);
   const clickTarget = recognitionClickTargetDetails(details);
   const clickMode = recognitionClickModeFromDetails(details);
   const recognitionMode = String(details.modo_reconhecimento ?? "imagem");
+  if (recognitionMode === "texto_ocr" && activeRecognitionTab === "behavior") {
+    activeRecognitionTab = "visual";
+  }
+  if (recognitionMode !== "texto_ocr" && activeRecognitionTab === "ocr_actions") {
+    activeRecognitionTab = "visual";
+  }
   const successAction = String(details.ao_sucesso ?? "continuar");
   const failureAction = String(details.ao_nao_encontrar ?? "parar");
   const visibleSuccessAction = successAction === "ir_para_sequencia" ? "continuar" : successAction;
@@ -9486,9 +10008,10 @@ function renderRecognitionExpandedTreeEditor(event) {
   `;
   return `
     <div class="field-stack field-stack-recognition recognition-expanded-editor">
-      <div class="recognition-card-tabs has-preview" role="tablist" aria-label="Configuracoes do reconhecimento visual">
+      <div class="recognition-card-tabs has-preview ${recognitionMode === "texto_ocr" ? "is-ocr-hybrid" : ""}" role="tablist" aria-label="Configuracoes do reconhecimento visual">
         <button class="recognition-card-tab ${activeRecognitionTab === "visual" ? "is-active" : ""}" data-recognition-tab-target="visual" type="button" aria-pressed="${activeRecognitionTab === "visual" ? "true" : "false"}">Busca</button>
-        <button class="recognition-card-tab ${activeRecognitionTab === "behavior" ? "is-active" : ""}" data-recognition-tab-target="behavior" type="button" aria-pressed="${activeRecognitionTab === "behavior" ? "true" : "false"}">Clique e ajustes</button>
+        ${recognitionMode === "texto_ocr" ? `<button class="recognition-card-tab ${activeRecognitionTab === "ocr_actions" ? "is-active" : ""}" data-recognition-tab-target="ocr_actions" type="button" aria-pressed="${activeRecognitionTab === "ocr_actions" ? "true" : "false"}">Acoes por OCR</button>` : ""}
+        ${recognitionMode === "texto_ocr" ? "" : `<button class="recognition-card-tab ${activeRecognitionTab === "behavior" ? "is-active" : ""}" data-recognition-tab-target="behavior" type="button" aria-pressed="${activeRecognitionTab === "behavior" ? "true" : "false"}">Clique e ajustes</button>`}
       </div>
       <input data-tree-field="recognitionMode" type="hidden" value="${escapeHtml(recognitionMode)}" />
 
@@ -9550,6 +10073,26 @@ function renderRecognitionExpandedTreeEditor(event) {
           </label>
         `}
         </div>
+      </div>
+
+      <div class="recognition-card-panel recognition-ocr-actions-panel ${activeRecognitionTab === "ocr_actions" ? "is-active" : ""}" data-recognition-tab-panel="ocr_actions" ${activeRecognitionTab === "ocr_actions" ? "" : "hidden"}>
+        ${recognitionMode === "texto_ocr" ? `
+          <section class="ocr-target-actions-card">
+            <div class="insert-outcome-header"><strong>Acoes por OCR</strong></div>
+            <p class="recognition-card-helper">Cada OCR e avaliado separadamente. Quando for reconhecido, executa a acao configurada para ele.</p>
+            <div data-ocr-target-actions-host data-ocr-target-actions-order="${event.order}">
+              ${renderOcrTargetActionRows({
+                imagem: details.imagem ?? "",
+                texto_ocr_busca: details.texto_ocr_busca ?? "",
+                ocr_target_layouts: details.ocr_target_layouts ?? [],
+                relativeOcr,
+                clickTarget,
+              }, event.order)}
+            </div>
+          </section>
+        ` : `
+          <p class="recognition-card-helper">Escolha OCR + Visual na aba Busca para configurar acoes por texto.</p>
+        `}
       </div>
 
       <div class="recognition-card-panel ${activeRecognitionTab === "behavior" ? "is-active" : ""}" data-recognition-tab-panel="behavior" ${activeRecognitionTab === "behavior" ? "" : "hidden"}>
@@ -11132,10 +11675,11 @@ async function persistCapturedRecognitionImage(target) {
 }
 
 async function captureImageToProject(target) {
-  if (!target) {
+  if (!target || state.captureImageInProgress) {
     return;
   }
 
+  state.captureImageInProgress = true;
   try {
     setBusy("Capturando imagem");
     setMessage("Selecione a area da tela que deseja usar no reconhecimento.", "info");
@@ -11185,6 +11729,8 @@ async function captureImageToProject(target) {
   } catch (error) {
     setBusy("Erro");
     setMessage(String(error), "error");
+  } finally {
+    state.captureImageInProgress = false;
   }
 }
 
@@ -18936,6 +19482,7 @@ function renderTimeline() {
             <div class="block-grid">
               <div class="block-editor">
                 ${renderEditorFields(event)}
+                ${renderRecognitionValidationPanel(event)}
                 <div class="card-actions">
                   <button class="save-button" data-action="save">Salvar bloco</button>
                   <button class="micro-button" data-action="up">Subir</button>
@@ -19125,6 +19672,7 @@ function renderCommandMapCardSegment(event, index = 0, events = [], options = {}
         <div class="command-tree-grid">
           <div class="tree-editor">
             ${isInlineExpanded ? renderTreeEditorFields(event) : renderCompactTreeEditorFields(event)}
+            ${renderRecognitionValidationPanel(event)}
           </div>
           <div class="tree-command-preview">${escapeHtml(event.command)}</div>
         </div>
@@ -19255,6 +19803,9 @@ function resolveCommandMapTreeTarget(route, event, index, events, context) {
 function getCommandMapTreeBranchTargetKey(branch) {
   const targetOrder = Number(branch?.targetEvent?.order || branch?.targetOrder || 0);
   if (Number.isFinite(targetOrder) && targetOrder > 0) {
+    if (String(branch?.kind || "").trim().toLowerCase() === "ocr_action") {
+      return `ocr:${String(branch?.ocrColor || "").trim().toLowerCase()}:${targetOrder}`;
+    }
     return `block:${targetOrder}`;
   }
   const targetLabel = String(branch?.targetLabel || "").trim().toLowerCase();
@@ -19299,6 +19850,36 @@ function dedupeCommandMapTreeBranches(branches = []) {
   return Array.from(branchByTarget.values());
 }
 
+function getCommandMapOcrActionBranches(event, index, events, context) {
+  if (String(event?.type || "") !== "clicar_imagem") return [];
+  const details = event?.details ?? {};
+  if (String(details.modo_reconhecimento || "").trim().toLowerCase() !== "texto_ocr") return [];
+  const layouts = Array.isArray(details.ocr_target_layouts) ? details.ocr_target_layouts : [];
+  return layouts.flatMap((layout, indexOcr) => {
+    const action = normalizeOcrTargetAction(layout?.action);
+    if (!layout || !["clicar_ir_para_bloco", "confirmar_ir_para_bloco"].includes(action)) return [];
+    const targetBlock = Number(layout.block);
+    if (!Number.isFinite(targetBlock) || targetBlock <= 0) return [];
+    const target = resolveCommandMapTreeTarget(
+      { action: "ir_para_bloco", block: targetBlock, delay: 0 },
+      event,
+      index,
+      events,
+      context,
+    );
+    if (!target.targetEvent && !target.terminal) return [];
+    return [{
+      kind: "ocr_action",
+      ocrColor: OCR_TARGET_COLORS[indexOcr % OCR_TARGET_COLORS.length],
+      ocrIndex: indexOcr,
+      label: `OCR ${indexOcr + 1}`,
+      ...target,
+      editableDelay: "",
+      hideDelay: true,
+    }];
+  });
+}
+
 function buildCommandMapTreeBranches(event, index, events, context) {
   const conditional = isCommandMapConditionalEvent(event);
   const successRoute = getCommandMapSuccessRoute(event);
@@ -19329,6 +19910,7 @@ function buildCommandMapTreeBranches(event, index, events, context) {
       ...resolveCommandMapTreeTarget(divergeRoute, event, index, events, context),
     });
   }
+  branches.push(...getCommandMapOcrActionBranches(event, index, events, context));
   return dedupeCommandMapTreeBranches(branches);
 }
 
@@ -19373,7 +19955,7 @@ function renderCommandMapTreeCardReference(branch, targetEvent, targetIndex, eve
 
 function renderCommandMapTreeBranch(branch, childHtml = "") {
   const delayValue = formatTransitionDelayValue(branch.delay ?? 0);
-  const delayControl = branch.editableDelay === "next" && branch.targetOrder
+  const delayControl = branch.hideDelay ? "" : branch.editableDelay === "next" && branch.targetOrder
     ? `
       <input
         data-connector-delay="true"
@@ -19404,9 +19986,9 @@ function renderCommandMapTreeBranch(branch, childHtml = "") {
     <div class="command-map-tree-branch is-${escapeHtml(branch.kind || "success")}">
       <div class="command-map-tree-branch-link">
         <span>${escapeHtml(branch.label || "Rama")}</span>
-        <label class="command-map-tree-delay">
+        ${branch.hideDelay ? "" : `<label class="command-map-tree-delay">
           ${delayControl}
-        </label>
+        </label>`}
       </div>
       <div class="command-map-tree-branch-target">
         ${childHtml || renderCommandMapTreeTerminal(branch)}
@@ -19453,10 +20035,51 @@ function getCommandMapTreeStageConstants(events = []) {
     lowerBranchLaneGap: 56,
     minHeight: hasExpandedCard ? 980 : 820,
     terminalOffsetX: 220,
+    insertPanelWidth: 320,
+    insertPanelGap: 44,
+  };
+}
+
+function getCommandMapTreeCardLayoutWidth(event = {}) {
+  if (Number(state.expandedTreeCardOrder) === Number(event.order)) {
+    return 324;
+  }
+  if (["clicar_imagem", "procurar_texto_ocr", "sequencia_planilha", "escrever_planilha", "comparar_planilha_tela"].includes(String(event.type || ""))) {
+    return 236;
+  }
+  if (isLoopMarkerType(event.type)) {
+    return 176;
+  }
+  return 188;
+}
+
+function getCommandMapTreeInsertPreview(events = [], nodes = [], constants = {}) {
+  const panel = state.insertPanel;
+  if (!panel || String(panel.position || "after") !== "after") {
+    return null;
+  }
+  const originIndex = events.findIndex((event) => Number(event.order) === Number(panel.targetOrder));
+  if (originIndex < 0) {
+    return null;
+  }
+  const originNode = nodes[originIndex];
+  if (!originNode) {
+    return null;
+  }
+  const originCardWidth = getCommandMapTreeCardLayoutWidth(originNode.event);
+  return {
+    originIndex,
+    originOrder: Number(originNode.order),
+    originX: Number(originNode.x),
+    panelRight: Number(originNode.x) + originCardWidth + Number(constants.insertPanelWidth || 320),
+    shiftX: Number(constants.insertPanelWidth || 320) + Number(constants.insertPanelGap || 44),
   };
 }
 
 function renderCommandMapTreeDelayControl(edge) {
+  if (edge.hideDelay) {
+    return "";
+  }
   const delayValue = formatTransitionDelayValue(edge.delay ?? 0);
   if (edge.editableDelay === "next" && edge.targetOrder) {
     return `
@@ -19514,6 +20137,17 @@ function buildCommandMapTreeStageLayout(events, pageDefinition) {
       node.y = Math.max(24, manualY);
     }
   });
+  const insertPreview = getCommandMapTreeInsertPreview(events, nodes, constants);
+  if (insertPreview) {
+    // O painel de criacao ocupa uma coluna inteira entre o card de origem e
+    // os seguintes. Abra esse espaco apenas enquanto ele estiver visivel;
+    // posicoes manuais continuam salvas e voltam ao fechar o painel.
+    nodes.forEach((node) => {
+      if (node.index > insertPreview.originIndex) {
+        node.x += insertPreview.shiftX;
+      }
+    });
+  }
   const nodeByOrder = new Map(nodes.map((node) => [node.order, node]));
   const edges = [];
   const terminals = [];
@@ -19561,7 +20195,15 @@ function buildCommandMapTreeStageLayout(events, pageDefinition) {
         branchSide,
         isPrimaryNext,
         labelX: isPrimaryNext
-          ? sourceNode.x + constants.columnGap - 116
+          ? (() => {
+              const targetNode = nodeByOrder.get(targetOrder);
+              const targetX = Number(targetNode?.x ?? sourceNode.x + constants.columnGap);
+              const centeredX = sourceNode.x + (targetX - sourceNode.x) / 2 - 42;
+              const previewClearance = insertPreview?.originOrder === sourceOrder
+                ? insertPreview.panelRight + 24
+                : -Infinity;
+              return Math.max(sourceNode.x + 90, centeredX, previewClearance);
+            })()
           : sourceNode.x + 28,
         labelY: isPrimaryNext
           ? constants.mainLabelTop
@@ -19610,6 +20252,7 @@ function buildCommandMapTreeStageLayout(events, pageDefinition) {
     nodes,
     edges,
     terminals,
+    insertPreview,
     width: stageWidth,
     height: maxY + constants.paddingY,
   };
@@ -19676,12 +20319,13 @@ function renderCommandMapTreeStageEdgeLabel(edge) {
   const compactActionLabel = compactCommandMapTreeTerminalActionLabel(fullActionLabel);
   return `
     <label
-      class="command-map-tree-edge-label is-${escapeHtml(edge.kind || "success")} ${edge.isPrimaryNext ? "is-primary-next" : "is-branch-route"} is-branch-${escapeHtml(edge.branchSide || "main")} ${edge.terminalRoute ? "is-terminal-route" : ""}"
+      class="command-map-tree-edge-label is-${escapeHtml(edge.kind || "success")} ${edge.ocrColor ? `is-ocr-${escapeHtml(edge.ocrColor)}` : ""} ${edge.isPrimaryNext ? "is-primary-next" : "is-branch-route"} is-branch-${escapeHtml(edge.branchSide || "main")} ${edge.terminalRoute ? "is-terminal-route" : ""}"
       data-tree-edge-source-order="${escapeHtml(String(edge.sourceOrder || ""))}"
       data-tree-edge-target-order="${escapeHtml(String(edge.targetOrder || ""))}"
       data-tree-edge-terminal-id="${escapeHtml(String(edge.terminalId || ""))}"
       data-tree-edge-terminal-route="${edge.terminalRoute ? "true" : "false"}"
       data-tree-edge-kind="${escapeHtml(edge.kind || "success")}"
+      data-tree-edge-ocr-color="${escapeHtml(edge.ocrColor || "")}"
       data-tree-edge-lane-y="${escapeHtml(String(Math.round(edge.laneY || 0)))}"
       data-tree-edge-branch-lane="${escapeHtml(String(edge.branchLaneIndex ?? -1))}"
       data-tree-edge-side="${escapeHtml(edge.branchSide || "main")}"
@@ -19690,7 +20334,7 @@ function renderCommandMapTreeStageEdgeLabel(edge) {
       style="left:${Math.round(edge.labelX)}px;top:${Math.round(edge.labelY)}px"
     >
       <span>${escapeHtml(edge.label || "Rama")}</span>
-      <em>${renderCommandMapTreeDelayControl(edge)}</em>
+      ${edge.hideDelay ? "" : `<em>${renderCommandMapTreeDelayControl(edge)}</em>`}
       ${edge.terminalRoute ? `<b class="command-map-tree-edge-action" title="${escapeHtml(fullActionLabel)}">${escapeHtml(compactActionLabel)}</b>` : ""}
     </label>
   `;
@@ -19785,7 +20429,7 @@ function renderCommandMapTreeView(events, pageDefinition) {
 
 function commandMapTreeStageMetrics(stage) {
   const rect = stage.getBoundingClientRect();
-  const zoom = stage.offsetWidth ? Math.max(0.2, rect.width / stage.offsetWidth) : 1;
+  const zoom = stage.offsetWidth ? Math.max(0.01, rect.width / stage.offsetWidth) : 1;
   return { rect, zoom };
 }
 
@@ -19997,9 +20641,9 @@ function handleCommandMapTreeWheelZoom(event) {
 
   event.preventDefault();
   const listRect = commandMapList.getBoundingClientRect();
-  const currentZoom = Math.max(0.01, Number(state.commandMapZoom) || 0.96);
+  const currentZoom = normalizeCommandMapZoom(state.commandMapZoom, 0.96);
   const zoomFactor = delta > 0 ? 0.92 : 1.08;
-  const nextZoom = Math.round(currentZoom * zoomFactor * 100) / 100;
+  const nextZoom = currentZoom * zoomFactor;
   setCommandMapZoom(nextZoom, {
     preservePoint: {
       x: event.clientX - listRect.left,
@@ -21917,6 +22561,10 @@ function animateCreatedBlockFromPreview(order) {
     card.style.opacity = "";
     card.__commandMapShiftAnimation = null;
     state.createdBlockMorphRect = null;
+    // Durante o morph o card ainda possui transformacao temporaria. As linhas
+    // precisam ser refeitas depois da limpeza para usar a posicao final, sem
+    // exigir que o usuario mova o mapa para elas se acertarem.
+    scheduleCommandConnectorLayout({ burstMs: 140 });
   };
 
   if (typeof card.animate === "function") {
@@ -22132,11 +22780,11 @@ mapZoomRange.addEventListener("input", (event) => {
 });
 
 mapZoomOutButton.addEventListener("click", () => {
-  setCommandMapZoom(Math.round((state.commandMapZoom - 0.05) * 100) / 100);
+  setCommandMapZoom(normalizeCommandMapZoom(state.commandMapZoom, 0.96) * 0.9);
 });
 
 mapZoomInButton.addEventListener("click", () => {
-  setCommandMapZoom(Math.round((state.commandMapZoom + 0.05) * 100) / 100);
+  setCommandMapZoom(normalizeCommandMapZoom(state.commandMapZoom, 0.96) * 1.1);
 });
 
 commandMapViewButtons.forEach((button) => {
@@ -23966,6 +24614,9 @@ commandsPanel?.addEventListener("input", () => {
 
 commandMapList?.addEventListener("input", (event) => {
   const target = event.target;
+  if (syncOcrTargetActionControlToSource(target)) {
+    return;
+  }
   if (
     target?.matches?.('[data-tree-field="imagePath"], [data-insert-field="imagePath"]')
   ) {
@@ -24663,6 +25314,9 @@ timelineList.addEventListener("click", (event) => {
 
 commandMapList.addEventListener("change", (event) => {
   const target = event.target;
+  if (syncOcrTargetActionControlToSource(target)) {
+    return;
+  }
   if (
     target.matches('[data-tree-field="editableAtRun"], [data-field="editableAtRun"], [data-insert-field="editableAtRun"]')
   ) {
@@ -24773,6 +25427,7 @@ commandMapList.addEventListener("change", (event) => {
   if (target.matches('[data-tree-field="ocrTarget"], [data-field="ocrTarget"]')) {
     const card = target.closest(".command-tree-card, .flow-card");
     updateRelativeOcrPreviewOverlay(card);
+    syncOcrTargetActionRows(card);
     if (card?.classList.contains("command-tree-card")) {
       syncCommandMapDraftFromCard(card);
     }
@@ -24812,6 +25467,7 @@ commandMapList.addEventListener("change", (event) => {
   if (target.matches('[data-insert-field="ocrTarget"]')) {
     const panel = target.closest(".insert-card-panel");
     updateRelativeOcrPreviewOverlay(panel);
+    syncOcrTargetActionRows(panel);
     if (state.insertPanel && panel) {
       state.insertPanel = {
         ...state.insertPanel,
@@ -25141,6 +25797,12 @@ window.addEventListener("pointercancel", (event) => {
 });
 
 commandMapList.addEventListener("click", async (event) => {
+  const ocrTargetActionChoice = event.target.closest("[data-ocr-target-action-choice]");
+  if (ocrTargetActionChoice) {
+    applyOcrTargetActionChoice(ocrTargetActionChoice);
+    return;
+  }
+
   const recognitionTabButton = event.target.closest("button[data-recognition-tab-target]");
   if (recognitionTabButton) {
     const card = recognitionTabButton.closest(".command-tree-card");
@@ -25161,6 +25823,9 @@ commandMapList.addEventListener("click", async (event) => {
         [order]: Boolean(recognitionMarkerToggle.checked),
       };
       card.querySelectorAll("[data-recognition-preview-card]").forEach((previewCard) => {
+        if (previewCard.closest(".ocr-target-action-preview")) {
+          return;
+        }
         previewCard.dataset.recognitionPreviewMarkers = recognitionMarkerToggle.checked ? "true" : "false";
         if (!recognitionMarkerToggle.checked) {
           previewCard.querySelectorAll("[data-relative-ocr-map]").forEach((overlay) => overlay.remove());
@@ -25433,9 +26098,6 @@ commandMapList.addEventListener("click", async (event) => {
     const layoutSnapshot = captureCommandMapCardPositions();
     setCommandMapFocus(order);
     state.insertPanel = createInsertPanelState(order, action === "insert-before" ? "before" : "after");
-    if (state.commandMapZoom > 1) {
-      setCommandMapZoom(1);
-    }
     commandMapList.scrollTop = 0;
     renderCommandMap({
       layoutSnapshot,
@@ -26666,4 +27328,3 @@ applyLoginStateUI();
 });
 boot();
 }
-

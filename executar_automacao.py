@@ -1566,6 +1566,27 @@ class ExecutorAutomacao:
                 "cor_fundo_etiqueta": "#A21CAF",
                 "etiqueta": "OCR 4",
             },
+            "ocr_busca_5": {
+                "cor_borda": "#FDBA74",
+                "cor_flash": "#FED7AA",
+                "cor_texto": "#FFF7ED",
+                "cor_fundo_etiqueta": "#C2410C",
+                "etiqueta": "OCR 5",
+            },
+            "ocr_busca_6": {
+                "cor_borda": "#67E8F9",
+                "cor_flash": "#A5F3FC",
+                "cor_texto": "#ECFEFF",
+                "cor_fundo_etiqueta": "#0E7490",
+                "etiqueta": "OCR 6",
+            },
+            "ocr_alvo_falha": {
+                "cor_borda": "#FB7185",
+                "cor_flash": "#FDA4AF",
+                "cor_texto": "#FFF1F2",
+                "cor_fundo_etiqueta": "#BE123C",
+                "etiqueta": "Falha OCR",
+            },
             "ocr_falha": {
                 "cor_borda": "#38BDF8",
                 "cor_flash": "#93C5FD",
@@ -2043,10 +2064,24 @@ class ExecutorAutomacao:
             safe_print(f"Falha ao reconstruir referencia pela ancora OCR: {erro}", flush=True)
             return None
 
+    def tema_alvo_ocr(self, indice):
+        """Mantem a mesma sequencia de cores usada pelos cards do Studio."""
+        try:
+            indice_normalizado = max(0, int(indice or 0))
+        except (TypeError, ValueError):
+            indice_normalizado = 0
+        return f"ocr_busca_{(indice_normalizado % 6) + 1}"
+
     def marcar_alvos_ocr_em_sequencia(self, local, leitura_relativa=None, dimensoes_referencia=None):
         config = leitura_relativa or {}
+        if not config.get("_mostrar_marcadores_ocr", True):
+            return
         layouts = config.get("ocr_target_layouts") or []
         bounds = local.get("ocr_related_bounds") or [local.get("ocr_bounds") or {}]
+        try:
+            indice_inicial = max(0, int(config.get("ocr_target_marker_index", 0) or 0))
+        except (TypeError, ValueError):
+            indice_inicial = 0
         esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
         ref_w, ref_h = dimensoes_referencia or (largura, altura)
         scale_x, scale_y = largura / max(1, ref_w), altura / max(1, ref_h)
@@ -2071,8 +2106,9 @@ class ExecutorAutomacao:
                 x, y, w, h = self.bounds_reconhecimento(detected)
             # Mantem a confirmacao visivel, mas sem introduzir quase meio
             # segundo de espera para cada OCR de um bloco composto.
-            self.marcar_regiao_absoluta(x, y, w, h, tema=f"ocr_busca_{min(index + 1, 4)}",
-                                       etiqueta=f"OCR {index + 1}", duracao=0.18,
+            indice_visual = indice_inicial + index
+            self.marcar_regiao_absoluta(x, y, w, h, tema=self.tema_alvo_ocr(indice_visual),
+                                       etiqueta=f"OCR {indice_visual + 1}", duracao=0.18,
                                        bloqueante=True, margem=0)
 
     def regioes_alvos_ocr_por_layout(self, local, leitura_relativa=None, dimensoes_referencia=None, quantidade=0):
@@ -2166,6 +2202,10 @@ class ExecutorAutomacao:
             return None
         bounds = []
         textos_lidos = []
+        try:
+            indice_inicial = max(0, int((leitura_relativa or {}).get("ocr_target_marker_index", 0) or 0))
+        except (TypeError, ValueError):
+            indice_inicial = 0
         for index, esperado in enumerate(partes[:quantidade]):
             regiao = self.limitar_regiao(regioes[index])
             if not regiao:
@@ -2173,8 +2213,8 @@ class ExecutorAutomacao:
             if marcar:
                 self.marcar_regiao_absoluta(
                     int(regiao[0]), int(regiao[1]), int(regiao[2]), int(regiao[3]),
-                    tema=f"ocr_busca_{min(index + 1, 4)}",
-                    etiqueta=f"OCR {index + 1}",
+                    tema=self.tema_alvo_ocr(indice_inicial + index),
+                    etiqueta=f"OCR {indice_inicial + index + 1}",
                     duracao=0.12,
                     bloqueante=True,
                     margem=0,
@@ -2443,6 +2483,367 @@ class ExecutorAutomacao:
                 return True
         return False
 
+    def modo_acao_alvos_ocr(self, leitura_relativa=None):
+        """Usa cada alvo OCR como uma alternativa independente.
+
+        Os cards salvos pela aba Acoes por OCR registram a chave ``action``
+        em cada alvo. Neles, cada texto e confirmado com sua propria area e
+        imagem: encontrar um alvo ja e suficiente para executar sua acao,
+        inclusive a acao normal do bloco. Layouts legados, sem essa chave,
+        continuam com a confirmacao conjunta para nao alterar automacoes ja
+        existentes.
+        """
+        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        layouts = leitura.get("ocr_target_layouts") if isinstance(leitura.get("ocr_target_layouts"), list) else []
+        return "individual" if any(
+            isinstance(layout, dict) and ("action" in layout or "acao" in layout)
+            for layout in layouts
+        ) else "todos"
+
+    def regra_acao_individual_ocr(self, config=None):
+        """Normaliza as escolhas feitas para um alvo OCR individual.
+
+        A configuracao e deliberadamente guardada junto do proprio alvo: assim
+        cada OCR pode decidir se segue para outro OCR, se pula para um bloco
+        ou se interrompe a automacao quando nao for encontrado.
+        """
+        dados = config if isinstance(config, dict) else {}
+        acao = str(dados.get("action", dados.get("acao", "continuar")) or "continuar").strip().lower()
+        aliases = {
+            "click": "clicar",
+            "clique": "clicar",
+            "bloco": "confirmar_ir_para_bloco",
+            "navegar": "confirmar_ir_para_bloco",
+            "ir_para_bloco": "confirmar_ir_para_bloco",
+            "clicar_e_ir_para_bloco": "clicar_ir_para_bloco",
+            "click_and_jump": "clicar_ir_para_bloco",
+            "click_goto": "clicar_ir_para_bloco",
+            "confirmar_e_ir_para_bloco": "confirmar_ir_para_bloco",
+            "confirm_and_jump": "confirmar_ir_para_bloco",
+            "confirm_goto": "confirmar_ir_para_bloco",
+        }
+        acao = aliases.get(acao, acao)
+        if acao not in {"continuar", "clicar", "clicar_ir_para_bloco", "confirmar_ir_para_bloco"}:
+            acao = "continuar"
+        falha = str(
+            dados.get("failureAction", dados.get("failure_action", dados.get("acao_falha", "continuar")))
+            or "continuar"
+        ).strip().lower()
+        if falha in {"stop", "interromper"}:
+            falha = "parar"
+        if falha not in {"continuar", "parar"}:
+            falha = "continuar"
+        return {
+            "acao": acao,
+            "falha": falha,
+            "bloco": str(dados.get("block", dados.get("bloco", "")) or "").strip(),
+            "clicks": max(1, int(dados.get("clicks", dados.get("cliques", 1)) or 1)),
+        }
+
+    def reler_alvo_ocr_na_referencia(self, local, indice, esperado, leitura_relativa=None, dimensoes_referencia=None):
+        """Confere apenas o texto que a leitura ampla perdeu, na referencia ja localizada."""
+        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        layouts = leitura.get("ocr_target_layouts") or []
+        if (
+            not isinstance(local, dict) or not local.get("visual_confirmed")
+            or indice >= len(layouts) or not dimensoes_referencia
+            or self.cancelamento_solicitado()
+        ):
+            return None
+        regioes = self.regioes_alvos_ocr_por_layout(
+            local, leitura, dimensoes_referencia, quantidade=len(layouts),
+        )
+        regiao = self.limitar_regiao(regioes[indice], limite=self.bounds_reconhecimento(local))
+        if not regiao:
+            return None
+        safe_print(f"OCR {indice + 1}: conferindo somente seu recorte ({self.formatar_regiao_log(regiao)}).", flush=True)
+        try:
+            captura, _left, _top = self.capturar_tela_pil(region=regiao)
+            # Uma linha ampliada dispensa a varredura da janela inteira e
+            # conserva acentos/espacos, sem a whitelist da leitura generica.
+            ampliada = self.ampliar_imagem_para_ocr(captura.convert("L"), fator=2)
+            primeira_leitura = self.extrair_texto_ocr_imagem_pil(ampliada, config="--psm 7")
+            textos = [primeira_leitura] if primeira_leitura else []
+            if not self.texto_ocr_confirma_alvo(esperado, primeira_leitura, limite_ratio=0.86):
+                textos.extend(self.extrair_textos_ocr_rapido(captura, texto_esperado=esperado))
+        except Exception as erro:
+            safe_print(f"OCR {indice + 1}: falha na leitura do recorte: {erro}", flush=True)
+            return None
+        if self.cancelamento_solicitado():
+            return None
+        # Cada variante e uma leitura independente. Concatenar as alternativas
+        # duplicava palavras e fazia uma leitura correta reprovar na comparacao.
+        capturado = next((str(texto).strip() for texto in textos
+                          if self.texto_ocr_confirma_alvo(esperado, texto, limite_ratio=0.86)), "")
+        if not capturado:
+            amostra = " | ".join(str(texto).strip() for texto in textos[:3])
+            safe_print(f"OCR {indice + 1}: recorte nao confirmou '{esperado}' | lido='{amostra}'.", flush=True)
+            return None
+        bounds = dict(zip(("left", "top", "width", "height"), regiao))
+        bounds["texto"] = capturado
+        confirmado = dict(local)
+        confirmado.update({
+            "ocr_anchor_confirmed": True,
+            "ocr_text": capturado,
+            "ocr_bounds": bounds,
+            "ocr_related_bounds": [bounds],
+            "ocr_partes": [esperado],
+            "ocr_textos": [capturado],
+            "ocr_composto": False,
+            "ocr_relacional": False,
+            "ocr_layout_targets_marked": True,
+            "search_stage": "ocr_visual_hybrid",
+        })
+        if leitura.get("_mostrar_marcadores_ocr", True):
+            self.marcar_regiao_absoluta(
+                *regiao, tema=self.tema_alvo_ocr(indice), etiqueta=f"OCR {indice + 1}",
+                duracao=0.18, bloqueante=True, margem=0,
+            )
+        safe_print(f"OCR {indice + 1} confirmado no recorte: '{capturado}'.", flush=True)
+        return confirmado
+
+    def localizar_referencia_hibrida_por_primeiro_ocr(
+        self,
+        caminho_referencia,
+        texto_ocr_esperado="",
+        region=None,
+        dimensoes_referencia=None,
+        confianca_ocr=0.72,
+        confianca_visual=0.8,
+        perfil_busca="balanced",
+        leitura_relativa=None,
+        _escala_ocr=None,
+    ):
+        """Confirma a referencia a partir do primeiro alvo OCR disponivel.
+
+        Cada alvo usa sua propria geometria salva no print de referencia. Isso
+        preserva a busca independente de monitor/DPI e permite que cada OCR
+        tenha uma acao diferente no fluxo.
+        """
+        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        partes = self.partes_alvos_ocr_esperados(texto_ocr_esperado, leitura)
+        layouts = leitura.get("ocr_target_layouts") if isinstance(leitura.get("ocr_target_layouts"), list) else []
+        geometrias = self.montar_layouts_alvos_ocr(
+            leitura,
+            dimensoes_referencia=dimensoes_referencia,
+            quantidade=len(partes),
+        )
+        testar_todos = bool(leitura.get("_testar_todos_alvos_ocr"))
+        resultados = []
+        ultimo_confirmado = None
+        for indice, esperado in enumerate(partes):
+            if self.cancelamento_solicitado():
+                return None
+            if not str(esperado or "").strip():
+                continue
+            geometria = geometrias[indice] if indice < len(geometrias) else {}
+            layout_origem = layouts[indice] if indice < len(layouts) and isinstance(layouts[indice], dict) else {}
+            layout_unico = dict(layout_origem)
+            layout_unico["texto"] = str(esperado).strip()
+            leitura_alvo = {
+                **leitura,
+                "_ocr_individual_resolvido": True,
+                "ocr_target_index": indice,
+                # A leitura individual recebe apenas sua propria geometria,
+                # mas o marcador ainda deve manter a cor e o numero originais
+                # do OCR dentro do bloco.
+                "ocr_target_marker_index": indice,
+                "ocr_target_action": layout_origem,
+                "offset_x": float(geometria.get("offset_x", 0) or 0),
+                "offset_y": float(geometria.get("offset_y", 0) or 0),
+                "largura": max(16, float(geometria.get("width", 140) or 140)),
+                "altura": max(12, float(geometria.get("height", 40) or 40)),
+                "ocr_target_layouts": [layout_unico],
+            }
+            safe_print(
+                f"OCR alternativo {indice + 1}/{len(partes)}: procurando '{esperado}'.",
+                flush=True,
+            )
+            confirmado = self.localizar_referencia_hibrida_ocr_visual(
+                caminho_referencia,
+                texto_ocr_esperado=str(esperado).strip(),
+                region=region,
+                dimensoes_referencia=dimensoes_referencia,
+                confianca_ocr=confianca_ocr,
+                confianca_visual=confianca_visual,
+                perfil_busca=perfil_busca,
+                leitura_relativa=leitura_alvo,
+                ocr_confirmado=None,
+                _escala_ocr=_escala_ocr,
+            )
+            if not confirmado and ultimo_confirmado:
+                confirmado = self.reler_alvo_ocr_na_referencia(
+                    ultimo_confirmado, indice, esperado, leitura, dimensoes_referencia,
+                )
+            status = (
+                "confirmed" if confirmado and confirmado.get("visual_confirmed")
+                else "visual_failed" if confirmado and confirmado.get("ocr_anchor_confirmed")
+                else "not_found"
+            )
+            resultados.append({"index": indice, "text": str(esperado).strip(), "status": status})
+            if status != "confirmed":
+                motivo = "imagem nao confirmou" if status == "visual_failed" else "texto nao encontrado"
+                safe_print(f"Falha OCR {indice + 1}: {motivo} ('{esperado}').", flush=True)
+                # Se outro alvo ja localizou a referencia, podemos mostrar
+                # onde este OCR falhou sem inventar uma posicao na tela.
+                if not confirmado and ultimo_confirmado and leitura.get("_mostrar_marcadores_ocr", True):
+                    regioes = self.regioes_alvos_ocr_por_layout(
+                        ultimo_confirmado, leitura, dimensoes_referencia, quantidade=len(partes),
+                    )
+                    regiao_falha = self.limitar_regiao(regioes[indice])
+                    if regiao_falha:
+                        self.marcar_regiao_absoluta(
+                            *regiao_falha, tema="ocr_alvo_falha",
+                            etiqueta=f"Falha OCR {indice + 1}", duracao=0.28, bloqueante=True, margem=0,
+                        )
+            if confirmado and bool(confirmado.get("visual_confirmed")):
+                ultimo_confirmado = confirmado
+                confirmado["ocr_target_index"] = indice
+                confirmado["ocr_target_action"] = layout_origem
+                confirmado["ocr_target_individual"] = True
+                if testar_todos:
+                    continue
+                regra = self.regra_acao_individual_ocr(layout_origem)
+                # "Continuar" em um OCR intermediario significa avaliar o
+                # proximo alvo; somente o ultimo libera a acao normal do bloco.
+                if regra["acao"] == "continuar" and indice < len(partes) - 1:
+                    safe_print(
+                        f"OCR {indice + 1} confirmado. Regra: continuar para OCR {indice + 2}.",
+                        flush=True,
+                    )
+                    continue
+                safe_print(
+                    f"OCR alternativo confirmado: OCR {indice + 1} ('{esperado}').",
+                    flush=True,
+                )
+                return confirmado
+            if testar_todos:
+                continue
+            regra = self.regra_acao_individual_ocr(layout_origem)
+            if regra["falha"] == "parar":
+                safe_print(
+                    f"OCR {indice + 1} nao foi confirmado. Regra: parar automacao.",
+                    flush=True,
+                )
+                return {
+                    "ocr_target_individual": True,
+                    "ocr_target_index": indice,
+                    "ocr_target_action": layout_origem,
+                    "ocr_target_flow": {"acao": "parar"},
+                }
+            if indice < len(partes) - 1:
+                safe_print(
+                    f"OCR {indice + 1} nao foi confirmado. Regra: procurar OCR {indice + 2}.",
+                    flush=True,
+                )
+                continue
+            # No ultimo OCR, "continuar" encerra este bloco sem erro e deixa
+            # a sequencia seguir para o proximo comando da automacao.
+            safe_print(
+                f"OCR {indice + 1} nao foi confirmado. Regra: continuar automacao.",
+                flush=True,
+            )
+            return {
+                "ocr_target_individual": True,
+                "ocr_target_index": indice,
+                "ocr_target_action": layout_origem,
+                "ocr_target_flow": {"acao": "continuar"},
+            }
+        if testar_todos:
+            # Procurar e um diagnostico: percorre todos os alvos uma vez e
+            # conserva inclusive as falhas. Nao executa cliques nem saltos.
+            return {
+                **(ultimo_confirmado or {}),
+                "ocr_validation": {
+                    "targets": resultados,
+                    "visual_confirmed": ultimo_confirmado is not None,
+                    "success": bool(resultados) and all(item["status"] == "confirmed" for item in resultados),
+                },
+            }
+        return None
+
+    def acao_individual_ocr_configurada(self, local, leitura_relativa=None):
+        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        if not bool(local.get("ocr_target_individual")):
+            return None
+        config = local.get("ocr_target_action") if isinstance(local.get("ocr_target_action"), dict) else {}
+        if not config:
+            config = leitura.get("ocr_target_action") if isinstance(leitura.get("ocr_target_action"), dict) else {}
+        regra = self.regra_acao_individual_ocr(config)
+        acao = regra["acao"]
+        if acao not in {"clicar", "clicar_ir_para_bloco", "confirmar_ir_para_bloco"}:
+            return None
+        return {
+            "acao": acao,
+            "bloco": regra["bloco"],
+            "clicks": regra["clicks"],
+            "indice": int(local.get("ocr_target_index", 0) or 0),
+        }
+
+    def aplicar_acao_individual_ocr(self, local, leitura_relativa=None):
+        acao = self.acao_individual_ocr_configurada(local, leitura_relativa)
+        if not acao:
+            return None
+        if acao["acao"] == "confirmar_ir_para_bloco":
+            if not acao["bloco"]:
+                safe_print("OCR individual encontrou a regra de salto sem bloco de destino; mantendo o fluxo normal.", flush=True)
+                return None
+            local["ocr_target_flow"] = {"acao": "ir_para_bloco", "bloco": acao["bloco"]}
+            safe_print(
+                f"OCR {acao['indice'] + 1}: redirecionando para o bloco {acao['bloco']}.",
+                flush=True,
+            )
+            return "ir_para_bloco"
+
+        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        # A bolinha "Clique" mostrada em cada preview continua sendo o ponto
+        # de clique do bloco. O OCR escolhido apenas decide qual regra sera
+        # seguida; ele nao desloca o clique para o centro do texto encontrado.
+        # Isso permite, por exemplo, ler o rotulo e clicar no botao ao lado.
+        dimensoes = leitura.get("_dimensoes_referencia")
+        offset_x, offset_y = self.escalar_offset_referencia(
+            local,
+            offset_x=leitura.get("_click_offset_x", 0),
+            offset_y=leitura.get("_click_offset_y", 0),
+            dimensoes_referencia=dimensoes,
+        )
+        destino_x, destino_y = self.centro_area_reconhecida(
+            local,
+            offset_x=offset_x,
+            offset_y=offset_y,
+        )
+        self.marcar_regiao_absoluta(
+            int(destino_x) - 9,
+            int(destino_y) - 9,
+            18,
+            18,
+            tema=self.tema_alvo_ocr(acao['indice']),
+            etiqueta=f"Clique OCR {acao['indice'] + 1}",
+            duracao=0.18,
+            bloqueante=True,
+            margem=0,
+        )
+        if self.cancelamento_solicitado():
+            return "cancelado"
+        time.sleep(0.04)
+        pyautogui.click(x=destino_x, y=destino_y, clicks=acao["clicks"], interval=0.08)
+        safe_print(
+            f"OCR {acao['indice'] + 1}: clique individual executado em X/Y: {destino_x}/{destino_y} | clicks={acao['clicks']}",
+            flush=True,
+        )
+        local["ocr_target_action_applied"] = "clicar"
+        if acao["acao"] == "clicar_ir_para_bloco":
+            if not acao["bloco"]:
+                safe_print("OCR individual clicou, mas a regra nao possui bloco de destino; mantendo o fluxo normal.", flush=True)
+                return "clicar"
+            local["ocr_target_flow"] = {"acao": "ir_para_bloco", "bloco": acao["bloco"]}
+            safe_print(
+                f"OCR {acao['indice'] + 1}: clique concluido. Indo para bloco {acao['bloco']}.",
+                flush=True,
+            )
+            return "ir_para_bloco"
+        return "clicar"
+
     def localizar_referencia_hibrida_ocr_visual(
         self,
         caminho_referencia,
@@ -2465,6 +2866,23 @@ class ExecutorAutomacao:
             return None
         if ref_largura <= 0 or ref_altura <= 0:
             return None
+
+        leitura_configurada = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        if (
+            not leitura_configurada.get("_ocr_individual_resolvido")
+            and self.modo_acao_alvos_ocr(leitura_configurada) == "individual"
+        ):
+            return self.localizar_referencia_hibrida_por_primeiro_ocr(
+                caminho_referencia,
+                texto_ocr_esperado=esperado,
+                region=region,
+                dimensoes_referencia=dimensoes_referencia,
+                confianca_ocr=confianca_ocr,
+                confianca_visual=confianca_visual,
+                perfil_busca=perfil_busca,
+                leitura_relativa=leitura_configurada,
+                _escala_ocr=_escala_ocr,
+            )
 
         spec_composto = self.interpretar_texto_ocr_composto(esperado)
         quantidade_esperada = self.quantidade_alvos_ocr_esperados(esperado, leitura_relativa)
@@ -2688,6 +3106,14 @@ class ExecutorAutomacao:
                         "visual_confirmed": True,
                         "visual_scale": float(visual.get("scale", escala_visual) or escala_visual),
                     })
+                    if self.modo_acao_alvos_ocr(leitura_configurada) == "individual":
+                        confirmado["ocr_target_individual"] = True
+                        confirmado["ocr_target_index"] = int(leitura_configurada.get("ocr_target_index", 0) or 0)
+                        confirmado["ocr_target_action"] = (
+                            leitura_configurada.get("ocr_target_action")
+                            if isinstance(leitura_configurada.get("ocr_target_action"), dict)
+                            else (leitura_configurada.get("ocr_target_layouts") or [{}])[0]
+                        )
                     safe_print(
                         f"Hibrido OCR + imagem: etapa 2/2 confirmada pela imagem (escala={confirmado['visual_scale']:.2f}).",
                         flush=True,
@@ -6888,7 +7314,7 @@ class ExecutorAutomacao:
                             bound,
                             duracao=0.18,
                             bloqueante=False,
-                            tema=f"ocr_busca_{min(parte_indice, 4)}",
+                            tema=self.tema_alvo_ocr(parte_indice - 1),
                             etiqueta=f"OCR {indice}.{parte_indice}",
                             margem=3,
                         )
@@ -8108,6 +8534,25 @@ class ExecutorAutomacao:
                         leitura_relativa=leitura_relativa,
                         ocr_confirmado=ocr_cacheado,
                     )
+                    if isinstance(local_hibrido, dict) and "ocr_validation" in local_hibrido:
+                        # O teste completo ja tem o resultado de cada alvo,
+                        # mesmo quando algum falhou. Nao reinicie noutra area.
+                        return local_hibrido
+                    fluxo_ocr_individual = (
+                        local_hibrido.get("ocr_target_flow")
+                        if isinstance(local_hibrido, dict)
+                        else None
+                    )
+                    if (
+                        isinstance(fluxo_ocr_individual, dict)
+                        and str(fluxo_ocr_individual.get("acao") or "") in {"continuar", "parar"}
+                    ):
+                        # Uma falha individual nao e uma tentativa pendente de
+                        # OCR: ela ja decidiu o fluxo. Antes esse resultado era
+                        # descartado pelo cache hibrido e o comportamento geral
+                        # do card acabava substituindo a regra do OCR.
+                        ocr_hibrido_pendente.pop(chave_hibrido, None)
+                        return local_hibrido
                     if local_hibrido and local_hibrido.get("visual_confirmed"):
                         ocr_hibrido_pendente.pop(chave_hibrido, None)
                         self.registrar_reconhecimento_bem_sucedido(
@@ -8472,6 +8917,11 @@ class ExecutorAutomacao:
         )
         if not local:
             return None
+        fluxo_individual = local.get("ocr_target_flow") if isinstance(local, dict) else None
+        if isinstance(fluxo_individual, dict) and str(fluxo_individual.get("acao") or "") in {"continuar", "parar"}:
+            # A regra de falha de um OCR individual encerra a busca do bloco
+            # antes da confirmacao visual/click padrao.
+            return local
         hibrido_ocr_visual = bool(
             texto_ocr_esperado
             and dimensoes_referencia
@@ -8486,12 +8936,24 @@ class ExecutorAutomacao:
         ordem_bloco = None
         if str(bloco_id or "").startswith("bloco:"):
             ordem_bloco = str(bloco_id).split(":", 1)[1].strip()
-        leitura = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        leitura = {
+            **(leitura_relativa if isinstance(leitura_relativa, dict) else {}),
+            # Mantem o mesmo ponto "Clique" configurado na aba Busca para
+            # uma acao individual de OCR.
+            "_click_offset_x": offset_x,
+            "_click_offset_y": offset_y,
+            "_dimensoes_referencia": dimensoes_referencia,
+        }
         salvar_em = str(leitura.get("salvar_em", "") or "").strip()
         ocr_ja_confirmado = (
             isinstance(local, dict)
             and (
                 self.ocr_hibrido_tem_todos_alvos(local, texto_ocr_esperado, leitura_relativa)
+                or (
+                    local.get("ocr_target_individual")
+                    and local.get("visual_confirmed")
+                    and local.get("ocr_anchor_confirmed", True)
+                )
                 or (
                     local.get("ocr_visual_anchor")
                     and texto_ocr_esperado
@@ -8539,6 +9001,12 @@ class ExecutorAutomacao:
                 flush=True,
             )
             return None
+        acao_ocr_individual = self.aplicar_acao_individual_ocr(local, leitura_relativa=leitura)
+        if acao_ocr_individual == "cancelado":
+            return None
+        if acao_ocr_individual in {"clicar", "ir_para_bloco"}:
+            return local
+
         # A borda verde continua informando a confirmacao, so que com uma
         # exibicao curta para nao atrasar cada proximo bloco da automacao.
         self.marcar_area_reconhecida(local, duracao=0.28, bloqueante=True, etiqueta="Reconhecimento")
@@ -8602,6 +9070,11 @@ class ExecutorAutomacao:
         marcador_bloqueante=True,
         duracao_marcador=0.24,
     ):
+        leitura_relativa = dict(leitura_relativa or {})
+        leitura_relativa["_mostrar_marcadores_ocr"] = bool(mostrar_marcador)
+        leitura_relativa["_testar_todos_alvos_ocr"] = bool(
+            texto_ocr_esperado and self.modo_acao_alvos_ocr(leitura_relativa) == "individual"
+        )
         titulo_janela = str(janela_alvo or self.janela_alvo or "").strip()
         if titulo_janela:
             safe_print(f"Janela alvo configurada para teste: {titulo_janela}", flush=True)
@@ -8660,7 +9133,7 @@ class ExecutorAutomacao:
         inicio_teste = time.perf_counter()
         timeout_total = max(0.1, float(timeout or 0.1))
         timeout_primeira_tentativa = timeout_total
-        if janela_ativa_teste and modo_area_teste == "custom_area":
+        if janela_ativa_teste and modo_area_teste == "custom_area" and not leitura_relativa["_testar_todos_alvos_ocr"]:
             timeout_primeira_tentativa = min(timeout_total, 2.5)
         local = self.esperar_imagem(
             imagem=imagem,
@@ -8696,6 +9169,26 @@ class ExecutorAutomacao:
         if not local:
             safe_print("Teste de reconhecimento: nenhuma correspondencia encontrada.", flush=True)
             return False
+
+        diagnostico = local.get("ocr_validation") if isinstance(local, dict) else None
+        if isinstance(diagnostico, dict):
+            # O modo individual ja leu os alvos na ordem e confirmou a imagem.
+            # Revalidar aqui como OCR composto repetia 1/2 e alterava o resultado.
+            safe_print("OCR_VALIDATION_JSON|" + json.dumps(diagnostico, ensure_ascii=True), flush=True)
+            if mostrar_marcador and diagnostico.get("visual_confirmed"):
+                self.marcar_area_reconhecida(
+                    local, duracao=max(0.12, float(duracao_marcador or 0.24)),
+                    bloqueante=bool(marcador_bloqueante), etiqueta="Reconhecimento",
+                )
+            sucesso = bool(diagnostico.get("success"))
+            if sucesso:
+                safe_print("Teste concluido: todos os OCRs e a imagem confirmaram.", flush=True)
+            else:
+                falhas = ", ".join(
+                    f"OCR {item['index'] + 1}" for item in diagnostico["targets"] if item["status"] != "confirmed"
+                )
+                safe_print(f"Teste concluido com falha em: {falhas}.", flush=True)
+            return sucesso
 
         esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
         safe_print(
@@ -9165,6 +9658,28 @@ class ExecutorAutomacao:
                     )
 
                 if resultado:
+                    fluxo_ocr = resultado.get("ocr_target_flow") if isinstance(resultado, dict) else None
+                    acao_fluxo_ocr = str(fluxo_ocr.get("acao") or "") if isinstance(fluxo_ocr, dict) else ""
+                    if acao_fluxo_ocr == "parar":
+                        safe_print(
+                            f"Bloco {ordem_evento}: OCR individual acionou parar automacao.",
+                            flush=True,
+                        )
+                        return self.resultado_fluxo("parar")
+                    if acao_fluxo_ocr == "continuar":
+                        safe_print(
+                            f"Bloco {ordem_evento}: OCR individual nao confirmou; continuando a automacao.",
+                            flush=True,
+                        )
+                        return self.resultado_fluxo("continuar")
+                    if acao_fluxo_ocr == "ir_para_bloco":
+                        bloco_destino_ocr = str(fluxo_ocr.get("bloco") or "").strip()
+                        if bloco_destino_ocr:
+                            safe_print(
+                                f"Bloco {ordem_evento}: OCR individual confirmou {nome_imagem}. Indo para bloco {bloco_destino_ocr}.",
+                                flush=True,
+                            )
+                            return self.resultado_fluxo("ir_para_bloco", bloco=bloco_destino_ocr)
                     safe_print(
                         f"Bloco {ordem_evento}: reconhecimento confirmou {nome_imagem}.",
                         flush=True,

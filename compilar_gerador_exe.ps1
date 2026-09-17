@@ -109,9 +109,24 @@ function Ensure-BuildPython {
 
     Write-Host "Instalando Python $pythonVersion temporario para gerar wheels compativeis..." -ForegroundColor DarkCyan
     & $pythonInstallerPath /quiet InstallAllUsers=0 TargetDir="$buildPythonDir" AssociateFiles=0 PrependPath=0 AppendPath=0 Shortcuts=0 Include_doc=0 Include_test=0 Include_tools=0 Include_launcher=0 InstallLauncherAllUsers=0 Include_pip=1 Include_tcltk=1 | Out-Host
-    if (-not (Test-Path $buildPythonExe)) {
-        throw "Nao foi possivel preparar o Python temporario em '$buildPythonDir'."
+    if (Test-Path $buildPythonExe) {
+        return
     }
+
+    # O runtime portatil ja incluido no instalador tambem tem pip e todas as
+    # bibliotecas necessarias. Ele permite gerar a release quando o instalador
+    # temporario do Python for bloqueado por politica/antivirus do Windows.
+    $portablePython = Join-Path $installerSupportDir "python_runtime_prebuilt\python.exe"
+    if (Test-Path $portablePython) {
+        & $portablePython --version *> $null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Usando o Python portatil ja validado para gerar a release..." -ForegroundColor DarkCyan
+            $script:buildPythonExe = $portablePython
+            return
+        }
+    }
+
+    throw "Nao foi possivel preparar o Python temporario em '$buildPythonDir'."
 }
 
 function Invoke-BuildPython {
