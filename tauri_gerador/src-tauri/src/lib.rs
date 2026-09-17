@@ -1407,6 +1407,33 @@ fn list_virtualbox_vms() -> Result<Value, String> {
 
 fn local_python_candidates(root: &Path) -> Vec<PathBuf> {
     let mut local_candidates = Vec::<PathBuf>::new();
+    // O Agent reutiliza este runtime do Studio. Em desenvolvimento, `root`
+    // aponta para a raiz do repositorio, enquanto o Python portatil esta no
+    // suporte do instalador (ou no target do Agent), nao ao lado dos scripts.
+    // Inclua esses caminhos antes de procurar um Python global do Windows.
+    local_candidates.push(
+        root.join("tauri_gerador")
+            .join("src-tauri")
+            .join("installer_support")
+            .join("python_runtime_prebuilt")
+            .join("python.exe"),
+    );
+    for profile in ["debug", "release"] {
+        local_candidates.push(
+            root.join("flowdetect_agent")
+                .join("target")
+                .join(profile)
+                .join("python_runtime")
+                .join("python.exe"),
+        );
+        local_candidates.push(
+            root.join("tauri_gerador")
+                .join("target")
+                .join(profile)
+                .join("python_runtime")
+                .join("python.exe"),
+        );
+    }
     local_candidates.push(root.join("python_runtime").join("python.exe"));
     local_candidates.push(
         root.join("resources")
@@ -5308,6 +5335,26 @@ fn get_test_execution_state(
         .map_err(|_| "Falha no estado interno da execucao.".to_string())?
         .to_owned();
     Ok(TestExecutionPayload { running })
+}
+
+#[tauri::command]
+fn move_blocks_to_sequence(
+    app: AppHandle,
+    orders: Vec<i32>,
+    sequence: String,
+) -> Result<Value, String> {
+    if orders.is_empty() {
+        return Err("Selecione pelo menos um bloco para mover.".into());
+    }
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "move-to-sequence".into(),
+        "--sequencia".into(),
+        sequence,
+        "--orders".into(),
+    ];
+    args.extend(orders.into_iter().map(|order| order.to_string()));
+    run_helper_json(&root, &args)
 }
 
 #[tauri::command]
@@ -10262,6 +10309,7 @@ pub fn run() {
             update_compare_spreadsheet_block,
             update_sequence_settings,
             update_initial_sequence,
+            move_blocks_to_sequence,
             update_block_delay,
             update_all_blocks_delay,
             move_block,

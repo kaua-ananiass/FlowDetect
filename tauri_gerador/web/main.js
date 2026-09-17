@@ -222,6 +222,10 @@ const state = {
   commandMapPageSequence: "principal",
   commandMapPageSequenceLock: null,
   commandMapFocusOrder: null,
+  commandMapSelectedCardKeys: new Set(),
+  commandMapSelectionSequence: "",
+  commandMapMoveTargetSequence: "",
+  commandMapMarqueeSelection: null,
   commandMapOrderCache: [],
   commandMapAutoFitFrame: 0,
   commandConnectorLayoutFrame: 0,
@@ -438,6 +442,9 @@ const timelineMeta = document.getElementById("timelineMeta");
 const commandMapMeta = document.getElementById("commandMapMeta");
 const commandMapStepBadge = document.getElementById("commandMapStepBadge");
 const commandMapPageTabs = document.getElementById("commandMapPageTabs");
+const mapSelectionMenu = document.getElementById("mapSelectionMenu");
+const mapSelectionMenuCount = document.getElementById("mapSelectionMenuCount");
+const mapSelectionMenuTargets = document.getElementById("mapSelectionMenuTargets");
 const commandMapPageModeSelect = document.getElementById("commandMapPageModeSelect");
 const commandMapPageAfterLoopSelect = document.getElementById("commandMapPageAfterLoopSelect");
 const commandMapPageModeHint = document.getElementById("commandMapPageModeHint");
@@ -10541,6 +10548,254 @@ function renderCommandMapPageTabs() {
     .join("");
 }
 
+function commandMapCardClientKey(event) {
+  return String(event?.clientKey || "").trim();
+}
+
+function clearCommandMapCardSelection({ render = false } = {}) {
+  state.commandMapSelectedCardKeys = new Set();
+  state.commandMapSelectionSequence = "";
+  closeCommandMapSelectionMenu();
+  if (render) {
+    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+    return;
+  }
+  syncCommandMapCardMoveControls();
+  syncCommandMapCardSelectionVisuals();
+}
+
+function selectedCommandMapEvents(events = getCommandMapEvents()) {
+  const selectedKeys = state.commandMapSelectedCardKeys instanceof Set
+    ? state.commandMapSelectedCardKeys
+    : new Set();
+  return events.filter((event) => selectedKeys.has(commandMapCardClientKey(event)));
+}
+
+function pruneCommandMapCardSelection(events = getCommandMapEvents()) {
+  const currentSequence = normalizeSequenceName(state.commandMapPageSequence);
+  if (state.commandMapSelectionSequence && state.commandMapSelectionSequence !== currentSequence) {
+    state.commandMapSelectedCardKeys = new Set();
+    state.commandMapSelectionSequence = "";
+    return;
+  }
+  const availableKeys = new Set(events.map(commandMapCardClientKey).filter(Boolean));
+  state.commandMapSelectedCardKeys = new Set(
+    Array.from(state.commandMapSelectedCardKeys || []).filter((key) => availableKeys.has(key))
+  );
+  if (!state.commandMapSelectedCardKeys.size) {
+    state.commandMapSelectionSequence = "";
+  }
+}
+
+function syncCommandMapCardSelectionVisuals() {
+  const selectedKeys = state.commandMapSelectedCardKeys || new Set();
+  commandMapList?.querySelectorAll(".command-tree-card[data-client-key]").forEach((card) => {
+    const selected = selectedKeys.has(String(card.dataset.clientKey || ""));
+    card.classList.toggle("is-selected-for-move", selected);
+  });
+}
+
+function syncCommandMapCardMoveControls(events = getCommandMapEvents()) {
+  pruneCommandMapCardSelection(events);
+  syncCommandMapCardSelectionVisuals();
+}
+
+function closeCommandMapSelectionMenu() {
+  if (mapSelectionMenu) {
+    mapSelectionMenu.hidden = true;
+  }
+}
+
+function openCommandMapSelectionMenu(clientX, clientY) {
+  const selected = selectedCommandMapEvents();
+  const sourceSequence = normalizeSequenceName(state.commandMapPageSequence);
+  const destinations = getCommandMapPageDefinitions()
+    .filter((page) => page.sequence !== sourceSequence);
+  if (!selected.length || !destinations.length || !mapSelectionMenu || !mapSelectionMenuTargets) {
+    return;
+  }
+  mapSelectionMenuCount.textContent = `${selected.length} card${selected.length === 1 ? "" : "s"} selecionado(s)`;
+  mapSelectionMenuTargets.innerHTML = destinations
+    .map((page) => `<button type="button" role="menuitem" data-map-selection-target="${escapeHtml(page.sequence)}">${escapeHtml(page.label)}</button>`)
+    .join("");
+  mapSelectionMenu.hidden = false;
+  const width = mapSelectionMenu.offsetWidth || 200;
+  const height = mapSelectionMenu.offsetHeight || 120;
+  mapSelectionMenu.style.left = `${Math.max(12, Math.min(window.innerWidth - width - 12, clientX + 10))}px`;
+  mapSelectionMenu.style.top = `${Math.max(12, Math.min(window.innerHeight - height - 12, clientY + 10))}px`;
+}
+
+function toggleCommandMapCardSelection(clientKey, selected) {
+  const key = String(clientKey || "").trim();
+  if (!key) {
+    return;
+  }
+  closeCommandMapSelectionMenu();
+  const currentSequence = normalizeSequenceName(state.commandMapPageSequence);
+  if (state.commandMapSelectionSequence && state.commandMapSelectionSequence !== currentSequence) {
+    state.commandMapSelectedCardKeys = new Set();
+  }
+  state.commandMapSelectionSequence = currentSequence;
+  const next = new Set(state.commandMapSelectedCardKeys || []);
+  if (selected) {
+    next.add(key);
+  } else {
+    next.delete(key);
+  }
+  state.commandMapSelectedCardKeys = next;
+  if (!next.size) {
+    state.commandMapSelectionSequence = "";
+  }
+  syncCommandMapCardMoveControls();
+  syncCommandMapCardSelectionVisuals();
+}
+
+function commandMapMarqueeRect(startX, startY, endX, endY) {
+  return {
+    left: Math.min(startX, endX),
+    top: Math.min(startY, endY),
+    right: Math.max(startX, endX),
+    bottom: Math.max(startY, endY),
+  };
+}
+
+function commandMapRectIntersects(first, second) {
+  return first.left < second.right
+    && first.right > second.left
+    && first.top < second.bottom
+    && first.bottom > second.top;
+}
+
+function startCommandMapMarqueeSelection(event) {
+  if (
+    !commandMapList
+    || event.button !== 0
+    || state.activeTab !== "commands"
+    || !(event.ctrlKey || event.metaKey)
+    || event.target.closest("button, input, textarea, select, label, a, [contenteditable='true'], .command-tree-card, .insert-card-panel, .command-map-tree-edge-label, .command-map-tree-terminal-node")
+    || !event.target.closest(".command-flow-row, .command-map-tree, .command-map-tree-stage, .command-map-list")
+  ) {
+    return false;
+  }
+
+  event.preventDefault();
+  closeCommandMapSelectionMenu();
+  const box = document.createElement("div");
+  box.className = "command-map-selection-rectangle";
+  document.body.appendChild(box);
+  const preserveSelection = Boolean(event.ctrlKey || event.metaKey);
+  state.commandMapMarqueeSelection = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    latestX: event.clientX,
+    latestY: event.clientY,
+    baseKeys: preserveSelection ? new Set(state.commandMapSelectedCardKeys || []) : new Set(),
+    box,
+    moved: false,
+  };
+  commandMapList.setPointerCapture?.(event.pointerId);
+  return true;
+}
+
+function updateCommandMapMarqueeSelection(event) {
+  const selection = state.commandMapMarqueeSelection;
+  if (!selection || selection.pointerId !== event.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  selection.latestX = event.clientX;
+  selection.latestY = event.clientY;
+  const rect = commandMapMarqueeRect(selection.startX, selection.startY, selection.latestX, selection.latestY);
+  selection.moved = selection.moved || rect.right - rect.left >= 5 || rect.bottom - rect.top >= 5;
+  Object.assign(selection.box.style, {
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${rect.right - rect.left}px`,
+    height: `${rect.bottom - rect.top}px`,
+  });
+
+  const nextKeys = new Set(selection.baseKeys);
+  getDistinctCommandTreeCards().forEach((card) => {
+    const cardRect = card.getBoundingClientRect();
+    if (commandMapRectIntersects(rect, cardRect)) {
+      nextKeys.add(String(card.dataset.clientKey || ""));
+    }
+  });
+  state.commandMapSelectedCardKeys = new Set(Array.from(nextKeys).filter(Boolean));
+  state.commandMapSelectionSequence = state.commandMapSelectedCardKeys.size
+    ? normalizeSequenceName(state.commandMapPageSequence)
+    : "";
+  syncCommandMapCardSelectionVisuals();
+}
+
+function stopCommandMapMarqueeSelection(event, commit = true) {
+  const selection = state.commandMapMarqueeSelection;
+  if (!selection || selection.pointerId !== event.pointerId) {
+    return;
+  }
+  selection.box.remove();
+  state.commandMapMarqueeSelection = null;
+  if (!commit || !selection.moved) {
+    clearCommandMapCardSelection();
+    return;
+  }
+  syncCommandMapCardMoveControls();
+  const selected = selectedCommandMapEvents();
+  if (selected.length) {
+    openCommandMapSelectionMenu(selection.latestX, selection.latestY);
+  }
+}
+
+async function moveSelectedCommandMapCards(destination = "") {
+  const sourceSequence = normalizeSequenceName(state.commandMapPageSequence);
+  let selected = selectedCommandMapEvents();
+  if (!selected.length) {
+    setMessage("Selecione um ou mais cards para mover.", "error");
+    return;
+  }
+  const destinationSequence = normalizeSequenceName(destination || state.commandMapMoveTargetSequence);
+  if (!destinationSequence || destinationSequence === sourceSequence) {
+    setMessage("Escolha outra pagina como destino dos cards.", "error");
+    return;
+  }
+
+  try {
+    const prepared = await autoSaveCommandMapPageSwitch();
+    if (!prepared) {
+      return;
+    }
+    selected = selectedCommandMapEvents();
+    if (!selected.length) {
+      setMessage("A selecao mudou antes da transferencia. Selecione os cards novamente.", "error");
+      return;
+    }
+
+    setBusy("Movendo cards");
+    const roadmap = await invoke("move_blocks_to_sequence", {
+      orders: selected.map((event) => Number(event.order)).filter((order) => Number.isFinite(order) && order > 0),
+      sequence: destinationSequence,
+    });
+    const destinationLabel = getCommandMapPageLabel(destinationSequence, roadmap);
+    const movedCount = selected.length;
+    closeCommandMapSelectionMenu();
+    clearCommandMapCardSelection();
+    state.commandMapMoveTargetSequence = destinationSequence;
+    state.commandMapPageSequence = destinationSequence;
+    state.commandMapFocusOrder = getCommandMapEvents(destinationSequence, roadmap)
+      .find((event) => selected.some((item) => commandMapCardClientKey(item) === commandMapCardClientKey(event)))?.order
+      ?? getCommandMapEvents(destinationSequence, roadmap)[0]?.order
+      ?? null;
+    applyRoadmap(roadmap, { preserveCommandMapSequence: destinationSequence });
+    await refreshAutomationLibrary();
+    setBusy("Pronto");
+    setMessage(`${movedCount} card${movedCount === 1 ? "" : "s"} movido(s) para ${destinationLabel}.`, "success");
+  } catch (error) {
+    setBusy("Erro");
+    setMessage(String(error), "error");
+  }
+}
+
 function switchCommandMapPage(sequenceName, options = {}) {
   const { skipAutoSave = false } = options;
   const nextSequence = normalizeSequenceName(sequenceName);
@@ -10556,6 +10811,7 @@ function switchCommandMapPage(sequenceName, options = {}) {
   state.insertPanel = null;
   state.expandedTreeCardOrder = null;
   state.expandedTreeCardOrigin = null;
+  clearCommandMapCardSelection();
   state.commandMapPageSequenceLock = null;
   state.commandMapPageSequence = nextSequence;
   syncCommandMapPageTheme();
@@ -18807,6 +19063,7 @@ function renderCommandMapCardSegment(event, index = 0, events = [], options = {}
   const isLoopMarker = isLoopMarkerType(event.type);
   const isRuntimeEditable = event.type === "texto_livre" && Boolean(event.details?.editavel_execucao);
   const isNewlyCreated = Number(state.createdBlockAnimationOrder) === Number(event.order);
+  const isSelectedForMove = state.commandMapSelectedCardKeys?.has(commandMapCardClientKey(event));
   const primaryActionClass = isRecognitionCard
     ? "has-recognition-button"
     : hasRecordButton
@@ -18836,7 +19093,7 @@ function renderCommandMapCardSegment(event, index = 0, events = [], options = {}
   ].filter(Boolean).join(" ");
   return `
     <div class="${escapeHtml(wrapperClass)}" data-order="${escapeHtml(event.order)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" ${options.treeNode ? 'data-tree-node-segment="true"' : ""}>
-      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isInlineExpanded ? "is-inline-expanded" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarker ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""} ${isNewlyCreated ? "is-newly-created" : ""}" data-order="${escapeHtml(event.order)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
+      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isInlineExpanded ? "is-inline-expanded" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarker ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""} ${isNewlyCreated ? "is-newly-created" : ""} ${isSelectedForMove ? "is-selected-for-move" : ""}" data-order="${escapeHtml(event.order)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
         <div class="command-tree-top is-command-chip-top">
           <div class="command-tree-main">
             <span class="command-index">${String(event.order).padStart(2, "0")}</span>
@@ -19661,6 +19918,7 @@ function startCommandMapTreePan(event) {
 
   event.preventDefault();
   event.stopPropagation();
+  clearCommandMapCardSelection();
   state.commandMapTreePan = {
     pointerId: event.pointerId,
     startX: event.clientX,
@@ -19765,6 +20023,8 @@ function renderCommandMap(options = {}) {
   const previousScrollLeft = preserveScroll ? commandMapList.scrollLeft : null;
   const previousScrollTop = preserveScroll ? commandMapList.scrollTop : null;
   const events = getCommandMapEvents().map((event) => applyCommandMapDraftToEvent(event));
+  pruneCommandMapCardSelection(events);
+  syncCommandMapCardMoveControls(events);
   state.commandMapOrderCache = events
     .map((event) => Number(event.order))
     .filter((order) => Number.isFinite(order));
@@ -19886,6 +20146,7 @@ function renderCommandMap(options = {}) {
     commandMapList.scrollTop = previousScrollTop ?? commandMapList.scrollTop;
   }
   hydrateRecognitionPreviewCards(commandMapList);
+  syncCommandMapCardSelectionVisuals();
   applyCommandMapZoom();
   if (skipAutoFit) {
     scheduleCommandConnectorLayout({ burstMs: layoutSnapshot ? 440 : 0 });
@@ -24145,6 +24406,22 @@ mapApplyBulkDelayButton?.addEventListener("click", async () => {
   await applyBulkDelayToAllBlocks("map");
 });
 
+mapSelectionMenuTargets?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-map-selection-target]");
+  if (!button) {
+    return;
+  }
+  const sequence = normalizeSequenceName(button.dataset.mapSelectionTarget);
+  state.commandMapMoveTargetSequence = sequence;
+  void moveSelectedCommandMapCards(sequence);
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && mapSelectionMenu && !mapSelectionMenu.hidden) {
+    closeCommandMapSelectionMenu();
+  }
+});
+
 
 document.getElementById("exportButton").addEventListener("click", async () => {
   const automationName = exportNameInput.value.trim();
@@ -24699,6 +24976,10 @@ commandMapList.addEventListener("pointerdown", (event) => {
     return;
   }
 
+  if (startCommandMapMarqueeSelection(event)) {
+    return;
+  }
+
   if (startCommandMapTreePan(event)) {
     return;
   }
@@ -24735,6 +25016,9 @@ commandMapList.addEventListener("pointerdown", (event) => {
 window.addEventListener("pointermove", moveRecognitionVisualDrag);
 window.addEventListener("pointerup", stopRecognitionVisualDrag);
 window.addEventListener("pointercancel", stopRecognitionVisualDrag);
+window.addEventListener("pointermove", updateCommandMapMarqueeSelection);
+window.addEventListener("pointerup", (event) => stopCommandMapMarqueeSelection(event, true));
+window.addEventListener("pointercancel", (event) => stopCommandMapMarqueeSelection(event, false));
 window.addEventListener("pointermove", updateCommandMapTreeNodeDrag);
 window.addEventListener("pointerup", (event) => stopCommandMapTreeNodeDrag(event, true));
 window.addEventListener("pointercancel", (event) => stopCommandMapTreeNodeDrag(event, false));
@@ -24763,6 +25047,23 @@ commandMapList.addEventListener("focusin", (event) => {
       setCommandMapFocus(order, "smooth");
     }
   }
+});
+
+commandMapList.addEventListener("click", (event) => {
+  if (!(event.ctrlKey || event.metaKey)) {
+    return;
+  }
+  if (event.target.closest("button, input, textarea, select, label, a, [contenteditable='true']")) {
+    return;
+  }
+  const card = event.target.closest(".command-tree-card[data-client-key]");
+  if (!card) {
+    return;
+  }
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const key = String(card.dataset.clientKey || "");
+  toggleCommandMapCardSelection(key, !state.commandMapSelectedCardKeys?.has(key));
 });
 
 commandMapList.addEventListener("click", async (event) => {
