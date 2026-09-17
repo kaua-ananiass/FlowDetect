@@ -345,6 +345,126 @@ class OcrAnchorTests(unittest.TestCase):
         self.assertFalse(self.executor.texto_ocr_confirma_alvo("C\u00f3digo", "C\u00e9digo", limite_ratio=0.90))
         self.assertFalse(self.executor.texto_ocr_confirma_alvo("C\u00f3digo", "Caxigo", limite_ratio=0.86))
 
+    def test_individual_ocr_continues_to_next_target_after_a_match(self):
+        executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.cancelamento_solicitado = Mock(return_value=False)
+        leitura = {
+            "largura": 136, "altura": 27, "offset_x": 0, "offset_y": -21,
+            "ocr_target_layouts": [
+                {"texto": "Natureza de", "action": "continuar", "failureAction": "continuar"},
+                {"texto": "Codigo", "offsetX": -39, "offsetY": 2, "width": 57, "height": 23,
+                 "action": "confirmar_ir_para_bloco", "block": "15", "failureAction": "parar"},
+            ],
+        }
+        primeira = {"visual_confirmed": True, "left": 10, "top": 10, "width": 159, "height": 74}
+        segunda = {"visual_confirmed": True, "left": 10, "top": 10, "width": 159, "height": 74}
+        executor.localizar_referencia_hibrida_ocr_visual = Mock(side_effect=[primeira, segunda])
+
+        local = executor.localizar_referencia_hibrida_por_primeiro_ocr(
+            "codigo_001", "Natureza de\nCodigo", dimensoes_referencia=(159, 74), leitura_relativa=leitura,
+        )
+
+        self.assertEqual(executor.localizar_referencia_hibrida_ocr_visual.call_count, 2)
+        leituras = [call.kwargs["leitura_relativa"] for call in executor.localizar_referencia_hibrida_ocr_visual.call_args_list]
+        self.assertEqual([item["ocr_target_marker_index"] for item in leituras], [0, 1])
+        self.assertEqual(local["ocr_target_index"], 1)
+        self.assertEqual(local["ocr_target_action"]["action"], "confirmar_ir_para_bloco")
+
+    def test_individual_ocr_marker_keeps_its_original_color_and_number(self):
+        executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.cancelamento_solicitado = Mock(return_value=False)
+        executor.bounds_reconhecimento = Mock(return_value=(100, 120, 200, 90))
+        executor.marcar_regiao_absoluta = Mock()
+
+        executor.marcar_alvos_ocr_em_sequencia(
+            {"ocr_bounds": {"left": 140, "top": 146, "width": 44, "height": 18}},
+            leitura_relativa={
+                "largura": 44,
+                "altura": 18,
+                "offset_x": 0,
+                "offset_y": 0,
+                "ocr_target_marker_index": 2,
+                "ocr_target_layouts": [{"texto": "OCR tres"}],
+            },
+            dimensoes_referencia=(200, 90),
+        )
+
+        self.assertEqual(executor.marcar_regiao_absoluta.call_args.kwargs["tema"], "ocr_busca_3")
+        self.assertEqual(executor.marcar_regiao_absoluta.call_args.kwargs["etiqueta"], "OCR 3")
+        self.assertEqual(executor.tema_alvo_ocr(4), "ocr_busca_5")
+        self.assertEqual(executor.tema_alvo_ocr(5), "ocr_busca_6")
+
+    def test_individual_ocr_failure_can_stop_without_checking_next_target(self):
+        executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.cancelamento_solicitado = Mock(return_value=False)
+        leitura = {
+            "ocr_target_layouts": [
+                {"texto": "Natureza de", "action": "continuar", "failureAction": "parar"},
+                {"texto": "Codigo", "action": "continuar", "failureAction": "continuar"},
+            ],
+        }
+        executor.localizar_referencia_hibrida_ocr_visual = Mock(return_value=None)
+
+        local = executor.localizar_referencia_hibrida_por_primeiro_ocr(
+            "codigo_001", "Natureza de\nCodigo", dimensoes_referencia=(159, 74), leitura_relativa=leitura,
+        )
+
+        self.assertEqual(executor.localizar_referencia_hibrida_ocr_visual.call_count, 1)
+        self.assertEqual(local["ocr_target_flow"], {"acao": "parar"})
+
+    def test_individual_visual_failure_respects_continue_rule(self):
+        executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.cancelamento_solicitado = Mock(return_value=False)
+        leitura = {
+            "ocr_target_layouts": [
+                {"texto": "OCR um", "action": "continuar", "failureAction": "continuar"},
+                {"texto": "OCR dois", "action": "continuar", "failureAction": "continuar"},
+                {"texto": "OCR tres", "action": "continuar", "failureAction": "continuar"},
+            ],
+        }
+        primeiro = {"visual_confirmed": False, "left": 10, "top": 10, "width": 100, "height": 50}
+        terceiro = {"visual_confirmed": False, "left": 12, "top": 12, "width": 100, "height": 50}
+        executor.localizar_referencia_hibrida_ocr_visual = Mock(side_effect=[primeiro, None, terceiro])
+
+        resultado = executor.localizar_referencia_hibrida_por_primeiro_ocr(
+            "codigo_001", "OCR um\nOCR dois\nOCR tres", dimensoes_referencia=(159, 74), leitura_relativa=leitura,
+        )
+
+        self.assertEqual(resultado["ocr_target_flow"], {"acao": "continuar"})
+        self.assertEqual(resultado["ocr_target_index"], 2)
+        self.assertEqual(executor.localizar_referencia_hibrida_ocr_visual.call_count, 3)
+
+    def test_individual_ocr_confirm_and_click_actions_jump_to_the_configured_block(self):
+        executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.cancelamento_solicitado = Mock(return_value=False)
+        confirmar = {
+            "ocr_target_individual": True,
+            "ocr_target_index": 0,
+            "ocr_target_action": {"action": "confirmar_ir_para_bloco", "block": "15"},
+        }
+
+        self.assertEqual(executor.aplicar_acao_individual_ocr(confirmar), "ir_para_bloco")
+        self.assertEqual(confirmar["ocr_target_flow"], {"acao": "ir_para_bloco", "bloco": "15"})
+
+        clicar = {
+            "ocr_target_individual": True,
+            "ocr_target_index": 1,
+            "ocr_target_action": {"action": "clicar_ir_para_bloco", "block": "18", "clicks": 1},
+            "ocr_related_bounds": [{"left": 120, "top": 220, "width": 40, "height": 20}],
+        }
+        executor.bounds_reconhecimento = Mock(return_value=(120, 220, 40, 20))
+        executor.marcar_regiao_absoluta = Mock()
+        with patch.object(motor.pyautogui, "click") as click:
+            self.assertEqual(executor.aplicar_acao_individual_ocr(clicar, {
+                "_click_offset_x": 50,
+                "_click_offset_y": -25,
+                "_dimensoes_referencia": (100, 50),
+            }), "ir_para_bloco")
+        # O clique usa o ponto marcado no print, escalado pela referencia, e
+        # nao o centro do texto OCR que serviu apenas para validar a tela.
+        click.assert_called_once_with(x=160, y=220, clicks=1, interval=0.08)
+        self.assertEqual(clicar["ocr_target_flow"], {"acao": "ir_para_bloco", "bloco": "18"})
+
     def test_hybrid_execution_reads_the_active_window_without_activating_it(self):
         executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
         executor._cache_ocr_screenshot = {}
@@ -398,6 +518,26 @@ class OcrAnchorTests(unittest.TestCase):
             (530, 116, 604, 690),
         )
         executor.registrar_reconhecimento_bem_sucedido.assert_called_once()
+
+        # Uma falha decidida pela aba "Acoes por OCR" precisa sair da busca
+        # hibrida imediatamente; ela nao pode cair na regra geral do card.
+        fluxo_ocr = {
+            "ocr_target_individual": True,
+            "ocr_target_index": 1,
+            "ocr_target_flow": {"acao": "parar"},
+        }
+        executor.localizar_referencia_hibrida_ocr_visual.reset_mock(return_value=True)
+        executor.localizar_referencia_hibrida_ocr_visual.return_value = fluxo_ocr
+        encontrado_fluxo = executor.esperar_imagem(
+            "sped_001",
+            timeout=3,
+            confianca=0.8,
+            perfil_busca="balanced",
+            modo_area_busca="target_window",
+            texto_ocr_esperado="SPED Reinf",
+            leitura_relativa={"largura": 71, "altura": 22, "offset_x": -3, "offset_y": 4},
+        )
+        self.assertIs(encontrado_fluxo, fluxo_ocr)
 
     def test_hybrid_execution_keeps_an_inherited_window_passive(self):
         executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
