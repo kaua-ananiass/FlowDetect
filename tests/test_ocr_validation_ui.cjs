@@ -121,3 +121,12 @@ test("each OCR rule shows only its own test result", () => {
   assert.match(ocr5, /Confirmado/);
   assert.doesNotMatch(ocr1, /Texto 3/);
 });
+
+test("OCR actions use the same found and not-found layout as visual recognition", () => {
+  assert.match(source, /insert-outcome-group is-success ocr-target-outcome/);
+  assert.match(source, /insert-outcome-group is-failure ocr-target-outcome/);
+  assert.match(source, /<strong>OCR encontrado<\/strong>/);
+  assert.match(source, /<strong>OCR nao encontrado<\/strong>/);
+  assert.match(source, /class="recognition-choice-button \$\{visibleAction/);
+  assert.doesNotMatch(source, /ocr-target-decision-button/);
+});

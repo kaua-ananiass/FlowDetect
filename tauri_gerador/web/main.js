@@ -9473,25 +9473,31 @@ function renderOcrTargetActionRows(details = {}, currentOrder = null) {
             <input data-ocr-target-action-control="action" type="hidden" value="${escapeHtml(targetAction.action)}" />
             <input data-ocr-target-action-control="failureAction" type="hidden" value="${escapeHtml(targetAction.failureAction)}" />
             <input data-ocr-target-action-control="clicks" type="hidden" value="${targetAction.clicks}" />
-            <section class="ocr-target-decision is-success" aria-label="Quando encontrar este OCR">
-              <div class="ocr-target-decision-heading"><strong>Se encontrar</strong></div>
-              <div class="ocr-target-decision-choices">
-                <button class="ocr-target-decision-button ${visibleAction === "clicar_ir_para_bloco" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="clicar_ir_para_bloco" type="button">Clicar e ir ao bloco</button>
-                <button class="ocr-target-decision-button ${visibleAction === "confirmar_ir_para_bloco" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="confirmar_ir_para_bloco" type="button">Confirmar e ir ao bloco</button>
-                <button class="ocr-target-decision-button ${visibleAction === "continuar" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="continuar" type="button">${escapeHtml(nextTargetLabel)}</button>
+            <section class="insert-outcome-group is-success ocr-target-outcome" aria-label="Quando encontrar este OCR">
+              <div class="insert-outcome-header"><strong>OCR encontrado</strong></div>
+              <div class="recognition-choice-group">
+                <span>Acao</span>
+                <div class="recognition-choice-row">
+                  <button class="recognition-choice-button ${visibleAction === "clicar_ir_para_bloco" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="clicar_ir_para_bloco" type="button">Clicar e ir ao bloco</button>
+                  <button class="recognition-choice-button ${visibleAction === "confirmar_ir_para_bloco" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="confirmar_ir_para_bloco" type="button">Confirmar e ir ao bloco</button>
+                  <button class="recognition-choice-button ${visibleAction === "continuar" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="continuar" type="button">${escapeHtml(nextTargetLabel)}</button>
+                </div>
               </div>
+              <label class="action-target-field ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "is-ocr-target-action-hidden"}" data-ocr-target-action-fields="block" ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "hidden"}>
+                <span>Abrir este bloco</span>
+                <select data-ocr-target-action-control="block">
+                  ${blockTargetOptions(targetAction.block, currentOrder, "Escolha o bloco")}
+                </select>
+              </label>
             </section>
-            <label class="recognition-cell recognition-cell-full ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "is-ocr-target-action-hidden"}" data-ocr-target-action-fields="block" ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "hidden"}>
-              <span>Ir para este bloco</span>
-              <select data-ocr-target-action-control="block">
-                ${blockTargetOptions(targetAction.block, currentOrder, "Escolha o bloco")}
-              </select>
-            </label>
-            <section class="ocr-target-decision is-failure" aria-label="Quando nao encontrar este OCR">
-              <div class="ocr-target-decision-heading"><strong>Se nao encontrar</strong></div>
-              <div class="ocr-target-decision-choices">
-                <button class="ocr-target-decision-button ${targetAction.failureAction === "continuar" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="continuar" type="button">${escapeHtml(failureContinueLabel)}</button>
-                <button class="ocr-target-decision-button ${targetAction.failureAction === "parar" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="parar" type="button">Parar automacao</button>
+            <section class="insert-outcome-group is-failure ocr-target-outcome" aria-label="Quando nao encontrar este OCR">
+              <div class="insert-outcome-header"><strong>OCR nao encontrado</strong></div>
+              <div class="recognition-choice-group">
+                <span>O que fazer</span>
+                <div class="recognition-choice-row">
+                  <button class="recognition-choice-button ${targetAction.failureAction === "parar" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="parar" type="button">Parar</button>
+                  <button class="recognition-choice-button ${targetAction.failureAction === "continuar" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="continuar" type="button">${escapeHtml(failureContinueLabel)}</button>
+                </div>
               </div>
             </section>
           </section>

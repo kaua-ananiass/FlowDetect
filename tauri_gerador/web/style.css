@@ -11629,79 +11629,26 @@ label span {
   z-index: 9;
 }
 
-.ocr-target-decision {
-  display: grid;
-  gap: 5px;
-  padding: 7px;
-  border: 1px solid rgba(230, 247, 255, 0.08);
-  border-radius: 10px;
-  background: rgba(7, 17, 31, 0.56);
+.ocr-target-outcome {
+  gap: 7px;
+  padding: 8px;
+  border-radius: 12px;
 }
 
-.ocr-target-decision.is-success {
-  border-color: rgba(34, 197, 94, 0.2);
-}
-
-.ocr-target-decision.is-failure {
-  border-color: rgba(251, 146, 60, 0.2);
-}
-
-.ocr-target-decision-heading {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.ocr-target-decision-heading strong {
-  color: rgba(230, 247, 255, 0.88);
-  font-size: 0.5rem;
-  font-weight: 900;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.ocr-target-decision-choices {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.ocr-target-outcome .recognition-choice-group {
   gap: 5px;
 }
 
-.ocr-target-decision.is-success .ocr-target-decision-button:last-child {
-  grid-column: 1 / -1;
+.ocr-target-outcome .action-target-field {
+  padding-top: 1px;
 }
 
-.ocr-target-decision-button {
-  min-height: 27px;
-  padding: 5px 6px;
-  border: 1px solid rgba(230, 247, 255, 0.1);
-  border-radius: 8px;
-  color: rgba(230, 247, 255, 0.72);
-  background: rgba(230, 247, 255, 0.035);
-  font: inherit;
-  font-size: 0.49rem;
+.ocr-target-outcome .action-target-field span {
+  color: rgba(134, 239, 172, 0.84);
+  font-size: 0.48rem;
   font-weight: 800;
-  line-height: 1.15;
-  cursor: pointer;
-  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, box-shadow 140ms ease;
-}
-
-.ocr-target-decision-button:hover {
-  border-color: rgba(94, 234, 212, 0.48);
-  color: #eafff8;
-}
-
-.ocr-target-decision.is-success .ocr-target-decision-button.is-active {
-  border-color: rgba(34, 197, 94, 0.68);
-  color: #eafff1;
-  background: rgba(34, 197, 94, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.1), 0 0 12px rgba(34, 197, 94, 0.1);
-}
-
-.ocr-target-decision.is-failure .ocr-target-decision-button.is-active {
-  border-color: rgba(251, 146, 60, 0.72);
-  color: #fff1df;
-  background: rgba(251, 146, 60, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(251, 146, 60, 0.08), 0 0 12px rgba(251, 146, 60, 0.1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .recognition-preview-card {
