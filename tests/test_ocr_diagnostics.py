@@ -133,6 +133,30 @@ class OcrDiagnosticsTests(unittest.TestCase):
         self.assertTrue(success)
         self.assertTrue(report["success"])
         self.assertEqual(self.markers, ["OCR 1", "OCR 2", "OCR 3", "OCR 4", "OCR 5", "Reconhecimento"])
+        self.assertGreaterEqual(
+            self.executor.marcar_area_reconhecida.call_args.kwargs["duracao"],
+            0.72,
+        )
+
+    def test_marker_retries_and_preserves_the_ocr_color(self):
+        executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.bounds_reconhecimento = Mock(return_value=(12, 24, 80, 20))
+        executor.feedback_visual_habilitado = Mock(return_value=True)
+        executor.marcar_regiao_absoluta = Mock(side_effect=[False, True])
+        with patch.object(motor, "TK_DISPONIVEL", True), patch.object(motor.time, "sleep"):
+            shown = executor.marcar_area_reconhecida(
+                {"left": 12, "top": 24, "width": 80, "height": 20},
+                duracao=0.72,
+                bloqueante=True,
+                tema="ocr_busca_3",
+                etiqueta="OCR 3",
+                margem=0,
+            )
+        self.assertTrue(shown)
+        self.assertEqual(executor.marcar_regiao_absoluta.call_count, 2)
+        for call in executor.marcar_regiao_absoluta.call_args_list:
+            self.assertEqual(call.kwargs["tema"], "ocr_busca_3")
+            self.assertEqual(call.kwargs["etiqueta"], "OCR 3")
 
     def test_all_fail_do_not_reenter_search_or_invent_visual_confirmation(self):
         self.missing = set(range(5))

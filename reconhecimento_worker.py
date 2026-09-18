@@ -61,7 +61,10 @@ def main():
                     leitura_relativa=request.get("leitura_relativa") or {},
                     mostrar_marcador=True,
                     marcador_bloqueante=True,
-                    duracao_marcador=0.36,
+                    # O Studio volta da minimizacao ao receber esta resposta.
+                    # A confirmacao precisa durar o bastante para continuar
+                    # visivel durante essa transicao.
+                    duracao_marcador=0.75,
                 )
             responder({"success": bool(sucesso), "stdout": logs.getvalue(), "stderr": ""})
         except Exception as erro:

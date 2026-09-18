@@ -1407,10 +1407,11 @@ class ExecutorAutomacao:
         margem=16,
     ):
         if not TK_DISPONIVEL:
-            return
+            safe_print("Marcador visual indisponivel: Tk nao esta carregado.", flush=True)
+            return False
 
         esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
-        self.marcar_regiao_absoluta(
+        exibido = self.marcar_regiao_absoluta(
             esquerda,
             topo,
             largura,
@@ -1421,6 +1422,24 @@ class ExecutorAutomacao:
             etiqueta=etiqueta,
             margem=margem,
         )
+        # A primeira criacao da janela transparente pode ser descartada pelo
+        # Windows enquanto o Studio esta minimizado para o botao Procurar.
+        # Repetimos uma unica vez para o usuario sempre ver a confirmacao.
+        if exibido is False and self.feedback_visual_habilitado():
+            safe_print("Marcador visual nao abriu na primeira tentativa; repetindo.", flush=True)
+            time.sleep(0.06)
+            exibido = self.marcar_regiao_absoluta(
+                esquerda,
+                topo,
+                largura,
+                altura,
+                duracao=duracao,
+                bloqueante=bloqueante,
+                tema=tema,
+                etiqueta=etiqueta,
+                margem=margem,
+            )
+        return bool(exibido)
 
     def feedback_visual_habilitado(self):
         """Indica se os contornos de OCR/reconhecimento podem ser exibidos.
@@ -1431,6 +1450,19 @@ class ExecutorAutomacao:
         nao precisam mais ficar restritos ao botao de teste.
         """
         return bool(TK_DISPONIVEL and not bool(getattr(self, "ocultar_feedback_visual", False)))
+
+    def duracao_confirmacao_visual(self, duracao):
+        """Mantem a confirmacao do botao Procurar visivel tempo suficiente."""
+        try:
+            valor = max(0.12, float(duracao or 0.24))
+        except (TypeError, ValueError):
+            valor = 0.24
+        # O Studio retorna logo apos o worker responder. Uma borda de 0,36 s
+        # podia desaparecer durante a restauracao da janela e parecer que a
+        # confirmacao nao tinha sido desenhada.
+        if bool(getattr(self, "modo_teste_reconhecimento", False)):
+            return max(0.72, valor)
+        return valor
 
     def aplicar_estilo_marcador_passivo(self, janela):
         """Torna um marcador Tk visivel e sem ativacao no Windows.
@@ -1510,7 +1542,7 @@ class ExecutorAutomacao:
         # click-through/no-activate. Assim eles voltam a aparecer tambem na
         # execucao assistida sem cobrir a interacao nem trocar o foco do alvo.
         if not self.feedback_visual_habilitado():
-            return
+            return False
 
         esquerda = int(esquerda)
         topo = int(topo)
@@ -1720,6 +1752,14 @@ class ExecutorAutomacao:
                 # A borda fica no topo apenas para ser vista; os estilos
                 # passivos garantem que nem o mouse nem o foco sejam retidos
                 # pela janela temporaria.
+                try:
+                    overlay.deiconify()
+                    overlay.lift()
+                    overlay.attributes("-topmost", True)
+                    overlay.update_idletasks()
+                    overlay.update()
+                except Exception:
+                    pass
                 self.aplicar_estilo_marcador_passivo(overlay)
 
                 retangulo_x1 = max(6, int(area_visivel_esquerda - overlay_esquerda) + 4)
@@ -1822,19 +1862,21 @@ class ExecutorAutomacao:
                 # que uma captura imediatamente seguinte leia a borda colorida.
                 if not bool(getattr(self, "modo_teste_reconhecimento", False)):
                     time.sleep(0.03)
+                safe_print(f"Marcador visual exibido: {texto_marcador}.", flush=True)
+                return True
             except Exception as erro:
                 safe_print(f"Falha ao exibir marcador visual: {erro}", flush=True)
-                return
+                return False
 
         # Marcadores assincronos podem permanecer visiveis enquanto a proxima
         # captura OCR/template e feita. Fora do botao Procurar, executamos o
         # pequeno feedback de forma sincronizada: ele aparece, fecha e so entao
         # a automacao continua a capturar pixels.
         if bloqueante or not bool(getattr(self, "modo_teste_reconhecimento", False)):
-            exibir()
-            return
+            return exibir()
 
         threading.Thread(target=exibir, daemon=True).start()
+        return True
 
     def marcar_regiao_ocr(self, regiao, confirmado=True, duracao=0.9):
         if not regiao:
@@ -9177,7 +9219,7 @@ class ExecutorAutomacao:
             safe_print("OCR_VALIDATION_JSON|" + json.dumps(diagnostico, ensure_ascii=True), flush=True)
             if mostrar_marcador and diagnostico.get("visual_confirmed"):
                 self.marcar_area_reconhecida(
-                    local, duracao=max(0.12, float(duracao_marcador or 0.24)),
+                    local, duracao=self.duracao_confirmacao_visual(duracao_marcador),
                     bloqueante=bool(marcador_bloqueante), etiqueta="Reconhecimento",
                 )
             sucesso = bool(diagnostico.get("success"))
@@ -9229,7 +9271,7 @@ class ExecutorAutomacao:
         if mostrar_marcador:
             self.marcar_area_reconhecida(
                 local,
-                duracao=max(0.12, float(duracao_marcador or 0.24)),
+                duracao=self.duracao_confirmacao_visual(duracao_marcador),
                 bloqueante=bool(marcador_bloqueante),
             )
         if clicar:
