@@ -103,8 +103,9 @@ class OcrAnchorTests(unittest.TestCase):
         self.assertTrue(local["ocr_anchor_confirmed"])
         self.assertFalse(local["visual_confirmed"])
 
-    def test_small_individual_target_uses_saved_visual_crop_when_wide_ocr_misses(self):
+    def test_saved_visual_crop_alone_cannot_confirm_missing_ocr(self):
         config = {
+            "_testar_todos_alvos_ocr": True,
             "largura": 92,
             "altura": 26,
             "offset_x": -34,
@@ -132,12 +133,10 @@ class OcrAnchorTests(unittest.TestCase):
                 leitura_relativa=config,
             )
 
-        self.assertTrue(local["visual_confirmed"])
-        self.assertTrue(local["ocr_anchor_confirmed"])
-        self.assertEqual(local["ocr_text"], "Empresa")
-        self.assertTrue(local["ocr_target_individual"])
-        self.assertEqual(local["ocr_target_action"]["action"], "continuar")
-        self.executor.localizar_referencia_por_recorte_ocr_visual.assert_called_once()
+        self.assertFalse(local["ocr_validation"]["success"])
+        self.assertFalse(local["ocr_validation"]["visual_confirmed"])
+        self.assertEqual(local["ocr_validation"]["targets"][0]["status"], "not_found")
+        self.executor.localizar_referencia_por_recorte_ocr_visual.assert_not_called()
 
     def test_visual_can_refine_position_after_ocr(self):
         events = []

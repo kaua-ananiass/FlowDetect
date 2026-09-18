@@ -181,5 +181,70 @@ class OcrDiagnosticsTests(unittest.TestCase):
         self.assertEqual(report["targets"][2]["status"], "visual_failed")
 
 
+class RecognitionSearchRegionTests(unittest.TestCase):
+    """Keep real region calculations across Procurar and esperar_imagem."""
+
+    def setUp(self):
+        self.executor = motor.ExecutorAutomacao(modo_teste_reconhecimento=True)
+        executor = self.executor
+        self.window = {
+            "title": "Movimento de ISS Tomador",
+            "left": 452, "top": 186, "width": 1016, "height": 659,
+        }
+        executor.obter_janela_ativa = Mock(return_value=self.window)
+        executor.localizar_janela_alvo = Mock(return_value=self.window)
+        executor.obter_regiao_busca = Mock(side_effect=lambda *a, **kw: tuple(
+            self.window[key] for key in ("left", "top", "width", "height")
+        ))
+        executor.janela_parece_interface_flowdetect = Mock(return_value=False)
+        executor.resolver_janela_evento = Mock(return_value=self.window["title"])
+        executor.resolver_imagem = Mock(return_value=(Path(__file__), "empresa"))
+        executor.obter_dimensoes_imagem = Mock(return_value=(146, 102))
+        executor.localizar_referencia_hibrida_ocr_visual = Mock(return_value={
+            "ocr_validation": {
+                "targets": [{"index": 0, "text": "Empresa", "status": "not_found"}],
+                "visual_confirmed": False,
+                "success": False,
+            },
+        })
+        executor.ativar_janela_alvo = Mock(side_effect=AssertionError("Must not activate windows"))
+        executor.capturar_tela_pil = Mock(side_effect=AssertionError("Unexpected screen capture"))
+        executor.clicar_area_reconhecida = Mock(side_effect=AssertionError("Procurar must not click"))
+        executor.salvar_captura_bruta_reconhecimento = Mock(return_value=None)
+
+    def run_search(self, **kwargs):
+        with patch.object(motor, "OCR_DISPONIVEL", True), \
+                patch.object(motor.time, "sleep"), \
+                patch.dict(motor.os.environ, {"FLOWDETECT_DEBUG_RECONHECIMENTO": "1"}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.executor.testar_reconhecimento(
+                "empresa", texto_ocr_esperado="Empresa", mostrar_marcador=False,
+                leitura_relativa={"ocr_target_layouts": [{"texto": "Empresa", "action": "continuar"}]},
+                **kwargs,
+            )
+        self.executor.ativar_janela_alvo.assert_not_called()
+        self.executor.clicar_area_reconhecida.assert_not_called()
+        return self.executor.localizar_referencia_hibrida_ocr_visual.call_args.kwargs["region"]
+
+    def test_procurar_captures_whole_active_window_without_doubling_its_origin(self):
+        for left, top in [(452, 186), (1050, 600), (-1300, -160)]:
+            with self.subTest(left=left, top=top):
+                self.window.update(left=left, top=top)
+                expected = (left, top, 1016, 659)
+                self.assertEqual(self.run_search(), expected)
+                self.assertEqual(
+                    self.executor.salvar_captura_bruta_reconhecimento.call_args.kwargs["region"],
+                    expected,
+                )
+
+    def test_explicit_custom_area_keeps_offsets_relative_to_selected_window(self):
+        region = self.run_search(
+            janela_alvo=self.window["title"], modo_area_busca="custom_area",
+            area_personalizada={"x": 14, "y": 70, "width": 240, "height": 120},
+        )
+        self.assertEqual(region, (466, 256, 240, 120))
+        self.executor.obter_janela_ativa.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

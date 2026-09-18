@@ -2931,55 +2931,6 @@ class ExecutorAutomacao:
         partes_obrigatorias = self.partes_alvos_ocr_esperados(esperado, leitura_relativa)
         partes_compostas = partes_obrigatorias or (spec_composto.get("partes", []) if spec_composto else [])
 
-        def confirmar_pelo_recorte_visual_salvo():
-            """Usa o recorte salvo do alvo quando a leitura ampla perde fontes pequenas.
-
-            O template e composto exatamente pela area configurada para este
-            OCR. Assim, uma palavra igual em um aviso sobreposto nao confirma
-            o campo: o recorte precisa coincidir com o rotulo e seu contexto
-            no formulario original.
-            """
-            # Um unico recorte so comprova um alvo. Para OCRs conjuntos a
-            # confirmacao continua exigindo todos os textos e suas posicoes.
-            if quantidade_esperada != 1 or self.cancelamento_solicitado():
-                return None
-            ancora_visual = self.localizar_referencia_por_recorte_ocr_visual(
-                caminho_referencia,
-                region=region,
-                leitura_relativa=leitura_configurada,
-                dimensoes_referencia=dimensoes_referencia,
-                confianca=max(0.74, min(float(confianca_visual or 0.8), 0.88)),
-            )
-            if not ancora_visual:
-                return None
-            confirmado = dict(ancora_visual)
-            bounds = dict(confirmado.get("ocr_bounds") or {})
-            confirmado.update({
-                "search_stage": "ocr_visual_saved_crop",
-                "ocr_anchor_confirmed": True,
-                "visual_confirmed": True,
-                "ocr_text": esperado,
-                "ocr_related_bounds": [bounds] if bounds else [],
-                "ocr_partes": [esperado],
-                "ocr_textos": [esperado],
-                "ocr_composto": False,
-                "ocr_relacional": False,
-                "ocr_layout_targets_marked": True,
-            })
-            if self.modo_acao_alvos_ocr(leitura_configurada) == "individual":
-                confirmado["ocr_target_individual"] = True
-                confirmado["ocr_target_index"] = int(leitura_configurada.get("ocr_target_index", 0) or 0)
-                confirmado["ocr_target_action"] = (
-                    leitura_configurada.get("ocr_target_action")
-                    if isinstance(leitura_configurada.get("ocr_target_action"), dict)
-                    else (leitura_configurada.get("ocr_target_layouts") or [{}])[0]
-                )
-            safe_print(
-                f"OCR '{esperado}' confirmado pelo recorte visual salvo; leitura ampla nao era necessaria.",
-                flush=True,
-            )
-            return confirmado
-
         if quantidade_esperada > 1 and len([parte for parte in partes_compostas if str(parte or "").strip()]) < quantidade_esperada:
             safe_print(
                 "Hibrido OCR + imagem bloqueado: existem varios alvos OCR, mas o texto de busca chegou incompleto. "
@@ -3033,9 +2984,6 @@ class ExecutorAutomacao:
                     _tentativa_ampliada=bool(_escala_ocr is not None),
                 )
         if not candidatos_ocr:
-            confirmado_recorte = confirmar_pelo_recorte_visual_salvo()
-            if confirmado_recorte:
-                return confirmado_recorte
             return None
 
         partes = partes_compostas or [esperado]
@@ -3224,9 +3172,6 @@ class ExecutorAutomacao:
                 flush=True,
             )
             pendente_ocr = local
-        confirmado_recorte = confirmar_pelo_recorte_visual_salvo()
-        if confirmado_recorte:
-            return confirmado_recorte
         if pendente_ocr:
             return pendente_ocr
         # A leitura nativa e muito mais rapida, mas labels pequenos podem
@@ -9213,14 +9158,17 @@ class ExecutorAutomacao:
                 titulo_janela = str(janela_ativa_teste.get("title") or titulo_janela or "").strip()
                 self.janela_alvo = titulo_janela
                 janela_teste = janela_ativa_teste
+                # Areas personalizadas sao relativas a janela. Usar left/top
+                # da tela aqui somava a posicao novamente em esperar_imagem,
+                # recortando o canto inferior direito e excluindo os rotulos.
                 area_teste = {
-                    "x": int(janela_ativa_teste.get("left", 0) or 0),
-                    "y": int(janela_ativa_teste.get("top", 0) or 0),
+                    "x": 0,
+                    "y": 0,
                     "width": int(janela_ativa_teste.get("width", 0) or 0),
                     "height": int(janela_ativa_teste.get("height", 0) or 0),
                 }
                 modo_area_teste = "custom_area"
-                regiao_teste = self.construir_regiao_personalizada(area_teste)
+                regiao_teste = self.construir_regiao_personalizada(area_teste, janela_info=janela_teste)
                 safe_print(
                     "Teste rapido: usando a janela externa em primeiro plano "
                     f"({janela_ativa_teste.get('title', 'janela atual')}).",
