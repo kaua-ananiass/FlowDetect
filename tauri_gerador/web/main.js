@@ -293,7 +293,6 @@ const state = {
   testLaunchPending: false,
   insertPanel: null,
   createdBlockAnimationOrder: null,
-  createdBlockMorphRect: null,
   captureTarget: null,
   captureBlurTimer: null,
   captureSequence: 0,
@@ -5104,6 +5103,7 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
     return;
   }
   const mode = options.mode || "arc";
+  const zoom = normalizeCommandMapZoom(state.commandMapZoom, 1);
 
   const animatedItems = [];
   commandMapList.querySelectorAll(".command-flow-segment[data-client-key]").forEach((segment) => {
@@ -5115,8 +5115,8 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
     }
 
     const nextRect = card.getBoundingClientRect();
-    const deltaX = previousRect.left - nextRect.left;
-    const deltaY = previousRect.top - nextRect.top;
+    const deltaX = (previousRect.left - nextRect.left) / zoom;
+    const deltaY = (previousRect.top - nextRect.top) / zoom;
 
     if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) {
       return;
@@ -5144,8 +5144,8 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
     }
 
     const nextRect = connector.getBoundingClientRect();
-    const deltaX = previousRect.left - nextRect.left;
-    const deltaY = previousRect.top - nextRect.top;
+    const deltaX = (previousRect.left - nextRect.left) / zoom;
+    const deltaY = (previousRect.top - nextRect.top) / zoom;
 
     if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) {
       return;
@@ -5188,7 +5188,12 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
       const arcLift = mode === "slide" || isConnector ? 0 : distance > 20 ? Math.min(18, Math.max(8, distance * 0.085)) : 0;
       const arcY = deltaY + (deltaX > 0 ? arcLift : -arcLift);
 
+      let cleaned = false;
       const cleanup = () => {
+        if (cleaned) {
+          return;
+        }
+        cleaned = true;
         element.style.transition = "";
         element.style.transform = "";
         element.style.willChange = "";
@@ -5246,6 +5251,10 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
         element.__commandMapShiftAnimation = animation;
         animation.addEventListener("finish", cleanup, { once: true });
         animation.addEventListener("cancel", cleanup, { once: true });
+        // Alguns WebViews concluem uma animacao finalizada manualmente sem
+        // disparar o evento `finish`. A promise garante que o card e as
+        // linhas sempre retornem para a posicao definitiva.
+        animation.finished.then(cleanup, cleanup);
         return;
       }
 
@@ -19660,6 +19669,91 @@ function rememberCommandMapTreeNodePosition(order, x, y, pageSequence = state.co
   rememberCommandMapTreeItemPosition(String(numericOrder), x, y, pageSequence);
 }
 
+function captureCommandMapTreeInsertion(targetOrder, position) {
+  const events = getCommandMapEvents();
+  const pageSequence = state.commandMapPageSequence;
+  return {
+    targetOrder: Number(targetOrder),
+    position,
+    pageSequence,
+    previousEvents: [...(state.roadmap?.events || [])],
+    layout: buildCommandMapTreeStageLayout(events, getCommandMapPageDefinition(pageSequence), { includeInsertPreview: false }),
+  };
+}
+
+function placeCreatedCommandMapTreeNode(roadmap, insertion) {
+  const previous = insertion.previousEvents;
+  const events = roadmap?.events || [];
+  if (events.length !== previous.length + 1) return roadmap;
+  const createdOrder = insertion.targetOrder > 0
+    ? insertion.targetOrder + (insertion.position === "before" ? 0 : 1)
+    : Number(events.at(-1)?.order);
+  const created = events.find(event => Number(event.order) === createdOrder);
+  if (!created) return roadmap;
+  insertion.createdOrder = createdOrder;
+
+  // O backend renumera todos os blocos. Preserve a identidade dos existentes,
+  // inclusive quando ha dois blocos iguais ou rotas com numeros alterados.
+  const remaining = events.filter(event => event !== created);
+  const orders = new Map(previous.map((event, index) => [Number(event.order), Number(remaining[index].order)]));
+  const clientKeys = new Map(previous.map((event, index) => [Number(remaining[index].order), event.clientKey]));
+  const nodes = insertion.layout.nodes;
+  const originIndex = nodes.findIndex(node => node.order === insertion.targetOrder);
+  const origin = nodes[originIndex];
+  const constants = getCommandMapTreeStageConstants(nodes.map(node => node.event));
+  const newPosition = {
+    x: origin ? origin.x + (insertion.position === "before" ? 0 : constants.columnGap) : constants.paddingX,
+    y: origin ? origin.y : constants.rowTop,
+  };
+  const following = origin ? nodes.slice(originIndex + (insertion.position === "before" ? 0 : 1)) : [];
+  const shiftX = following.length
+    ? Math.max(0, newPosition.x + constants.columnGap - Math.min(...following.map(node => node.x)))
+    : 0;
+  const shiftedOrders = new Set(following.map(node => node.order));
+
+  // Descarte ordens antigas sem bloco correspondente: a nova ordem nao pode
+  // herdar uma posicao deixada por um bloco removido anteriormente.
+  const layouts = {};
+  for (const [page, positions] of Object.entries(state.commandMapTreeLayouts || {})) {
+    const remapped = {};
+    for (const [key, point] of Object.entries(positions || {})) {
+      if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) continue;
+      const edge = key.match(/^edge:(\d+):(block|terminal):([^:]+):(.*)$/);
+      const oldSource = Number(edge ? edge[1] : key);
+      const source = orders.get(oldSource);
+      if (!source) continue;
+      let newKey = String(source);
+      if (edge) {
+        const target = /^\d+$/.test(edge[3]) ? orders.get(Number(edge[3])) : edge[3];
+        if (!target) continue;
+        newKey = `edge:${source}:${edge[2]}:${target}:${edge[4]}`;
+      }
+      remapped[newKey] = {
+        ...point,
+        x: Number(point.x) + (page === insertion.pageSequence && shiftedOrders.has(oldSource) ? shiftX : 0),
+      };
+    }
+    layouts[page] = remapped;
+  }
+  const pageLayout = layouts[insertion.pageSequence] || {};
+  for (const node of nodes) {
+    pageLayout[String(orders.get(node.order))] = {
+      x: node.x + (shiftedOrders.has(node.order) ? shiftX : 0), y: node.y,
+    };
+  }
+  pageLayout[String(createdOrder)] = newPosition;
+  layouts[insertion.pageSequence] = pageLayout;
+  state.commandMapTreeLayouts = layouts;
+  persistCommandMapTreeLayouts();
+  return {
+    ...roadmap,
+    events: events.map(event => ({
+      ...event,
+      clientKey: event === created ? nextCommandMapClientKey() : clientKeys.get(Number(event.order)),
+    })),
+  };
+}
+
 function commandMapTreeEdgeLayoutKey(edge) {
   const source = Number(edge?.sourceOrder || 0);
   const target = Number(edge?.targetOrder || 0);
@@ -20204,7 +20298,7 @@ function renderCommandMapTreeDelayControl(edge) {
   return `<strong>${escapeHtml(edge.displayDelayLabel || commandMapBranchDelayLabel(edge.delay))}</strong>`;
 }
 
-function buildCommandMapTreeStageLayout(events, pageDefinition) {
+function buildCommandMapTreeStageLayout(events, pageDefinition, { includeInsertPreview = true } = {}) {
   const constants = getCommandMapTreeStageConstants(events);
   const orderToEvent = new Map(events.map((event) => [Number(event.order), event]));
   const orderToIndex = new Map(events.map((event, index) => [Number(event.order), index]));
@@ -20229,7 +20323,7 @@ function buildCommandMapTreeStageLayout(events, pageDefinition) {
       node.y = Math.max(24, manualY);
     }
   });
-  const insertPreview = getCommandMapTreeInsertPreview(events, nodes, constants);
+  const insertPreview = includeInsertPreview ? getCommandMapTreeInsertPreview(events, nodes, constants) : null;
   if (insertPreview) {
     // O painel de criacao ocupa uma coluna inteira entre o card de origem e
     // os seguintes. Abra esse espaco apenas enquanto ele estiver visivel;
@@ -20903,7 +20997,7 @@ function renderCommandMap(options = {}) {
   applyCommandMapFocus("auto", { suppressScroll: suppressFocusScroll, suppressVisualFocus });
   if (state.createdBlockAnimationOrder) {
     const createdOrder = Number(state.createdBlockAnimationOrder);
-    const usedMorphAnimation = animateCreatedBlockFromPreview(createdOrder);
+    scheduleCommandConnectorLayout({ burstMs: 460 });
     window.setTimeout(() => {
       if (Number(state.createdBlockAnimationOrder) === createdOrder) {
         state.createdBlockAnimationOrder = null;
@@ -20911,7 +21005,8 @@ function renderCommandMap(options = {}) {
       commandMapList
         ?.querySelector(`.command-tree-card.is-newly-created[data-order="${createdOrder}"]`)
         ?.classList.remove("is-newly-created");
-    }, usedMorphAnimation ? 520 : 520);
+      scheduleCommandConnectorLayout({ burstMs: 140 });
+    }, 460);
   }
   if (layoutSnapshot && !quietUpdate) {
     requestAnimationFrame(() => {
@@ -21098,6 +21193,7 @@ async function runMutation(label, promiseFactory, focusResolver = null, options 
     setBusy("Pronto");
     setMessage(`${label} com sucesso.`, "success");
   } catch (error) {
+    options.onError?.(error);
     setBusy("Erro");
     setMessage(String(error), "error");
   }
@@ -22607,103 +22703,10 @@ function playInsertCreateAnimation(panelElement) {
     return Promise.resolve();
   }
 
-  const rect = panelElement.getBoundingClientRect();
-  state.createdBlockMorphRect = {
-    left: rect.left,
-    top: rect.top,
-    width: rect.width,
-    height: rect.height,
-  };
   panelElement.classList.add("is-creating");
   return new Promise((resolve) => {
     window.setTimeout(resolve, 120);
   });
-}
-
-function animateCreatedBlockFromPreview(order) {
-  const fromRect = state.createdBlockMorphRect;
-  if (!fromRect) {
-    return false;
-  }
-
-  const card = commandMapList?.querySelector(`.command-tree-card[data-order="${order}"]`);
-  if (!card) {
-    return false;
-  }
-
-  const toRect = card.getBoundingClientRect();
-  if (!toRect.width || !toRect.height) {
-    return false;
-  }
-
-  const deltaX = fromRect.left - toRect.left;
-  const deltaY = fromRect.top - toRect.top;
-  const scaleX = Math.max(0.72, Math.min(1.35, fromRect.width / toRect.width));
-  const scaleY = Math.max(0.72, Math.min(1.35, fromRect.height / toRect.height));
-  const fromTransform = `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`;
-
-  card.classList.remove("is-newly-created");
-  card.classList.add("is-morph-created");
-  card.style.transformOrigin = "top left";
-  card.style.willChange = "transform, opacity";
-
-  if (card.__commandMapShiftAnimation) {
-    card.__commandMapShiftAnimation.cancel();
-    card.__commandMapShiftAnimation = null;
-  }
-
-  const cleanup = () => {
-    card.classList.remove("is-morph-created");
-    card.style.transformOrigin = "";
-    card.style.willChange = "";
-    card.style.transform = "";
-    card.style.opacity = "";
-    card.__commandMapShiftAnimation = null;
-    state.createdBlockMorphRect = null;
-    // Durante o morph o card ainda possui transformacao temporaria. As linhas
-    // precisam ser refeitas depois da limpeza para usar a posicao final, sem
-    // exigir que o usuario mova o mapa para elas se acertarem.
-    scheduleCommandConnectorLayout({ burstMs: 140 });
-  };
-
-  if (typeof card.animate === "function") {
-    const animation = card.animate(
-      [
-        {
-          opacity: 0.82,
-          transform: fromTransform,
-        },
-        {
-          opacity: 1,
-          transform: "translate(0px, -3px) scale(1.015, 1.015)",
-          offset: 0.62,
-        },
-        {
-          opacity: 1,
-          transform: "translate(0px, 0px) scale(1, 1)",
-        },
-      ],
-      {
-        duration: 420,
-        easing: "cubic-bezier(0.16, 1, 0.3, 1)",
-        fill: "both",
-      }
-    );
-    card.__commandMapShiftAnimation = animation;
-    animation.addEventListener("finish", cleanup, { once: true });
-    animation.addEventListener("cancel", cleanup, { once: true });
-    return true;
-  }
-
-  card.style.transition = "transform 420ms cubic-bezier(0.16, 1, 0.3, 1), opacity 280ms ease";
-  card.style.opacity = "0.82";
-  card.style.transform = fromTransform;
-  requestAnimationFrame(() => {
-    card.style.opacity = "";
-    card.style.transform = "";
-  });
-  window.setTimeout(cleanup, 460);
-  return true;
 }
 
 async function persistCommandMapDrafts() {
@@ -27194,6 +27197,8 @@ commandMapList.addEventListener("click", async (event) => {
             });
     }
 
+    const insertion = captureCommandMapTreeInsertion(common.targetOrder, common.position);
+    const creationLayoutSnapshot = captureCommandMapCardPositions();
     state.insertPanel = {
       ...state.insertPanel,
       ...values,
@@ -27233,15 +27238,17 @@ commandMapList.addEventListener("click", async (event) => {
       );
       state.insertPanel = null;
       window.clearTimeout(savingWatchdog);
-      return roadmap;
+      return placeCreatedCommandMapTreeNode(roadmap, insertion);
     }, (roadmap) => {
       const createdOrder = resolveNearestCommandMapFocus(
         roadmap,
-        isFirstBlock ? roadmap?.events?.[0]?.order ?? null : common.position === "before" ? common.targetOrder : common.targetOrder + 1
+        insertion.createdOrder ?? (common.position === "before" ? common.targetOrder : common.targetOrder + 1)
       );
       state.createdBlockAnimationOrder = createdOrder;
       return createdOrder;
     }, {
+      commandMapLayoutSnapshot: creationLayoutSnapshot,
+      commandMapLayoutAnimationMode: "slide",
       onError: () => {
         window.clearTimeout(savingWatchdog);
         if (state.insertPanel) {
