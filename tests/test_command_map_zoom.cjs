@@ -5,10 +5,14 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../tauri_gerador/web/main.js"), "utf8");
-const found = source.match(/^function normalizeCommandMapZoom\(.*?^}/ms);
-assert.ok(found, "Production zoom normalizer");
+const names = ["normalizeCommandMapZoom", "commandMapWheelZoomFactor"];
+const functions = names.map((name) => {
+  const found = source.match(new RegExp(`^function ${name}\\(.*?^}`, "ms"));
+  assert.ok(found, `Production function ${name}`);
+  return found[0];
+}).join("\n");
 const context = vm.createContext({ Number });
-vm.runInContext(found[0], context);
+vm.runInContext(functions, context);
 
 test("command map accepts zoom values outside the previous fixed range", () => {
   assert.equal(context.normalizeCommandMapZoom(0.08, 1), 0.08);
@@ -19,4 +23,14 @@ test("command map accepts zoom values outside the previous fixed range", () => {
 test("invalid zoom never replaces the current valid scale", () => {
   assert.equal(context.normalizeCommandMapZoom(0, 0.72), 0.72);
   assert.equal(context.normalizeCommandMapZoom("invalid", 2.4), 2.4);
+});
+
+test("wheel zoom changes gradually and limits a large scroll event", () => {
+  const factor = context.commandMapWheelZoomFactor(120);
+  assert.ok(factor > 0.95 && factor < 1, `expected a gentle reduction, got ${factor}`);
+  assert.ok(context.commandMapWheelZoomFactor(-120) > 1);
+  assert.equal(
+    context.commandMapWheelZoomFactor(5000),
+    context.commandMapWheelZoomFactor(240),
+  );
 });

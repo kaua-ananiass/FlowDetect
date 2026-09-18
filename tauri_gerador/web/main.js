@@ -460,8 +460,6 @@ const testLoopStartInput = document.getElementById("testLoopStartInput");
 const testLoopHint = document.getElementById("testLoopHint");
 const bulkDelayInput = document.getElementById("bulkDelayInput");
 const applyBulkDelayButton = document.getElementById("applyBulkDelayButton");
-const mapBulkDelayInput = document.getElementById("mapBulkDelayInput");
-const mapApplyBulkDelayButton = document.getElementById("mapApplyBulkDelayButton");
 const mapSaveButton = document.getElementById("mapSaveButton");
 const mapSavePercent = document.getElementById("mapSavePercent");
 const mapSaveFill = document.getElementById("mapSaveFill");
@@ -628,10 +626,6 @@ const agentSchedulerRepeatSelect = document.getElementById("agentSchedulerRepeat
 const agentSchedulerCreateButton = document.getElementById("agentSchedulerCreateButton");
 const agentSchedulerList = document.getElementById("agentSchedulerList");
 const agentSchedulerStatus = document.getElementById("agentSchedulerStatus");
-const mapZoomOutButton = document.getElementById("mapZoomOutButton");
-const mapZoomInButton = document.getElementById("mapZoomInButton");
-const mapZoomRange = document.getElementById("mapZoomRange");
-const mapZoomValue = document.getElementById("mapZoomValue");
 const commandMapViewButtons = Array.from(document.querySelectorAll("[data-command-map-view]"));
 const assistDelayInput = document.getElementById("assistDelayInput");
 const assistLoopStartInput = document.getElementById("assistLoopStartInput");
@@ -1326,18 +1320,7 @@ function normalizeCommandMapZoom(value, fallback = 1) {
 }
 
 function applyCommandMapZoom() {
-  const zoomPercent = Math.max(0.1, Math.round(state.commandMapZoom * 1000) / 10);
   commandMapList.style.setProperty("--command-map-zoom", String(state.commandMapZoom));
-  if (mapZoomRange) {
-    // O controle acompanha a escala atual para nunca limitar o zoom escolhido
-    // pelo mouse ou pelos botões.
-    mapZoomRange.min = String(Math.max(0.1, Math.min(10, Math.floor(zoomPercent / 1.6))));
-    mapZoomRange.max = String(Math.max(500, Math.ceil(zoomPercent * 1.6)));
-    mapZoomRange.value = String(zoomPercent);
-  }
-  if (mapZoomValue) {
-    mapZoomValue.textContent = `${zoomPercent}%`;
-  }
 }
 
 function autoFitCommandMapZoom() {
@@ -20620,6 +20603,12 @@ function stopCommandMapTreePan(event) {
   scheduleCommandConnectorLayout({ burstMs: 120 });
 }
 
+function commandMapWheelZoomFactor(delta, deltaMode = 0) {
+  const limitedDelta = Math.max(-240, Math.min(240, Number(delta) || 0));
+  const sensitivity = Number(deltaMode) === 1 ? 0.014 : 0.00035;
+  return Math.exp(-limitedDelta * sensitivity);
+}
+
 function handleCommandMapTreeWheelZoom(event) {
   // O card aberto tem rolagem propria. Deixar o evento seguir seu fluxo nativo
   // permite rolar os detalhes sem alterar a escala do mapa por tras dele.
@@ -20642,7 +20631,9 @@ function handleCommandMapTreeWheelZoom(event) {
   event.preventDefault();
   const listRect = commandMapList.getBoundingClientRect();
   const currentZoom = normalizeCommandMapZoom(state.commandMapZoom, 0.96);
-  const zoomFactor = delta > 0 ? 0.92 : 1.08;
+  // Cada entalhe do mouse altera poucos pontos percentuais. O limite evita
+  // que um scroll muito longo de uma vez salte para uma escala distante.
+  const zoomFactor = commandMapWheelZoomFactor(delta, event.deltaMode);
   const nextZoom = currentZoom * zoomFactor;
   setCommandMapZoom(nextZoom, {
     preservePoint: {
@@ -20909,14 +20900,10 @@ async function refreshRoadmap(message = "Roteiro atualizado.") {
   setMessage(message, "success");
 }
 
-async function applyBulkDelayToAllBlocks(source = "top") {
-  const sourceInput = source === "map" ? mapBulkDelayInput : bulkDelayInput;
-  const delay = Math.max(0, parseNumber(sourceInput?.value, 0));
+async function applyBulkDelayToAllBlocks() {
+  const delay = Math.max(0, parseNumber(bulkDelayInput?.value, 0));
   if (bulkDelayInput) {
     bulkDelayInput.value = String(delay);
-  }
-  if (mapBulkDelayInput) {
-    mapBulkDelayInput.value = String(delay);
   }
   const totalEvents = state.roadmap?.events?.length ?? 0;
   if (!totalEvents) {
@@ -22773,18 +22760,6 @@ document.getElementById("addTextButton").addEventListener("click", () => {
       rotuloExecucao: null,
     })
   , focusLastCommandMapCard);
-});
-
-mapZoomRange.addEventListener("input", (event) => {
-  setCommandMapZoom(Number(event.target.value) / 100);
-});
-
-mapZoomOutButton.addEventListener("click", () => {
-  setCommandMapZoom(normalizeCommandMapZoom(state.commandMapZoom, 0.96) * 0.9);
-});
-
-mapZoomInButton.addEventListener("click", () => {
-  setCommandMapZoom(normalizeCommandMapZoom(state.commandMapZoom, 0.96) * 1.1);
 });
 
 commandMapViewButtons.forEach((button) => {
@@ -25051,10 +25026,6 @@ document.getElementById("legacyButton").addEventListener("click", async () => {
 
 applyBulkDelayButton?.addEventListener("click", async () => {
   await applyBulkDelayToAllBlocks("top");
-});
-
-mapApplyBulkDelayButton?.addEventListener("click", async () => {
-  await applyBulkDelayToAllBlocks("map");
 });
 
 mapSelectionMenuTargets?.addEventListener("click", (event) => {
