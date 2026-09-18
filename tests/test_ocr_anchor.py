@@ -103,6 +103,42 @@ class OcrAnchorTests(unittest.TestCase):
         self.assertTrue(local["ocr_anchor_confirmed"])
         self.assertFalse(local["visual_confirmed"])
 
+    def test_small_individual_target_uses_saved_visual_crop_when_wide_ocr_misses(self):
+        config = {
+            "largura": 92,
+            "altura": 26,
+            "offset_x": -34,
+            "offset_y": -11,
+            "ocr_target_layouts": [{"texto": "Empresa", "action": "continuar"}],
+        }
+        self.executor.localizar_referencia_por_recorte_ocr_visual = Mock(return_value={
+            "left": 440,
+            "top": 265,
+            "width": 180,
+            "height": 70,
+            "x": 530,
+            "y": 300,
+            "score": 0.91,
+            "ocr_visual_anchor": True,
+            "ocr_bounds": {"left": 462, "top": 276, "width": 68, "height": 18},
+        })
+
+        with patch.object(motor, "OCR_DISPONIVEL", True):
+            local = self.executor.localizar_referencia_hibrida_ocr_visual(
+                "reference.png",
+                "Empresa",
+                region=(0, 0, 1600, 900),
+                dimensoes_referencia=(180, 70),
+                leitura_relativa=config,
+            )
+
+        self.assertTrue(local["visual_confirmed"])
+        self.assertTrue(local["ocr_anchor_confirmed"])
+        self.assertEqual(local["ocr_text"], "Empresa")
+        self.assertTrue(local["ocr_target_individual"])
+        self.assertEqual(local["ocr_target_action"]["action"], "continuar")
+        self.executor.localizar_referencia_por_recorte_ocr_visual.assert_called_once()
+
     def test_visual_can_refine_position_after_ocr(self):
         events = []
         candidate = self.candidate()
