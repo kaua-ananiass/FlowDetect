@@ -9286,7 +9286,28 @@ function normalizeOcrTargetFailureAction(value = "continuar") {
 }
 
 function ocrTargetMatchNeedsBlock(action = "continuar") {
-  return ["clicar_ir_para_bloco", "confirmar_ir_para_bloco", "clicar"].includes(normalizeOcrTargetAction(action));
+  return ["clicar_ir_para_bloco", "confirmar_ir_para_bloco"].includes(normalizeOcrTargetAction(action));
+}
+
+function ocrTargetClickChoiceFromAction(action = "continuar", clicks = 1) {
+  const normalizedAction = normalizeOcrTargetAction(action);
+  if (!["clicar", "clicar_ir_para_bloco"].includes(normalizedAction)) {
+    return "confirm";
+  }
+  return Math.max(1, Math.trunc(parseNumber(clicks, 1))) >= 2 ? "double" : "single";
+}
+
+function ocrTargetNextStepFromAction(action = "continuar") {
+  return ["clicar_ir_para_bloco", "confirmar_ir_para_bloco"].includes(normalizeOcrTargetAction(action))
+    ? "goto"
+    : "continue";
+}
+
+function ocrTargetActionFromChoices(clickChoice = "confirm", nextStep = "continue") {
+  const click = ["single", "double"].includes(String(clickChoice || "").trim().toLowerCase());
+  const goto = String(nextStep || "").trim().toLowerCase() === "goto";
+  if (goto) return click ? "clicar_ir_para_bloco" : "confirmar_ir_para_bloco";
+  return click ? "clicar" : "continuar";
 }
 
 function ocrTargetLayoutsFromContainer(container) {
@@ -9455,7 +9476,8 @@ function renderOcrTargetActionRows(details = {}, currentOrder = null) {
       ${targets.map((target, index) => {
         const targetAction = ocrTargetActionLayout(layouts, index);
         const hasNextTarget = index < targets.length - 1;
-        const visibleAction = targetAction.action === "clicar" ? "clicar_ir_para_bloco" : targetAction.action;
+        const clickChoice = ocrTargetClickChoiceFromAction(targetAction.action, targetAction.clicks);
+        const nextStep = ocrTargetNextStepFromAction(targetAction.action);
         const nextTargetLabel = hasNextTarget ? `Continuar para OCR ${index + 2}` : "Continuar automacao";
         const failureContinueLabel = hasNextTarget ? `Procurar OCR ${index + 2}` : "Continuar automacao";
         return `
@@ -9473,14 +9495,23 @@ function renderOcrTargetActionRows(details = {}, currentOrder = null) {
             <input data-ocr-target-action-control="action" type="hidden" value="${escapeHtml(targetAction.action)}" />
             <input data-ocr-target-action-control="failureAction" type="hidden" value="${escapeHtml(targetAction.failureAction)}" />
             <input data-ocr-target-action-control="clicks" type="hidden" value="${targetAction.clicks}" />
+            <input data-ocr-target-action-control="clickChoice" type="hidden" value="${escapeHtml(clickChoice)}" />
+            <input data-ocr-target-action-control="nextStep" type="hidden" value="${escapeHtml(nextStep)}" />
             <section class="insert-outcome-group is-success ocr-target-outcome" aria-label="Quando encontrar este OCR">
               <div class="insert-outcome-header"><strong>OCR encontrado</strong></div>
               <div class="recognition-choice-group">
-                <span>Acao</span>
+                <span>Clique</span>
                 <div class="recognition-choice-row">
-                  <button class="recognition-choice-button ${visibleAction === "clicar_ir_para_bloco" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="clicar_ir_para_bloco" type="button">Clicar e ir ao bloco</button>
-                  <button class="recognition-choice-button ${visibleAction === "confirmar_ir_para_bloco" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="confirmar_ir_para_bloco" type="button">Confirmar e ir ao bloco</button>
-                  <button class="recognition-choice-button ${visibleAction === "continuar" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="continuar" type="button">${escapeHtml(nextTargetLabel)}</button>
+                  <button class="recognition-choice-button ${clickChoice === "single" ? "is-active" : ""}" data-ocr-target-action-choice="clickChoice" data-ocr-target-action-value="single" type="button">1 clique</button>
+                  <button class="recognition-choice-button ${clickChoice === "double" ? "is-active" : ""}" data-ocr-target-action-choice="clickChoice" data-ocr-target-action-value="double" type="button">2 cliques</button>
+                  <button class="recognition-choice-button ${clickChoice === "confirm" ? "is-active" : ""}" data-ocr-target-action-choice="clickChoice" data-ocr-target-action-value="confirm" type="button">So confirmar</button>
+                </div>
+              </div>
+              <div class="recognition-choice-group">
+                <span>Proximo passo</span>
+                <div class="recognition-choice-row">
+                  <button class="recognition-choice-button ${nextStep === "continue" ? "is-active" : ""}" data-ocr-target-action-choice="nextStep" data-ocr-target-action-value="continue" type="button">${escapeHtml(nextTargetLabel)}</button>
+                  <button class="recognition-choice-button ${nextStep === "goto" ? "is-active" : ""}" data-ocr-target-action-choice="nextStep" data-ocr-target-action-value="goto" type="button">Ir para bloco</button>
                 </div>
               </div>
               <label class="action-target-field ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "is-ocr-target-action-hidden"}" data-ocr-target-action-fields="block" ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "hidden"}>
@@ -9511,6 +9542,15 @@ function applyOcrTargetActionVisibility(row) {
   if (!row) return;
   const action = normalizeOcrTargetAction(row.querySelector('[data-ocr-target-action-control="action"]')?.value);
   const failureAction = normalizeOcrTargetFailureAction(row.querySelector('[data-ocr-target-action-control="failureAction"]')?.value);
+  const clickChoice = ocrTargetClickChoiceFromAction(
+    action,
+    row.querySelector('[data-ocr-target-action-control="clicks"]')?.value,
+  );
+  const nextStep = ocrTargetNextStepFromAction(action);
+  const clickChoiceControl = row.querySelector('[data-ocr-target-action-control="clickChoice"]');
+  const nextStepControl = row.querySelector('[data-ocr-target-action-control="nextStep"]');
+  if (clickChoiceControl) clickChoiceControl.value = clickChoice;
+  if (nextStepControl) nextStepControl.value = nextStep;
   row.querySelectorAll("[data-ocr-target-action-fields]").forEach((field) => {
     const shouldShow = field.dataset.ocrTargetActionFields === "block" && ocrTargetMatchNeedsBlock(action);
     field.hidden = !shouldShow;
@@ -9519,9 +9559,11 @@ function applyOcrTargetActionVisibility(row) {
     field.classList.toggle("is-ocr-target-action-hidden", !shouldShow);
     field.setAttribute("aria-hidden", String(!shouldShow));
   });
-  row.querySelectorAll('[data-ocr-target-action-choice="action"]').forEach((button) => {
-    const choice = String(button.dataset.ocrTargetActionValue || "");
-    button.classList.toggle("is-active", choice === (action === "clicar" ? "clicar_ir_para_bloco" : action));
+  row.querySelectorAll('[data-ocr-target-action-choice="clickChoice"]').forEach((button) => {
+    button.classList.toggle("is-active", String(button.dataset.ocrTargetActionValue || "") === clickChoice);
+  });
+  row.querySelectorAll('[data-ocr-target-action-choice="nextStep"]').forEach((button) => {
+    button.classList.toggle("is-active", String(button.dataset.ocrTargetActionValue || "") === nextStep);
   });
   row.querySelectorAll('[data-ocr-target-action-choice="failureAction"]').forEach((button) => {
     button.classList.toggle("is-active", String(button.dataset.ocrTargetActionValue || "") === failureAction);
@@ -9545,6 +9587,10 @@ function syncOcrTargetActionRows(container) {
     if (blockControl) blockControl.value = block;
     const clicksControl = actionRow.querySelector('[data-ocr-target-action-control="clicks"]');
     if (clicksControl) clicksControl.value = clicks;
+    const clickChoiceControl = actionRow.querySelector('[data-ocr-target-action-control="clickChoice"]');
+    if (clickChoiceControl) clickChoiceControl.value = ocrTargetClickChoiceFromAction(action, clicks);
+    const nextStepControl = actionRow.querySelector('[data-ocr-target-action-control="nextStep"]');
+    if (nextStepControl) nextStepControl.value = ocrTargetNextStepFromAction(action);
     const failureControl = actionRow.querySelector('[data-ocr-target-action-control="failureAction"]');
     if (failureControl) failureControl.value = normalizeOcrTargetFailureAction(failureAction);
     applyOcrTargetActionVisibility(actionRow);
@@ -9557,6 +9603,24 @@ function syncOcrTargetActionControlToSource(target) {
   const container = target.closest(".command-tree-card, .flow-card, .insert-card-panel");
   const index = Number(actionRow?.dataset.ocrTargetActionIndex);
   if (!container || !Number.isInteger(index) || index < 0) return false;
+  const control = target.dataset.ocrTargetActionControl;
+  if (["clickChoice", "nextStep"].includes(control)) {
+    const clickChoice = String(
+      actionRow.querySelector('[data-ocr-target-action-control="clickChoice"]')?.value || "confirm",
+    ).trim().toLowerCase();
+    const nextStep = String(
+      actionRow.querySelector('[data-ocr-target-action-control="nextStep"]')?.value || "continue",
+    ).trim().toLowerCase();
+    const actionControl = actionRow.querySelector('[data-ocr-target-action-control="action"]');
+    const clicksControl = actionRow.querySelector('[data-ocr-target-action-control="clicks"]');
+    if (!actionControl || !clicksControl) return false;
+    actionControl.value = ocrTargetActionFromChoices(clickChoice, nextStep);
+    clicksControl.value = clickChoice === "double" ? "2" : "1";
+    const actionChanged = syncOcrTargetActionControlToSource(actionControl);
+    const clicksChanged = syncOcrTargetActionControlToSource(clicksControl);
+    applyOcrTargetActionVisibility(actionRow);
+    return actionChanged || clicksChanged;
+  }
   const source = ocrTargetRowByIndex(container, index);
   const fieldMap = {
     action: "[data-ocr-target-action]",
@@ -9566,7 +9630,6 @@ function syncOcrTargetActionControlToSource(target) {
   };
   const destination = source?.querySelector(fieldMap[target.dataset.ocrTargetActionControl]);
   if (!destination) return false;
-  const control = target.dataset.ocrTargetActionControl;
   const nextValue = control === "action"
     ? normalizeOcrTargetAction(target.value)
     : control === "failureAction"

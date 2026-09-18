@@ -10,6 +10,7 @@ const names = [
   "parseOcrValidationResult", "recognitionValidationMessage", "renderRecognitionValidationDetails",
   "renderRecognitionOcrRuleTestResult",
   "recognitionOcrTargetRuleSummary", "splitOcrTargetText", "normalizeOcrTargetAction", "normalizeOcrTargetFailureAction",
+  "ocrTargetClickChoiceFromAction", "ocrTargetNextStepFromAction", "ocrTargetActionFromChoices",
   "recognitionTestStatusForEvent", "renderRecognitionValidationPanel", "setRecognitionTestStatusForOrder",
   "findRecognitionRoadmapEventByOrder", "isRecognitionTestedForEvent", "updateRecognitionStatusUIForOrder",
 ];
@@ -127,6 +128,19 @@ test("OCR actions use the same found and not-found layout as visual recognition"
   assert.match(source, /insert-outcome-group is-failure ocr-target-outcome/);
   assert.match(source, /<strong>OCR encontrado<\/strong>/);
   assert.match(source, /<strong>OCR nao encontrado<\/strong>/);
-  assert.match(source, /class="recognition-choice-button \$\{visibleAction/);
+  assert.match(source, /<span>Clique<\/span>/);
+  assert.match(source, /<span>Proximo passo<\/span>/);
+  assert.match(source, /data-ocr-target-action-choice="clickChoice"/);
+  assert.match(source, /data-ocr-target-action-choice="nextStep"/);
   assert.doesNotMatch(source, /ocr-target-decision-button/);
+});
+
+test("OCR click and next-step choices preserve each supported execution rule", () => {
+  const { context } = fixture();
+  assert.equal(context.ocrTargetActionFromChoices("single", "continue"), "clicar");
+  assert.equal(context.ocrTargetActionFromChoices("double", "goto"), "clicar_ir_para_bloco");
+  assert.equal(context.ocrTargetActionFromChoices("confirm", "goto"), "confirmar_ir_para_bloco");
+  assert.equal(context.ocrTargetActionFromChoices("confirm", "continue"), "continuar");
+  assert.equal(context.ocrTargetClickChoiceFromAction("clicar_ir_para_bloco", 2), "double");
+  assert.equal(context.ocrTargetNextStepFromAction("confirmar_ir_para_bloco"), "goto");
 });
