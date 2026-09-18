@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../tauri_gerador/web/main.js"), "utf8");
-const names = ["normalizeCommandMapZoom", "commandMapWheelZoomFactor"];
+const names = ["normalizeCommandMapZoom", "commandMapWheelZoomFactor", "commandMapTreePanCoordinate"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp(`^function ${name}\\(.*?^}`, "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -33,4 +33,10 @@ test("wheel zoom changes gradually and limits a large scroll event", () => {
     context.commandMapWheelZoomFactor(5000),
     context.commandMapWheelZoomFactor(240),
   );
+});
+
+test("tree pan has no map-size boundary", () => {
+  assert.equal(context.commandMapTreePanCoordinate(0, -50000), -50000);
+  assert.equal(context.commandMapTreePanCoordinate(-50000, 100000), 50000);
+  assert.equal(context.commandMapTreePanCoordinate("invalid", 24), 24);
 });

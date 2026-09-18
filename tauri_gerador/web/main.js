@@ -231,6 +231,8 @@ const state = {
   commandMapAutoFitFrame: 0,
   commandConnectorLayoutFrame: 0,
   commandMapTreePan: null,
+  commandMapTreePanOffset: { x: 0, y: 0 },
+  commandMapTreePanUserMoved: false,
   commandMapSave: {
     running: false,
     percent: 0,
@@ -1321,6 +1323,33 @@ function normalizeCommandMapZoom(value, fallback = 1) {
 
 function applyCommandMapZoom() {
   commandMapList.style.setProperty("--command-map-zoom", String(state.commandMapZoom));
+  applyCommandMapTreePanOffset();
+}
+
+function commandMapTreePanCoordinate(start, movement) {
+  const origin = Number(start);
+  const delta = Number(movement);
+  return (Number.isFinite(origin) ? origin : 0) + (Number.isFinite(delta) ? delta : 0);
+}
+
+function applyCommandMapTreePanOffset() {
+  if (!commandMapList) {
+    return;
+  }
+  const pan = state.commandMapTreePanOffset || {};
+  const x = Number.isFinite(Number(pan.x)) ? Number(pan.x) : 0;
+  const y = Number.isFinite(Number(pan.y)) ? Number(pan.y) : 0;
+  commandMapList.style.setProperty("--command-map-tree-pan-x", `${Math.round(x)}px`);
+  commandMapList.style.setProperty("--command-map-tree-pan-y", `${Math.round(y)}px`);
+}
+
+function moveCommandMapTreePanOffset(deltaX = 0, deltaY = 0) {
+  const current = state.commandMapTreePanOffset || {};
+  state.commandMapTreePanOffset = {
+    x: commandMapTreePanCoordinate(current.x, deltaX),
+    y: commandMapTreePanCoordinate(current.y, deltaY),
+  };
+  applyCommandMapTreePanOffset();
 }
 
 function autoFitCommandMapZoom() {
@@ -5019,6 +5048,17 @@ function centerCommandMapOrder(order, behavior = "smooth", options = {}) {
 
   const containerRect = commandMapList.getBoundingClientRect();
   const targetRect = targetSegment.getBoundingClientRect();
+  if (normalizeCommandMapViewMode(state.commandMapViewMode) === "tree") {
+    // Depois que o usuario arrasta o plano da arvore, a navegacao manual e a
+    // fonte de verdade. Re-renderizar um card nao pode puxar o mapa de volta.
+    if (state.commandMapTreePanUserMoved) {
+      return;
+    }
+    const deltaX = containerRect.left + (commandMapList.clientWidth / 2) - (targetRect.left + targetRect.width / 2);
+    const deltaY = containerRect.top + (commandMapList.clientHeight / 2) - (targetRect.top + targetRect.height / 2);
+    moveCommandMapTreePanOffset(deltaX, deltaY);
+    return;
+  }
   if (mode === "if-needed") {
     const margin = Math.min(140, Math.max(72, commandMapList.clientWidth * 0.12));
     const leftOverflow = targetRect.left - (containerRect.left + margin);
@@ -20538,11 +20578,6 @@ function startCommandMapTreePan(event) {
   ) {
     return false;
   }
-  const treeSurface = event.target.closest(".command-map-tree-stage, .command-map-tree, .command-map-tree-link-layer, .command-map-tree-link-svg");
-  if (!treeSurface) {
-    return false;
-  }
-
   event.preventDefault();
   event.stopPropagation();
   clearCommandMapCardSelection();
@@ -20552,8 +20587,8 @@ function startCommandMapTreePan(event) {
     startY: event.clientY,
     latestX: event.clientX,
     latestY: event.clientY,
-    scrollLeft: commandMapList.scrollLeft,
-    scrollTop: commandMapList.scrollTop,
+    panX: Number(state.commandMapTreePanOffset?.x || 0),
+    panY: Number(state.commandMapTreePanOffset?.y || 0),
     frame: 0,
   };
   commandMapList.classList.add("is-tree-panning");
@@ -20578,8 +20613,12 @@ function updateCommandMapTreePan(event) {
     if (state.commandMapTreePan !== pan || !commandMapList) {
       return;
     }
-    commandMapList.scrollLeft = Math.max(0, pan.scrollLeft - (pan.latestX - pan.startX));
-    commandMapList.scrollTop = Math.max(0, pan.scrollTop - (pan.latestY - pan.startY));
+    state.commandMapTreePanOffset = {
+      x: commandMapTreePanCoordinate(pan.panX, pan.latestX - pan.startX),
+      y: commandMapTreePanCoordinate(pan.panY, pan.latestY - pan.startY),
+    };
+    state.commandMapTreePanUserMoved = true;
+    applyCommandMapTreePanOffset();
   });
 }
 
@@ -20594,8 +20633,12 @@ function stopCommandMapTreePan(event) {
     pan.frame = 0;
   }
   if (commandMapList) {
-    commandMapList.scrollLeft = Math.max(0, pan.scrollLeft - (pan.latestX - pan.startX));
-    commandMapList.scrollTop = Math.max(0, pan.scrollTop - (pan.latestY - pan.startY));
+    state.commandMapTreePanOffset = {
+      x: commandMapTreePanCoordinate(pan.panX, pan.latestX - pan.startX),
+      y: commandMapTreePanCoordinate(pan.panY, pan.latestY - pan.startY),
+    };
+    state.commandMapTreePanUserMoved = true;
+    applyCommandMapTreePanOffset();
   }
   commandMapList?.classList.remove("is-tree-panning");
   builderShell?.classList.remove("is-map-dragging");
@@ -20619,7 +20662,7 @@ function handleCommandMapTreeWheelZoom(event) {
     !commandMapList
     || !isCommandMapTreeModeActive()
     || event.target.closest("input, textarea, select, button, a")
-    || !event.target.closest(".command-map-tree, .command-map-tree-stage")
+    || !(event.target === commandMapList || event.target.closest(".command-map-tree, .command-map-tree-stage"))
   ) {
     return;
   }

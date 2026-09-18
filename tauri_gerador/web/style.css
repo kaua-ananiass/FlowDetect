@@ -8836,6 +8836,9 @@ label span {
 .command-map-list.is-tree-view {
   align-items: flex-start;
   padding: 18px 18px 34px 0;
+  overflow: hidden;
+  --command-map-tree-pan-x: 0px;
+  --command-map-tree-pan-y: 0px;
 }
 
 .command-map-list.is-tree-view .command-map-tree-stage {
@@ -8908,7 +8911,13 @@ label span {
   min-width: min(100%, 1080px);
   padding: 32px clamp(42px, 6vw, 96px) 46px clamp(38px, 6vw, 90px);
   zoom: var(--command-map-zoom);
-  transform: translateY(var(--command-map-stage-lift));
+  /* A arvore e um plano livre: o arrasto desloca o plano inteiro, sem
+     depender de haver blocos suficientes para criar barras de rolagem. */
+  transform: translate3d(
+    var(--command-map-tree-pan-x),
+    calc(var(--command-map-stage-lift) + var(--command-map-tree-pan-y)),
+    0
+  );
   transform-origin: top left;
   background:
     radial-gradient(circle at 1px 1px, rgba(230, 247, 255, 0.052) 1px, transparent 0) 0 0 / 32px 32px,
