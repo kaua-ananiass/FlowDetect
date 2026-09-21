@@ -9058,6 +9058,7 @@ function recognitionOcrTargetRuleSummary(details = {}) {
     const action = normalizeOcrTargetAction(layout.action);
     const failureAction = normalizeOcrTargetFailureAction(layout.failureAction ?? layout.failure_action);
     const targetBlock = String(layout.block ?? "").trim();
+    const failureBlock = String(layout.failureBlock ?? layout.failure_block ?? layout.bloco_falha ?? "").trim();
     const next = index + 1 < total ? `OCR ${index + 2}` : "Continuar";
     let success = next;
     if (action === "clicar_ir_para_bloco") {
@@ -9068,7 +9069,11 @@ function recognitionOcrTargetRuleSummary(details = {}) {
     rules.push({
       label: `OCR ${index + 1}`,
       success,
-      failure: failureAction === "parar" ? "Parar" : next,
+      failure: failureAction === "parar"
+        ? "Parar"
+        : failureAction === "ir_para_bloco"
+          ? (failureBlock ? `Bloco ${failureBlock}` : "Outro bloco")
+          : next,
       color: OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length],
     });
   }
@@ -9291,11 +9296,17 @@ function normalizeOcrTargetAction(value = "continuar") {
 
 function normalizeOcrTargetFailureAction(value = "continuar") {
   const normalized = String(value || "continuar").trim().toLowerCase();
-  return ["parar", "stop", "interromper"].includes(normalized) ? "parar" : "continuar";
+  if (["parar", "stop", "interromper"].includes(normalized)) return "parar";
+  if (["ir_para_bloco", "bloco", "navegar", "goto", "jump"].includes(normalized)) return "ir_para_bloco";
+  return "continuar";
 }
 
 function ocrTargetMatchNeedsBlock(action = "continuar") {
   return ["clicar_ir_para_bloco", "confirmar_ir_para_bloco"].includes(normalizeOcrTargetAction(action));
+}
+
+function ocrTargetFailureNeedsBlock(action = "continuar") {
+  return normalizeOcrTargetFailureAction(action) === "ir_para_bloco";
 }
 
 function ocrTargetClickChoiceFromAction(action = "continuar", clicks = 1) {
@@ -9351,6 +9362,7 @@ function ocrTargetLayoutsFromContainer(container) {
       block: String(blockField?.value || "").trim(),
       clicks: Math.max(1, Math.trunc(parseNumber(clicksField?.value, 1))),
       failureAction: normalizeOcrTargetFailureAction(row.querySelector("[data-ocr-target-failure-action]")?.value),
+      failureBlock: String(row.querySelector("[data-ocr-target-failure-block]")?.value || "").trim(),
     };
   });
 }
@@ -9379,6 +9391,7 @@ function renderOcrTargetRows(fieldAttr, actionAttr, text = "", layouts = []) {
               <input ${fieldAttr}="ocrTargetBlock" data-ocr-target-block type="hidden" value="${escapeHtml(layouts?.[index]?.block ?? "")}" />
               <input ${fieldAttr}="ocrTargetClicks" data-ocr-target-clicks type="hidden" value="${escapeHtml(Math.max(1, Math.trunc(parseNumber(layouts?.[index]?.clicks, 1))))}" />
               <input ${fieldAttr}="ocrTargetFailureAction" data-ocr-target-failure-action type="hidden" value="${escapeHtml(normalizeOcrTargetFailureAction(layouts?.[index]?.failureAction ?? layouts?.[index]?.failure_action))}" />
+              <input ${fieldAttr}="ocrTargetFailureBlock" data-ocr-target-failure-block type="hidden" value="${escapeHtml(layouts?.[index]?.failureBlock ?? layouts?.[index]?.failure_block ?? layouts?.[index]?.bloco_falha ?? "")}" />
             </label>
             <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo" ${targets.length <= 1 ? "disabled" : ""}>&times;</button>
           </div>
@@ -9422,6 +9435,7 @@ function addOcrTargetRow(container, fieldAttr, actionAttr, value = "") {
       <input ${fieldAttr}="ocrTargetBlock" data-ocr-target-block type="hidden" value="" />
       <input ${fieldAttr}="ocrTargetClicks" data-ocr-target-clicks type="hidden" value="1" />
       <input ${fieldAttr}="ocrTargetFailureAction" data-ocr-target-failure-action type="hidden" value="continuar" />
+      <input ${fieldAttr}="ocrTargetFailureBlock" data-ocr-target-failure-block type="hidden" value="" />
     </label>
     <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo">&times;</button>
   `;
@@ -9453,6 +9467,7 @@ function ocrTargetActionLayout(layouts = [], index = 0) {
     block: String(layout.block ?? "").trim(),
     clicks: Math.max(1, Math.trunc(parseNumber(layout.clicks, 1))),
     failureAction: normalizeOcrTargetFailureAction(layout.failureAction ?? layout.failure_action),
+    failureBlock: String(layout.failureBlock ?? layout.failure_block ?? layout.bloco_falha ?? "").trim(),
   };
 }
 
@@ -9503,6 +9518,7 @@ function renderOcrTargetActionRows(details = {}, currentOrder = null) {
             </div>
             <input data-ocr-target-action-control="action" type="hidden" value="${escapeHtml(targetAction.action)}" />
             <input data-ocr-target-action-control="failureAction" type="hidden" value="${escapeHtml(targetAction.failureAction)}" />
+            <input data-ocr-target-action-control="failureBlock" type="hidden" value="${escapeHtml(targetAction.failureBlock)}" />
             <input data-ocr-target-action-control="clicks" type="hidden" value="${targetAction.clicks}" />
             <input data-ocr-target-action-control="clickChoice" type="hidden" value="${escapeHtml(clickChoice)}" />
             <input data-ocr-target-action-control="nextStep" type="hidden" value="${escapeHtml(nextStep)}" />
@@ -9537,8 +9553,15 @@ function renderOcrTargetActionRows(details = {}, currentOrder = null) {
                 <div class="recognition-choice-row">
                   <button class="recognition-choice-button ${targetAction.failureAction === "parar" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="parar" type="button">Parar</button>
                   <button class="recognition-choice-button ${targetAction.failureAction === "continuar" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="continuar" type="button">${escapeHtml(failureContinueLabel)}</button>
+                  <button class="recognition-choice-button ${targetAction.failureAction === "ir_para_bloco" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="ir_para_bloco" type="button">Ir para bloco</button>
                 </div>
               </div>
+              <label class="action-target-field ${ocrTargetFailureNeedsBlock(targetAction.failureAction) ? "" : "is-ocr-target-action-hidden"}" data-ocr-target-failure-action-fields="block" ${ocrTargetFailureNeedsBlock(targetAction.failureAction) ? "" : "hidden"}>
+                <span>Abrir este bloco</span>
+                <select data-ocr-target-action-control="failureBlock">
+                  ${blockTargetOptions(targetAction.failureBlock, currentOrder, "Escolha o bloco")}
+                </select>
+              </label>
             </section>
           </section>
         `;
@@ -9568,6 +9591,12 @@ function applyOcrTargetActionVisibility(row) {
     field.classList.toggle("is-ocr-target-action-hidden", !shouldShow);
     field.setAttribute("aria-hidden", String(!shouldShow));
   });
+  row.querySelectorAll("[data-ocr-target-failure-action-fields]").forEach((field) => {
+    const shouldShow = field.dataset.ocrTargetFailureActionFields === "block" && ocrTargetFailureNeedsBlock(failureAction);
+    field.hidden = !shouldShow;
+    field.classList.toggle("is-ocr-target-action-hidden", !shouldShow);
+    field.setAttribute("aria-hidden", String(!shouldShow));
+  });
   row.querySelectorAll('[data-ocr-target-action-choice="clickChoice"]').forEach((button) => {
     button.classList.toggle("is-active", String(button.dataset.ocrTargetActionValue || "") === clickChoice);
   });
@@ -9590,6 +9619,7 @@ function syncOcrTargetActionRows(container) {
     const block = source?.querySelector("[data-ocr-target-block]")?.value || "";
     const clicks = source?.querySelector("[data-ocr-target-clicks]")?.value || "1";
     const failureAction = source?.querySelector("[data-ocr-target-failure-action]")?.value || "continuar";
+    const failureBlock = source?.querySelector("[data-ocr-target-failure-block]")?.value || "";
     const actionControl = actionRow.querySelector('[data-ocr-target-action-control="action"]');
     if (actionControl) actionControl.value = normalizeOcrTargetAction(action);
     const blockControl = actionRow.querySelector('[data-ocr-target-action-control="block"]');
@@ -9602,6 +9632,8 @@ function syncOcrTargetActionRows(container) {
     if (nextStepControl) nextStepControl.value = ocrTargetNextStepFromAction(action);
     const failureControl = actionRow.querySelector('[data-ocr-target-action-control="failureAction"]');
     if (failureControl) failureControl.value = normalizeOcrTargetFailureAction(failureAction);
+    const failureBlockControl = actionRow.querySelector('[data-ocr-target-action-control="failureBlock"]');
+    if (failureBlockControl) failureBlockControl.value = failureBlock;
     applyOcrTargetActionVisibility(actionRow);
   });
 }
@@ -9636,6 +9668,7 @@ function syncOcrTargetActionControlToSource(target) {
     block: "[data-ocr-target-block]",
     clicks: "[data-ocr-target-clicks]",
     failureAction: "[data-ocr-target-failure-action]",
+    failureBlock: "[data-ocr-target-failure-block]",
   };
   const destination = source?.querySelector(fieldMap[target.dataset.ocrTargetActionControl]);
   if (!destination) return false;

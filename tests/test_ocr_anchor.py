@@ -447,6 +447,33 @@ class OcrAnchorTests(unittest.TestCase):
         self.assertEqual(executor.localizar_referencia_hibrida_ocr_visual.call_count, 1)
         self.assertEqual(local["ocr_target_flow"], {"acao": "parar"})
 
+    def test_individual_ocr_failure_can_jump_to_its_configured_block(self):
+        executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.cancelamento_solicitado = Mock(return_value=False)
+        leitura = {
+            "ocr_target_layouts": [
+                {
+                    "texto": "Empresa",
+                    "action": "continuar",
+                    "failureAction": "ir_para_bloco",
+                    "failureBlock": "20",
+                },
+                {"texto": "Periodo", "action": "continuar", "failureAction": "continuar"},
+            ],
+        }
+        executor.localizar_referencia_hibrida_ocr_visual = Mock(return_value=None)
+
+        local = executor.localizar_referencia_hibrida_por_primeiro_ocr(
+            "empresa_001", "Empresa\nPeriodo", dimensoes_referencia=(159, 74), leitura_relativa=leitura,
+        )
+
+        self.assertEqual(executor.localizar_referencia_hibrida_ocr_visual.call_count, 1)
+        self.assertEqual(local["ocr_target_flow"], {
+            "acao": "ir_para_bloco",
+            "bloco": "20",
+            "origem": "falha_ocr",
+        })
+
     def test_individual_visual_failure_respects_continue_rule(self):
         executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
         executor.cancelamento_solicitado = Mock(return_value=False)

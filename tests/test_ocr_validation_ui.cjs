@@ -132,6 +132,9 @@ test("OCR actions use the same found and not-found layout as visual recognition"
   assert.match(source, /<span>Proximo passo<\/span>/);
   assert.match(source, /data-ocr-target-action-choice="clickChoice"/);
   assert.match(source, /data-ocr-target-action-choice="nextStep"/);
+  assert.match(source, /data-ocr-target-action-value="ir_para_bloco"[^>]*>Ir para bloco/);
+  assert.match(source, /data-ocr-target-action-control="failureBlock"/);
+  assert.match(source, /data-ocr-target-failure-action-fields="block"/);
   assert.doesNotMatch(source, /ocr-target-decision-button/);
 });
 
@@ -143,4 +146,18 @@ test("OCR click and next-step choices preserve each supported execution rule", (
   assert.equal(context.ocrTargetActionFromChoices("confirm", "continue"), "continuar");
   assert.equal(context.ocrTargetClickChoiceFromAction("clicar_ir_para_bloco", 2), "double");
   assert.equal(context.ocrTargetNextStepFromAction("confirmar_ir_para_bloco"), "goto");
+  assert.equal(context.normalizeOcrTargetFailureAction("ir_para_bloco"), "ir_para_bloco");
+});
+
+test("OCR summary identifies the block chosen after an individual failure", () => {
+  const { context } = fixture();
+  const rules = context.recognitionOcrTargetRuleSummary({
+    texto_ocr_busca: "Empresa\nPeriodo",
+    ocr_target_layouts: [
+      { action: "continuar", failureAction: "ir_para_bloco", failureBlock: "20" },
+      { action: "continuar", failureAction: "continuar" },
+    ],
+  });
+  assert.equal(rules[0].failure, "Bloco 20");
+  assert.equal(rules[1].failure, "Continuar");
 });

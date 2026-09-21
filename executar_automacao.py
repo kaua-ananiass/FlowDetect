@@ -2573,12 +2573,17 @@ class ExecutorAutomacao:
         ).strip().lower()
         if falha in {"stop", "interromper"}:
             falha = "parar"
-        if falha not in {"continuar", "parar"}:
+        if falha in {"bloco", "navegar", "goto", "jump"}:
+            falha = "ir_para_bloco"
+        if falha not in {"continuar", "parar", "ir_para_bloco"}:
             falha = "continuar"
         return {
             "acao": acao,
             "falha": falha,
             "bloco": str(dados.get("block", dados.get("bloco", "")) or "").strip(),
+            "bloco_falha": str(
+                dados.get("failureBlock", dados.get("failure_block", dados.get("bloco_falha", ""))) or ""
+            ).strip(),
             "clicks": max(1, int(dados.get("clicks", dados.get("cliques", 1)) or 1)),
         }
 
@@ -2773,6 +2778,27 @@ class ExecutorAutomacao:
                     "ocr_target_action": layout_origem,
                     "ocr_target_flow": {"acao": "parar"},
                 }
+            if regra["falha"] == "ir_para_bloco":
+                bloco_falha = regra["bloco_falha"]
+                if bloco_falha:
+                    safe_print(
+                        f"OCR {indice + 1} nao foi confirmado. Regra: ir para bloco {bloco_falha}.",
+                        flush=True,
+                    )
+                    return {
+                        "ocr_target_individual": True,
+                        "ocr_target_index": indice,
+                        "ocr_target_action": layout_origem,
+                        "ocr_target_flow": {
+                            "acao": "ir_para_bloco",
+                            "bloco": bloco_falha,
+                            "origem": "falha_ocr",
+                        },
+                    }
+                safe_print(
+                    f"OCR {indice + 1} nao foi confirmado. A regra Ir para bloco nao possui destino; continuando.",
+                    flush=True,
+                )
             if indice < len(partes) - 1:
                 safe_print(
                     f"OCR {indice + 1} nao foi confirmado. Regra: procurar OCR {indice + 2}.",
@@ -8591,7 +8617,7 @@ class ExecutorAutomacao:
                     )
                     if (
                         isinstance(fluxo_ocr_individual, dict)
-                        and str(fluxo_ocr_individual.get("acao") or "") in {"continuar", "parar"}
+                        and str(fluxo_ocr_individual.get("acao") or "") in {"continuar", "parar", "ir_para_bloco"}
                     ):
                         # Uma falha individual nao e uma tentativa pendente de
                         # OCR: ela ja decidiu o fluxo. Antes esse resultado era
@@ -8964,7 +8990,7 @@ class ExecutorAutomacao:
         if not local:
             return None
         fluxo_individual = local.get("ocr_target_flow") if isinstance(local, dict) else None
-        if isinstance(fluxo_individual, dict) and str(fluxo_individual.get("acao") or "") in {"continuar", "parar"}:
+        if isinstance(fluxo_individual, dict) and str(fluxo_individual.get("acao") or "") in {"continuar", "parar", "ir_para_bloco"}:
             # A regra de falha de um OCR individual encerra a busca do bloco
             # antes da confirmacao visual/click padrao.
             return local
@@ -9724,8 +9750,14 @@ class ExecutorAutomacao:
                     if acao_fluxo_ocr == "ir_para_bloco":
                         bloco_destino_ocr = str(fluxo_ocr.get("bloco") or "").strip()
                         if bloco_destino_ocr:
+                            origem_fluxo_ocr = str(fluxo_ocr.get("origem") or "").strip()
+                            mensagem_ocr = (
+                                f"Bloco {ordem_evento}: OCR individual nao foi confirmado. Indo para bloco {bloco_destino_ocr}."
+                                if origem_fluxo_ocr == "falha_ocr"
+                                else f"Bloco {ordem_evento}: OCR individual confirmou {nome_imagem}. Indo para bloco {bloco_destino_ocr}."
+                            )
                             safe_print(
-                                f"Bloco {ordem_evento}: OCR individual confirmou {nome_imagem}. Indo para bloco {bloco_destino_ocr}.",
+                                mensagem_ocr,
                                 flush=True,
                             )
                             return self.resultado_fluxo("ir_para_bloco", bloco=bloco_destino_ocr)
