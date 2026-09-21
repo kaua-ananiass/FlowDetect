@@ -1,4 +1,4 @@
-const CONTENT_RUNTIME_VERSION = "0.2.9";
+const CONTENT_RUNTIME_VERSION = "0.2.10";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
@@ -48,7 +48,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     return { element: match.element, rect: match.element.getBoundingClientRect(), text: match.text };
   }
 
-  function findTextTarget(text) {
+  function findTextTarget(text, options = {}) {
     const expected = normalize(text);
     if (!expected) return null;
     const selectors = "button, a, input, textarea, select, label, [role='button'], [role='link'], [role='option'], [role='menuitem'], [role='tab'], [role='treeitem'], [role='gridcell'], [contenteditable='true'], [aria-label], [title], img[alt]";
@@ -59,6 +59,19 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
 
     const staticTarget = findStaticTextTarget(expected);
     if (staticTarget) return staticTarget;
+
+    if (options.allowDocumentText) {
+      const documentElement = document.body || document.documentElement;
+      const renderedText = String(documentElement?.innerText || documentElement?.textContent || "");
+      if (renderedText && textMatches(renderedText, expected)) {
+        return {
+          element: documentElement,
+          rect: documentElement.getBoundingClientRect(),
+          text: expected,
+          documentText: true
+        };
+      }
+    }
 
     const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
     let node;
@@ -74,12 +87,12 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     return null;
   }
 
-  async function waitForTextTarget(text, timeoutMs, attempts = 1, interval = 0) {
+  async function waitForTextTarget(text, timeoutMs, attempts = 1, interval = 0, options = {}) {
     const timeout = Math.max(500, Number(timeoutMs || 10000));
     const deadline = Date.now() + timeout;
     const retryDelay = Math.max(120, Number(interval || 0) || Math.min(500, Math.round(timeout / (Math.max(1, Number(attempts || 1)) + 1))));
     while (Date.now() <= deadline) {
-      const target = findTextTarget(text);
+      const target = findTextTarget(text, options);
       if (target) return target;
       if (Date.now() + retryDelay > deadline) break;
       await sleep(retryDelay);
@@ -243,17 +256,19 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   }
 
   async function executeOcrText(step) {
-    const target = await waitForTextTarget(step.text, step.timeout_ms, step.attempts, step.interval_ms);
+    const shouldClick = Boolean(step.click) && !["confirmar", "esperar", "verificar"].includes(String(step.action || "").toLowerCase());
+    const target = await waitForTextTarget(step.text, step.timeout_ms, step.attempts, step.interval_ms, {
+      allowDocumentText: !shouldClick
+    });
     target.element.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
     await sleep(180);
-    const refreshedTarget = findTextTarget(step.text) || target;
+    const refreshedTarget = findTextTarget(step.text, { allowDocumentText: !shouldClick }) || target;
     const rect = refreshedTarget.rect || refreshedTarget.element.getBoundingClientRect();
     const clickPoint = {
       x: Math.max(1, Math.min(innerWidth - 1, rect.left + rect.width / 2 + Number(step.offset_x || 0))),
       y: Math.max(1, Math.min(innerHeight - 1, rect.top + rect.height / 2 + Number(step.offset_y || 0)))
     };
     highlightRect(rect, { color: "#44b9ff", label: "OCR" });
-    const shouldClick = Boolean(step.click) && !["confirmar", "esperar", "verificar"].includes(String(step.action || "").toLowerCase());
     if (shouldClick) clickTarget(refreshedTarget.element, step.clicks, clickPoint);
     return `OCR encontrou “${String(step.text).slice(0, 80)}”${shouldClick ? " e clicou" : ""}.`;
   }
@@ -296,7 +311,9 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     else if (step.type === "focused_text") execute = Promise.resolve().then(() => applyTextToFocused(step));
     else if (step.type === "key_sequence") execute = Promise.resolve().then(() => dispatchKeySequence(step.keys || [], step.repetitions));
     else if (step.type === "viewport_click") execute = Promise.resolve().then(() => clickAt(step));
-    else if (step.type === "wait_text") execute = waitForTextTarget(step.text, step.timeout_ms).then(() => `Texto confirmado: ${step.text}.`);
+    else if (step.type === "wait_text") execute = waitForTextTarget(step.text, step.timeout_ms, 1, 0, {
+      allowDocumentText: true
+    }).then(() => `Texto confirmado: ${step.text}.`);
     else execute = executeElementAction(step);
     execute.then((message) => sendResponse({ ok: true, message })).catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;

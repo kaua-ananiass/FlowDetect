@@ -100,7 +100,40 @@ test("OCR waits for a delayed static banner instead of failing on the first chec
 
 
 test("content runner uses a versioned message channel after an extension update", () => {
-  assert.match(source, /CONTENT_RUNTIME_VERSION = "0\.2\.9"/);
+  assert.match(source, /CONTENT_RUNTIME_VERSION = "0\.2\.\d+"/);
   assert.match(source, /flowdetect-execute-step-v2/);
   assert.match(source, /__flowDetectChromeRunnerListener/);
+});
+
+
+test("OCR confirmation accepts text rendered by a non-interactive alert", () => {
+  class Element {
+    constructor(text) {
+      this.innerText = text;
+      this.textContent = text;
+    }
+    getBoundingClientRect() { return { left: 0, top: 0, width: 400, height: 80 }; }
+  }
+
+  const findTextFunction = productionFunction("findTextTarget");
+  const banner = new Element("Nao ha debitos de interesse para o empregador.");
+  const context = vm.createContext({
+    Element,
+    String,
+    document: {
+      body: banner,
+      documentElement: banner,
+      querySelectorAll: () => [],
+    },
+    normalize: (value) => String(value).toLowerCase(),
+    textMatches: (value, expected) => String(value).toLowerCase().includes(expected),
+    isVisible: () => true,
+    findStaticTextTarget: () => null,
+  });
+  vm.runInContext(findTextFunction, context);
+
+  const target = context.findTextTarget("Nao ha debitos", { allowDocumentText: true });
+
+  assert.equal(target.documentText, true);
+  assert.equal(target.element, banner);
 });
