@@ -2,9 +2,18 @@
   "manifest_version": 3,
   "name": "FlowDetect para Chrome",
   "description": "Executa automacoes web exportadas pelo FlowDetect Studio.",
-  "version": "0.2.12",
-  "permissions": ["activeTab", "sidePanel", "scripting", "storage", "unlimitedStorage", "debugger"],
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "version": "0.2.13",
+  "permissions": [
+    "activeTab",
+    "sidePanel",
+    "storage",
+    "unlimitedStorage",
+    "debugger"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "background": {
     "service_worker": "service_worker.js",
     "type": "module"
@@ -14,5 +23,17 @@
   },
   "side_panel": {
     "default_path": "sidepanel.html"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
 }

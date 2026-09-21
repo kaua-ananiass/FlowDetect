@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.12";
+const RUNTIME_VERSION = "0.2.13";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -136,7 +136,6 @@ async function sendToPage(tabId, message) {
   while (Date.now() < limite) {
     try {
       await esperarAbaPronta(tabId, Math.min(1200, Math.max(250, limite - Date.now())));
-      await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
       const resposta = await chrome.tabs.sendMessage(tabId, versionedMessage);
       if (resposta) return resposta;
       ultimoErro = new Error("A página ainda está inicializando.");

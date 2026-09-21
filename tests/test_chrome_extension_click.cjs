@@ -140,9 +140,22 @@ test("OCR confirmation accepts text rendered by a non-interactive alert", () => 
 });
 
 test("content runner can be reinjected into the same tab", () => {
+  const version = source.match(/CONTENT_RUNTIME_VERSION = "([^"]+)"/)[1];
   const context = vm.createContext({});
-  vm.runInContext('globalThis.__flowDetectChromeRunnerVersion = "0.2.12";', context);
+  vm.runInContext(`globalThis.__flowDetectChromeRunnerVersion = "${version}";`, context);
 
   assert.doesNotThrow(() => vm.runInContext(source, context));
   assert.doesNotThrow(() => vm.runInContext(source, context));
+});
+
+const workerSource = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
+const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/manifest.json"), "utf8"));
+
+test("service worker uses the persistent content runner instead of reinjecting it", () => {
+  assert.doesNotMatch(workerSource, /chrome\.scripting\.executeScript/);
+  assert.deepEqual(manifest.content_scripts, [{
+    matches: ["http://*/*", "https://*/*"],
+    js: ["content.js"],
+    run_at: "document_idle",
+  }]);
 });
