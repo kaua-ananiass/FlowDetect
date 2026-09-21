@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "findSpreadsheetLoopSource", "executeSpreadsheetLoop", "keyEventFor", "executeNativeKeySequence"];
+const names = ["normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "findSpreadsheetLoopSource", "executeSpreadsheetLoop", "templateSamples", "scoreAt", "findTemplateInImage"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -79,38 +79,36 @@ test("Chrome runner repeats the complete flow once for each spreadsheet value", 
 });
 
 
-test("Chrome runner maps common keys to native browser key events", () => {
-  const context = runner();
-  const enter = context.keyEventFor("enter");
-  const letter = context.keyEventFor("a");
+const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/manifest.json"), "utf8"));
 
-  assert.equal(enter.key, "Enter");
-  assert.equal(enter.code, "Enter");
-  assert.equal(enter.virtualKey, 13);
-  assert.equal(letter.key, "a");
-  assert.equal(letter.code, "KeyA");
-  assert.equal(letter.virtualKey, 65);
-  assert.throws(() => context.keyEventFor("nao-existe"), /nao suportada/);
+test("Chrome sends key blocks to the page without attaching the debugger", () => {
+  assert.doesNotMatch(source, /chrome\.debugger/);
+  assert.match(source, /if \(step\.type === "key_sequence"\) return executePageStep\(run, step\);/);
+  assert.equal(manifest.permissions.includes("debugger"), false);
 });
 
-
-test("Chrome sends modifier flags as a protocol number", async () => {
-  const sent = [];
-  const context = runner({
-    chrome: {
-      debugger: {
-        attach: async () => {},
-        sendCommand: async (_target, command, params) => sent.push({ command, params }),
-        detach: async () => {},
-      },
-    },
+test("visual recognition locates an image even when it has no text", () => {
+  const context = runner();
+  const blank = (width, height) => new Uint8ClampedArray(width * height * 4).fill(255);
+  const setPixel = (image, width, x, y, rgb) => {
+    const index = (y * width + x) * 4;
+    image[index] = rgb[0]; image[index + 1] = rgb[1]; image[index + 2] = rgb[2]; image[index + 3] = 255;
+  };
+  const templatePixels = blank(3, 3);
+  const sourcePixels = blank(12, 12);
+  const colors = [[30, 210, 100], [30, 120, 240], [240, 170, 30], [190, 60, 200], [40, 40, 40], [230, 70, 80], [100, 210, 230], [80, 130, 60], [220, 220, 40]];
+  colors.forEach((color, index) => {
+    const x = index % 3; const y = Math.floor(index / 3);
+    setPixel(templatePixels, 3, x, y, color);
+    setPixel(sourcePixels, 12, x + 4, y + 4, color);
   });
 
-  await context.executeNativeKeySequence(42, ["ctrl", "shift", "a"]);
+  const match = context.findTemplateInImage(
+    { image: { data: sourcePixels, width: 12, height: 12 }, width: 12, height: 12, scale: 1 },
+    { image: { data: templatePixels, width: 3, height: 3 }, width: 3, height: 3, scale: 1 },
+  );
 
-  assert.equal(sent.length, 2);
-  assert.equal(sent[0].command, "Input.dispatchKeyEvent");
-  assert.equal(sent[0].params.modifiers, 10);
-  assert.equal(typeof sent[0].params.modifiers, "number");
-  assert.equal(sent[1].params.type, "keyUp");
+  assert.equal(match.x, 4);
+  assert.equal(match.y, 4);
+  assert.ok(match.score > .99);
 });

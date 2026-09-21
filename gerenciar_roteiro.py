@@ -882,6 +882,9 @@ def converter_evento_para_chrome(evento):
                 "attempts": max(1, int(detalhes.get("quantidade_tentativas") or 1)),
                 "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
             })
+            imagem_visual, _ = recurso_imagem_para_chrome(detalhes.get("imagem"))
+            if imagem_visual:
+                passo["visual_fallback"] = imagem_visual
             return aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes), None
         imagem, erro = recurso_imagem_para_chrome(detalhes.get("imagem"))
         if not imagem:

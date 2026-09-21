@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_RUNTIME_VERSION = "0.2.14";
+const CONTENT_RUNTIME_VERSION = "0.2.15";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
@@ -240,17 +240,82 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     return `Texto preenchido no campo ativo (${text.length} caracteres).`;
   }
 
-  const KEY_NAMES = { ctrl: "Control", ctrl_r: "Control", shift: "Shift", shift_r: "Shift", alt: "Alt", alt_r: "Alt", cmd: "Meta", cmd_r: "Meta", esc: "Escape", space: " ", pgup: "PageUp", pgdn: "PageDown", del: "Delete" };
+  const KEY_NAMES = { ctrl: "Control", ctrl_r: "Control", shift: "Shift", shift_r: "Shift", alt: "Alt", alt_r: "Alt", cmd: "Meta", cmd_r: "Meta", esc: "Escape", escape: "Escape", space: " ", pgup: "PageUp", pgdn: "PageDown", del: "Delete" };
+  const MODIFIER_KEYS = new Set(["ctrl", "ctrl_r", "shift", "shift_r", "alt", "alt_r", "cmd", "cmd_r"]);
   function keyName(key) { return KEY_NAMES[key] || (key.length === 1 ? key : key[0]?.toUpperCase() + key.slice(1)); }
+  function currentKeyboardTarget() {
+    return document.activeElement instanceof Element ? document.activeElement : document.body;
+  }
+  function focusableElements() {
+    const selector = "a[href],button,input,textarea,select,[tabindex]:not([tabindex='-1']),[contenteditable='true'],[role='button'],[role='link'],[role='option'],[role='tab'],[role='menuitem']";
+    return [...document.querySelectorAll(selector)].filter((element) => (
+      isVisible(element) && !element.disabled && element.getAttribute("aria-disabled") !== "true"
+    ));
+  }
+  function focusByTab(reverse = false) {
+    const candidates = focusableElements();
+    if (!candidates.length) return currentKeyboardTarget();
+    const active = currentKeyboardTarget();
+    const index = candidates.indexOf(active);
+    const next = candidates[(index + (reverse ? -1 : 1) + candidates.length) % candidates.length];
+    next.focus?.({ preventScroll: true });
+    return next;
+  }
+  function changeSelectValue(element, direction) {
+    const next = Math.max(0, Math.min(element.options.length - 1, element.selectedIndex + direction));
+    if (next === element.selectedIndex) return false;
+    element.selectedIndex = next;
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }
+  function applyKeyDefault(target, key, modifiers) {
+    if (modifiers.ctrlKey || modifiers.altKey || modifiers.metaKey) return false;
+    if (key === "tab") {
+      focusByTab(modifiers.shiftKey);
+      return true;
+    }
+    if (key === "escape" || key === "esc") {
+      target.blur?.();
+      return true;
+    }
+    if (key === "up" || key === "down") {
+      if (target instanceof HTMLSelectElement) return changeSelectValue(target, key === "up" ? -1 : 1);
+      return false;
+    }
+    if (key === "enter" || key === "space") {
+      const clickable = focusableTarget(target);
+      if (clickable?.matches?.("button,a,[role='button'],[role='link'],[role='option'],[role='menuitem'],input[type='checkbox'],input[type='radio']")) {
+        clickTarget(clickable);
+        return true;
+      }
+      if (key === "enter" && target instanceof HTMLInputElement && target.form?.requestSubmit) {
+        target.form.requestSubmit();
+        return true;
+      }
+    }
+    return false;
+  }
   function dispatchKeySequence(keys, repetitions = 1) {
-    const target = document.activeElement || document.body;
-    const raw = keys.map((key) => String(key || "").toLowerCase()).filter(Boolean);
-    if (!raw.length) throw new Error("Sequência de teclas vazia.");
+    const raw = (keys || []).map((key) => String(key || "").trim().toLowerCase()).filter(Boolean);
+    if (!raw.length) throw new Error("Sequ?ncia de teclas vazia.");
+    const modifiers = {
+      ctrlKey: raw.some((key) => key === "ctrl" || key === "ctrl_r"),
+      shiftKey: raw.some((key) => key === "shift" || key === "shift_r"),
+      altKey: raw.some((key) => key === "alt" || key === "alt_r"),
+      metaKey: raw.some((key) => key === "cmd" || key === "cmd_r")
+    };
+    const primaryKeys = raw.filter((key) => !MODIFIER_KEYS.has(key));
+    if (!primaryKeys.length) throw new Error("Informe uma tecla junto com o atalho.");
+    let target = currentKeyboardTarget();
     for (let attempt = 0; attempt < Math.max(1, Number(repetitions || 1)); attempt += 1) {
-      const modifiers = { ctrlKey: raw.some((key) => key === "ctrl" || key === "ctrl_r"), shiftKey: raw.some((key) => key === "shift" || key === "shift_r"), altKey: raw.some((key) => key === "alt" || key === "alt_r"), metaKey: raw.some((key) => key === "cmd" || key === "cmd_r") };
-      raw.forEach((key) => target.dispatchEvent(new KeyboardEvent("keydown", { key: keyName(key), bubbles: true, ...modifiers })));
-      raw.slice().reverse().forEach((key) => target.dispatchEvent(new KeyboardEvent("keyup", { key: keyName(key), bubbles: true, ...modifiers })));
-      if (raw.length === 1 && raw[0] === "enter") target.dispatchEvent(new Event("change", { bubbles: true }));
+      for (const key of primaryKeys) {
+        target = currentKeyboardTarget();
+        const event = { key: keyName(key), bubbles: true, cancelable: true, composed: true, ...modifiers };
+        const notCancelled = target.dispatchEvent(new KeyboardEvent("keydown", event));
+        if (notCancelled) applyKeyDefault(target, key, modifiers);
+        target.dispatchEvent(new KeyboardEvent("keyup", event));
+      }
     }
     if (target instanceof Element) highlight(target, "#55e6d5", "TECLA");
     return `Tecla enviada: ${raw.join(" + ")}.`;

@@ -111,6 +111,35 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertTrue(exported["steps"][1]["image"]["data_url"].startswith("data:image/png;base64,"))
         self.assertTrue(exported["steps"][0]["click"])
 
+    def test_exports_ocr_plus_visual_with_an_image_fallback(self):
+        automation_id = "auto_hybrid"
+        payload = self.roadmap.criar_payload_vazio()
+        image_path = Path("imagens") / "definir.png"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(
+            bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cfc0000003010100c9fe92ef0000000049454e44ae426082")
+        )
+        payload["eventos"] = [{
+            "ordem": 1,
+            "sequencia": "principal",
+            "tipo": "clicar_imagem",
+            "detalhes": {
+                "modo_reconhecimento": "texto_ocr",
+                "texto_ocr_busca": "Definir",
+                "acao_ocr": "clicar",
+                "imagem": "definir.png",
+            },
+        }]
+        self.roadmap.salvar_payload_em_automacao(automation_id, payload, incluir_recursos=False)
+
+        result = self.roadmap.exportar_automacao_para_chrome(automation_id, {"nome": "OCR e Visual"})
+        exported = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+        step = exported["steps"][0]
+
+        self.assertEqual(step["type"], "ocr_text")
+        self.assertTrue(step["click"])
+        self.assertTrue(step["visual_fallback"]["data_url"].startswith("data:image/png;base64,"))
+
     def test_exports_spreadsheet_values_as_a_loop_source(self):
         automation_id = "auto_spreadsheet"
         payload = self.roadmap.criar_payload_vazio()

@@ -1,77 +1,11 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.14";
+const RUNTIME_VERSION = "0.2.15";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => null);
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
-
-function keyEventFor(rawKey) {
-  const key = String(rawKey || "").trim().toLowerCase();
-  const known = {
-    enter: ["Enter", "Enter", 13],
-    tab: ["Tab", "Tab", 9],
-    esc: ["Escape", "Escape", 27],
-    escape: ["Escape", "Escape", 27],
-    space: [" ", "Space", 32],
-    backspace: ["Backspace", "Backspace", 8],
-    del: ["Delete", "Delete", 46],
-    delete: ["Delete", "Delete", 46],
-    up: ["ArrowUp", "ArrowUp", 38],
-    down: ["ArrowDown", "ArrowDown", 40],
-    left: ["ArrowLeft", "ArrowLeft", 37],
-    right: ["ArrowRight", "ArrowRight", 39],
-    home: ["Home", "Home", 36],
-    end: ["End", "End", 35],
-    pgup: ["PageUp", "PageUp", 33],
-    pgdn: ["PageDown", "PageDown", 34]
-  };
-  if (known[key]) {
-    const [value, code, virtualKey] = known[key];
-    return { key: value, code, virtualKey };
-  }
-  if (/^[a-z]$/.test(key)) return { key, code: "Key" + key.toUpperCase(), virtualKey: key.toUpperCase().charCodeAt(0) };
-  if (/^[0-9]$/.test(key)) return { key, code: "Digit" + key, virtualKey: key.charCodeAt(0) };
-  throw new Error("Tecla nao suportada no Chrome: " + key + ".");
-}
-
-async function executeNativeKeySequence(tabId, keys, repetitions = 1) {
-  const raw = (keys || []).map((key) => String(key || "").trim().toLowerCase()).filter(Boolean);
-  if (!raw.length) throw new Error("Sequencia de teclas vazia.");
-  const modifierMask = (raw.includes("alt") || raw.includes("alt_r") ? 1 : 0)
-    | (raw.includes("ctrl") || raw.includes("ctrl_r") ? 2 : 0)
-    | (raw.includes("cmd") || raw.includes("cmd_r") ? 4 : 0)
-    | (raw.includes("shift") || raw.includes("shift_r") ? 8 : 0);
-  const modifiers = new Set(["alt", "alt_r", "ctrl", "ctrl_r", "cmd", "cmd_r", "shift", "shift_r"]);
-  const primaryKeys = raw.filter((key) => !modifiers.has(key));
-  if (!primaryKeys.length) throw new Error("Informe uma tecla junto com o atalho.");
-  const debuggee = { tabId };
-  let attached = false;
-  try {
-    await chrome.debugger.attach(debuggee, "1.3");
-    attached = true;
-    for (let repeat = 0; repeat < Math.max(1, Number(repetitions || 1)); repeat += 1) {
-      for (const primaryKey of primaryKeys) {
-        const event = keyEventFor(primaryKey);
-        const base = {
-          key: event.key,
-          code: event.code,
-          windowsVirtualKeyCode: event.virtualKey,
-          nativeVirtualKeyCode: event.virtualKey,
-          modifiers: modifierMask
-        };
-        await chrome.debugger.sendCommand(debuggee, "Input.dispatchKeyEvent", { type: "keyDown", ...base });
-        await chrome.debugger.sendCommand(debuggee, "Input.dispatchKeyEvent", { type: "keyUp", ...base });
-      }
-    }
-  } catch (error) {
-    throw new Error("Nao foi possivel enviar a tecla no Chrome: " + String(error?.message || error));
-  } finally {
-    if (attached) await chrome.debugger.detach(debuggee).catch(() => null);
-  }
-  return "Tecla enviada: " + raw.join(" + ") + ".";
-}
 
 function createRun(automation, tabId) {
   return {
@@ -347,7 +281,7 @@ async function executeStep(run, rawStep) {
   }
   if (step.type === "visual_match") return executeVisualMatch(run, step);
   if (step.type === "visual_state") return executeVisualState(run, step);
-  if (step.type === "key_sequence") return executeNativeKeySequence(run.tabId, step.keys, step.repetitions);
+  if (step.type === "key_sequence") return executePageStep(run, step);
   if (step.type === "data_source") {
     const source = {
       name: step.name || "valor",
@@ -374,6 +308,10 @@ async function executeStep(run, rawStep) {
       if (step.type === "element_action" && step.visual_fallback?.data_url) {
         await addLog(run, "Seletor não respondeu; tentando referência visual.", "warning");
         return executeVisualMatch(run, { ...step, image: step.visual_fallback, click: true });
+      }
+      if (step.type === "ocr_text" && step.visual_fallback?.data_url) {
+        await addLog(run, "OCR nao respondeu; tentando a imagem deste bloco.", "warning");
+        return executeVisualMatch(run, { ...step, image: step.visual_fallback });
       }
       throw error;
     }
