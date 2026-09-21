@@ -73,3 +73,27 @@ test("OCR click ignores a hidden menu and presses the option at the recognized p
   assert.equal(option.clicks, 1);
   assert.deepEqual(option.events.filter((type) => type !== "focus"), ["pointerdown", "mousedown", "pointerup", "mouseup"]);
 });
+
+
+test("OCR waits for a delayed static banner instead of failing on the first check", async () => {
+  let now = 0;
+  let checks = 0;
+  const waitFunction = productionFunction("waitForTextTarget");
+  const context = vm.createContext({
+    Date: { now: () => now },
+    Math,
+    Number,
+    Error,
+    findTextTarget: () => {
+      checks += 1;
+      return checks === 2 ? { element: {} } : null;
+    },
+    sleep: async (milliseconds) => { now += milliseconds; },
+  });
+  vm.runInContext(waitFunction, context);
+
+  const target = await context.waitForTextTarget("Nao ha debitos", 1000, 1, 0);
+
+  assert.deepEqual(target, { element: {} });
+  assert.equal(checks, 2);
+});

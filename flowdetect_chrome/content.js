@@ -29,6 +29,22 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
     return text === expected || text.includes(expected);
   }
 
+  function findStaticTextTarget(expected) {
+    const selectors = [
+      "[role='alert']", "[role='status']", "[role='banner']", "output",
+      "[class*='alert']", "[class*='banner']", "[class*='message']",
+      "[class*='notice']", "[class*='notification']", "[class*='toast']"
+    ].join(", ");
+    const matches = [...document.querySelectorAll(selectors)]
+      .filter(isVisible)
+      .map((element) => ({ element, text: elementText(element).trim() }))
+      .filter((candidate) => candidate.text && textMatches(candidate.text, expected))
+      .sort((first, second) => first.text.length - second.text.length);
+    if (!matches.length) return null;
+    const match = matches[0];
+    return { element: match.element, rect: match.element.getBoundingClientRect(), text: match.text };
+  }
+
   function findTextTarget(text) {
     const expected = normalize(text);
     if (!expected) return null;
@@ -37,6 +53,9 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
     const direct = candidates.find((element) => normalize(elementText(element)) === expected)
       || candidates.find((element) => textMatches(elementText(element), expected));
     if (direct) return { element: direct, rect: direct.getBoundingClientRect(), text: elementText(direct) };
+
+    const staticTarget = findStaticTextTarget(expected);
+    if (staticTarget) return staticTarget;
 
     const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
     let node;
@@ -50,6 +69,19 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
       if (rect.width > 0 || rect.height > 0) return { element, rect, text: node.nodeValue.trim() };
     }
     return null;
+  }
+
+  async function waitForTextTarget(text, timeoutMs, attempts = 1, interval = 0) {
+    const timeout = Math.max(500, Number(timeoutMs || 10000));
+    const deadline = Date.now() + timeout;
+    const retryDelay = Math.max(120, Number(interval || 0) || Math.min(500, Math.round(timeout / (Math.max(1, Number(attempts || 1)) + 1))));
+    while (Date.now() <= deadline) {
+      const target = findTextTarget(text);
+      if (target) return target;
+      if (Date.now() + retryDelay > deadline) break;
+      await sleep(retryDelay);
+    }
+    throw new Error("OCR nao encontrou o texto: " + text + ".");
   }
 
   function resolveElement(selector = {}) {
@@ -76,19 +108,6 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
       await sleep(120);
     }
     throw new Error(`Não encontrei o elemento: ${selector?.value || "seletor vazio"}.`);
-  }
-
-  async function waitForTextTarget(text, timeoutMs, attempts = 1, interval = 0) {
-    const deadline = Date.now() + Math.max(500, Number(timeoutMs || 10000));
-    let currentAttempt = 0;
-    while (Date.now() <= deadline) {
-      const target = findTextTarget(text);
-      if (target) return target;
-      currentAttempt += 1;
-      if (currentAttempt >= Math.max(1, Number(attempts || 1)) && !interval) break;
-      await sleep(Math.max(120, Number(interval || 150)));
-    }
-    throw new Error(`OCR não encontrou o texto: ${text}.`);
   }
 
   function highlightRect(rect, { color = "#32e6c6", label = "" } = {}) {
