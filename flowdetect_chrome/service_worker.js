@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.13";
+const RUNTIME_VERSION = "0.2.14";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -59,7 +59,7 @@ async function executeNativeKeySequence(tabId, keys, repetitions = 1) {
           code: event.code,
           windowsVirtualKeyCode: event.virtualKey,
           nativeVirtualKeyCode: event.virtualKey,
-          modifiers
+          modifiers: modifierMask
         };
         await chrome.debugger.sendCommand(debuggee, "Input.dispatchKeyEvent", { type: "keyDown", ...base });
         await chrome.debugger.sendCommand(debuggee, "Input.dispatchKeyEvent", { type: "keyUp", ...base });

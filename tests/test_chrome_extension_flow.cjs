@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "findSpreadsheetLoopSource", "executeSpreadsheetLoop", "keyEventFor"];
+const names = ["normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "findSpreadsheetLoopSource", "executeSpreadsheetLoop", "keyEventFor", "executeNativeKeySequence"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -91,4 +91,26 @@ test("Chrome runner maps common keys to native browser key events", () => {
   assert.equal(letter.code, "KeyA");
   assert.equal(letter.virtualKey, 65);
   assert.throws(() => context.keyEventFor("nao-existe"), /nao suportada/);
+});
+
+
+test("Chrome sends modifier flags as a protocol number", async () => {
+  const sent = [];
+  const context = runner({
+    chrome: {
+      debugger: {
+        attach: async () => {},
+        sendCommand: async (_target, command, params) => sent.push({ command, params }),
+        detach: async () => {},
+      },
+    },
+  });
+
+  await context.executeNativeKeySequence(42, ["ctrl", "shift", "a"]);
+
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0].command, "Input.dispatchKeyEvent");
+  assert.equal(sent[0].params.modifiers, 10);
+  assert.equal(typeof sent[0].params.modifiers, "number");
+  assert.equal(sent[1].params.type, "keyUp");
 });
