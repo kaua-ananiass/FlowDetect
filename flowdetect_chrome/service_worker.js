@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.1";
+const RUNTIME_VERSION = "0.2.2";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -36,37 +36,52 @@ async function addLog(run, message, level = "info") {
   await persistRun(run);
 }
 
-async function ensureContentScript(tabId) {
-  try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
-  } catch (_) {
-    throw new Error("Não foi possível acessar esta página. Abra uma página HTTP ou HTTPS e tente novamente.");
+function timeoutDaPagina(message, fallback = 12000) {
+  return Math.max(2000, Math.min(30000, Number(message?.step?.timeout_ms || fallback)));
+}
+
+async function esperarAbaPronta(tabId, timeoutMs) {
+  const limite = Date.now() + Math.max(1000, Number(timeoutMs || 12000));
+  let ultimoErro = null;
+  while (Date.now() < limite) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (!tab.url?.startsWith("http://") && !tab.url?.startsWith("https://")) {
+        ultimoErro = new Error("Abra uma página HTTP ou HTTPS para executar a automação.");
+      } else if (tab.status === "complete") {
+        return tab;
+      }
+    } catch (error) {
+      ultimoErro = error;
+    }
+    await sleep(140);
   }
+  if (ultimoErro) throw ultimoErro;
+  throw new Error("A página demorou mais que o tempo configurado para carregar.");
 }
 
 async function sendToPage(tabId, message) {
-  await ensureContentScript(tabId);
-  try {
-    return await chrome.tabs.sendMessage(tabId, message);
-  } catch (_) {
-    throw new Error("A página foi atualizada ou não respondeu à automação. Tente executar novamente.");
+  const limite = Date.now() + timeoutDaPagina(message);
+  let ultimoErro = null;
+  while (Date.now() < limite) {
+    try {
+      await esperarAbaPronta(tabId, Math.min(1200, Math.max(250, limite - Date.now())));
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+      const resposta = await chrome.tabs.sendMessage(tabId, message);
+      if (resposta) return resposta;
+      ultimoErro = new Error("A página ainda está inicializando.");
+    } catch (error) {
+      ultimoErro = error;
+    }
+    await sleep(180);
   }
+  throw new Error(`A página ainda não respondeu após recarregar. ${String(ultimoErro?.message || "Tente executar novamente.")}`);
 }
 
-function waitForTabComplete(tabId, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      reject(new Error("A página demorou mais que o esperado para carregar."));
-    }, Math.max(1000, Number(timeoutMs || 15000)));
-    function onUpdated(updatedTabId, changeInfo) {
-      if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
-      clearTimeout(timeout);
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      resolve();
-    }
-    chrome.tabs.onUpdated.addListener(onUpdated);
-  });
+async function aguardarTransicaoDaPagina(tabId, timeoutMs) {
+  await sleep(160);
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (tab?.status === "loading") await esperarAbaPronta(tabId, timeoutMs);
 }
 
 function replaceVariables(value, variables) {
@@ -226,6 +241,7 @@ async function clickVisualResult(run, step, match, label = "VISUAL") {
 async function executeVisualMatch(run, step) {
   const match = await waitForVisualMatch(run, step, step.image);
   const result = await clickVisualResult(run, step, match, "VISUAL");
+  if (step.click) await aguardarTransicaoDaPagina(run.tabId, step.timeout_ms || 12000);
   return `Visual encontrado (${(match.score * 100).toFixed(0)}%)${step.click ? " e clicado" : ""} em ${Math.round(result.x)}, ${Math.round(result.y)}.`;
 }
 
@@ -247,6 +263,7 @@ async function executeVisualState(run, step) {
 async function executePageStep(run, step) {
   const response = await sendToPage(run.tabId, { type: "flowdetect-execute-step", step });
   if (!response?.ok) throw new Error(response?.error || "A etapa não foi concluída.");
+  await aguardarTransicaoDaPagina(run.tabId, step.timeout_ms || 12000);
   return response.message || "Etapa concluída.";
 }
 
@@ -255,9 +272,8 @@ async function executeStep(run, rawStep) {
   if (step.delay_ms) await sleep(Number(step.delay_ms));
   if (step.type === "navigate") {
     await addLog(run, `Abrindo ${step.url}`);
-    const loaded = waitForTabComplete(run.tabId, step.timeout_ms || 15000);
     await chrome.tabs.update(run.tabId, { url: step.url });
-    await loaded;
+    await esperarAbaPronta(run.tabId, step.timeout_ms || 15000);
     return "Página carregada.";
   }
   if (step.type === "visual_match") return executeVisualMatch(run, step);
