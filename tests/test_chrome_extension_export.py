@@ -111,7 +111,7 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertTrue(exported["steps"][1]["image"]["data_url"].startswith("data:image/png;base64,"))
         self.assertTrue(exported["steps"][0]["click"])
 
-    def test_exports_spreadsheet_values_as_a_typing_sequence(self):
+    def test_exports_spreadsheet_values_as_a_loop_source(self):
         automation_id = "auto_spreadsheet"
         payload = self.roadmap.criar_payload_vazio()
         payload["eventos"] = [
@@ -133,11 +133,11 @@ class ChromeExtensionExportTest(unittest.TestCase):
         exported = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
         step = exported["steps"][0]
 
-        self.assertEqual(step["type"], "spreadsheet_sequence")
+        self.assertEqual(step["type"], "data_source")
         self.assertEqual(step["name"], "CNPJ")
         self.assertEqual(step["values"], ["03943209000187", "51708970000187"])
-        self.assertEqual(step["after_keys"], ["enter"])
         self.assertEqual(step["interval_ms"], 500)
+        self.assertNotIn("after_keys", step)
 
     def test_exports_ocr_routes_and_secondary_page_targets(self):
         automation_id = "auto_ocr_route"

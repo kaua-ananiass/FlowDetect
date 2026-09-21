@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.6";
+const RUNTIME_VERSION = "0.2.7";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -279,11 +279,25 @@ async function executeStep(run, rawStep) {
   if (step.type === "visual_match") return executeVisualMatch(run, step);
   if (step.type === "visual_state") return executeVisualState(run, step);
   if (step.type === "data_source") {
-    run.dataSource = { name: step.name || "valor", values: Array.isArray(step.values) ? step.values : [], interval: Number(step.interval_ms || 0) };
-    return `${run.dataSource.values.length} valor(es) preparados para o loop ${run.dataSource.name}.`;
+    const source = {
+      name: step.name || "valor",
+      values: Array.isArray(step.values) ? step.values.map((value) => String(value ?? "")) : [],
+      interval: Math.max(0, Number(step.interval_ms || 0))
+    };
+    if (run.spreadsheetLoop?.sourceIndex === run.currentIndex) {
+      const value = String(run.variables[source.name] ?? "");
+      return executePageStep(run, {
+        ...step,
+        type: "focused_text",
+        text: value,
+        clear_before: true
+      });
+    }
+    run.dataSource = source;
+    return `${source.values.length} valor(es) preparados para o loop ${source.name}.`;
   }
   if (step.type === "loop_end" || step.type === "loop_start") return "Marcador de loop processado.";
-  if (["element_action", "ocr_text", "focused_text", "spreadsheet_sequence", "key_sequence", "viewport_click", "wait_text"].includes(step.type)) {
+  if (["element_action", "ocr_text", "focused_text", "key_sequence", "viewport_click", "wait_text"].includes(step.type)) {
     try {
       return await executePageStep(run, step);
     } catch (error) {
@@ -365,12 +379,43 @@ function flowLabel(flow) {
   return "Continuando conforme o bloco.";
 }
 
+function findSpreadsheetLoopSource(steps) {
+  if (steps.some((step) => step?.type === "loop_start" || step?.type === "loop_end")) return null;
+  const index = steps.findIndex((step) => step?.type === "data_source" && Array.isArray(step.values) && step.values.length);
+  if (index < 0) return null;
+  const step = steps[index];
+  return {
+    index,
+    name: String(step.name || "valor"),
+    values: step.values.map((value) => String(value ?? "")),
+    interval: Math.max(0, Number(step.interval_ms || 0))
+  };
+}
+
+async function executeSpreadsheetLoop(run, source, executeIteration) {
+  run.totalSteps = Math.max(1, Number(run.stepsPerIteration || 1) * source.values.length);
+  try {
+    for (let row = 0; row < source.values.length; row += 1) {
+      if (run.cancelled) throw new Error("Execucao interrompida pelo usuario.");
+      run.variables[source.name] = source.values[row];
+      run.spreadsheetLoop = { sourceIndex: source.index, row, total: source.values.length };
+      await addLog(run, "Planilha " + source.name + ": " + (row + 1) + "/" + source.values.length + " - " + source.values[row] + ".");
+      await executeIteration();
+      if (row < source.values.length - 1 && source.interval) await sleep(source.interval);
+    }
+  } finally {
+    delete run.spreadsheetLoop;
+    delete run.currentIndex;
+  }
+}
+
 async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
   if (depth > 5) throw new Error("Loops aninhados demais para executar no Chrome.");
   let index = start;
   while (index < end) {
     if (run.cancelled) throw new Error("Execução interrompida pelo usuário.");
     const step = steps[index];
+    run.currentIndex = index;
     if (step.type === "loop_end") return;
     if (step.type === "loop_start") {
       const loopEnd = pairs.get(index);
@@ -428,7 +473,19 @@ async function executeAutomation(automation, tabId) {
     if (!Number.isInteger(firstStep)) {
       throw new Error(`A pagina inicial ${initialSequence} nao possui blocos compativeis com o Chrome.`);
     }
-    await executeRange(run, steps, firstStep, steps.length, loopPairs(steps), indexes);
+    const pairs = loopPairs(steps);
+    const spreadsheetLoop = findSpreadsheetLoopSource(steps);
+    if (spreadsheetLoop) {
+      run.stepsPerIteration = steps.filter((step) => step.type !== "loop_start" && step.type !== "loop_end").length;
+      await executeSpreadsheetLoop(
+        run,
+        spreadsheetLoop,
+        () => executeRange(run, steps, firstStep, steps.length, pairs, indexes)
+      );
+      delete run.stepsPerIteration;
+    } else {
+      await executeRange(run, steps, firstStep, steps.length, pairs, indexes);
+    }
     run.status = "completed";
     await addLog(run, "Automação concluída com sucesso.", "success");
   } catch (error) {
@@ -447,7 +504,7 @@ async function handleMessage(message, sender) {
     return {
       ok: true,
       version: RUNTIME_VERSION,
-      capabilities: ["ocr_text", "visual_match", "visual_state", "focused_text", "spreadsheet_sequence", "key_sequence", "viewport_click"]
+      capabilities: ["ocr_text", "visual_match", "visual_state", "focused_text", "data_source", "key_sequence", "viewport_click"]
     };
   }
   if (message?.type === "flowdetect-start") {

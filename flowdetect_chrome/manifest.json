@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "FlowDetect para Chrome",
   "description": "Executa automacoes web exportadas pelo FlowDetect Studio.",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "permissions": ["activeTab", "sidePanel", "scripting", "storage", "unlimitedStorage"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "background": {
