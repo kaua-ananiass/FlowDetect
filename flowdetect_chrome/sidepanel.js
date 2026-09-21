@@ -1,5 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
+const REQUIRED_RUNTIME_VERSION = "0.2.1";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
@@ -83,7 +84,18 @@ async function refreshActiveTab() {
   }
 }
 
+async function ensureCurrentRuntime() {
+  const runtime = await chrome.runtime.sendMessage({ type: "flowdetect-runtime-info" }).catch(() => null);
+  if (runtime?.ok && runtime.version === REQUIRED_RUNTIME_VERSION) return true;
+  runStatus.textContent = "Atualizando";
+  runStatus.className = "status-chip running";
+  runProgress.textContent = "Atualizando o motor da extensão para executar OCR e reconhecimento visual.";
+  chrome.runtime.reload();
+  return false;
+}
+
 async function runAutomation(automation) {
+  if (!await ensureCurrentRuntime()) return;
   const tab = await getActiveTab();
   runTitle.textContent = automation.automation.nome;
   runStatus.textContent = "Executando";

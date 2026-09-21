@@ -1,4 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
+const RUNTIME_VERSION = "0.2.1";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -373,6 +374,13 @@ async function executeAutomation(automation, tabId) {
 }
 
 async function handleMessage(message, sender) {
+  if (message?.type === "flowdetect-runtime-info") {
+    return {
+      ok: true,
+      version: RUNTIME_VERSION,
+      capabilities: ["ocr_text", "visual_match", "visual_state", "focused_text", "key_sequence", "viewport_click"]
+    };
+  }
   if (message?.type === "flowdetect-start") {
     const tabId = Number(message.tabId || sender?.tab?.id);
     if (!Number.isInteger(tabId)) throw new Error("Não encontrei a aba que receberá a automação.");
