@@ -138,3 +138,11 @@ test("OCR confirmation accepts text rendered by a non-interactive alert", () => 
   assert.equal(target.documentText, true);
   assert.equal(target.element, banner);
 });
+
+test("content runner can be reinjected into the same tab", () => {
+  const context = vm.createContext({});
+  vm.runInContext('globalThis.__flowDetectChromeRunnerVersion = "0.2.12";', context);
+
+  assert.doesNotThrow(() => vm.runInContext(source, context));
+  assert.doesNotThrow(() => vm.runInContext(source, context));
+});

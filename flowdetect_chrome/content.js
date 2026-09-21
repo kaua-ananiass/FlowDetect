@@ -1,4 +1,5 @@
-const CONTENT_RUNTIME_VERSION = "0.2.11";
+(() => {
+const CONTENT_RUNTIME_VERSION = "0.2.12";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
@@ -358,3 +359,4 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   chrome.runtime.onMessage.addListener(flowDetectMessageListener);
   globalThis.__flowDetectChromeRunnerListener = flowDetectMessageListener;
 }
+})();
