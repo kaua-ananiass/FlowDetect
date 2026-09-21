@@ -32,7 +32,7 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
   function findTextTarget(text) {
     const expected = normalize(text);
     if (!expected) return null;
-    const selectors = "button, a, input, textarea, select, label, [role='button'], [role='link'], [contenteditable='true'], [aria-label], [title], img[alt]";
+    const selectors = "button, a, input, textarea, select, label, [role='button'], [role='link'], [role='option'], [role='menuitem'], [role='tab'], [role='treeitem'], [role='gridcell'], [contenteditable='true'], [aria-label], [title], img[alt]";
     const candidates = [...document.querySelectorAll(selectors)].filter(isVisible);
     const direct = candidates.find((element) => normalize(elementText(element)) === expected)
       || candidates.find((element) => textMatches(elementText(element), expected));
@@ -123,7 +123,7 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
   }
 
   function focusableTarget(element) {
-    return element?.closest?.("button,a,input,textarea,select,label,[role='button'],[contenteditable='true']") || element;
+    return element?.closest?.("button,a,input,textarea,select,label,[role='button'],[role='link'],[role='option'],[role='menuitem'],[role='tab'],[role='treeitem'],[role='gridcell'],[contenteditable='true']") || element;
   }
 
   function clickTarget(target, clicks = 1, point = null) {

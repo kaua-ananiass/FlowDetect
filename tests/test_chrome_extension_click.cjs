@@ -12,20 +12,29 @@ const functions = names.map((name) => {
   return found[0];
 }).join("\n");
 
-test("OCR click ignores a hidden menu and presses the element at the recognized point", () => {
+test("OCR click ignores a hidden menu and presses the option at the recognized point", () => {
   class Element {
-    constructor({ parent = null, rect = { left: 0, top: 0, width: 20, height: 20 }, style = {}, ariaHidden = "false", clickable = null } = {}) {
+    constructor({ parent = null, rect = { left: 0, top: 0, width: 20, height: 20 }, style = {}, ariaHidden = "false", role = "" } = {}) {
       this.parentElement = parent;
       this.rect = rect;
       this.style = { display: "block", visibility: "visible", opacity: "1", ...style };
       this.ariaHidden = ariaHidden;
-      this.clickable = clickable;
+      this.role = role;
       this.events = [];
       this.clicks = 0;
     }
-    getAttribute(name) { return name === "aria-hidden" ? this.ariaHidden : null; }
+    getAttribute(name) {
+      if (name === "aria-hidden") return this.ariaHidden;
+      if (name === "role") return this.role || null;
+      return null;
+    }
     getBoundingClientRect() { return this.rect; }
-    closest() { return this.clickable || this; }
+    closest(selector) {
+      for (let current = this; current; current = current.parentElement) {
+        if (current.role && selector.includes(`[role='${current.role}']`)) return current;
+      }
+      return this;
+    }
     focus() { this.events.push("focus"); }
     dispatchEvent(event) { this.events.push(event.type); return true; }
     click() { this.clicks += 1; }
@@ -36,8 +45,8 @@ test("OCR click ignores a hidden menu and presses the element at the recognized 
 
   const hiddenParent = new Element({ style: { display: "none" } });
   const hiddenText = new Element({ parent: hiddenParent });
-  const button = new Element({ rect: { left: 80, top: 40, width: 100, height: 30 } });
-  const textAtPoint = new Element({ clickable: button });
+  const option = new Element({ role: "option", rect: { left: 80, top: 40, width: 100, height: 30 } });
+  const textAtPoint = new Element({ parent: option });
   let point = null;
   const context = vm.createContext({
     Element,
@@ -60,6 +69,6 @@ test("OCR click ignores a hidden menu and presses the element at the recognized 
   assert.equal(context.isVisible(hiddenText), false);
   context.clickTarget(hiddenText, 1, { x: 105, y: 55 });
   assert.deepEqual(point, { x: 105, y: 55 });
-  assert.equal(button.clicks, 1);
-  assert.deepEqual(button.events.filter((type) => type !== "focus"), ["pointerdown", "mousedown", "pointerup", "mouseup"]);
+  assert.equal(option.clicks, 1);
+  assert.deepEqual(option.events.filter((type) => type !== "focus"), ["pointerdown", "mousedown", "pointerup", "mouseup"]);
 });
