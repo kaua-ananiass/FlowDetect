@@ -638,6 +638,122 @@ def exportar_automacao_para_zip(automacao_id, item, destino_zip=None):
     return destino_zip
 
 
+def converter_evento_para_chrome(evento):
+    """Converte os blocos web do Studio para o formato executavel pela extensao."""
+    tipo = str((evento or {}).get("tipo") or "").strip()
+    detalhes = (evento or {}).get("detalhes") or {}
+    ordem = int((evento or {}).get("ordem") or 0)
+    atraso_ms = max(0, round(float((evento or {}).get("intervalo_antes") or 0) * 1000))
+
+    if tipo == "abrir_url":
+        url = str(detalhes.get("url") or "").strip()
+        if not url:
+            return None, f"Bloco {ordem}: URL vazia nao foi exportada."
+        return {
+            "id": f"step_{ordem}",
+            "source_order": ordem,
+            "type": "navigate",
+            "url": url,
+            "delay_ms": atraso_ms,
+            "timeout_ms": max(500, round(float(detalhes.get("aguardar_segundos") or 10) * 1000)),
+        }, None
+
+    if tipo == "chrome_elemento_html":
+        alvo = detalhes.get("alvo") or {}
+        acao = detalhes.get("acao") or {}
+        metodo = str(alvo.get("metodo") or "css").strip().lower()
+        valor = str(alvo.get("valor") or alvo.get("seletor_css") or "").strip()
+        if not valor:
+            return None, f"Bloco {ordem}: seletor Chrome vazio nao foi exportado."
+        return {
+            "id": f"step_{ordem}",
+            "source_order": ordem,
+            "type": "element_action",
+            "selector": {"method": metodo, "value": valor},
+            "action": {
+                "type": str(acao.get("tipo") or "clicar").strip().lower(),
+                "value": str(acao.get("valor") or ""),
+                "clear_before": bool(acao.get("limpar_antes", True)),
+                "press_after": str(acao.get("pressionar_depois") or "").strip().lower(),
+            },
+            "delay_ms": atraso_ms,
+            "timeout_ms": max(500, int(detalhes.get("timeout") or 10000)),
+        }, None
+
+    if tipo == "procurar_texto_ocr":
+        textos = [
+            item.get("texto") if isinstance(item, dict) else item
+            for item in list(detalhes.get("textos_ocr") or [])
+        ]
+        texto = str(detalhes.get("texto") or next((item for item in textos if item), "")).strip()
+        if not texto:
+            return None, f"Bloco {ordem}: OCR sem texto nao foi exportado."
+        return {
+            "id": f"step_{ordem}",
+            "source_order": ordem,
+            "type": "wait_text",
+            "text": texto,
+            "delay_ms": atraso_ms,
+            "timeout_ms": max(500, round(float(detalhes.get("timeout") or 8) * 1000)),
+        }, (
+            f"Bloco {ordem}: OCR foi convertido para leitura do texto presente na pagina; "
+            "OCR visual da extensao sera adicionado em uma proxima versao."
+        )
+
+    return None, f"Bloco {ordem}: tipo '{tipo or 'desconhecido'}' ainda nao e executado pela extensao Chrome."
+
+
+def exportar_automacao_para_chrome(automacao_id, item, destino_json=None):
+    """Gera um arquivo JSON que a extensao FlowDetect para Chrome pode importar."""
+    payload = carregar_payload_da_automacao(automacao_id)
+    nome_base = normalizar_nome_arquivo(item.get("nome") or automacao_id, "automacao")
+    if destino_json:
+        destino_json = Path(destino_json)
+        if destino_json.suffix.lower() != ".json":
+            destino_json = destino_json.with_suffix(".json")
+        destino_json.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        destino_json = caminho_arquivo_unico(
+            DIRETORIO_EXPORTACOES_AUTOMACAO,
+            f"{nome_base}_Chrome.json",
+        )
+
+    passos = []
+    avisos = []
+    for evento in sorted(payload.get("eventos") or [], key=lambda item_evento: int(item_evento.get("ordem") or 0)):
+        if normalizar_nome_sequencia(evento.get("sequencia")) != "principal":
+            avisos.append(
+                f"Bloco {int(evento.get('ordem') or 0)}: sequencias alternativas ainda nao sao exportadas para a extensao."
+            )
+            continue
+        passo, aviso = converter_evento_para_chrome(evento)
+        if passo:
+            passos.append(passo)
+        if aviso:
+            avisos.append(aviso)
+
+    exportacao = {
+        "schema": "flowdetect_chrome_automation",
+        "version": 1,
+        "exported_at": agora_iso(),
+        "automation": {
+            "id": str(automacao_id),
+            "nome": str(item.get("nome") or "Automacao Chrome"),
+            "descricao": str(item.get("descricao") or ""),
+            "source": "FlowDetect Studio",
+        },
+        "steps": passos,
+        "warnings": avisos,
+    }
+    destino_json.write_text(json.dumps(exportacao, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {
+        "json_path": str(destino_json),
+        "automation": exportacao["automation"],
+        "exported_steps": len(passos),
+        "warnings": avisos,
+    }
+
+
 def extrair_zip_com_seguranca(arquivo_zip, destino):
     destino = Path(destino)
     destino.mkdir(parents=True, exist_ok=True)
@@ -2936,6 +3052,12 @@ def comando_exportar_automacao_zip(args):
     }
 
 
+def comando_exportar_automacao_chrome(args):
+    biblioteca = carregar_biblioteca()
+    _, item = localizar_item_biblioteca(biblioteca, args.id)
+    return exportar_automacao_para_chrome(args.id, item, args.destino)
+
+
 def exportar_runtime_para_zip(destino_zip=None):
     nome_base = "FlowDetect_Runtime_Update"
     if destino_zip:
@@ -4221,6 +4343,10 @@ def build_parser():
     export_zip.add_argument("--id", required=True)
     export_zip.add_argument("--destino")
 
+    export_chrome = subparsers.add_parser("automation-export-chrome")
+    export_chrome.add_argument("--id", required=True)
+    export_chrome.add_argument("--destino")
+
     import_zip = subparsers.add_parser("automation-import-zip")
     import_zip.add_argument("--arquivo", required=True)
 
@@ -4718,6 +4844,7 @@ COMANDOS = {
     "automation-delete": comando_excluir_automacao,
     "automation-mark-run": comando_marcar_execucao_automacao,
     "automation-export-zip": comando_exportar_automacao_zip,
+    "automation-export-chrome": comando_exportar_automacao_chrome,
     "automation-import-zip": comando_importar_automacao_zip,
     "runtime-info": comando_info_runtime,
     "runtime-export-zip": comando_exportar_runtime_zip,

@@ -2429,6 +2429,25 @@ fn export_saved_automation_zip(
 }
 
 #[tauri::command]
+fn export_saved_automation_chrome(
+    app: AppHandle,
+    id: String,
+    destino: Option<String>,
+    destination_path: Option<String>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec!["automation-export-chrome".into(), "--id".into(), id];
+    let output_path = destination_path.or(destino);
+    if let Some(value) = output_path {
+        if !value.trim().is_empty() {
+            args.push("--destino".into());
+            args.push(value);
+        }
+    }
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn remote_agent_send_saved_automation(
     app: AppHandle,
     address: String,
@@ -10345,6 +10364,7 @@ pub fn run() {
             rename_saved_automation,
             delete_saved_automation,
             export_saved_automation_zip,
+            export_saved_automation_chrome,
             import_saved_automation_zip,
             import_saved_automation_zip_from_path,
             import_saved_automation_zip_from_file_path,

@@ -13154,6 +13154,7 @@ function renderLauncherLibrary() {
 
                     <div class="automation-library-actions">
                       <button class="ghost-button secondary-inline-action" data-library-action="edit-meta">Editar dados</button>
+                      <button class="ghost-button secondary-inline-action" data-library-action="export-chrome">Exportar para Chrome</button>
                       <button class="ghost-button secondary-inline-action" data-library-action="export-zip">Exportar ZIP</button>
                       <button class="danger-button secondary-inline-action" data-library-action="delete">Excluir</button>
                     </div>
@@ -24217,6 +24218,40 @@ launcherList.addEventListener("click", async (event) => {
       setBusy("Pronto");
       setMessage(
         `Automacao "${result.automation?.nome || "sem nome"}" exportada em ${result.zip_path}.`,
+        "success"
+      );
+      return;
+    }
+
+    if (action === "export-chrome") {
+      const isActiveAutomation = String(automationId || "") === String(state.library.activeId || "");
+      if (isActiveAutomation && !ensureCommandMapSavedBefore("enviar a automacao para o Chrome")) {
+        return;
+      }
+      const item = state.library.items.find((entry) => String(entry.id) === String(automationId));
+      const defaultFileName = `${String(item?.nome || exportNameInput.value.trim() || "Automacao").trim() || "Automacao"}_Chrome.json`;
+      setBusy("Escolhendo local");
+      let pickedPath = null;
+      try {
+        pickedPath = await saveNativeFileDialog({
+          defaultPath: defaultFileName,
+          filters: [{ name: "Automacao FlowDetect para Chrome", extensions: ["json"] }],
+        });
+      } catch (dialogError) {
+        console.warn("Nao foi possivel abrir o seletor de destino do Chrome.", dialogError);
+      }
+      setBusy("Preparando Chrome");
+      const result = await invoke("export_saved_automation_chrome", {
+        id: automationId,
+        destino: pickedPath || null,
+        destinationPath: pickedPath || null,
+      });
+      setBusy("Pronto");
+      const warnings = Array.isArray(result.warnings) && result.warnings.length
+        ? ` ${result.warnings.length} bloco(s) ficaram como aviso.`
+        : "";
+      setMessage(
+        `Arquivo do Chrome criado com ${result.exported_steps || 0} etapa(s): ${result.json_path}.${warnings}`,
         "success"
       );
       return;
