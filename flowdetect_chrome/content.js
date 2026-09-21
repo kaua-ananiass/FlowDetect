@@ -10,8 +10,13 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
 
   function isVisible(element) {
     if (!element || !(element instanceof Element)) return false;
-    const style = getComputedStyle(element);
-    return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || 1) > 0;
+    for (let current = element; current && current instanceof Element; current = current.parentElement) {
+      const style = getComputedStyle(current);
+      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity || 1) <= 0) return false;
+      if (current.getAttribute("aria-hidden") === "true") return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
   }
 
   function elementText(element) {
@@ -121,10 +126,27 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
     return element?.closest?.("button,a,input,textarea,select,label,[role='button'],[contenteditable='true']") || element;
   }
 
-  function clickTarget(target, clicks = 1) {
-    const clickable = focusableTarget(target);
+  function clickTarget(target, clicks = 1, point = null) {
+    const x = Number(point?.x);
+    const y = Number(point?.y);
+    const atRecognizedPoint = Number.isFinite(x) && Number.isFinite(y)
+      ? document.elementFromPoint(x, y)
+      : null;
+    const clickable = focusableTarget(atRecognizedPoint || target);
+    if (!clickable || !isVisible(clickable)) throw new Error("O alvo reconhecido nao esta visivel para receber o clique.");
     clickable?.focus?.({ preventScroll: true });
-    for (let index = 0; index < Math.max(1, Number(clicks || 1)); index += 1) clickable?.click?.();
+    for (let index = 0; index < Math.max(1, Number(clicks || 1)); index += 1) {
+      const rect = clickable.getBoundingClientRect();
+      const clientX = Number.isFinite(x) ? x : rect.left + rect.width / 2;
+      const clientY = Number.isFinite(y) ? y : rect.top + rect.height / 2;
+      const mouse = { bubbles: true, cancelable: true, composed: true, view: window, clientX, clientY, button: 0, buttons: 1 };
+      if (globalThis.PointerEvent) clickable.dispatchEvent(new PointerEvent("pointerdown", { ...mouse, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+      clickable.dispatchEvent(new MouseEvent("mousedown", mouse));
+      clickable?.focus?.({ preventScroll: true });
+      if (globalThis.PointerEvent) clickable.dispatchEvent(new PointerEvent("pointerup", { ...mouse, buttons: 0, pointerId: 1, pointerType: "mouse", isPrimary: true }));
+      clickable.dispatchEvent(new MouseEvent("mouseup", { ...mouse, buttons: 0 }));
+      clickable.click();
+    }
     return clickable;
   }
 
@@ -201,11 +223,16 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
   async function executeOcrText(step) {
     const target = await waitForTextTarget(step.text, step.timeout_ms, step.attempts, step.interval_ms);
     target.element.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
-    await sleep(130);
-    const rect = target.element.getBoundingClientRect();
+    await sleep(180);
+    const refreshedTarget = findTextTarget(step.text) || target;
+    const rect = refreshedTarget.rect || refreshedTarget.element.getBoundingClientRect();
+    const clickPoint = {
+      x: Math.max(1, Math.min(innerWidth - 1, rect.left + rect.width / 2 + Number(step.offset_x || 0))),
+      y: Math.max(1, Math.min(innerHeight - 1, rect.top + rect.height / 2 + Number(step.offset_y || 0)))
+    };
     highlightRect(rect, { color: "#44b9ff", label: "OCR" });
     const shouldClick = Boolean(step.click) && !["confirmar", "esperar", "verificar"].includes(String(step.action || "").toLowerCase());
-    if (shouldClick) clickTarget(target.element, step.clicks);
+    if (shouldClick) clickTarget(refreshedTarget.element, step.clicks, clickPoint);
     return `OCR encontrou “${String(step.text).slice(0, 80)}”${shouldClick ? " e clicou" : ""}.`;
   }
 
@@ -216,7 +243,7 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
     if (!target) throw new Error("Não encontrei um elemento na coordenada do clique.");
     const rect = target.getBoundingClientRect();
     highlightRect(rect.width && rect.height ? rect : { left: x - 5, top: y - 5, width: 10, height: 10 }, { color: "#54ecd2", label: "CLIQUE" });
-    clickTarget(target, step.clicks);
+    clickTarget(target, step.clicks, { x, y });
     return `Clique executado em ${Math.round(x)}, ${Math.round(y)}.`;
   }
 
@@ -226,7 +253,7 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
     highlightRect(rect, { color: request.color || "#cf8cff", label: request.label || "VISUAL" });
     if (Number(request.clicks || 0) > 0) {
       const target = document.elementFromPoint(x, y);
-      if (target) clickTarget(target, request.clicks);
+      if (target) clickTarget(target, request.clicks, { x, y });
     }
     return { x, y };
   }
