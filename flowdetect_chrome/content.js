@@ -1,5 +1,8 @@
-if (!globalThis.__flowDetectChromeRunnerLoaded) {
-  globalThis.__flowDetectChromeRunnerLoaded = true;
+const CONTENT_RUNTIME_VERSION = "0.2.9";
+if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
+  const previousListener = globalThis.__flowDetectChromeRunnerListener;
+  if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
+  globalThis.__flowDetectChromeRunnerVersion = CONTENT_RUNTIME_VERSION;
 
   const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim().toLocaleLowerCase("pt-BR");
   const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
@@ -277,16 +280,16 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
     return { x, y };
   }
 
-  chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
-    if (request?.type === "flowdetect-viewport-info") {
+  const flowDetectMessageListener = (request, _sender, sendResponse) => {
+    if (request?.type === "flowdetect-viewport-info-v2") {
       sendResponse({ ok: true, width: innerWidth, height: innerHeight, devicePixelRatio });
       return;
     }
-    if (request?.type === "flowdetect-click-coordinate") {
+    if (request?.type === "flowdetect-click-coordinate-v2") {
       try { const point = visualCoordinate(request); sendResponse({ ok: true, point }); } catch (error) { sendResponse({ ok: false, error: String(error?.message || error) }); }
       return;
     }
-    if (request?.type !== "flowdetect-execute-step") return;
+    if (request?.type !== "flowdetect-execute-step-v2") return;
     const step = request.step || {};
     let execute;
     if (step.type === "ocr_text") execute = executeOcrText(step);
@@ -297,5 +300,7 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
     else execute = executeElementAction(step);
     execute.then((message) => sendResponse({ ok: true, message })).catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
-  });
+  };
+  chrome.runtime.onMessage.addListener(flowDetectMessageListener);
+  globalThis.__flowDetectChromeRunnerListener = flowDetectMessageListener;
 }

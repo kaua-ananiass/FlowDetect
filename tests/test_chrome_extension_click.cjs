@@ -97,3 +97,10 @@ test("OCR waits for a delayed static banner instead of failing on the first chec
   assert.deepEqual(target, { element: {} });
   assert.equal(checks, 2);
 });
+
+
+test("content runner uses a versioned message channel after an extension update", () => {
+  assert.match(source, /CONTENT_RUNTIME_VERSION = "0\.2\.9"/);
+  assert.match(source, /flowdetect-execute-step-v2/);
+  assert.match(source, /__flowDetectChromeRunnerListener/);
+});
