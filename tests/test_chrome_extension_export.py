@@ -111,6 +111,34 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertTrue(exported["steps"][1]["image"]["data_url"].startswith("data:image/png;base64,"))
         self.assertTrue(exported["steps"][0]["click"])
 
+    def test_exports_spreadsheet_values_as_a_typing_sequence(self):
+        automation_id = "auto_spreadsheet"
+        payload = self.roadmap.criar_payload_vazio()
+        payload["eventos"] = [
+            {
+                "ordem": 1,
+                "sequencia": "principal",
+                "tipo": "sequencia_planilha",
+                "detalhes": {
+                    "coluna": "CNPJ",
+                    "valores": ["03943209000187", 51708970000187],
+                    "acao_apos_item": ["enter"],
+                    "intervalo_entre_itens": 0.5,
+                },
+            },
+        ]
+        self.roadmap.salvar_payload_em_automacao(automation_id, payload, incluir_recursos=False)
+
+        result = self.roadmap.exportar_automacao_para_chrome(automation_id, {"nome": "Planilha"})
+        exported = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+        step = exported["steps"][0]
+
+        self.assertEqual(step["type"], "spreadsheet_sequence")
+        self.assertEqual(step["name"], "CNPJ")
+        self.assertEqual(step["values"], ["03943209000187", "51708970000187"])
+        self.assertEqual(step["after_keys"], ["enter"])
+        self.assertEqual(step["interval_ms"], 500)
+
     def test_exports_ocr_routes_and_secondary_page_targets(self):
         automation_id = "auto_ocr_route"
         payload = self.roadmap.criar_payload_vazio()

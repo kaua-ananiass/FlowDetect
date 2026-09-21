@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.5";
+const RUNTIME_VERSION = "0.2.6";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -283,7 +283,7 @@ async function executeStep(run, rawStep) {
     return `${run.dataSource.values.length} valor(es) preparados para o loop ${run.dataSource.name}.`;
   }
   if (step.type === "loop_end" || step.type === "loop_start") return "Marcador de loop processado.";
-  if (["element_action", "ocr_text", "focused_text", "key_sequence", "viewport_click", "wait_text"].includes(step.type)) {
+  if (["element_action", "ocr_text", "focused_text", "spreadsheet_sequence", "key_sequence", "viewport_click", "wait_text"].includes(step.type)) {
     try {
       return await executePageStep(run, step);
     } catch (error) {
@@ -447,7 +447,7 @@ async function handleMessage(message, sender) {
     return {
       ok: true,
       version: RUNTIME_VERSION,
-      capabilities: ["ocr_text", "visual_match", "visual_state", "focused_text", "key_sequence", "viewport_click"]
+      capabilities: ["ocr_text", "visual_match", "visual_state", "focused_text", "spreadsheet_sequence", "key_sequence", "viewport_click"]
     };
   }
   if (message?.type === "flowdetect-start") {

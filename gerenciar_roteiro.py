@@ -923,10 +923,16 @@ def converter_evento_para_chrome(evento):
 
     if tipo == "sequencia_planilha":
         valores = [str(valor) for valor in list(detalhes.get("valores") or [])]
-        passo = passo_chrome_base(evento, "data_source", detalhes)
+        acoes_apos_item = [
+            str(acao).strip().lower()
+            for acao in list(detalhes.get("acao_apos_item") or [])
+            if str(acao).strip()
+        ]
+        passo = passo_chrome_base(evento, "spreadsheet_sequence", detalhes)
         passo.update({
             "name": str(detalhes.get("coluna") or "valor"),
             "values": valores,
+            "after_keys": acoes_apos_item,
             "interval_ms": max(0, round(float(detalhes.get("intervalo_entre_itens") or 0) * 1000)),
         })
         return passo, None

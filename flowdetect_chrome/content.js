@@ -183,6 +183,29 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
     return `Tecla enviada: ${raw.join(" + ")}.`;
   }
 
+  async function executeSpreadsheetSequence(step) {
+    const values = Array.isArray(step.values) ? step.values.map((value) => String(value ?? "")) : [];
+    if (!values.length) throw new Error("O bloco da planilha nao possui valores para digitar.");
+    const afterKeys = Array.isArray(step.after_keys) ? step.after_keys.filter(Boolean) : [];
+    const interval = Math.max(0, Number(step.interval_ms || 0));
+    for (let index = 0; index < values.length; index += 1) {
+      const element = document.activeElement;
+      if (!element || element === document.body || element === document.documentElement) {
+        throw new Error("Selecione um campo na pagina antes do bloco da planilha.");
+      }
+      if (element.isContentEditable) setContentEditableValue(element, values[index], true);
+      else if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+        setNativeValue(element, `${element.value || ""}${values[index]}`);
+      } else {
+        throw new Error("O elemento ativo nao aceita o valor da planilha.");
+      }
+      highlight(element, "#54ecd2", `PLANILHA ${index + 1}/${values.length}`);
+      if (index < values.length - 1 && afterKeys.length) dispatchKeySequence(afterKeys);
+      if (index < values.length - 1 && interval) await sleep(interval);
+    }
+    return `Planilha ${String(step.name || "valor")}: ${values.length} valor(es) digitado(s).`;
+  }
+
   async function executeElementAction(step) {
     const element = await waitForElement(step.selector, step.timeout_ms);
     element.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
@@ -272,6 +295,7 @@ if (!globalThis.__flowDetectChromeRunnerLoaded) {
     let execute;
     if (step.type === "ocr_text") execute = executeOcrText(step);
     else if (step.type === "focused_text") execute = Promise.resolve().then(() => applyTextToFocused(step));
+    else if (step.type === "spreadsheet_sequence") execute = executeSpreadsheetSequence(step);
     else if (step.type === "key_sequence") execute = Promise.resolve().then(() => dispatchKeySequence(step.keys || [], step.repetitions));
     else if (step.type === "viewport_click") execute = Promise.resolve().then(() => clickAt(step));
     else if (step.type === "wait_text") execute = waitForTextTarget(step.text, step.timeout_ms).then(() => `Texto confirmado: ${step.text}.`);
