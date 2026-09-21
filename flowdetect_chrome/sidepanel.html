@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FlowDetect para Chrome</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <p class="eyebrow">FLOWDETECT</p>
+        <h1>Automações no Chrome</h1>
+        <p>Importe um arquivo do Studio e execute na aba atual.</p>
+      </header>
+
+      <section class="toolbar" aria-label="Ações">
+        <label class="button primary" for="importInput">Importar do Studio</label>
+        <input id="importInput" type="file" accept="application/json,.json" hidden>
+        <button id="newButton" class="button secondary" type="button">Nova vazia</button>
+      </section>
+
+      <section id="automationList" class="automation-list" aria-live="polite"></section>
+
+      <section class="run-panel">
+        <div class="run-panel-top">
+          <div>
+            <p class="eyebrow">EXECUÇÃO</p>
+            <h2 id="runTitle">Nenhuma execução</h2>
+          </div>
+          <span id="runStatus" class="status-chip">Pronto</span>
+        </div>
+        <p id="runProgress" class="run-progress">Escolha uma automação para executar na aba aberta.</p>
+        <div class="run-actions">
+          <button id="captureButton" class="button secondary" type="button">Preview da aba</button>
+          <button id="stopButton" class="button danger" type="button">Parar</button>
+        </div>
+        <img id="tabPreview" class="tab-preview" alt="Preview da aba atual" hidden>
+        <ul id="runLog" class="run-log"></ul>
+      </section>
+    </main>
+    <template id="automationTemplate">
+      <article class="automation-card">
+        <div class="automation-card-top">
+          <div>
+            <p class="eyebrow automation-source"></p>
+            <h2 class="automation-name"></h2>
+          </div>
+          <span class="step-count"></span>
+        </div>
+        <p class="automation-description"></p>
+        <p class="automation-warning" hidden></p>
+        <div class="automation-actions">
+          <button class="button primary run-automation" type="button">Executar nesta aba</button>
+          <button class="text-button export-automation" type="button">Exportar</button>
+          <button class="text-button delete-automation" type="button">Excluir</button>
+        </div>
+      </article>
+    </template>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

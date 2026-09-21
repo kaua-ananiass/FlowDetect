@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "FlowDetect para Chrome",
+  "description": "Executa automacoes web exportadas pelo FlowDetect Studio.",
+  "version": "0.1.0",
+  "permissions": ["activeTab", "sidePanel", "scripting", "storage"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "service_worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Abrir FlowDetect"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  }
+}
