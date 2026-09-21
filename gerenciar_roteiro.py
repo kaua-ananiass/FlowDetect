@@ -1,6 +1,8 @@
 import argparse
+import base64
 import hashlib
 import json
+import mimetypes
 import re
 import shutil
 import sys
@@ -638,25 +640,91 @@ def exportar_automacao_para_zip(automacao_id, item, destino_zip=None):
     return destino_zip
 
 
+def recurso_imagem_para_chrome(imagem):
+    """Inclui a referencia visual no JSON que sera importado pela extensao.
+
+    O arquivo exportado precisa ser portavel: a extensao nao deve depender da
+    pasta de imagens da instalacao que criou a automacao.
+    """
+    imagem_id = normalizar_id_imagem(imagem)
+    if not imagem_id:
+        return None, "Imagem de referencia vazia."
+
+    caminho = Path(imagem_id)
+    if not caminho.exists() and not caminho.is_absolute():
+        alternativa = PASTA_IMAGENS / Path(imagem_id).name
+        if alternativa.exists():
+            caminho = alternativa
+    if not caminho.exists() or not caminho.is_file():
+        return None, f"Imagem de referencia nao encontrada: {imagem_id}."
+
+    mime, _ = mimetypes.guess_type(caminho.name)
+    mime = mime if mime and mime.startswith("image/") else "image/png"
+    conteudo = base64.b64encode(caminho.read_bytes()).decode("ascii")
+    return {
+        "id": imagem_id,
+        "name": caminho.name,
+        "mime": mime,
+        "data_url": f"data:{mime};base64,{conteudo}",
+    }, None
+
+
+def fluxo_do_evento_para_chrome(detalhes, chave="ao_sucesso"):
+    """Preserva a decisao do bloco sem acoplar o arquivo ao runtime desktop."""
+    if chave == "ao_sucesso":
+        bloco = detalhes.get("bloco_sucesso") or ""
+        sequencia = detalhes.get("sequencia_sucesso") or ""
+    elif chave == "ao_nao_encontrar":
+        bloco = detalhes.get("bloco_nao_encontrar") or ""
+        sequencia = detalhes.get("sequencia_nao_encontrar") or ""
+    else:
+        bloco = detalhes.get("bloco_falha") or ""
+        sequencia = detalhes.get("sequencia_falha") or ""
+    return {
+        "action": str(detalhes.get(chave) or "continuar").strip().lower() or "continuar",
+        "block": bloco,
+        "sequence": str(sequencia).strip(),
+    }
+
+
+def fluxo_configurado_para_chrome(configuracao, padrao="continuar"):
+    configuracao = configuracao if isinstance(configuracao, dict) else {}
+    return {
+        "action": str(configuracao.get("acao") or configuracao.get("action") or padrao).strip().lower() or padrao,
+        "block": configuracao.get("bloco") or configuracao.get("block") or "",
+        "sequence": str(configuracao.get("sequencia") or configuracao.get("sequence") or "").strip(),
+    }
+
+
+def passo_chrome_base(evento, tipo, detalhes):
+    chave_falha = "ao_falhar" if str(evento.get("tipo") or "") == "chrome_elemento_html" else "ao_nao_encontrar"
+    return {
+        "id": f"step_{int(evento.get('ordem') or 0)}",
+        "source_order": int(evento.get("ordem") or 0),
+        "source_type": str(evento.get("tipo") or ""),
+        "type": tipo,
+        "delay_ms": max(0, round(float(evento.get("intervalo_antes") or 0) * 1000)),
+        "on_success": fluxo_do_evento_para_chrome(detalhes, "ao_sucesso"),
+        "on_failure": fluxo_do_evento_para_chrome(detalhes, chave_falha),
+    }
+
+
 def converter_evento_para_chrome(evento):
-    """Converte os blocos web do Studio para o formato executavel pela extensao."""
+    """Converte os blocos que fazem sentido dentro de uma pagina Chrome."""
     tipo = str((evento or {}).get("tipo") or "").strip()
     detalhes = (evento or {}).get("detalhes") or {}
     ordem = int((evento or {}).get("ordem") or 0)
-    atraso_ms = max(0, round(float((evento or {}).get("intervalo_antes") or 0) * 1000))
 
     if tipo == "abrir_url":
         url = str(detalhes.get("url") or "").strip()
         if not url:
             return None, f"Bloco {ordem}: URL vazia nao foi exportada."
-        return {
-            "id": f"step_{ordem}",
-            "source_order": ordem,
-            "type": "navigate",
+        passo = passo_chrome_base(evento, "navigate", detalhes)
+        passo.update({
             "url": url,
-            "delay_ms": atraso_ms,
             "timeout_ms": max(500, round(float(detalhes.get("aguardar_segundos") or 10) * 1000)),
-        }, None
+        })
+        return passo, None
 
     if tipo == "chrome_elemento_html":
         alvo = detalhes.get("alvo") or {}
@@ -665,10 +733,8 @@ def converter_evento_para_chrome(evento):
         valor = str(alvo.get("valor") or alvo.get("seletor_css") or "").strip()
         if not valor:
             return None, f"Bloco {ordem}: seletor Chrome vazio nao foi exportado."
-        return {
-            "id": f"step_{ordem}",
-            "source_order": ordem,
-            "type": "element_action",
+        passo = passo_chrome_base(evento, "element_action", detalhes)
+        passo.update({
             "selector": {"method": metodo, "value": valor},
             "action": {
                 "type": str(acao.get("tipo") or "clicar").strip().lower(),
@@ -676,9 +742,13 @@ def converter_evento_para_chrome(evento):
                 "clear_before": bool(acao.get("limpar_antes", True)),
                 "press_after": str(acao.get("pressionar_depois") or "").strip().lower(),
             },
-            "delay_ms": atraso_ms,
             "timeout_ms": max(500, int(detalhes.get("timeout") or 10000)),
-        }, None
+        })
+        fallback, erro_fallback = recurso_imagem_para_chrome(detalhes.get("fallback_imagem"))
+        if bool(detalhes.get("fallback_visual")) and fallback:
+            passo["visual_fallback"] = fallback
+        aviso = f"Bloco {ordem}: fallback visual sem imagem valida ({erro_fallback})." if bool(detalhes.get("fallback_visual")) and not fallback else None
+        return passo, aviso
 
     if tipo == "procurar_texto_ocr":
         textos = [
@@ -688,19 +758,122 @@ def converter_evento_para_chrome(evento):
         texto = str(detalhes.get("texto") or next((item for item in textos if item), "")).strip()
         if not texto:
             return None, f"Bloco {ordem}: OCR sem texto nao foi exportado."
-        return {
-            "id": f"step_{ordem}",
-            "source_order": ordem,
-            "type": "wait_text",
+        passo = passo_chrome_base(evento, "ocr_text", detalhes)
+        passo.update({
             "text": texto,
-            "delay_ms": atraso_ms,
             "timeout_ms": max(500, round(float(detalhes.get("timeout") or 8) * 1000)),
-        }, (
-            f"Bloco {ordem}: OCR foi convertido para leitura do texto presente na pagina; "
-            "OCR visual da extensao sera adicionado em uma proxima versao."
-        )
+            "confidence": max(0.35, min(1.0, float(detalhes.get("confianca") or 0.72))),
+            "action": str(detalhes.get("acao") or "clicar").strip().lower(),
+            "click": bool(detalhes.get("clicar", True)),
+            "clicks": max(1, int(detalhes.get("cliques") or 1)),
+            "offset_x": int(detalhes.get("offset_x") or 0),
+            "offset_y": int(detalhes.get("offset_y") or 0),
+            "attempts": max(1, int(detalhes.get("quantidade_tentativas") or 1)),
+            "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
+        })
+        return passo, None
 
-    return None, f"Bloco {ordem}: tipo '{tipo or 'desconhecido'}' ainda nao e executado pela extensao Chrome."
+    if tipo == "texto_livre":
+        texto = str(evento.get("texto") or detalhes.get("texto") or "")
+        if not texto:
+            return None, f"Bloco {ordem}: texto livre vazio nao foi exportado."
+        passo = passo_chrome_base(evento, "focused_text", detalhes)
+        passo.update({"text": texto, "clear_before": bool(detalhes.get("limpar_antes", False))})
+        return passo, None
+
+    if tipo in {"tecla", "atalho"}:
+        teclas = [str(tecla).strip().lower() for tecla in list(evento.get("teclas") or []) if str(tecla).strip()]
+        if not teclas:
+            return None, f"Bloco {ordem}: tecla nao configurada nao foi exportada."
+        passo = passo_chrome_base(evento, "key_sequence", detalhes)
+        passo.update({"keys": teclas, "repetitions": max(1, int(detalhes.get("repeticoes") or 1))})
+        return passo, None
+
+    if tipo == "mouse_click":
+        passo = passo_chrome_base(evento, "viewport_click", detalhes)
+        passo.update({
+            "x": int(detalhes.get("x") or 0),
+            "y": int(detalhes.get("y") or 0),
+            "button": str(detalhes.get("botao") or "left").lower(),
+            "clicks": max(1, int(detalhes.get("cliques") or 1)),
+            "coordinate_space": "viewport",
+        })
+        return passo, None
+
+    if tipo == "clicar_imagem":
+        modo = str(detalhes.get("modo_reconhecimento") or "imagem").strip().lower()
+        if modo in {"texto_ocr", "ocr", "texto"}:
+            texto = str(detalhes.get("texto_ocr_busca") or detalhes.get("texto_ocr_esperado") or "").strip()
+            if not texto:
+                return None, f"Bloco {ordem}: reconhecimento OCR sem texto nao foi exportado."
+            passo = passo_chrome_base(evento, "ocr_text", detalhes)
+            passo.update({
+                "text": texto,
+                "timeout_ms": max(500, round(float(detalhes.get("timeout") or 8) * 1000)),
+                "confidence": max(0.35, min(1.0, float(detalhes.get("confianca") or 0.72))),
+                "action": str(detalhes.get("acao_ocr") or "clicar").strip().lower(),
+                "click": str(detalhes.get("acao_ocr") or "clicar").strip().lower() == "clicar",
+                "clicks": max(1, int(detalhes.get("cliques") or 1)),
+                "offset_x": int(detalhes.get("offset_x") or 0),
+                "offset_y": int(detalhes.get("offset_y") or 0),
+                "attempts": max(1, int(detalhes.get("quantidade_tentativas") or 1)),
+                "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
+            })
+            return passo, None
+        imagem, erro = recurso_imagem_para_chrome(detalhes.get("imagem"))
+        if not imagem:
+            return None, f"Bloco {ordem}: {erro}"
+        passo = passo_chrome_base(evento, "visual_match", detalhes)
+        passo.update({
+            "image": imagem,
+            "timeout_ms": max(500, round(float(detalhes.get("timeout") or 10) * 1000)),
+            "confidence": max(0.35, min(0.99, float(detalhes.get("confianca") or 0.8))),
+            "click": bool(detalhes.get("clicar", True)),
+            "clicks": max(1, int(detalhes.get("cliques") or 1)),
+            "offset_x": int(detalhes.get("offset_x") or 0),
+            "offset_y": int(detalhes.get("offset_y") or 0),
+            "attempts": max(1, int(detalhes.get("quantidade_tentativas") or 1)),
+            "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
+        })
+        return passo, None
+
+    if tipo == "verificar_estado_botao":
+        ativo, erro_ativo = recurso_imagem_para_chrome(detalhes.get("imagem_ativo"))
+        desativado, erro_desativado = recurso_imagem_para_chrome(detalhes.get("imagem_desativado"))
+        if not ativo and not desativado:
+            return None, f"Bloco {ordem}: verificacao visual sem referencias validas ({erro_ativo or erro_desativado})."
+        passo = passo_chrome_base(evento, "visual_state", detalhes)
+        passo.update({
+            "name": str(detalhes.get("nome") or "Botao"),
+            "active_image": ativo,
+            "inactive_image": desativado,
+            "timeout_ms": max(500, round(float(detalhes.get("timeout") or 5) * 1000)),
+            "confidence": max(0.35, min(0.99, float(detalhes.get("confianca") or 0.85))),
+            "state_flows": {
+                "ativo": fluxo_configurado_para_chrome(detalhes.get("se_ativo")),
+                "desativado": fluxo_configurado_para_chrome(detalhes.get("se_desativado")),
+            },
+        })
+        passo["on_failure"] = fluxo_configurado_para_chrome(detalhes.get("se_nao_encontrar"), "parar")
+        avisos = [erro for erro in (erro_ativo if not ativo else None, erro_desativado if not desativado else None) if erro]
+        return passo, f"Bloco {ordem}: {' '.join(avisos)}" if avisos else None
+
+    if tipo == "sequencia_planilha":
+        valores = [str(valor) for valor in list(detalhes.get("valores") or [])]
+        passo = passo_chrome_base(evento, "data_source", detalhes)
+        passo.update({
+            "name": str(detalhes.get("coluna") or "valor"),
+            "values": valores,
+            "interval_ms": max(0, round(float(detalhes.get("intervalo_entre_itens") or 0) * 1000)),
+        })
+        return passo, None
+
+    if tipo in {"inicio_loop", "fim_loop"}:
+        return passo_chrome_base(evento, "loop_start" if tipo == "inicio_loop" else "loop_end", detalhes), None
+
+    if tipo in {"abrir_programa", "uia_elemento"}:
+        return None, f"Bloco {ordem}: tipo '{tipo}' precisa do Studio porque o Chrome nao pode controlar aplicativos Windows."
+    return None, f"Bloco {ordem}: tipo '{tipo or 'desconhecido'}' ainda nao e compativel com a extensao Chrome."
 
 
 def exportar_automacao_para_chrome(automacao_id, item, destino_json=None):
@@ -734,7 +907,7 @@ def exportar_automacao_para_chrome(automacao_id, item, destino_json=None):
 
     exportacao = {
         "schema": "flowdetect_chrome_automation",
-        "version": 1,
+        "version": 2,
         "exported_at": agora_iso(),
         "automation": {
             "id": str(automacao_id),

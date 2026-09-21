@@ -106,7 +106,7 @@ A primeira versão da extensão fica em `flowdetect_chrome/`.
 3. No Studio, abra a Biblioteca, vire o card de uma automação e clique em **Exportar para Chrome**.
 4. No painel lateral da extensão, importe o arquivo JSON e execute a automação na aba atual.
 
-Ela executa blocos de URL e Chrome/Web por seletor. Os blocos OCR com texto são convertidos em espera pelo texto do DOM nesta primeira versão.
+Ela executa URL, ações Chrome/Web, texto, teclas, clique na aba, loops de planilha, OCR de texto da página e reconhecimento visual por imagem. As referências visuais são incluídas no JSON exportado para a extensão funcionar sem depender da pasta de imagens do Studio.
 
 ## Observacao
 

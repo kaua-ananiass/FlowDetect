@@ -32,7 +32,7 @@ class ChromeExtensionExportTest(unittest.TestCase):
         os.chdir(self.previous_cwd)
         self.temp_dir.cleanup()
 
-    def test_exports_supported_web_blocks_and_reports_unsupported_ones(self):
+    def test_exports_web_blocks_for_the_chrome_runner(self):
         automation_id = "auto_chrome"
         payload = self.roadmap.criar_payload_vazio()
         payload["eventos"] = [
@@ -58,6 +58,7 @@ class ChromeExtensionExportTest(unittest.TestCase):
                 "ordem": 3,
                 "sequencia": "principal",
                 "tipo": "tecla",
+                "teclas": ["enter"],
                 "intervalo_antes": 0,
                 "detalhes": {},
             },
@@ -71,12 +72,43 @@ class ChromeExtensionExportTest(unittest.TestCase):
 
         exported = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
         self.assertEqual(exported["schema"], "flowdetect_chrome_automation")
-        self.assertEqual(exported["version"], 1)
-        self.assertEqual([step["type"] for step in exported["steps"]], ["navigate", "element_action"])
+        self.assertEqual(exported["version"], 2)
+        self.assertEqual([step["type"] for step in exported["steps"]], ["navigate", "element_action", "key_sequence"])
         self.assertEqual(exported["steps"][1]["selector"]["value"], "#email")
         self.assertEqual(exported["steps"][1]["action"]["value"], "teste@flowdetect.com")
-        self.assertEqual(result["exported_steps"], 2)
-        self.assertTrue(any("tecla" in warning for warning in result["warnings"]))
+        self.assertEqual(exported["steps"][2]["keys"], ["enter"])
+        self.assertEqual(result["exported_steps"], 3)
+
+    def test_exports_ocr_and_visual_reference_with_its_image_data(self):
+        automation_id = "auto_visual"
+        payload = self.roadmap.criar_payload_vazio()
+        image_path = Path("imagens") / "referencia.png"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(
+            bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360f8cfc0000003010100c9fe92ef0000000049454e44ae426082")
+        )
+        payload["eventos"] = [
+            {
+                "ordem": 1,
+                "sequencia": "principal",
+                "tipo": "procurar_texto_ocr",
+                "detalhes": {"texto": "Empresa", "acao": "clicar", "clicar": True, "timeout": 4},
+            },
+            {
+                "ordem": 2,
+                "sequencia": "principal",
+                "tipo": "clicar_imagem",
+                "detalhes": {"imagem": "referencia.png", "clicar": True, "confianca": 0.8},
+            },
+        ]
+        self.roadmap.salvar_payload_em_automacao(automation_id, payload, incluir_recursos=False)
+
+        result = self.roadmap.exportar_automacao_para_chrome(automation_id, {"nome": "Visual"})
+        exported = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+
+        self.assertEqual([step["type"] for step in exported["steps"]], ["ocr_text", "visual_match"])
+        self.assertTrue(exported["steps"][1]["image"]["data_url"].startswith("data:image/png;base64,"))
+        self.assertTrue(exported["steps"][0]["click"])
 
 
 if __name__ == "__main__":
