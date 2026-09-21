@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "findSpreadsheetLoopSource", "executeSpreadsheetLoop"];
+const names = ["normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "findSpreadsheetLoopSource", "executeSpreadsheetLoop", "keyEventFor"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -76,4 +76,19 @@ test("Chrome runner repeats the complete flow once for each spreadsheet value", 
     { type: "loop_start" },
     { type: "loop_end" },
   ]), null);
+});
+
+
+test("Chrome runner maps common keys to native browser key events", () => {
+  const context = runner();
+  const enter = context.keyEventFor("enter");
+  const letter = context.keyEventFor("a");
+
+  assert.equal(enter.key, "Enter");
+  assert.equal(enter.code, "Enter");
+  assert.equal(enter.virtualKey, 13);
+  assert.equal(letter.key, "a");
+  assert.equal(letter.code, "KeyA");
+  assert.equal(letter.virtualKey, 65);
+  assert.throws(() => context.keyEventFor("nao-existe"), /nao suportada/);
 });

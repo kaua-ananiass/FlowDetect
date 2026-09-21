@@ -129,6 +129,7 @@ test("OCR confirmation accepts text rendered by a non-interactive alert", () => 
     textMatches: (value, expected) => String(value).toLowerCase().includes(expected),
     isVisible: () => true,
     findStaticTextTarget: () => null,
+    findRenderedTextTarget: () => null,
   });
   vm.runInContext(findTextFunction, context);
 

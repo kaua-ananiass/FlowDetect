@@ -1,10 +1,16 @@
-const CONTENT_RUNTIME_VERSION = "0.2.10";
+const CONTENT_RUNTIME_VERSION = "0.2.11";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
   globalThis.__flowDetectChromeRunnerVersion = CONTENT_RUNTIME_VERSION;
 
-  const normalize = (value) => String(value || "").replace(/\s+/g, " ").trim().toLocaleLowerCase("pt-BR");
+  const normalize = (value) => String(value || "")
+    .replace(/\uFFFD/g, "?")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("pt-BR");
   const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
 
   function escapeCss(value) {
@@ -29,7 +35,10 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
 
   function textMatches(value, expected) {
     const text = normalize(value);
-    return text === expected || text.includes(expected);
+    if (text === expected || text.includes(expected)) return true;
+    if (!expected.includes("?")) return false;
+    const meaningfulTerms = expected.split(/[^\p{L}\p{N}]+/u).filter((term) => term.length >= 4);
+    return meaningfulTerms.length > 0 && meaningfulTerms.every((term) => text.includes(term));
   }
 
   function findStaticTextTarget(expected) {
@@ -48,6 +57,31 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     return { element: match.element, rect: match.element.getBoundingClientRect(), text: match.text };
   }
 
+  function findRenderedTextTarget(text) {
+    const query = String(text || "").trim();
+    if (!query || typeof window.find !== "function") return null;
+    const selection = window.getSelection();
+    const previousRange = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+    try {
+      if (!window.find(query, false, false, true, false, false, false)) return null;
+      if (!selection?.rangeCount) return null;
+      const range = selection.getRangeAt(0);
+      const rect = [...range.getClientRects()].find((item) => item.width > 0 && item.height > 0);
+      const element = range.commonAncestorContainer?.nodeType === Node.ELEMENT_NODE
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer?.parentElement;
+      if (!element || !rect || !isVisible(element)) return null;
+      return { element, rect, text: range.toString().trim(), renderedText: true };
+    } catch (_) {
+      return null;
+    } finally {
+      if (selection) {
+        selection.removeAllRanges();
+        if (previousRange) selection.addRange(previousRange);
+      }
+    }
+  }
+
   function findTextTarget(text, options = {}) {
     const expected = normalize(text);
     if (!expected) return null;
@@ -59,6 +93,9 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
 
     const staticTarget = findStaticTextTarget(expected);
     if (staticTarget) return staticTarget;
+
+    const renderedTarget = findRenderedTextTarget(text);
+    if (renderedTarget) return renderedTarget;
 
     if (options.allowDocumentText) {
       const documentElement = document.body || document.documentElement;
