@@ -444,11 +444,30 @@ def copiar_arquivo_se_existir(origem, destino):
     shutil.copy2(origem, destino)
 
 
+def sincronizar_arquivo(origem, destino):
+    """Faz o destino refletir o arquivo de origem, inclusive quando ele nao existe."""
+    origem = Path(origem)
+    destino = Path(destino)
+    remover_caminho(destino)
+    if origem.exists() and origem.is_file():
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(origem, destino)
+
+
+def remover_caminho(caminho):
+    caminho = Path(caminho)
+    if not caminho.exists():
+        return
+    if caminho.is_dir():
+        shutil.rmtree(caminho, ignore_errors=True)
+    else:
+        caminho.unlink()
+
+
 def sincronizar_diretorio(origem, destino):
     origem = Path(origem)
     destino = Path(destino)
-    if destino.exists():
-        shutil.rmtree(destino, ignore_errors=True)
+    remover_caminho(destino)
     if origem.exists():
         shutil.copytree(origem, destino, dirs_exist_ok=True)
 
@@ -482,7 +501,7 @@ def migrar_legado_se_necessario(biblioteca):
     return biblioteca
 
 
-def salvar_payload_em_automacao(automacao_id, payload):
+def salvar_payload_em_automacao(automacao_id, payload, incluir_recursos=True):
     pasta = diretorio_automacao(automacao_id)
     pasta.mkdir(parents=True, exist_ok=True)
     normalizar_eventos(payload)
@@ -492,9 +511,15 @@ def salvar_payload_em_automacao(automacao_id, payload):
     (pasta / ARQUIVO_SAIDA.name).write_text(roteiro_texto, encoding="utf-8")
     (pasta / ARQUIVO_RESUMO.name).write_text(montar_resumo(payload["eventos"]), encoding="utf-8")
     (pasta / ARQUIVO_SCRIPT.name).write_text(montar_script_python(payload["eventos"]), encoding="utf-8")
-    copiar_arquivo_se_existir(ARQUIVO_PLANILHA, pasta / ARQUIVO_PLANILHA.name)
-    sincronizar_diretorio(DIRETORIO_PLANILHAS, pasta / DIRETORIO_PLANILHAS.name)
-    sincronizar_diretorio(PASTA_IMAGENS, pasta / PASTA_IMAGENS.name)
+    if incluir_recursos:
+        sincronizar_arquivo(ARQUIVO_PLANILHA, pasta / ARQUIVO_PLANILHA.name)
+        sincronizar_diretorio(DIRETORIO_PLANILHAS, pasta / DIRETORIO_PLANILHAS.name)
+        sincronizar_diretorio(PASTA_IMAGENS, pasta / PASTA_IMAGENS.name)
+    else:
+        # Uma automacao criada do zero nao pode herdar arquivos da automacao aberta.
+        remover_caminho(pasta / ARQUIVO_PLANILHA.name)
+        remover_caminho(pasta / DIRETORIO_PLANILHAS.name)
+        remover_caminho(pasta / PASTA_IMAGENS.name)
 
 
 def sincronizar_automacao_ativa(payload):
@@ -520,13 +545,11 @@ def carregar_payload_da_automacao(automacao_id):
 def carregar_automacao_na_raiz(automacao_id):
     payload = carregar_payload_da_automacao(automacao_id)
     pasta = diretorio_automacao(automacao_id)
-    copiar_arquivo_se_existir(pasta / ARQUIVO_PLANILHA.name, ARQUIVO_PLANILHA)
-    if (pasta / DIRETORIO_PLANILHAS.name).exists():
-        DIRETORIO_PLANILHAS.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(pasta / DIRETORIO_PLANILHAS.name, DIRETORIO_PLANILHAS, dirs_exist_ok=True)
-    if (pasta / PASTA_IMAGENS.name).exists():
-        PASTA_IMAGENS.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(pasta / PASTA_IMAGENS.name, PASTA_IMAGENS, dirs_exist_ok=True)
+    # Trocar de automacao precisa substituir os recursos locais. Sem isso, uma
+    # automacao vazia continuava exibindo as planilhas da automacao anterior.
+    sincronizar_arquivo(pasta / ARQUIVO_PLANILHA.name, ARQUIVO_PLANILHA)
+    sincronizar_diretorio(pasta / DIRETORIO_PLANILHAS.name, DIRETORIO_PLANILHAS)
+    sincronizar_diretorio(pasta / PASTA_IMAGENS.name, PASTA_IMAGENS)
     definir_automacao_ativa(automacao_id)
     salvar_payload(payload)
     return payload
@@ -2814,7 +2837,11 @@ def comando_criar_automacao(args):
     )
     biblioteca["items"].append(item)
     salvar_biblioteca(biblioteca)
-    salvar_payload_em_automacao(automacao_id, criar_payload_vazio())
+    salvar_payload_em_automacao(
+        automacao_id,
+        criar_payload_vazio(),
+        incluir_recursos=False,
+    )
     payload = carregar_automacao_na_raiz(automacao_id)
     resposta = payload_para_resposta(payload)
     resposta["library"] = listar_automacoes_resumidas()
