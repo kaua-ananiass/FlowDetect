@@ -696,12 +696,75 @@ def fluxo_configurado_para_chrome(configuracao, padrao="continuar"):
     }
 
 
+def alvo_ocr_individual_para_chrome(detalhes):
+    """Retorna a regra do unico OCR configurado dentro de um bloco visual.
+
+    Na interface "Acoes por OCR", cada alvo pode ter uma rota diferente. A
+    extensao executa um alvo por etapa; portanto a regra e transferida quando
+    o bloco possui exatamente um OCR. Blocos com varios alvos continuam com a
+    rota geral do card, para nunca adivinhar qual deles deve decidir o salto.
+    """
+    layouts = detalhes.get("ocr_target_layouts") if isinstance(detalhes, dict) else []
+    layouts = [layout for layout in (layouts or []) if isinstance(layout, dict)]
+    return layouts[0] if len(layouts) == 1 else {}
+
+
+def fluxo_ocr_individual_para_chrome(detalhes, fluxo_padrao, resultado="sucesso"):
+    """Converte a decisao do OCR individual para o fluxo da extensao."""
+    alvo = alvo_ocr_individual_para_chrome(detalhes)
+    if not alvo:
+        return fluxo_padrao
+
+    if resultado == "falha":
+        acao = str(alvo.get("failureAction", alvo.get("failure_action", "continuar")) or "continuar").strip().lower()
+        bloco = alvo.get("failureBlock", alvo.get("failure_block", alvo.get("bloco_falha", ""))) or ""
+    else:
+        acao = str(alvo.get("action", alvo.get("acao", "")) or "").strip().lower()
+        bloco = alvo.get("block", alvo.get("bloco", "")) or ""
+
+    aliases = {
+        "stop": "parar",
+        "interromper": "parar",
+        "bloco": "ir_para_bloco",
+        "navegar": "ir_para_bloco",
+        "clicar_ir_para_bloco": "ir_para_bloco",
+        "clicar_e_ir_para_bloco": "ir_para_bloco",
+        "confirmar_ir_para_bloco": "ir_para_bloco",
+        "confirmar_e_ir_para_bloco": "ir_para_bloco",
+    }
+    acao = aliases.get(acao, acao)
+    if acao == "ir_para_bloco":
+        return {"action": "ir_para_bloco", "block": bloco, "sequence": ""}
+    if resultado == "falha" and acao in {"continuar", "parar", "ir_para_sequencia"}:
+        return {"action": acao, "block": bloco, "sequence": ""}
+    return fluxo_padrao
+
+
+def aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes):
+    """Mantem clique e fluxo do OCR individual no arquivo para Chrome."""
+    alvo = alvo_ocr_individual_para_chrome(detalhes)
+    if not alvo:
+        return passo
+
+    acao = str(alvo.get("action", alvo.get("acao", "")) or "").strip().lower()
+    if acao in {"clicar", "clicar_ir_para_bloco", "clicar_e_ir_para_bloco"}:
+        passo["click"] = True
+        passo["clicks"] = max(1, int(alvo.get("clicks", alvo.get("cliques", 1)) or 1))
+    elif acao in {"continuar", "confirmar_ir_para_bloco", "confirmar_e_ir_para_bloco"}:
+        passo["click"] = False
+
+    passo["on_success"] = fluxo_ocr_individual_para_chrome(detalhes, passo.get("on_success", {}), "sucesso")
+    passo["on_failure"] = fluxo_ocr_individual_para_chrome(detalhes, passo.get("on_failure", {}), "falha")
+    return passo
+
+
 def passo_chrome_base(evento, tipo, detalhes):
     chave_falha = "ao_falhar" if str(evento.get("tipo") or "") == "chrome_elemento_html" else "ao_nao_encontrar"
     return {
         "id": f"step_{int(evento.get('ordem') or 0)}",
         "source_order": int(evento.get("ordem") or 0),
         "source_type": str(evento.get("tipo") or ""),
+        "sequence": normalizar_nome_sequencia(evento.get("sequencia")),
         "type": tipo,
         "delay_ms": max(0, round(float(evento.get("intervalo_antes") or 0) * 1000)),
         "on_success": fluxo_do_evento_para_chrome(detalhes, "ao_sucesso"),
@@ -771,7 +834,7 @@ def converter_evento_para_chrome(evento):
             "attempts": max(1, int(detalhes.get("quantidade_tentativas") or 1)),
             "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
         })
-        return passo, None
+        return aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes), None
 
     if tipo == "texto_livre":
         texto = str(evento.get("texto") or detalhes.get("texto") or "")
@@ -819,7 +882,7 @@ def converter_evento_para_chrome(evento):
                 "attempts": max(1, int(detalhes.get("quantidade_tentativas") or 1)),
                 "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
             })
-            return passo, None
+            return aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes), None
         imagem, erro = recurso_imagem_para_chrome(detalhes.get("imagem"))
         if not imagem:
             return None, f"Bloco {ordem}: {erro}"
@@ -894,11 +957,6 @@ def exportar_automacao_para_chrome(automacao_id, item, destino_json=None):
     passos = []
     avisos = []
     for evento in sorted(payload.get("eventos") or [], key=lambda item_evento: int(item_evento.get("ordem") or 0)):
-        if normalizar_nome_sequencia(evento.get("sequencia")) != "principal":
-            avisos.append(
-                f"Bloco {int(evento.get('ordem') or 0)}: sequencias alternativas ainda nao sao exportadas para a extensao."
-            )
-            continue
         passo, aviso = converter_evento_para_chrome(evento)
         if passo:
             passos.append(passo)
@@ -907,7 +965,7 @@ def exportar_automacao_para_chrome(automacao_id, item, destino_json=None):
 
     exportacao = {
         "schema": "flowdetect_chrome_automation",
-        "version": 2,
+        "version": 3,
         "exported_at": agora_iso(),
         "automation": {
             "id": str(automacao_id),
@@ -915,6 +973,7 @@ def exportar_automacao_para_chrome(automacao_id, item, destino_json=None):
             "descricao": str(item.get("descricao") or ""),
             "source": "FlowDetect Studio",
         },
+        "initial_sequence": normalizar_nome_sequencia(payload.get("sequencia_inicial")),
         "steps": passos,
         "warnings": avisos,
     }

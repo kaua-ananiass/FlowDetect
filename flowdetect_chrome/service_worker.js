@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.2";
+const RUNTIME_VERSION = "0.2.3";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -310,21 +310,62 @@ function loopPairs(steps) {
   return pairs;
 }
 
-function actionToIndex(flow, orderIndex, fallback) {
+function normalizedSequence(value) {
+  return String(value || "principal").trim() || "principal";
+}
+
+function buildFlowIndexes(steps) {
+  const orderIndex = new Map();
+  const sequenceStart = new Map();
+  const nextByIndex = new Map();
+  const lastBySequence = new Map();
+
+  steps.forEach((step, index) => {
+    const sequence = normalizedSequence(step?.sequence);
+    const order = Number(step?.source_order);
+    if (Number.isInteger(order)) orderIndex.set(order, index);
+    if (!sequenceStart.has(sequence)) sequenceStart.set(sequence, index);
+    const previous = lastBySequence.get(sequence);
+    if (Number.isInteger(previous)) nextByIndex.set(previous, index);
+    lastBySequence.set(sequence, index);
+  });
+  steps.forEach((_step, index) => {
+    if (!nextByIndex.has(index)) nextByIndex.set(index, null);
+  });
+  return { orderIndex, sequenceStart, nextByIndex };
+}
+
+function actionToIndex(flow, indexes, fallback) {
   const action = String(flow?.action || "continuar").toLowerCase();
   if (["ir_para_bloco", "ir_para_outro_bloco", "ir_para"].includes(action)) {
-    const target = orderIndex.get(Number(flow?.block));
-    if (Number.isInteger(target) && target !== fallback - 1) return target;
+    const targetOrder = Number(flow?.block);
+    const target = indexes.orderIndex.get(targetOrder);
+    if (Number.isInteger(target)) return target;
+    throw new Error(`O bloco de destino ${flow?.block || "informado"} nao foi exportado para o Chrome.`);
   }
+  if (["ir_para_sequencia", "ir_para_pagina", "ir_para_pag"].includes(action)) {
+    const sequence = normalizedSequence(flow?.sequence);
+    const target = indexes.sequenceStart.get(sequence);
+    if (Number.isInteger(target)) return target;
+    throw new Error(`A pagina de destino ${sequence} nao possui blocos compativeis com o Chrome.`);
+  }
+  if (["parar", "stop", "interromper"].includes(action)) return null;
   return fallback;
 }
 
 function flowContinues(flow) {
   const action = String(flow?.action || "parar").toLowerCase();
-  return ["continuar", "continue", "seguir", "ir_para_bloco", "ir_para_outro_bloco", "ir_para"].includes(action);
+  return ["continuar", "continue", "seguir", "ir_para_bloco", "ir_para_outro_bloco", "ir_para", "ir_para_sequencia", "ir_para_pagina", "ir_para_pag"].includes(action);
 }
 
-async function executeRange(run, steps, start, end, pairs, orderIndex, depth = 0) {
+function flowLabel(flow) {
+  const action = String(flow?.action || "continuar").toLowerCase();
+  if (["ir_para_bloco", "ir_para_outro_bloco", "ir_para"].includes(action)) return `Indo para bloco ${flow?.block}.`;
+  if (["ir_para_sequencia", "ir_para_pagina", "ir_para_pag"].includes(action)) return `Indo para pagina ${normalizedSequence(flow?.sequence)}.`;
+  return "Continuando conforme o bloco.";
+}
+
+async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
   if (depth > 5) throw new Error("Loops aninhados demais para executar no Chrome.");
   let index = start;
   while (index < end) {
@@ -339,10 +380,12 @@ async function executeRange(run, steps, start, end, pairs, orderIndex, depth = 0
       for (let row = 0; row < source.values.length; row += 1) {
         run.variables[source.name] = source.values[row];
         await addLog(run, `Loop ${source.name}: ${row + 1}/${source.values.length} · ${source.values[row]}`);
-        await executeRange(run, steps, index + 1, loopEnd, pairs, orderIndex, depth + 1);
+        await executeRange(run, steps, index + 1, loopEnd, pairs, indexes, depth + 1);
         if (row < source.values.length - 1 && source.interval) await sleep(source.interval);
       }
-      index = loopEnd + 1;
+      const nextAfterLoop = indexes.nextByIndex.get(loopEnd);
+      if (!Number.isInteger(nextAfterLoop)) return;
+      index = nextAfterLoop;
       continue;
     }
     run.currentStep += 1;
@@ -353,17 +396,22 @@ async function executeRange(run, steps, start, end, pairs, orderIndex, depth = 0
       const message = typeof output === "object" ? output.message : output;
       const flow = typeof output === "object" ? output.flow : step.on_success;
       await addLog(run, message, "success");
-      index = actionToIndex(flow, orderIndex, index + 1);
+      const nextIndex = actionToIndex(flow, indexes, indexes.nextByIndex.get(index));
+      if (!Number.isInteger(nextIndex)) return;
+      if (nextIndex !== indexes.nextByIndex.get(index)) await addLog(run, flowLabel(flow), "info");
+      index = nextIndex;
     } catch (error) {
       if (!flowContinues(step.on_failure)) throw error;
-      await addLog(run, `${String(error?.message || error)} Continuando conforme o bloco.`, "warning");
-      index = actionToIndex(step.on_failure, orderIndex, index + 1);
+      const nextIndex = actionToIndex(step.on_failure, indexes, indexes.nextByIndex.get(index));
+      await addLog(run, `${String(error?.message || error)} ${flowLabel(step.on_failure)}`, "warning");
+      if (!Number.isInteger(nextIndex)) return;
+      index = nextIndex;
     }
   }
 }
 
 async function executeAutomation(automation, tabId) {
-  if (!automation || automation.schema !== "flowdetect_chrome_automation" || ![1, 2].includes(Number(automation.version))) {
+  if (!automation || automation.schema !== "flowdetect_chrome_automation" || ![1, 2, 3].includes(Number(automation.version))) {
     throw new Error("Arquivo de automação Chrome inválido.");
   }
   if (!Array.isArray(automation.steps) || !automation.steps.length) {
@@ -374,8 +422,13 @@ async function executeAutomation(automation, tabId) {
   await addLog(run, `Iniciando ${run.automationName}.`);
   try {
     const steps = automation.steps;
-    const orderIndex = new Map(steps.map((step, index) => [Number(step.source_order), index]));
-    await executeRange(run, steps, 0, steps.length, loopPairs(steps), orderIndex);
+    const indexes = buildFlowIndexes(steps);
+    const initialSequence = normalizedSequence(automation.initial_sequence);
+    const firstStep = indexes.sequenceStart.get(initialSequence);
+    if (!Number.isInteger(firstStep)) {
+      throw new Error(`A pagina inicial ${initialSequence} nao possui blocos compativeis com o Chrome.`);
+    }
+    await executeRange(run, steps, firstStep, steps.length, loopPairs(steps), indexes);
     run.status = "completed";
     await addLog(run, "Automação concluída com sucesso.", "success");
   } catch (error) {

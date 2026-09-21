@@ -72,7 +72,8 @@ class ChromeExtensionExportTest(unittest.TestCase):
 
         exported = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
         self.assertEqual(exported["schema"], "flowdetect_chrome_automation")
-        self.assertEqual(exported["version"], 2)
+        self.assertEqual(exported["version"], 3)
+        self.assertEqual(exported["initial_sequence"], "principal")
         self.assertEqual([step["type"] for step in exported["steps"]], ["navigate", "element_action", "key_sequence"])
         self.assertEqual(exported["steps"][1]["selector"]["value"], "#email")
         self.assertEqual(exported["steps"][1]["action"]["value"], "teste@flowdetect.com")
@@ -109,6 +110,54 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertEqual([step["type"] for step in exported["steps"]], ["ocr_text", "visual_match"])
         self.assertTrue(exported["steps"][1]["image"]["data_url"].startswith("data:image/png;base64,"))
         self.assertTrue(exported["steps"][0]["click"])
+
+    def test_exports_ocr_routes_and_secondary_page_targets(self):
+        automation_id = "auto_ocr_route"
+        payload = self.roadmap.criar_payload_vazio()
+        payload["eventos"] = [
+            {
+                "ordem": 1,
+                "sequencia": "principal",
+                "tipo": "clicar_imagem",
+                "detalhes": {
+                    "modo_reconhecimento": "texto_ocr",
+                    "texto_ocr_busca": "Certificado digital",
+                    "acao_ocr": "clicar",
+                    "cliques": 1,
+                    "ocr_target_layouts": [{
+                        "texto": "Certificado digital",
+                        "action": "clicar_ir_para_bloco",
+                        "block": "2",
+                        "clicks": 2,
+                        "failureAction": "ir_para_bloco",
+                        "failureBlock": "2",
+                    }],
+                    "ao_nao_encontrar": "parar",
+                },
+            },
+            {
+                "ordem": 2,
+                "sequencia": "pagina_2",
+                "tipo": "clicar_imagem",
+                "detalhes": {
+                    "modo_reconhecimento": "texto_ocr",
+                    "texto_ocr_busca": "Meu Perfil",
+                    "acao_ocr": "clicar",
+                },
+            },
+        ]
+        self.roadmap.salvar_payload_em_automacao(automation_id, payload, incluir_recursos=False)
+
+        result = self.roadmap.exportar_automacao_para_chrome(automation_id, {"nome": "Rota OCR"})
+        exported = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(result["exported_steps"], 2)
+        self.assertEqual([step["sequence"] for step in exported["steps"]], ["principal", "pagina_2"])
+        self.assertEqual(exported["steps"][0]["on_success"], {"action": "ir_para_bloco", "block": "2", "sequence": ""})
+        self.assertEqual(exported["steps"][0]["on_failure"], {"action": "ir_para_bloco", "block": "2", "sequence": ""})
+        self.assertTrue(exported["steps"][0]["click"])
+        self.assertEqual(exported["steps"][0]["clicks"], 2)
+        self.assertFalse(exported["warnings"])
 
 
 if __name__ == "__main__":

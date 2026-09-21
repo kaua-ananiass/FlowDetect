@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.2";
+const REQUIRED_RUNTIME_VERSION = "0.2.3";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
@@ -40,7 +40,7 @@ const fileName = (name) => String(name || "Automacao_Chrome").replace(/[<>:"/\\|
 
 function normalizeImportedAutomation(raw) {
   const version = Number(raw?.version);
-  if (!raw || raw.schema !== "flowdetect_chrome_automation" || ![1, 2].includes(version) || !Array.isArray(raw.steps)) {
+  if (!raw || raw.schema !== "flowdetect_chrome_automation" || ![1, 2, 3].includes(version) || !Array.isArray(raw.steps)) {
     throw new Error("Escolha um arquivo JSON exportado pelo FlowDetect Studio para Chrome.");
   }
   return {
@@ -208,7 +208,7 @@ newButton.addEventListener("click", async () => {
   if (!nome) return;
   const automation = normalizeImportedAutomation({
     schema: "flowdetect_chrome_automation",
-    version: 2,
+    version: 3,
     automation: { nome, descricao: "Adicione blocos no FlowDetect Studio e exporte novamente.", source: "FlowDetect Chrome" },
     steps: [],
     warnings: []
