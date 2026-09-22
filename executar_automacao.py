@@ -2912,68 +2912,6 @@ class ExecutorAutomacao:
             return "ir_para_bloco"
         return "clicar"
 
-    def localizar_referencia_visual_quando_ocr_nao_ler(
-        self,
-        caminho_referencia,
-        region=None,
-        confianca_visual=0.8,
-        perfil_busca="balanced",
-    ):
-        """Usa a referencia visual exata quando um unico OCR nao consegue ler o alvo.
-
-        Botoes com texto branco, badges coloridos e fontes muito pequenas podem
-        estar perfeitamente visiveis para o template e ainda assim nao gerar uma
-        palavra confiavel no Tesseract. Esta rota continua exigindo uma imagem
-        forte e so e usada para um alvo OCR; blocos com varios OCRs preservam a
-        validacao conjunta e as regras de cada etapa.
-        """
-        try:
-            confianca = max(0.84, min(0.95, float(confianca_visual or 0.8)))
-        except (TypeError, ValueError):
-            confianca = 0.84
-        try:
-            visual = self.procurar_imagem_por_template(
-                caminho_referencia,
-                confianca=confianca,
-                region=region,
-                perfil_busca=perfil_busca,
-                incluir_ocr_referencia=False,
-            )
-        except Exception:
-            return None
-        if not visual:
-            return None
-        try:
-            if not self.validar_correspondencia_visual(
-                caminho_referencia,
-                visual,
-                confianca,
-                perfil_busca=perfil_busca,
-            ):
-                return None
-            confirmado = self.confirmar_localizacao_imagem(
-                caminho_referencia,
-                visual,
-                confianca,
-                perfil_busca=perfil_busca,
-            )
-        except Exception:
-            return None
-        if not confirmado:
-            return None
-        resultado = dict(confirmado)
-        resultado.update({
-            "search_stage": "ocr_visual_fallback",
-            "visual_confirmed": True,
-            "ocr_anchor_confirmed": False,
-            "ocr_visual_fallback": True,
-        })
-        safe_print(
-            "OCR nao leu o texto do alvo, mas a imagem exata confirmou a referencia visual.",
-            flush=True,
-        )
-        return resultado
-
     def localizar_referencia_hibrida_ocr_visual(
         self,
         caminho_referencia,
@@ -3071,28 +3009,10 @@ class ExecutorAutomacao:
                     _escala_ocr=_escala_ocr,
                     _tentativa_ampliada=bool(_escala_ocr is not None),
                 )
-        partes = partes_compostas or [esperado]
-
-        def tentar_fallback_visual_unico():
-            if quantidade_esperada != 1:
-                return None
-            if self.modo_acao_alvos_ocr(leitura_configurada) == "individual":
-                regra = self.regra_acao_individual_ocr(
-                    leitura_configurada.get("ocr_target_action")
-                    or (leitura_configurada.get("ocr_target_layouts") or [{}])[0]
-                )
-                if not leitura_configurada.get("_testar_todos_alvos_ocr") and regra.get("falha") != "continuar":
-                    return None
-            return self.localizar_referencia_visual_quando_ocr_nao_ler(
-                caminho_referencia,
-                region=region,
-                confianca_visual=confianca_visual,
-                perfil_busca=perfil_busca,
-            )
-
         if not candidatos_ocr:
-            return tentar_fallback_visual_unico()
+            return None
 
+        partes = partes_compostas or [esperado]
         pendente_ocr = None
         for candidato in candidatos_ocr:
             if self.cancelamento_solicitado():
@@ -3280,9 +3200,6 @@ class ExecutorAutomacao:
             pendente_ocr = local
         if pendente_ocr:
             return pendente_ocr
-        fallback_visual = tentar_fallback_visual_unico()
-        if fallback_visual:
-            return fallback_visual
         # A leitura nativa e muito mais rapida, mas labels pequenos podem
         # gerar um candidato parecido sem atingir a confirmacao estrita. Nesse
         # caso fazemos uma unica releitura ampliada antes de repetir o ciclo;
@@ -7716,6 +7633,110 @@ class ExecutorAutomacao:
         }
         return captura, int(base_left), int(base_top), itens, regiao_ocr
 
+    def localizar_texto_por_ocr_em_controles_coloridos(
+        self,
+        captura,
+        texto_alvo,
+        confianca=0.72,
+        base_left=0,
+        base_top=0,
+    ):
+        """L? textos claros dentro de botoes coloridos que o OCR amplo ignora.
+
+        O alvo continua sendo confirmado pelo texto lido. A cor serve apenas
+        para obter recortes pequenos e legiveis antes da etapa normal de
+        reconhecimento visual, preservando a ordem OCR -> imagem do bloco.
+        """
+        if not OPENCV_DISPONIVEL or np is None or pytesseract is None or captura is None:
+            return None
+        esperado = self.normalizar_texto_ocr(texto_alvo)
+        if len(esperado.replace(" ", "")) < 3:
+            return None
+        try:
+            imagem_bgr = cv2.cvtColor(np.array(captura), cv2.COLOR_RGB2BGR)
+            imagem_hsv = cv2.cvtColor(imagem_bgr, cv2.COLOR_BGR2HSV)
+            mascara_colorida = cv2.inRange(
+                imagem_hsv,
+                np.array([0, 80, 70], dtype=np.uint8),
+                np.array([179, 255, 255], dtype=np.uint8),
+            )
+            contornos, _ = cv2.findContours(mascara_colorida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        except Exception:
+            return None
+
+        tamanho_minimo = min(180, max(46, len(esperado.replace(" ", "")) * 5))
+        proporcao_esperada = min(6.0, max(1.4, len(esperado.replace(" ", "")) / 3.0))
+        controles = []
+        for contorno in contornos:
+            try:
+                esquerda, topo, largura, altura = cv2.boundingRect(contorno)
+                preenchimento = float(cv2.contourArea(contorno)) / max(1.0, float(largura * altura))
+            except Exception:
+                continue
+            if (
+                largura < tamanho_minimo or largura > 520
+                or altura < 20 or altura > 140
+                or largura / max(1.0, altura) < 1.25
+                or preenchimento < 0.25
+            ):
+                continue
+            controles.append((
+                abs((largura / max(1.0, altura)) - proporcao_esperada),
+                -preenchimento,
+                esquerda,
+                topo,
+                largura,
+                altura,
+            ))
+        controles.sort()
+
+        limite_ratio = max(0.80, min(0.86, float(confianca or 0.72)))
+        for _distancia, _preenchimento, esquerda, topo, largura, altura in controles[:14]:
+            if self.cancelamento_solicitado():
+                return None
+            recorte_bgr = imagem_bgr[topo : topo + altura, esquerda : esquerda + largura]
+            if recorte_bgr.size == 0:
+                continue
+            try:
+                recorte_hsv = cv2.cvtColor(recorte_bgr, cv2.COLOR_BGR2HSV)
+                # Letras brancas ou muito claras sobre o fundo saturado viram
+                # tinta preta em uma tela branca, que o Tesseract le melhor.
+                mascara_texto = cv2.inRange(
+                    recorte_hsv,
+                    np.array([0, 0, 165], dtype=np.uint8),
+                    np.array([179, 100, 255], dtype=np.uint8),
+                )
+                if cv2.countNonZero(mascara_texto) < 14:
+                    continue
+                leitura = np.full(mascara_texto.shape, 255, dtype=np.uint8)
+                leitura[mascara_texto > 0] = 0
+                leitura = cv2.copyMakeBorder(leitura, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=255)
+                leitura = cv2.resize(leitura, None, fx=3, fy=3, interpolation=cv2.INTER_NEAREST)
+            except Exception:
+                continue
+            for psm in (7, 6):
+                try:
+                    texto_lido = str(pytesseract.image_to_string(leitura, config=f"--psm {psm}") or "").strip()
+                except Exception:
+                    continue
+                if not texto_lido or not self.texto_ocr_confirma_alvo(esperado, texto_lido, limite_ratio=limite_ratio):
+                    continue
+                score = self.similaridade_texto(esperado, texto_lido)
+                safe_print(
+                    f"OCR confirmou texto em controle colorido: esperado='{texto_alvo}' | capturado='{texto_lido}'.",
+                    flush=True,
+                )
+                return {
+                    "left": int(base_left) + int(esquerda),
+                    "top": int(base_top) + int(topo),
+                    "width": max(12, int(largura)),
+                    "height": max(10, int(altura)),
+                    "text": texto_lido,
+                    "score": float(score),
+                    "source": "ocr_colored_control",
+                }
+        return None
+
     def localizar_texto_por_ocr_screenshot(
         self,
         texto,
@@ -7826,6 +7847,17 @@ class ExecutorAutomacao:
                             "score": score,
                             "source": "ocr",
                         })
+
+        if not candidatos:
+            candidato_colorido = self.localizar_texto_por_ocr_em_controles_coloridos(
+                captura,
+                texto_alvo,
+                confianca=confianca,
+                base_left=base_left,
+                base_top=base_top,
+            )
+            if candidato_colorido:
+                candidatos.append(candidato_colorido)
 
         if not candidatos and itens:
             amostras = " | ".join(str(item.get("text", "")) for item in itens[:24])
@@ -9117,12 +9149,7 @@ class ExecutorAutomacao:
                 )
             )
         )
-        if texto_ocr_esperado and bool(local.get("ocr_visual_fallback")):
-            safe_print(
-                "OCR nao leu o texto do alvo; a imagem exata foi confirmada e o bloco pode continuar.",
-                flush=True,
-            )
-        elif texto_ocr_esperado and ocr_ja_confirmado:
+        if texto_ocr_esperado and ocr_ja_confirmado:
             capturado_ocr = str(local.get("ocr_text") or texto_ocr_esperado).strip()
             if capturado_ocr:
                 self.salvar_variavel_contexto("ultimo_ocr", capturado_ocr)
@@ -9360,12 +9387,7 @@ class ExecutorAutomacao:
         )
         caminho_imagem, _imagem_id = self.resolver_imagem(imagem)
         dimensoes_referencia = self.obter_dimensoes_imagem(caminho_imagem) if caminho_imagem.exists() else None
-        if texto_ocr_esperado and isinstance(local, dict) and local.get("ocr_visual_fallback"):
-            safe_print(
-                "Teste de reconhecimento: OCR nao leu o texto, mas a imagem exata confirmou o alvo.",
-                flush=True,
-            )
-        elif texto_ocr_esperado and isinstance(local, dict) and self.ocr_hibrido_tem_todos_alvos(local, texto_ocr_esperado, leitura_relativa):
+        if texto_ocr_esperado and isinstance(local, dict) and self.ocr_hibrido_tem_todos_alvos(local, texto_ocr_esperado, leitura_relativa):
             capturado_ocr = str(local.get("ocr_text") or texto_ocr_esperado).strip()
             safe_print(
                 f"Teste de reconhecimento: OCR confirmado pela ancora '{capturado_ocr}'.",

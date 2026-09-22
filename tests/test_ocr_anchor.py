@@ -138,38 +138,26 @@ class OcrAnchorTests(unittest.TestCase):
         self.assertEqual(local["ocr_validation"]["targets"][0]["status"], "not_found")
         self.executor.localizar_referencia_por_recorte_ocr_visual.assert_not_called()
 
-    def test_single_target_uses_exact_image_when_button_text_is_not_legible(self):
-        config = {
-            "largura": 180,
-            "altura": 70,
-            "offset_x": 0,
-            "offset_y": 0,
-            "ocr_target_layouts": [{
-                "texto": "Emitir guia",
-                "action": "continuar",
-                "failureAction": "continuar",
-            }],
-        }
-        visual = {"left": 677, "top": 898, "width": 200, "height": 108, "x": 777, "y": 952, "score": 1.0}
-        self.executor.localizar_texto_por_ocr_screenshot.return_value = []
-        self.executor.procurar_imagem_por_template.return_value = visual
-        self.executor.validar_correspondencia_visual = Mock(return_value=True)
-        self.executor.confirmar_localizacao_imagem = Mock(return_value=visual)
-
-        with patch.object(motor, "OCR_DISPONIVEL", True):
-            local = self.executor.localizar_referencia_hibrida_ocr_visual(
-                "reference.png",
+    def test_colored_control_ocr_confirms_light_text_before_visual_search(self):
+        imagem = motor.Image.new("RGB", (240, 110), "white")
+        desenho = motor.ImageDraw.Draw(imagem)
+        desenho.rectangle((45, 28, 180, 70), fill=(19, 81, 180))
+        desenho.text((60, 42), "Emitir guia", fill="white")
+        with patch.object(motor.pytesseract, "image_to_string", return_value="< Emitir quia >"):
+            candidato = self.executor.localizar_texto_por_ocr_em_controles_coloridos(
+                imagem,
                 "Emitir guia",
-                region=(0, 0, 1920, 1040),
-                dimensoes_referencia=(200, 108),
-                leitura_relativa=config,
+                confianca=.72,
+                base_left=500,
+                base_top=300,
             )
 
-        self.assertTrue(local["visual_confirmed"])
-        self.assertTrue(local["ocr_visual_fallback"])
-        self.assertFalse(local["ocr_anchor_confirmed"])
-        self.assertEqual(local["left"], 677)
-        self.executor.procurar_imagem_por_template.assert_called_once()
+        self.assertIsNotNone(candidato)
+        self.assertEqual(candidato["source"], "ocr_colored_control")
+        self.assertEqual(candidato["text"], "< Emitir quia >")
+        self.assertGreaterEqual(candidato["left"], 545)
+        self.assertGreaterEqual(candidato["top"], 328)
+        self.assertTrue(self.executor.texto_ocr_confirma_alvo("Emitir guia", candidato["text"], limite_ratio=.86))
 
     def test_visual_can_refine_position_after_ocr(self):
         events = []
