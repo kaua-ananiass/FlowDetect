@@ -15,9 +15,13 @@ h1, p { margin: 0; }
 .automation-card.is-active { border-color: rgba(69, 230, 204, .54); box-shadow: 0 0 22px rgba(24, 211, 183, .12), inset 0 1px rgba(170, 248, 255, .05); }
 .automation-card-top { display: flex; align-items: center; gap: 8px; min-width: 0; margin-bottom: 10px; }
 .automation-card-title { min-width: 0; flex: 1; }
+.automation-card-actions { display: inline-flex; align-items: center; gap: 6px; }
 .eyebrow { color: #52efd4; font-size: 8px; font-weight: 850; letter-spacing: .13em; }
 .automation-name { overflow: hidden; color: #effcff; font-size: 16px; line-height: 1.18; text-overflow: ellipsis; white-space: nowrap; }
 .step-count, .execution-status { padding: 5px 8px; border: 1px solid rgba(130, 238, 229, .24); border-radius: 999px; color: #9ceee2; background: rgba(9, 52, 60, .65); font-size: 9px; font-weight: 850; white-space: nowrap; }
+.delete-automation { display: inline-grid; width: 25px; height: 25px; padding: 0; place-items: center; border: 1px solid rgba(255, 126, 139, .3); border-radius: 7px; cursor: pointer; color: #f5a6b0; background: rgba(76, 28, 39, .32); font-size: 18px; font-weight: 400; line-height: 1; transition: background .16s ease, border-color .16s ease, transform .16s ease; }
+.delete-automation:hover { border-color: rgba(255, 126, 139, .68); background: rgba(121, 31, 46, .7); transform: translateY(-1px); }
+.delete-automation:active { transform: translateY(0); }
 .play-button, .stop-button { display: inline-flex; align-items: center; justify-content: center; width: 100%; min-height: 39px; border: 1px solid rgba(68, 247, 198, .68); border-radius: 9px; cursor: pointer; color: #efffff; background: linear-gradient(135deg, #067f70, #12c293); font-size: 11px; font-weight: 850; transition: filter .16s ease, transform .16s ease; }
 .play-button span { margin-right: 6px; }
 .play-button:hover, .stop-button:hover { filter: brightness(1.12); transform: translateY(-1px); }

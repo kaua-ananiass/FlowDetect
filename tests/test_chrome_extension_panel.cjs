@@ -21,6 +21,11 @@ test("Chrome popup keeps execution details inside the active automation card", (
   assert.match(html, /class="execution" hidden/);
   assert.match(html, /class="progress-bar"/);
   assert.match(html, /class="run-log"/);
+  assert.match(html, /class="delete-automation"/);
   assert.match(source, /const ordered = \[\.\.\.automationsCache\]\.sort/);
   assert.match(source, /execution-percent/);
+  assert.match(source, /async function deleteAutomation/);
+  assert.match(source, /window\.confirm/);
+  assert.match(source, /filter\(\(item\) => String\(item\.id\) !== String\(automation\.id\)\)/);
+  assert.match(source, /chrome\.storage\.local\.remove\(RUN_STORAGE_KEY\)/);
 });

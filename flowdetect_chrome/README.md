@@ -31,6 +31,8 @@ Extensão que executa automações web exportadas pelo FlowDetect Studio na aba 
 4. No popup da extensao, clique em **+ Adicionar automacao** e selecione o arquivo `.json` criado.
 5. Abra o site de destino e clique em **Executar**.
 
+Para remover uma automacao armazenada na extensao, clique no botao **×** ao lado da quantidade de blocos e confirme a exclusao.
+
 O Studio exporta os blocos web de URL, Chrome/Web, texto, tecla, clique, OCR, reconhecimento visual, verificação de estado e marcadores de loop. As imagens de referência seguem dentro do próprio `.json`, portanto a extensão não depende da pasta `imagens` do computador que gerou a automação.
 
 O OCR da extensão lê o texto que a página disponibiliza para o navegador, inclusive rótulos e conteúdos dinâmicos. O reconhecimento visual compara a imagem de referência com a área visível da aba. Blocos que controlam programas Windows continuam no Studio, pois uma extensão não tem permissão para controlar outros aplicativos.

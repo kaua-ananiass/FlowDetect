@@ -78,6 +78,25 @@ function updateRun(run = {}) {
   renderAutomations();
 }
 
+async function deleteAutomation(automation) {
+  const nome = automation?.automation?.nome || "esta automacao";
+  if (!window.confirm(`Excluir "${nome}"? Essa acao nao pode ser desfeita.`)) return;
+
+  const isCurrent = String(currentRun?.automationId || "") === String(automation.id);
+  if (isCurrent && currentRun?.status === "running") {
+    await chrome.runtime.sendMessage({ type: "flowdetect-stop" }).catch(() => null);
+  }
+
+  const remaining = (await getAutomations()).filter((item) => String(item.id) !== String(automation.id));
+  await setAutomations(remaining);
+
+  if (isCurrent) {
+    currentRun = {};
+    await chrome.storage.local.remove(RUN_STORAGE_KEY);
+    renderAutomations(remaining);
+  }
+}
+
 function renderAutomation(automation) {
   const fragment = automationTemplate.content.cloneNode(true);
   const card = fragment.querySelector(".automation-card");
@@ -116,6 +135,9 @@ function renderAutomation(automation) {
       currentStep: 0,
       logs: [{ level: "error", message: String(error.message || error) }]
     });
+  }));
+  fragment.querySelector(".delete-automation").addEventListener("click", () => deleteAutomation(automation).catch((error) => {
+    window.alert(`Nao foi possivel excluir a automacao: ${String(error.message || error)}`);
   }));
   return fragment;
 }
