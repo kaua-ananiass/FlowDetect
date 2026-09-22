@@ -1,9 +1,10 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.16";
+const REQUIRED_RUNTIME_VERSION = "0.2.17";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
+const newButton = document.querySelector("#newButton");
 let automationsCache = [];
 let currentRun = {};
 
@@ -125,7 +126,7 @@ function renderAutomations(automations = automationsCache) {
   if (!automationsCache.length) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
-    empty.innerHTML = 'Nenhuma automacao importada.<br><label for="importInput">Importar do Studio</label>';
+    empty.textContent = 'Nenhuma automacao importada. Use + Adicionar automacao.';
     automationList.append(empty);
     return;
   }
@@ -146,6 +147,19 @@ importInput.addEventListener("change", async () => {
   } catch (error) {
     window.alert(String(error.message || error));
   }
+});
+
+newButton.addEventListener("click", async () => {
+  const nome = window.prompt("Nome da automacao:", "Nova automacao Chrome");
+  if (!nome) return;
+  const automation = normalizeImportedAutomation({
+    schema: "flowdetect_chrome_automation",
+    version: 3,
+    automation: { nome, descricao: "Rascunho criado no FlowDetect Chrome.", source: "FlowDetect Chrome" },
+    steps: [],
+    warnings: []
+  });
+  await setAutomations([...(await getAutomations()), automation]);
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {

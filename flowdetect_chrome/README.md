@@ -21,14 +21,14 @@ Extensão que executa automações web exportadas pelo FlowDetect Studio na aba 
 2. Ative o **Modo do desenvolvedor**.
 3. Clique em **Carregar sem compactacao**.
 4. Escolha esta pasta: `flowdetect_chrome`.
-5. Fixe o icone do FlowDetect e clique nele para abrir o painel lateral.
+5. Fixe o icone do FlowDetect e clique nele para abrir o popup compacto.
 
 ## Enviar uma automacao do Studio
 
 1. Abra a Biblioteca de automacoes no FlowDetect Studio.
 2. Vire o card da automacao.
 3. Clique em **Exportar para Chrome**.
-4. No painel da extensao, clique em **Importar do Studio** e selecione o arquivo `.json` criado.
+4. No popup da extensao, clique em **+ Adicionar automacao** e selecione o arquivo `.json` criado.
 5. Abra o site de destino e clique em **Executar**.
 
 O Studio exporta os blocos web de URL, Chrome/Web, texto, tecla, clique, OCR, reconhecimento visual, verificação de estado e marcadores de loop. As imagens de referência seguem dentro do próprio `.json`, portanto a extensão não depende da pasta `imagens` do computador que gerou a automação.

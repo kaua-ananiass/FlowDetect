@@ -1,9 +1,8 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.16";
+const RUNTIME_VERSION = "0.2.17";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => null);
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
 

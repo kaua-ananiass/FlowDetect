@@ -9,6 +9,13 @@
   <body>
     <main class="app-shell">
       <input id="importInput" type="file" accept="application/json,.json" hidden>
+      <header class="popup-toolbar">
+        <span>Automa&ccedil;&otilde;es</span>
+        <div class="popup-tools">
+          <label class="import-automation" for="importInput">Importar</label>
+          <button id="newButton" class="add-automation" type="button">+ Adicionar</button>
+        </div>
+      </header>
       <section id="automationList" class="automation-list" aria-live="polite"></section>
     </main>
 
@@ -22,9 +29,9 @@
         <section class="execution" hidden>
           <div class="execution-top"><span class="execution-status"></span><strong class="execution-percent">0%</strong></div>
           <p class="execution-summary">0 de 0 blocos</p>
-          <div class="progress-track" aria-label="Progresso da automacao"><i class="progress-bar"></i></div>
-          <button class="stop-button" type="button" hidden>Parar execucao</button>
-          <ul class="run-log" aria-label="Logs da execucao" aria-live="polite"></ul>
+          <div class="progress-track" aria-label="Progresso da automação"><i class="progress-bar"></i></div>
+          <button class="stop-button" type="button" hidden>Parar execução</button>
+          <ul class="run-log" aria-label="Logs da execução" aria-live="polite"></ul>
         </section>
       </article>
     </template>
