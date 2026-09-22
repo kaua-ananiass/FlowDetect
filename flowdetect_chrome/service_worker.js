@@ -6,7 +6,7 @@ const imageBitmapCache = new Map();
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
 
-function createRun(automation, tabId) {
+function createRun(automation, tabId, startRow = 1) {
   return {
     id: crypto.randomUUID(),
     automationId: String(automation?.id || ""),
@@ -19,7 +19,8 @@ function createRun(automation, tabId) {
     totalSteps: Array.isArray(automation?.steps) ? automation.steps.length : 0,
     lastMessage: "",
     logs: [],
-    variables: {}
+    variables: {},
+    requestedStartRow: Math.max(1, Math.trunc(Number(startRow) || 1))
   };
 }
 
@@ -285,7 +286,8 @@ async function executeStep(run, rawStep) {
     const source = {
       name: step.name || "valor",
       values: Array.isArray(step.values) ? step.values.map((value) => String(value ?? "")) : [],
-      interval: Math.max(0, Number(step.interval_ms || 0))
+      interval: Math.max(0, Number(step.interval_ms || 0)),
+      index: run.currentIndex
     };
     if (run.spreadsheetLoop?.sourceIndex === run.currentIndex) {
       const value = String(run.variables[source.name] ?? "");
@@ -399,10 +401,18 @@ function findSpreadsheetLoopSource(steps) {
   };
 }
 
+function spreadsheetStartRow(value, total) {
+  const parsed = Math.trunc(Number(value));
+  return Math.min(Math.max(1, Number.isFinite(parsed) ? parsed : 1), Math.max(1, Number(total) || 1));
+}
+
 async function executeSpreadsheetLoop(run, source, executeIteration) {
-  run.totalSteps = Math.max(1, Number(run.stepsPerIteration || 1) * source.values.length);
+  const firstRow = spreadsheetStartRow(run.requestedStartRow, source.values.length) - 1;
+  run.totalSteps = Math.max(1, Number(run.stepsPerIteration || 1) * (source.values.length - firstRow));
+  run.spreadsheetStartRow = firstRow + 1;
   try {
-    for (let row = 0; row < source.values.length; row += 1) {
+    if (firstRow > 0) await addLog(run, `Planilha ${source.name}: iniciando na linha ${firstRow + 1} de ${source.values.length}.`);
+    for (let row = firstRow; row < source.values.length; row += 1) {
       if (run.cancelled) throw new Error("Execucao interrompida pelo usuario.");
       run.variables[source.name] = source.values[row];
       run.spreadsheetLoop = {
@@ -445,8 +455,17 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       if (!Number.isInteger(loopEnd)) throw new Error("O bloco Início do loop não possui um Fim do loop.");
       const source = run.dataSource || { name: "valor", values: [] };
       if (!source.values.length) throw new Error("O loop não possui valores da planilha para executar.");
-      for (let row = 0; row < source.values.length; row += 1) {
+      const firstRow = run.manualSpreadsheetLoopStarted
+        ? 0
+        : spreadsheetStartRow(run.requestedStartRow, source.values.length) - 1;
+      if (!run.manualSpreadsheetLoopStarted) {
+        run.manualSpreadsheetLoopStarted = true;
+        run.spreadsheetStartRow = firstRow + 1;
+        if (firstRow > 0) await addLog(run, `Planilha ${source.name}: iniciando na linha ${firstRow + 1} de ${source.values.length}.`);
+      }
+      for (let row = firstRow; row < source.values.length; row += 1) {
         run.variables[source.name] = source.values[row];
+        run.spreadsheetLoop = { sourceIndex: source.index, row, total: source.values.length };
         await addLog(run, `Loop ${source.name}: ${row + 1}/${source.values.length} · ${source.values[row]}`);
         await executeRange(run, steps, index + 1, loopEnd, pairs, indexes, depth + 1);
         if (row < source.values.length - 1 && source.interval) await sleep(source.interval);
@@ -486,14 +505,14 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
   }
 }
 
-async function executeAutomation(automation, tabId) {
+async function executeAutomation(automation, tabId, startRow = 1) {
   if (!automation || automation.schema !== "flowdetect_chrome_automation" || ![1, 2, 3].includes(Number(automation.version))) {
     throw new Error("Arquivo de automação Chrome inválido.");
   }
   if (!Array.isArray(automation.steps) || !automation.steps.length) {
     throw new Error("Essa automação não possui blocos compatíveis com a extensão.");
   }
-  const run = createRun(automation, tabId);
+  const run = createRun(automation, tabId, startRow);
   activeRuns.set(run.id, run);
   await addLog(run, `Iniciando ${run.automationName}.`);
   try {
@@ -542,7 +561,7 @@ async function handleMessage(message, sender) {
   if (message?.type === "flowdetect-start") {
     const tabId = Number(message.tabId || sender?.tab?.id);
     if (!Number.isInteger(tabId)) throw new Error("Não encontrei a aba que receberá a automação.");
-    const run = await executeAutomation(message.automation, tabId);
+    const run = await executeAutomation(message.automation, tabId, message.startRow);
     return { ok: run.status === "completed", run };
   }
   if (message?.type === "flowdetect-stop") {

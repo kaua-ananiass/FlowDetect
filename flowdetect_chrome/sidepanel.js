@@ -55,20 +55,38 @@ function appendLogs(container, logs) {
   }));
 }
 
-async function runAutomation(automation) {
+function spreadsheetLoopInfo(automation) {
+  const source = (automation?.steps || []).find((step) => (
+    step?.type === "data_source" && Array.isArray(step.values) && step.values.length
+  ));
+  if (!source) return null;
+  return {
+    name: String(source.name || "valor"),
+    total: source.values.length
+  };
+}
+
+function clampSpreadsheetStartRow(value, total) {
+  const parsed = Math.trunc(Number(value));
+  return Math.min(Math.max(1, Number.isFinite(parsed) ? parsed : 1), Math.max(1, Number(total) || 1));
+}
+
+async function runAutomation(automation, startRow = 1) {
   if (!await ensureCurrentRuntime()) return;
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab?.id) throw new Error("Abra a pagina onde deseja executar a automacao.");
+  const loop = spreadsheetLoopInfo(automation);
+  const selectedStartRow = loop ? clampSpreadsheetStartRow(startRow, loop.total) : 1;
   currentRun = {
     automationId: automation.id,
     automationName: automation.automation?.nome,
     status: "running",
     currentStep: 0,
-    totalSteps: automation.steps.length,
-    logs: [{ level: "info", message: "Iniciando automacao." }]
+    totalSteps: loop ? automation.steps.length * (loop.total - selectedStartRow + 1) : automation.steps.length,
+    logs: [{ level: "info", message: loop ? `Iniciando na linha ${selectedStartRow} de ${loop.total}.` : "Iniciando automacao." }]
   };
   renderAutomations();
-  const response = await chrome.runtime.sendMessage({ type: "flowdetect-start", automation, tabId: tab.id });
+  const response = await chrome.runtime.sendMessage({ type: "flowdetect-start", automation, tabId: tab.id, startRow: selectedStartRow });
   if (response?.run) updateRun(response.run);
   if (!response?.ok) throw new Error(response?.run?.logs?.at(-1)?.message || response?.error || "A automacao falhou.");
 }
@@ -103,6 +121,21 @@ function renderAutomation(automation) {
   fragment.querySelector(".automation-source").textContent = automation.automation?.source || "FLOWDETECT";
   fragment.querySelector(".automation-name").textContent = automation.automation?.nome || "Automacao Chrome";
   fragment.querySelector(".step-count").textContent = `${automation.steps.length} blocos`;
+  const loop = spreadsheetLoopInfo(automation);
+  const loopStart = fragment.querySelector(".loop-start");
+  const loopStartInput = fragment.querySelector(".loop-start-row");
+  if (loop) {
+    loopStart.hidden = false;
+    loopStartInput.max = String(loop.total);
+    const atualizarResumoLoop = () => {
+      const startRow = clampSpreadsheetStartRow(loopStartInput.value, loop.total);
+      loopStartInput.value = String(startRow);
+      fragment.querySelector(".loop-start-summary").textContent = `Loop ${loop.name}: linhas ${startRow}-${loop.total}`;
+    };
+    loopStartInput.addEventListener("change", atualizarResumoLoop);
+    loopStartInput.addEventListener("blur", atualizarResumoLoop);
+    atualizarResumoLoop();
+  }
 
   const isCurrent = String(currentRun?.automationId || "") === String(automation.id);
   if (isCurrent) {
@@ -126,7 +159,9 @@ function renderAutomation(automation) {
     appendLogs(fragment.querySelector(".run-log"), currentRun.logs);
   }
 
-  fragment.querySelector(".run-automation").addEventListener("click", () => runAutomation(automation).catch((error) => {
+  fragment.querySelector(".run-automation").addEventListener("click", () => {
+    const startRow = loop ? clampSpreadsheetStartRow(loopStartInput.value, loop.total) : 1;
+    return runAutomation(automation, startRow).catch((error) => {
     updateRun({
       automationId: automation.id,
       automationName: automation.automation?.nome,
@@ -135,7 +170,8 @@ function renderAutomation(automation) {
       currentStep: 0,
       logs: [{ level: "error", message: String(error.message || error) }]
     });
-  }));
+    });
+  });
   fragment.querySelector(".delete-automation").addEventListener("click", () => deleteAutomation(automation).catch((error) => {
     window.alert(`Nao foi possivel excluir a automacao: ${String(error.message || error)}`);
   }));

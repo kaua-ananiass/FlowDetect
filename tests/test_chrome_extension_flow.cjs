@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "findSpreadsheetLoopSource", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
+const names = ["loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -76,6 +76,53 @@ test("Chrome runner repeats the complete flow once for each spreadsheet value", 
     { type: "loop_start" },
     { type: "loop_end" },
   ]), null);
+});
+
+test("Chrome runner starts the spreadsheet loop from the requested line", async () => {
+  const logs = [];
+  const context = runner({ addLog: async (_run, message) => logs.push(message), sleep: async () => {} });
+  const run = { variables: {}, stepsPerIteration: 3, requestedStartRow: 3 };
+  const executed = [];
+  const source = { name: "CNPJ", values: ["01", "02", "03", "04"], interval: 0 };
+
+  await context.executeSpreadsheetLoop(run, source, async () => executed.push(run.variables.CNPJ));
+
+  assert.deepEqual(executed, ["03", "04"]);
+  assert.equal(run.totalSteps, 6);
+  assert.equal(run.spreadsheetStartRow, 3);
+  assert.match(logs[0], /linha 3 de 4/);
+  assert.equal(context.spreadsheetStartRow(99, 4), 4);
+  assert.equal(context.spreadsheetStartRow(0, 4), 1);
+});
+
+test("Chrome runner applies the selected row to loops with start and end markers", async () => {
+  const executed = [];
+  const context = runner({
+    addLog: async () => {},
+    persistRun: async () => {},
+    executeStep: async (run, step) => {
+      if (step.type === "ocr_text") executed.push(run.variables.CNPJ);
+      return "Etapa concluida.";
+    },
+    sleep: async () => {},
+  });
+  const steps = [
+    { source_order: 1, sequence: "principal", type: "data_source" },
+    { source_order: 2, sequence: "principal", type: "loop_start" },
+    { source_order: 3, sequence: "principal", type: "ocr_text", on_success: { action: "continuar" } },
+    { source_order: 4, sequence: "principal", type: "loop_end" },
+  ];
+  const run = {
+    variables: {},
+    requestedStartRow: 3,
+    currentStep: 0,
+    dataSource: { name: "CNPJ", index: 0, values: ["01", "02", "03", "04"], interval: 0 },
+  };
+
+  await context.executeRange(run, steps, 1, steps.length, context.loopPairs(steps), context.buildFlowIndexes(steps));
+
+  assert.deepEqual(executed, ["03", "04"]);
+  assert.equal(run.spreadsheetStartRow, 3);
 });
 
 test("Chrome runner advances the spreadsheet row when a flow returns to its first block", async () => {
