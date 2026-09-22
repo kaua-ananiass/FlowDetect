@@ -405,7 +405,12 @@ async function executeSpreadsheetLoop(run, source, executeIteration) {
     for (let row = 0; row < source.values.length; row += 1) {
       if (run.cancelled) throw new Error("Execucao interrompida pelo usuario.");
       run.variables[source.name] = source.values[row];
-      run.spreadsheetLoop = { sourceIndex: source.index, row, total: source.values.length };
+      run.spreadsheetLoop = {
+        sourceIndex: source.index,
+        iterationStart: source.iterationStart,
+        row,
+        total: source.values.length
+      };
       await addLog(run, "Planilha " + source.name + ": " + (row + 1) + "/" + source.values.length + " - " + source.values[row] + ".");
       await executeIteration();
       if (row < source.values.length - 1 && source.interval) await sleep(source.interval);
@@ -414,6 +419,17 @@ async function executeSpreadsheetLoop(run, source, executeIteration) {
     delete run.spreadsheetLoop;
     delete run.currentIndex;
   }
+}
+
+function mustAdvanceSpreadsheetRow(run, currentIndex, nextIndex) {
+  const loop = run?.spreadsheetLoop;
+  const iterationStart = Number(loop?.iterationStart);
+  return Boolean(
+    loop
+    && Number.isInteger(iterationStart)
+    && currentIndex !== iterationStart
+    && nextIndex === iterationStart
+  );
 }
 
 async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
@@ -449,6 +465,10 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       const flow = typeof output === "object" ? output.flow : step.on_success;
       await addLog(run, message, "success");
       const nextIndex = actionToIndex(flow, indexes, indexes.nextByIndex.get(index));
+      if (mustAdvanceSpreadsheetRow(run, index, nextIndex)) {
+        await addLog(run, `Linha ${run.spreadsheetLoop.row + 1}/${run.spreadsheetLoop.total} concluida; avancando para o proximo valor.`);
+        return;
+      }
       if (!Number.isInteger(nextIndex)) return;
       if (nextIndex !== indexes.nextByIndex.get(index)) await addLog(run, flowLabel(flow), "info");
       index = nextIndex;
@@ -456,6 +476,10 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       if (!flowContinues(step.on_failure)) throw error;
       const nextIndex = actionToIndex(step.on_failure, indexes, indexes.nextByIndex.get(index));
       await addLog(run, `${String(error?.message || error)} ${flowLabel(step.on_failure)}`, "warning");
+      if (mustAdvanceSpreadsheetRow(run, index, nextIndex)) {
+        await addLog(run, `Linha ${run.spreadsheetLoop.row + 1}/${run.spreadsheetLoop.total} finalizada pela regra do bloco; avancando para o proximo valor.`, "warning");
+        return;
+      }
       if (!Number.isInteger(nextIndex)) return;
       index = nextIndex;
     }
@@ -483,6 +507,7 @@ async function executeAutomation(automation, tabId) {
     const pairs = loopPairs(steps);
     const spreadsheetLoop = findSpreadsheetLoopSource(steps);
     if (spreadsheetLoop) {
+      spreadsheetLoop.iterationStart = firstStep;
       run.stepsPerIteration = steps.filter((step) => step.type !== "loop_start" && step.type !== "loop_end").length;
       await executeSpreadsheetLoop(
         run,

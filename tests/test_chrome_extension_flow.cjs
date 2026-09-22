@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "findSpreadsheetLoopSource", "executeSpreadsheetLoop", "templateSamples", "scoreAt", "findTemplateInImage"];
+const names = ["normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "findSpreadsheetLoopSource", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -76,6 +76,34 @@ test("Chrome runner repeats the complete flow once for each spreadsheet value", 
     { type: "loop_start" },
     { type: "loop_end" },
   ]), null);
+});
+
+test("Chrome runner advances the spreadsheet row when a flow returns to its first block", async () => {
+  const insertedValues = [];
+  const logs = [];
+  const context = runner({
+    addLog: async (_run, message) => logs.push(message),
+    persistRun: async () => {},
+    executeStep: async (run, step) => {
+      if (step.type === "data_source") insertedValues.push(run.variables.CNPJ);
+      return "Etapa concluida.";
+    },
+  });
+  const steps = [
+    { source_order: 1, sequence: "principal", type: "data_source", name: "CNPJ", values: ["01", "02"], on_success: { action: "continuar" } },
+    { source_order: 2, sequence: "principal", type: "ocr_text", on_success: { action: "ir_para_bloco", block: "1" } },
+  ];
+  const indexes = context.buildFlowIndexes(steps);
+  const source = { ...context.findSpreadsheetLoopSource(steps), iterationStart: 0 };
+  const run = { variables: {}, currentStep: 0, stepsPerIteration: 2 };
+
+  await context.executeSpreadsheetLoop(run, source, () => (
+    context.executeRange(run, steps, 0, steps.length, new Map(), indexes)
+  ));
+
+  assert.deepEqual(insertedValues, ["01", "02"]);
+  assert.equal(logs.filter((message) => message.includes("concluida; avancando")).length, 2);
+  assert.equal(run.spreadsheetLoop, undefined);
 });
 
 
