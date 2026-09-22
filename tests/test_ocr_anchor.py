@@ -103,6 +103,62 @@ class OcrAnchorTests(unittest.TestCase):
         self.assertTrue(local["ocr_anchor_confirmed"])
         self.assertFalse(local["visual_confirmed"])
 
+    def test_saved_visual_crop_alone_cannot_confirm_missing_ocr(self):
+        config = {
+            "_testar_todos_alvos_ocr": True,
+            "largura": 92,
+            "altura": 26,
+            "offset_x": -34,
+            "offset_y": -11,
+            "ocr_target_layouts": [{"texto": "Empresa", "action": "continuar"}],
+        }
+        self.executor.localizar_referencia_por_recorte_ocr_visual = Mock(return_value={
+            "left": 440,
+            "top": 265,
+            "width": 180,
+            "height": 70,
+            "x": 530,
+            "y": 300,
+            "score": 0.91,
+            "ocr_visual_anchor": True,
+            "ocr_bounds": {"left": 462, "top": 276, "width": 68, "height": 18},
+        })
+
+        with patch.object(motor, "OCR_DISPONIVEL", True):
+            local = self.executor.localizar_referencia_hibrida_ocr_visual(
+                "reference.png",
+                "Empresa",
+                region=(0, 0, 1600, 900),
+                dimensoes_referencia=(180, 70),
+                leitura_relativa=config,
+            )
+
+        self.assertFalse(local["ocr_validation"]["success"])
+        self.assertFalse(local["ocr_validation"]["visual_confirmed"])
+        self.assertEqual(local["ocr_validation"]["targets"][0]["status"], "not_found")
+        self.executor.localizar_referencia_por_recorte_ocr_visual.assert_not_called()
+
+    def test_colored_control_ocr_confirms_light_text_before_visual_search(self):
+        imagem = motor.Image.new("RGB", (240, 110), "white")
+        desenho = motor.ImageDraw.Draw(imagem)
+        desenho.rectangle((45, 28, 180, 70), fill=(19, 81, 180))
+        desenho.text((60, 42), "Emitir guia", fill="white")
+        with patch.object(motor.pytesseract, "image_to_string", return_value="< Emitir quia >"):
+            candidato = self.executor.localizar_texto_por_ocr_em_controles_coloridos(
+                imagem,
+                "Emitir guia",
+                confianca=.72,
+                base_left=500,
+                base_top=300,
+            )
+
+        self.assertIsNotNone(candidato)
+        self.assertEqual(candidato["source"], "ocr_colored_control")
+        self.assertEqual(candidato["text"], "< Emitir quia >")
+        self.assertGreaterEqual(candidato["left"], 545)
+        self.assertGreaterEqual(candidato["top"], 328)
+        self.assertTrue(self.executor.texto_ocr_confirma_alvo("Emitir guia", candidato["text"], limite_ratio=.86))
+
     def test_visual_can_refine_position_after_ocr(self):
         events = []
         candidate = self.candidate()
@@ -411,6 +467,33 @@ class OcrAnchorTests(unittest.TestCase):
 
         self.assertEqual(executor.localizar_referencia_hibrida_ocr_visual.call_count, 1)
         self.assertEqual(local["ocr_target_flow"], {"acao": "parar"})
+
+    def test_individual_ocr_failure_can_jump_to_its_configured_block(self):
+        executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.cancelamento_solicitado = Mock(return_value=False)
+        leitura = {
+            "ocr_target_layouts": [
+                {
+                    "texto": "Empresa",
+                    "action": "continuar",
+                    "failureAction": "ir_para_bloco",
+                    "failureBlock": "20",
+                },
+                {"texto": "Periodo", "action": "continuar", "failureAction": "continuar"},
+            ],
+        }
+        executor.localizar_referencia_hibrida_ocr_visual = Mock(return_value=None)
+
+        local = executor.localizar_referencia_hibrida_por_primeiro_ocr(
+            "empresa_001", "Empresa\nPeriodo", dimensoes_referencia=(159, 74), leitura_relativa=leitura,
+        )
+
+        self.assertEqual(executor.localizar_referencia_hibrida_ocr_visual.call_count, 1)
+        self.assertEqual(local["ocr_target_flow"], {
+            "acao": "ir_para_bloco",
+            "bloco": "20",
+            "origem": "falha_ocr",
+        })
 
     def test_individual_visual_failure_respects_continue_rule(self):
         executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)

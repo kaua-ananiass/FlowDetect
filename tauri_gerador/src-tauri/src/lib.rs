@@ -2429,6 +2429,25 @@ fn export_saved_automation_zip(
 }
 
 #[tauri::command]
+fn export_saved_automation_chrome(
+    app: AppHandle,
+    id: String,
+    destino: Option<String>,
+    destination_path: Option<String>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec!["automation-export-chrome".into(), "--id".into(), id];
+    let output_path = destination_path.or(destino);
+    if let Some(value) = output_path {
+        if !value.trim().is_empty() {
+            args.push("--destino".into());
+            args.push(value);
+        }
+    }
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn remote_agent_send_saved_automation(
     app: AppHandle,
     address: String,
@@ -6691,6 +6710,50 @@ fn add_spreadsheet_block(
 }
 
 #[tauri::command]
+fn add_report_result_block(
+    app: AppHandle,
+    status: String,
+    tom: String,
+    resultado: String,
+    confirmacao: String,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec!["add-report-result".into()];
+    args.extend([
+        "--status".into(),
+        status,
+        "--tom".into(),
+        tom,
+        "--resultado".into(),
+        resultado,
+        "--confirmacao".into(),
+        confirmacao,
+        "--delay".into(),
+        delay.to_string(),
+    ]);
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn add_write_spreadsheet_block(
     app: AppHandle,
     workbook: Option<String>,
@@ -7650,6 +7713,56 @@ fn insert_spreadsheet_block(
 }
 
 #[tauri::command]
+fn insert_report_result_block(
+    app: AppHandle,
+    target_order: i32,
+    position: String,
+    status: String,
+    tom: String,
+    resultado: String,
+    confirmacao: String,
+    delay: f64,
+    sequencia: Option<String>,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "insert-report-result".into(),
+        "--target-order".into(),
+        target_order.to_string(),
+        "--position".into(),
+        position,
+        "--status".into(),
+        status,
+        "--tom".into(),
+        tom,
+        "--resultado".into(),
+        resultado,
+        "--confirmacao".into(),
+        confirmacao,
+        "--delay".into(),
+        delay.to_string(),
+    ];
+    if let Some(sequence_name) = sequencia {
+        if !sequence_name.trim().is_empty() {
+            args.push("--sequencia".into());
+            args.push(sequence_name);
+        }
+    }
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
 fn insert_write_spreadsheet_block(
     app: AppHandle,
     target_order: i32,
@@ -8478,6 +8591,46 @@ fn update_spreadsheet_block(
         "--delay".into(),
         delay.to_string(),
     ]);
+    append_success_flow_args(
+        &mut args,
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    );
+    run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+fn update_report_result_block(
+    app: AppHandle,
+    order: i32,
+    status: String,
+    tom: String,
+    resultado: String,
+    confirmacao: String,
+    delay: f64,
+    ao_sucesso: Option<String>,
+    bloco_sucesso: Option<i32>,
+    sequencia_sucesso: Option<String>,
+    atraso_sequencia_sucesso: Option<f64>,
+) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    let mut args = vec![
+        "update-report-result".into(),
+        "--order".into(),
+        order.to_string(),
+        "--status".into(),
+        status,
+        "--tom".into(),
+        tom,
+        "--resultado".into(),
+        resultado,
+        "--confirmacao".into(),
+        confirmacao,
+        "--delay".into(),
+        delay.to_string(),
+    ];
     append_success_flow_args(
         &mut args,
         ao_sucesso,
@@ -10345,6 +10498,7 @@ pub fn run() {
             rename_saved_automation,
             delete_saved_automation,
             export_saved_automation_zip,
+            export_saved_automation_chrome,
             import_saved_automation_zip,
             import_saved_automation_zip_from_path,
             import_saved_automation_zip_from_file_path,
@@ -10383,6 +10537,7 @@ pub fn run() {
             add_open_program_block,
             add_save_download_block,
             add_spreadsheet_block,
+            add_report_result_block,
             add_write_spreadsheet_block,
             add_compare_spreadsheet_block,
             insert_text_block,
@@ -10398,6 +10553,7 @@ pub fn run() {
             insert_open_program_block,
             insert_save_download_block,
             insert_spreadsheet_block,
+            insert_report_result_block,
             insert_write_spreadsheet_block,
             insert_compare_spreadsheet_block,
             update_text_block,
@@ -10413,6 +10569,7 @@ pub fn run() {
             update_open_program_block,
             update_save_download_block,
             update_spreadsheet_block,
+            update_report_result_block,
             update_write_spreadsheet_block,
             update_compare_spreadsheet_block,
             update_sequence_settings,

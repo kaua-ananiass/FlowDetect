@@ -33,6 +33,7 @@ Ele foi pensado para automatizar tarefas em programas Windows, ERPs, portais web
 - **Reconhecimento visual:** procura uma imagem na tela e decide o fluxo.
 - **Planilha:** usa uma coluna como loop de execucao.
 - **Escrever celula:** grava status, observacoes ou resultados na linha atual da planilha.
+- **Resultado do relatorio:** define o status, a mensagem e a evidencia da linha atual no PDF final do loop.
 - **Inicio/Fim do loop:** delimita trechos repetidos por linha da planilha.
 - **Verificar estado:** valida imagens/estados antes de continuar.
 - **Chrome/Web:** captura campos, botoes e textos do Chrome para automatizar sites.
@@ -46,7 +47,9 @@ Ele foi pensado para automatizar tarefas em programas Windows, ERPs, portais web
 - **Cards compactos e detalhados:** o bloco mostra o essencial no mapa e abre detalhes quando necessario.
 - **Gravador Inteligente:** cria blocos automaticamente a partir de cliques, textos e teclas gravadas.
 - **Captura Chrome/Web:** seleciona elementos direto no navegador e salva uma ficha amigavel do elemento.
+- **Extensão Chrome:** exporta automações web para executar diretamente na aba atual do navegador.
 - **Planilha em tempo real:** permite usar linhas como loop e atualizar celulas durante a execucao.
+- **Relatorio PDF compacto:** ao finalizar um loop de planilha, gera um resumo visual com cada linha, resultado, horario e status configurado no fluxo.
 - **Agent remoto:** o Studio pode enviar automacoes para outro PC, iniciar execucoes e acompanhar o andamento.
 - **Tela remota:** visualizacao da tela do Agent dentro do Studio para acompanhar a automacao.
 
@@ -95,6 +98,17 @@ python -m playwright install
 cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
 powershell -ExecutionPolicy Bypass -File .\compilar_gerador_exe.ps1
 ```
+
+## Extensão para Chrome
+
+A primeira versão da extensão fica em `flowdetect_chrome/`.
+
+1. No Chrome, abra `chrome://extensions` e ative o **Modo do desenvolvedor**.
+2. Clique em **Carregar sem compactação** e selecione `flowdetect_chrome`.
+3. No Studio, abra a Biblioteca, vire o card de uma automação e clique em **Exportar para Chrome**.
+4. No painel lateral da extensão, importe o arquivo JSON e execute a automação na aba atual.
+
+Ela executa URL, ações Chrome/Web, texto, teclas, clique na aba, loops de planilha, OCR de texto da página e reconhecimento visual por imagem. As referências visuais são incluídas no JSON exportado para a extensão funcionar sem depender da pasta de imagens do Studio.
 
 ## Observacao
 

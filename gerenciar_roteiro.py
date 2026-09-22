@@ -1,6 +1,8 @@
 import argparse
+import base64
 import hashlib
 import json
+import mimetypes
 import re
 import shutil
 import sys
@@ -43,6 +45,7 @@ INSTRUCOES_PADRAO = [
     "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura.",
 ]
 TIPOS_SEQUENCIA_PLANILHA = {"sequencia_planilha"}
+TIPOS_RESULTADO_RELATORIO = {"resultado_relatorio"}
 TIPOS_MARCADORES_LOOP = {"inicio_loop", "fim_loop"}
 TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
@@ -56,6 +59,7 @@ TIPOS_SUPORTADOS_RUNTIME = {
     "tecla",
     "atalho",
     *TIPOS_SEQUENCIA_PLANILHA,
+    *TIPOS_RESULTADO_RELATORIO,
     *TIPOS_MARCADORES_LOOP,
     *TIPOS_MOUSE,
     *TIPOS_IMAGEM,
@@ -444,11 +448,30 @@ def copiar_arquivo_se_existir(origem, destino):
     shutil.copy2(origem, destino)
 
 
+def sincronizar_arquivo(origem, destino):
+    """Faz o destino refletir o arquivo de origem, inclusive quando ele nao existe."""
+    origem = Path(origem)
+    destino = Path(destino)
+    remover_caminho(destino)
+    if origem.exists() and origem.is_file():
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(origem, destino)
+
+
+def remover_caminho(caminho):
+    caminho = Path(caminho)
+    if not caminho.exists():
+        return
+    if caminho.is_dir():
+        shutil.rmtree(caminho, ignore_errors=True)
+    else:
+        caminho.unlink()
+
+
 def sincronizar_diretorio(origem, destino):
     origem = Path(origem)
     destino = Path(destino)
-    if destino.exists():
-        shutil.rmtree(destino, ignore_errors=True)
+    remover_caminho(destino)
     if origem.exists():
         shutil.copytree(origem, destino, dirs_exist_ok=True)
 
@@ -482,7 +505,7 @@ def migrar_legado_se_necessario(biblioteca):
     return biblioteca
 
 
-def salvar_payload_em_automacao(automacao_id, payload):
+def salvar_payload_em_automacao(automacao_id, payload, incluir_recursos=True):
     pasta = diretorio_automacao(automacao_id)
     pasta.mkdir(parents=True, exist_ok=True)
     normalizar_eventos(payload)
@@ -492,9 +515,15 @@ def salvar_payload_em_automacao(automacao_id, payload):
     (pasta / ARQUIVO_SAIDA.name).write_text(roteiro_texto, encoding="utf-8")
     (pasta / ARQUIVO_RESUMO.name).write_text(montar_resumo(payload["eventos"]), encoding="utf-8")
     (pasta / ARQUIVO_SCRIPT.name).write_text(montar_script_python(payload["eventos"]), encoding="utf-8")
-    copiar_arquivo_se_existir(ARQUIVO_PLANILHA, pasta / ARQUIVO_PLANILHA.name)
-    sincronizar_diretorio(DIRETORIO_PLANILHAS, pasta / DIRETORIO_PLANILHAS.name)
-    sincronizar_diretorio(PASTA_IMAGENS, pasta / PASTA_IMAGENS.name)
+    if incluir_recursos:
+        sincronizar_arquivo(ARQUIVO_PLANILHA, pasta / ARQUIVO_PLANILHA.name)
+        sincronizar_diretorio(DIRETORIO_PLANILHAS, pasta / DIRETORIO_PLANILHAS.name)
+        sincronizar_diretorio(PASTA_IMAGENS, pasta / PASTA_IMAGENS.name)
+    else:
+        # Uma automacao criada do zero nao pode herdar arquivos da automacao aberta.
+        remover_caminho(pasta / ARQUIVO_PLANILHA.name)
+        remover_caminho(pasta / DIRETORIO_PLANILHAS.name)
+        remover_caminho(pasta / PASTA_IMAGENS.name)
 
 
 def sincronizar_automacao_ativa(payload):
@@ -520,13 +549,11 @@ def carregar_payload_da_automacao(automacao_id):
 def carregar_automacao_na_raiz(automacao_id):
     payload = carregar_payload_da_automacao(automacao_id)
     pasta = diretorio_automacao(automacao_id)
-    copiar_arquivo_se_existir(pasta / ARQUIVO_PLANILHA.name, ARQUIVO_PLANILHA)
-    if (pasta / DIRETORIO_PLANILHAS.name).exists():
-        DIRETORIO_PLANILHAS.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(pasta / DIRETORIO_PLANILHAS.name, DIRETORIO_PLANILHAS, dirs_exist_ok=True)
-    if (pasta / PASTA_IMAGENS.name).exists():
-        PASTA_IMAGENS.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(pasta / PASTA_IMAGENS.name, PASTA_IMAGENS, dirs_exist_ok=True)
+    # Trocar de automacao precisa substituir os recursos locais. Sem isso, uma
+    # automacao vazia continuava exibindo as planilhas da automacao anterior.
+    sincronizar_arquivo(pasta / ARQUIVO_PLANILHA.name, ARQUIVO_PLANILHA)
+    sincronizar_diretorio(pasta / DIRETORIO_PLANILHAS.name, DIRETORIO_PLANILHAS)
+    sincronizar_diretorio(pasta / PASTA_IMAGENS.name, PASTA_IMAGENS)
     definir_automacao_ativa(automacao_id)
     salvar_payload(payload)
     return payload
@@ -613,6 +640,407 @@ def exportar_automacao_para_zip(automacao_id, item, destino_zip=None):
                     arquivo_zip.write(caminho, caminho.relative_to(raiz_bundle))
 
     return destino_zip
+
+
+def recurso_imagem_para_chrome(imagem):
+    """Inclui a referencia visual no JSON que sera importado pela extensao.
+
+    O arquivo exportado precisa ser portavel: a extensao nao deve depender da
+    pasta de imagens da instalacao que criou a automacao.
+    """
+    imagem_id = normalizar_id_imagem(imagem)
+    if not imagem_id:
+        return None, "Imagem de referencia vazia."
+
+    caminho = Path(imagem_id)
+    if not caminho.exists() and not caminho.is_absolute():
+        alternativa = PASTA_IMAGENS / Path(imagem_id).name
+        if alternativa.exists():
+            caminho = alternativa
+    if not caminho.exists() or not caminho.is_file():
+        return None, f"Imagem de referencia nao encontrada: {imagem_id}."
+
+    mime, _ = mimetypes.guess_type(caminho.name)
+    mime = mime if mime and mime.startswith("image/") else "image/png"
+    conteudo = base64.b64encode(caminho.read_bytes()).decode("ascii")
+    return {
+        "id": imagem_id,
+        "name": caminho.name,
+        "mime": mime,
+        "data_url": f"data:{mime};base64,{conteudo}",
+    }, None
+
+
+def fluxo_do_evento_para_chrome(detalhes, chave="ao_sucesso"):
+    """Preserva a decisao do bloco sem acoplar o arquivo ao runtime desktop."""
+    if chave == "ao_sucesso":
+        bloco = detalhes.get("bloco_sucesso") or ""
+        sequencia = detalhes.get("sequencia_sucesso") or ""
+    elif chave == "ao_nao_encontrar":
+        bloco = detalhes.get("bloco_nao_encontrar") or ""
+        sequencia = detalhes.get("sequencia_nao_encontrar") or ""
+    else:
+        bloco = detalhes.get("bloco_falha") or ""
+        sequencia = detalhes.get("sequencia_falha") or ""
+    return {
+        "action": str(detalhes.get(chave) or "continuar").strip().lower() or "continuar",
+        "block": bloco,
+        "sequence": str(sequencia).strip(),
+    }
+
+
+def fluxo_configurado_para_chrome(configuracao, padrao="continuar"):
+    configuracao = configuracao if isinstance(configuracao, dict) else {}
+    return {
+        "action": str(configuracao.get("acao") or configuracao.get("action") or padrao).strip().lower() or padrao,
+        "block": configuracao.get("bloco") or configuracao.get("block") or "",
+        "sequence": str(configuracao.get("sequencia") or configuracao.get("sequence") or "").strip(),
+    }
+
+
+def alvo_ocr_individual_para_chrome(detalhes):
+    """Retorna a regra do unico OCR configurado dentro de um bloco visual."""
+    layouts = detalhes.get("ocr_target_layouts") if isinstance(detalhes, dict) else []
+    layouts = [layout for layout in (layouts or []) if isinstance(layout, dict)]
+    return layouts[0] if len(layouts) == 1 else {}
+
+
+def fluxo_alvo_ocr_para_chrome(alvo, fluxo_padrao, resultado="sucesso"):
+    """Converte a rota de um alvo OCR para o formato da extensao Chrome."""
+    if not alvo:
+        return fluxo_padrao
+
+    if resultado == "falha":
+        acao = str(alvo.get("failureAction", alvo.get("failure_action", "continuar")) or "continuar").strip().lower()
+        bloco = alvo.get("failureBlock", alvo.get("failure_block", alvo.get("bloco_falha", ""))) or ""
+    else:
+        acao = str(alvo.get("action", alvo.get("acao", "")) or "").strip().lower()
+        bloco = alvo.get("block", alvo.get("bloco", "")) or ""
+
+    aliases = {
+        "stop": "parar",
+        "interromper": "parar",
+        "bloco": "ir_para_bloco",
+        "navegar": "ir_para_bloco",
+        "goto": "ir_para_bloco",
+        "jump": "ir_para_bloco",
+        "clicar_ir_para_bloco": "ir_para_bloco",
+        "clicar_e_ir_para_bloco": "ir_para_bloco",
+        "confirmar_ir_para_bloco": "ir_para_bloco",
+        "confirmar_e_ir_para_bloco": "ir_para_bloco",
+    }
+    acao = aliases.get(acao, acao)
+    if acao == "ir_para_bloco":
+        return {"action": "ir_para_bloco", "block": bloco, "sequence": ""}
+    if resultado == "falha" and acao in {"continuar", "parar", "ir_para_sequencia"}:
+        return {"action": acao, "block": bloco, "sequence": ""}
+    return fluxo_padrao
+
+
+def fluxo_ocr_individual_para_chrome(detalhes, fluxo_padrao, resultado="sucesso"):
+    """Converte a decisao do unico OCR para o fluxo da extensao."""
+    return fluxo_alvo_ocr_para_chrome(
+        alvo_ocr_individual_para_chrome(detalhes),
+        fluxo_padrao,
+        resultado,
+    )
+
+
+def acao_alvo_ocr_para_chrome(alvo):
+    """Normaliza a acao visual de um alvo OCR sem perder a intencao de clique."""
+    acao = str((alvo or {}).get("action", (alvo or {}).get("acao", "continuar")) or "continuar").strip().lower()
+    aliases = {
+        "click": "clicar",
+        "clique": "clicar",
+        "click_and_jump": "clicar_ir_para_bloco",
+        "click_goto": "clicar_ir_para_bloco",
+        "clicar_e_ir_para_bloco": "clicar_ir_para_bloco",
+        "confirm_and_jump": "confirmar_ir_para_bloco",
+        "confirm_goto": "confirmar_ir_para_bloco",
+        "confirmar_e_ir_para_bloco": "confirmar_ir_para_bloco",
+        "ir_para_bloco": "confirmar_ir_para_bloco",
+        "bloco": "confirmar_ir_para_bloco",
+        "navegar": "confirmar_ir_para_bloco",
+    }
+    return aliases.get(acao, acao or "continuar")
+
+
+def alvos_ocr_para_chrome(detalhes, passo):
+    """Exporta cada OCR do card para que o Chrome respeite suas rotas proprias."""
+    layouts = detalhes.get("ocr_target_layouts") if isinstance(detalhes, dict) else []
+    layouts = [layout for layout in (layouts or []) if isinstance(layout, dict)]
+    if len(layouts) < 2:
+        return []
+
+    alvos = []
+    for indice, layout in enumerate(layouts, start=1):
+        texto = str(layout.get("texto", layout.get("text", layout.get("ocrText", ""))) or "").strip()
+        if not texto:
+            continue
+        acao = acao_alvo_ocr_para_chrome(layout)
+        alvos.append({
+            "index": indice,
+            "text": texto,
+            "action": acao,
+            "click": acao in {"clicar", "clicar_ir_para_bloco"},
+            "clicks": max(1, int(layout.get("clicks", layout.get("cliques", passo.get("clicks", 1))) or 1)),
+            "on_success": fluxo_alvo_ocr_para_chrome(layout, passo.get("on_success", {}), "sucesso"),
+            "on_failure": fluxo_alvo_ocr_para_chrome(layout, passo.get("on_failure", {}), "falha"),
+        })
+    return alvos if len(alvos) >= 2 else []
+
+
+def aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes):
+    """Mantem clique e fluxo do OCR individual no arquivo para Chrome."""
+    alvo = alvo_ocr_individual_para_chrome(detalhes)
+    if not alvo:
+        return passo
+
+    acao = str(alvo.get("action", alvo.get("acao", "")) or "").strip().lower()
+    if acao in {"clicar", "clicar_ir_para_bloco", "clicar_e_ir_para_bloco"}:
+        passo["click"] = True
+        passo["clicks"] = max(1, int(alvo.get("clicks", alvo.get("cliques", 1)) or 1))
+    elif acao in {"continuar", "confirmar_ir_para_bloco", "confirmar_e_ir_para_bloco"}:
+        passo["click"] = False
+
+    passo["on_success"] = fluxo_ocr_individual_para_chrome(detalhes, passo.get("on_success", {}), "sucesso")
+    passo["on_failure"] = fluxo_ocr_individual_para_chrome(detalhes, passo.get("on_failure", {}), "falha")
+    return passo
+
+
+def passo_chrome_base(evento, tipo, detalhes):
+    chave_falha = "ao_falhar" if str(evento.get("tipo") or "") == "chrome_elemento_html" else "ao_nao_encontrar"
+    return {
+        "id": f"step_{int(evento.get('ordem') or 0)}",
+        "source_order": int(evento.get("ordem") or 0),
+        "source_type": str(evento.get("tipo") or ""),
+        "sequence": normalizar_nome_sequencia(evento.get("sequencia")),
+        "type": tipo,
+        "delay_ms": max(0, round(float(evento.get("intervalo_antes") or 0) * 1000)),
+        "on_success": fluxo_do_evento_para_chrome(detalhes, "ao_sucesso"),
+        "on_failure": fluxo_do_evento_para_chrome(detalhes, chave_falha),
+    }
+
+
+def converter_evento_para_chrome(evento):
+    """Converte os blocos que fazem sentido dentro de uma pagina Chrome."""
+    tipo = str((evento or {}).get("tipo") or "").strip()
+    detalhes = (evento or {}).get("detalhes") or {}
+    ordem = int((evento or {}).get("ordem") or 0)
+
+    if tipo == "abrir_url":
+        url = str(detalhes.get("url") or "").strip()
+        if not url:
+            return None, f"Bloco {ordem}: URL vazia nao foi exportada."
+        passo = passo_chrome_base(evento, "navigate", detalhes)
+        passo.update({
+            "url": url,
+            "timeout_ms": max(500, round(float(detalhes.get("aguardar_segundos") or 10) * 1000)),
+        })
+        return passo, None
+
+    if tipo == "chrome_elemento_html":
+        alvo = detalhes.get("alvo") or {}
+        acao = detalhes.get("acao") or {}
+        metodo = str(alvo.get("metodo") or "css").strip().lower()
+        valor = str(alvo.get("valor") or alvo.get("seletor_css") or "").strip()
+        if not valor:
+            return None, f"Bloco {ordem}: seletor Chrome vazio nao foi exportado."
+        passo = passo_chrome_base(evento, "element_action", detalhes)
+        passo.update({
+            "selector": {"method": metodo, "value": valor},
+            "action": {
+                "type": str(acao.get("tipo") or "clicar").strip().lower(),
+                "value": str(acao.get("valor") or ""),
+                "clear_before": bool(acao.get("limpar_antes", True)),
+                "press_after": str(acao.get("pressionar_depois") or "").strip().lower(),
+            },
+            "timeout_ms": max(500, int(detalhes.get("timeout") or 10000)),
+        })
+        fallback, erro_fallback = recurso_imagem_para_chrome(detalhes.get("fallback_imagem"))
+        if bool(detalhes.get("fallback_visual")) and fallback:
+            passo["visual_fallback"] = fallback
+        aviso = f"Bloco {ordem}: fallback visual sem imagem valida ({erro_fallback})." if bool(detalhes.get("fallback_visual")) and not fallback else None
+        return passo, aviso
+
+    if tipo == "procurar_texto_ocr":
+        textos = [
+            item.get("texto") if isinstance(item, dict) else item
+            for item in list(detalhes.get("textos_ocr") or [])
+        ]
+        texto = str(detalhes.get("texto") or next((item for item in textos if item), "")).strip()
+        if not texto:
+            return None, f"Bloco {ordem}: OCR sem texto nao foi exportado."
+        passo = passo_chrome_base(evento, "ocr_text", detalhes)
+        passo.update({
+            "text": texto,
+            "timeout_ms": max(500, round(float(detalhes.get("timeout") or 8) * 1000)),
+            "confidence": max(0.35, min(1.0, float(detalhes.get("confianca") or 0.72))),
+            "action": str(detalhes.get("acao") or "clicar").strip().lower(),
+            "click": bool(detalhes.get("clicar", True)),
+            "clicks": max(1, int(detalhes.get("cliques") or 1)),
+            "offset_x": int(detalhes.get("offset_x") or 0),
+            "offset_y": int(detalhes.get("offset_y") or 0),
+            "attempts": max(1, int(detalhes.get("quantidade_tentativas") or 1)),
+            "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
+        })
+        return aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes), None
+
+    if tipo == "texto_livre":
+        texto = str(evento.get("texto") or detalhes.get("texto") or "")
+        if not texto:
+            return None, f"Bloco {ordem}: texto livre vazio nao foi exportado."
+        passo = passo_chrome_base(evento, "focused_text", detalhes)
+        passo.update({"text": texto, "clear_before": bool(detalhes.get("limpar_antes", False))})
+        return passo, None
+
+    if tipo in {"tecla", "atalho"}:
+        teclas = [str(tecla).strip().lower() for tecla in list(evento.get("teclas") or []) if str(tecla).strip()]
+        if not teclas:
+            return None, f"Bloco {ordem}: tecla nao configurada nao foi exportada."
+        passo = passo_chrome_base(evento, "key_sequence", detalhes)
+        passo.update({"keys": teclas, "repetitions": max(1, int(detalhes.get("repeticoes") or 1))})
+        return passo, None
+
+    if tipo == "mouse_click":
+        passo = passo_chrome_base(evento, "viewport_click", detalhes)
+        passo.update({
+            "x": int(detalhes.get("x") or 0),
+            "y": int(detalhes.get("y") or 0),
+            "button": str(detalhes.get("botao") or "left").lower(),
+            "clicks": max(1, int(detalhes.get("cliques") or 1)),
+            "coordinate_space": "viewport",
+        })
+        return passo, None
+
+    if tipo == "clicar_imagem":
+        modo = str(detalhes.get("modo_reconhecimento") or "imagem").strip().lower()
+        if modo in {"texto_ocr", "ocr", "texto"}:
+            texto = str(detalhes.get("texto_ocr_busca") or detalhes.get("texto_ocr_esperado") or "").strip()
+            if not texto:
+                return None, f"Bloco {ordem}: reconhecimento OCR sem texto nao foi exportado."
+            passo = passo_chrome_base(evento, "ocr_text", detalhes)
+            passo.update({
+                "text": texto,
+                "timeout_ms": max(500, round(float(detalhes.get("timeout") or 8) * 1000)),
+                "confidence": max(0.35, min(1.0, float(detalhes.get("confianca") or 0.72))),
+                "action": str(detalhes.get("acao_ocr") or "clicar").strip().lower(),
+                "click": str(detalhes.get("acao_ocr") or "clicar").strip().lower() == "clicar",
+                "clicks": max(1, int(detalhes.get("cliques") or 1)),
+                "offset_x": int(detalhes.get("offset_x") or 0),
+                "offset_y": int(detalhes.get("offset_y") or 0),
+                "attempts": max(1, int(detalhes.get("quantidade_tentativas") or 1)),
+                "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
+            })
+            imagem_visual, _ = recurso_imagem_para_chrome(detalhes.get("imagem"))
+            if imagem_visual:
+                passo["visual_fallback"] = imagem_visual
+            alvos = alvos_ocr_para_chrome(detalhes, passo)
+            if alvos:
+                passo["ocr_targets"] = alvos
+                return passo, None
+            return aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes), None
+        imagem, erro = recurso_imagem_para_chrome(detalhes.get("imagem"))
+        if not imagem:
+            return None, f"Bloco {ordem}: {erro}"
+        passo = passo_chrome_base(evento, "visual_match", detalhes)
+        passo.update({
+            "image": imagem,
+            "timeout_ms": max(500, round(float(detalhes.get("timeout") or 10) * 1000)),
+            "confidence": max(0.35, min(0.99, float(detalhes.get("confianca") or 0.8))),
+            "click": bool(detalhes.get("clicar", True)),
+            "clicks": max(1, int(detalhes.get("cliques") or 1)),
+            "offset_x": int(detalhes.get("offset_x") or 0),
+            "offset_y": int(detalhes.get("offset_y") or 0),
+            "attempts": max(1, int(detalhes.get("quantidade_tentativas") or 1)),
+            "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
+        })
+        return passo, None
+
+    if tipo == "verificar_estado_botao":
+        ativo, erro_ativo = recurso_imagem_para_chrome(detalhes.get("imagem_ativo"))
+        desativado, erro_desativado = recurso_imagem_para_chrome(detalhes.get("imagem_desativado"))
+        if not ativo and not desativado:
+            return None, f"Bloco {ordem}: verificacao visual sem referencias validas ({erro_ativo or erro_desativado})."
+        passo = passo_chrome_base(evento, "visual_state", detalhes)
+        passo.update({
+            "name": str(detalhes.get("nome") or "Botao"),
+            "active_image": ativo,
+            "inactive_image": desativado,
+            "timeout_ms": max(500, round(float(detalhes.get("timeout") or 5) * 1000)),
+            "confidence": max(0.35, min(0.99, float(detalhes.get("confianca") or 0.85))),
+            "state_flows": {
+                "ativo": fluxo_configurado_para_chrome(detalhes.get("se_ativo")),
+                "desativado": fluxo_configurado_para_chrome(detalhes.get("se_desativado")),
+            },
+        })
+        passo["on_failure"] = fluxo_configurado_para_chrome(detalhes.get("se_nao_encontrar"), "parar")
+        avisos = [erro for erro in (erro_ativo if not ativo else None, erro_desativado if not desativado else None) if erro]
+        return passo, f"Bloco {ordem}: {' '.join(avisos)}" if avisos else None
+
+    if tipo == "sequencia_planilha":
+        valores = [str(valor) for valor in list(detalhes.get("valores") or [])]
+        passo = passo_chrome_base(evento, "data_source", detalhes)
+        passo.update({
+            "name": str(detalhes.get("coluna") or "valor"),
+            "values": valores,
+            "interval_ms": max(0, round(float(detalhes.get("intervalo_entre_itens") or 0) * 1000)),
+        })
+        return passo, None
+
+    if tipo in {"inicio_loop", "fim_loop"}:
+        return passo_chrome_base(evento, "loop_start" if tipo == "inicio_loop" else "loop_end", detalhes), None
+
+    if tipo in {"abrir_programa", "uia_elemento"}:
+        return None, f"Bloco {ordem}: tipo '{tipo}' precisa do Studio porque o Chrome nao pode controlar aplicativos Windows."
+    return None, f"Bloco {ordem}: tipo '{tipo or 'desconhecido'}' ainda nao e compativel com a extensao Chrome."
+
+
+def exportar_automacao_para_chrome(automacao_id, item, destino_json=None):
+    """Gera um arquivo JSON que a extensao FlowDetect para Chrome pode importar."""
+    payload = carregar_payload_da_automacao(automacao_id)
+    nome_base = normalizar_nome_arquivo(item.get("nome") or automacao_id, "automacao")
+    if destino_json:
+        destino_json = Path(destino_json)
+        if destino_json.suffix.lower() != ".json":
+            destino_json = destino_json.with_suffix(".json")
+        destino_json.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        destino_json = caminho_arquivo_unico(
+            DIRETORIO_EXPORTACOES_AUTOMACAO,
+            f"{nome_base}_Chrome.json",
+        )
+
+    passos = []
+    avisos = []
+    for evento in sorted(payload.get("eventos") or [], key=lambda item_evento: int(item_evento.get("ordem") or 0)):
+        passo, aviso = converter_evento_para_chrome(evento)
+        if passo:
+            passos.append(passo)
+        if aviso:
+            avisos.append(aviso)
+
+    exportacao = {
+        "schema": "flowdetect_chrome_automation",
+        "version": 3,
+        "exported_at": agora_iso(),
+        "automation": {
+            "id": str(automacao_id),
+            "nome": str(item.get("nome") or "Automacao Chrome"),
+            "descricao": str(item.get("descricao") or ""),
+            "source": "FlowDetect Studio",
+        },
+        "initial_sequence": normalizar_nome_sequencia(payload.get("sequencia_inicial")),
+        "steps": passos,
+        "warnings": avisos,
+    }
+    destino_json.write_text(json.dumps(exportacao, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {
+        "json_path": str(destino_json),
+        "automation": exportacao["automation"],
+        "exported_steps": len(passos),
+        "warnings": avisos,
+    }
 
 
 def extrair_zip_com_seguranca(arquivo_zip, destino):
@@ -1197,6 +1625,12 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         acao = (metadados or {}).get("acao_apos_item_texto") or "nenhuma"
         return f"[PLANILHA:{coluna} x{quantidade} | apos:{acao}]"
 
+    if tipo_evento in TIPOS_RESULTADO_RELATORIO:
+        detalhes = metadados or {}
+        status = str(detalhes.get("status", "Concluida") or "Concluida").strip()
+        resultado = str(detalhes.get("resultado", "") or "").strip()
+        return f"[RELATORIO:{status} | {resultado[:56] or 'resultado padrao'}]"
+
     if tipo_evento in TIPOS_MOUSE:
         detalhes = metadados or {}
         x = detalhes.get("x", 0)
@@ -1330,6 +1764,15 @@ def montar_comando_python(teclas, tipo_evento, texto_livre=None, metadados=None)
             f"executar_sequencia({valores!r}, "
             f"acao_apos_item={acao_apos_item!r}, "
             f"intervalo_entre_itens={intervalo_entre_itens!r})"
+        )
+
+    if tipo_evento in TIPOS_RESULTADO_RELATORIO:
+        detalhes = metadados or {}
+        return (
+            "registrar_resultado_relatorio("
+            f"status={str(detalhes.get('status', 'Concluida'))!r}, "
+            f"tom={str(detalhes.get('tom', 'success'))!r}, "
+            f"resultado={str(detalhes.get('resultado', ''))!r})"
         )
 
     if tipo_evento in TIPOS_MOUSE:
@@ -2525,6 +2968,45 @@ def criar_bloco_planilha(
     }
 
 
+def criar_bloco_resultado_relatorio(
+    status="Concluida",
+    tom="success",
+    resultado="",
+    confirmacao="",
+    delay=0,
+    sequencia="principal",
+    ao_sucesso="continuar",
+    bloco_sucesso="",
+    sequencia_sucesso="",
+    atraso_sequencia_sucesso=0,
+):
+    tom_normalizado = str(tom or "success").strip().lower()
+    if tom_normalizado not in {"success", "info", "warning", "danger"}:
+        tom_normalizado = "success"
+    detalhes = aplicar_fluxo_sucesso(
+        {
+            "status": str(status or "Concluida").strip() or "Concluida",
+            "tom": tom_normalizado,
+            "resultado": str(resultado or "").strip(),
+            "confirmacao": str(confirmacao or "").strip(),
+        },
+        ao_sucesso,
+        bloco_sucesso,
+        sequencia_sucesso,
+        atraso_sequencia_sucesso,
+    )
+    return {
+        "ordem": 0,
+        "sequencia": normalizar_nome_sequencia(sequencia),
+        "tipo": "resultado_relatorio",
+        "teclas": ["resultado_relatorio"],
+        "texto": formatar_evento(["resultado_relatorio"], "resultado_relatorio", metadados=detalhes),
+        "intervalo_antes": round(float(delay or 0), 3),
+        "comando_python": montar_comando_python(["resultado_relatorio"], "resultado_relatorio", metadados=detalhes),
+        "detalhes": detalhes,
+    }
+
+
 def criar_bloco_marcador_loop(tipo, delay=0, sequencia="principal"):
     tipo_normalizado = "inicio_loop" if str(tipo or "").strip().lower() == "inicio_loop" else "fim_loop"
     return {
@@ -2662,6 +3144,10 @@ def card_do_evento(evento):
             f"{len(detalhes.get('valores', []))} itens | apos item: "
             f"{detalhes.get('acao_apos_item_texto', 'nenhuma')}"
         )
+    elif tipo == "resultado_relatorio":
+        titulo = "Resultado do relatorio"
+        subtitulo = resumir_texto(detalhes.get("status", "Concluida"), 58)
+        descricao = resumir_texto(detalhes.get("resultado", "") or "Mensagem padrao no PDF", 82)
     elif tipo == "inicio_loop":
         titulo = "Inicio do loop"
         subtitulo = "Daqui em diante o trecho pode repetir por linha da planilha."
@@ -2814,7 +3300,11 @@ def comando_criar_automacao(args):
     )
     biblioteca["items"].append(item)
     salvar_biblioteca(biblioteca)
-    salvar_payload_em_automacao(automacao_id, criar_payload_vazio())
+    salvar_payload_em_automacao(
+        automacao_id,
+        criar_payload_vazio(),
+        incluir_recursos=False,
+    )
     payload = carregar_automacao_na_raiz(automacao_id)
     resposta = payload_para_resposta(payload)
     resposta["library"] = listar_automacoes_resumidas()
@@ -2907,6 +3397,12 @@ def comando_exportar_automacao_zip(args):
         "automation": item,
         "exported_id": args.id,
     }
+
+
+def comando_exportar_automacao_chrome(args):
+    biblioteca = carregar_biblioteca()
+    _, item = localizar_item_biblioteca(biblioteca, args.id)
+    return exportar_automacao_para_chrome(args.id, item, args.destino)
 
 
 def exportar_runtime_para_zip(destino_zip=None):
@@ -3353,6 +3849,25 @@ def comando_adicionar_planilha(args):
     return salvar_e_retornar(payload)
 
 
+def comando_adicionar_resultado_relatorio(args):
+    payload = carregar_e_normalizar()
+    payload["eventos"].append(
+        criar_bloco_resultado_relatorio(
+            args.status,
+            args.tom,
+            args.resultado,
+            args.confirmacao,
+            args.delay,
+            args.sequencia,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+        )
+    )
+    return salvar_e_retornar(payload)
+
+
 def comando_adicionar_inicio_loop(args):
     payload = carregar_e_normalizar()
     payload["eventos"].append(criar_bloco_marcador_loop("inicio_loop", args.delay, args.sequencia))
@@ -3633,6 +4148,28 @@ def comando_inserir_planilha(args):
             args.after_action,
             args.interval_between,
             args.workbook,
+            args.sequencia,
+            args.ao_sucesso,
+            args.bloco_sucesso,
+            args.sequencia_sucesso,
+            args.atraso_sequencia_sucesso,
+        ),
+        args.target_order,
+        args.position,
+    )
+    return salvar_e_retornar(payload)
+
+
+def comando_inserir_resultado_relatorio(args):
+    payload = carregar_e_normalizar()
+    inserir_evento(
+        payload,
+        criar_bloco_resultado_relatorio(
+            args.status,
+            args.tom,
+            args.resultado,
+            args.confirmacao,
+            args.delay,
             args.sequencia,
             args.ao_sucesso,
             args.bloco_sucesso,
@@ -3956,6 +4493,27 @@ def comando_atualizar_planilha(args):
     return salvar_e_retornar(payload)
 
 
+def comando_atualizar_resultado_relatorio(args):
+    payload = carregar_e_normalizar()
+    _, evento = localizar_evento(payload, args.order)
+    if evento.get("tipo") != "resultado_relatorio":
+        raise ValueError("O bloco selecionado nao eh do tipo resultado do relatorio.")
+    bloco = criar_bloco_resultado_relatorio(
+        args.status,
+        args.tom,
+        args.resultado,
+        args.confirmacao,
+        args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
+        args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
+        args.ao_sucesso,
+        args.bloco_sucesso,
+        args.sequencia_sucesso,
+        args.atraso_sequencia_sucesso,
+    )
+    evento.update(bloco)
+    return salvar_e_retornar(payload)
+
+
 def comando_atualizar_atraso(args):
     payload = carregar_e_normalizar()
     _, evento = localizar_evento(payload, args.order)
@@ -4194,6 +4752,10 @@ def build_parser():
     export_zip.add_argument("--id", required=True)
     export_zip.add_argument("--destino")
 
+    export_chrome = subparsers.add_parser("automation-export-chrome")
+    export_chrome.add_argument("--id", required=True)
+    export_chrome.add_argument("--destino")
+
     import_zip = subparsers.add_parser("automation-import-zip")
     import_zip.add_argument("--arquivo", required=True)
 
@@ -4333,6 +4895,15 @@ def build_parser():
     add_sheet.add_argument("--interval-between", type=float, default=0.5)
     add_sheet.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(add_sheet)
+
+    add_report_result = subparsers.add_parser("add-report-result")
+    add_report_result.add_argument("--status", default="Concluida")
+    add_report_result.add_argument("--tom", choices=["success", "info", "warning", "danger"], default="success")
+    add_report_result.add_argument("--resultado", default="")
+    add_report_result.add_argument("--confirmacao", default="")
+    add_report_result.add_argument("--delay", type=float, default=0)
+    add_report_result.add_argument("--sequencia", default="principal")
+    adicionar_argumentos_fluxo_sucesso(add_report_result)
 
     add_loop_start = subparsers.add_parser("add-loop-start")
     add_loop_start.add_argument("--delay", type=float, default=0)
@@ -4493,6 +5064,17 @@ def build_parser():
     insert_sheet.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(insert_sheet)
 
+    insert_report_result = subparsers.add_parser("insert-report-result")
+    insert_report_result.add_argument("--target-order", type=int, required=True)
+    insert_report_result.add_argument("--position", choices=["before", "after"], required=True)
+    insert_report_result.add_argument("--status", default="Concluida")
+    insert_report_result.add_argument("--tom", choices=["success", "info", "warning", "danger"], default="success")
+    insert_report_result.add_argument("--resultado", default="")
+    insert_report_result.add_argument("--confirmacao", default="")
+    insert_report_result.add_argument("--delay", type=float, default=0)
+    insert_report_result.add_argument("--sequencia", default="principal")
+    adicionar_argumentos_fluxo_sucesso(insert_report_result)
+
     insert_loop_start = subparsers.add_parser("insert-loop-start")
     insert_loop_start.add_argument("--target-order", type=int, required=True)
     insert_loop_start.add_argument("--position", choices=["before", "after"], required=True)
@@ -4645,6 +5227,16 @@ def build_parser():
     update_sheet.add_argument("--sequencia")
     adicionar_argumentos_fluxo_sucesso(update_sheet)
 
+    update_report_result = subparsers.add_parser("update-report-result")
+    update_report_result.add_argument("--order", type=int, required=True)
+    update_report_result.add_argument("--status", default="Concluida")
+    update_report_result.add_argument("--tom", choices=["success", "info", "warning", "danger"], default="success")
+    update_report_result.add_argument("--resultado", default="")
+    update_report_result.add_argument("--confirmacao", default="")
+    update_report_result.add_argument("--delay", type=float)
+    update_report_result.add_argument("--sequencia")
+    adicionar_argumentos_fluxo_sucesso(update_report_result)
+
     update_delay = subparsers.add_parser("update-delay")
     update_delay.add_argument("--order", type=int, required=True)
     update_delay.add_argument("--delay", type=float, required=True)
@@ -4691,6 +5283,7 @@ COMANDOS = {
     "automation-delete": comando_excluir_automacao,
     "automation-mark-run": comando_marcar_execucao_automacao,
     "automation-export-zip": comando_exportar_automacao_zip,
+    "automation-export-chrome": comando_exportar_automacao_chrome,
     "automation-import-zip": comando_importar_automacao_zip,
     "runtime-info": comando_info_runtime,
     "runtime-export-zip": comando_exportar_runtime_zip,
@@ -4708,6 +5301,7 @@ COMANDOS = {
     "add-open-url": comando_adicionar_abrir_url,
     "add-open-program": comando_adicionar_abrir_programa,
     "add-planilha": comando_adicionar_planilha,
+    "add-report-result": comando_adicionar_resultado_relatorio,
     "add-loop-start": comando_adicionar_inicio_loop,
     "add-loop-end": comando_adicionar_fim_loop,
     "insert-text": comando_inserir_texto,
@@ -4721,6 +5315,7 @@ COMANDOS = {
     "insert-open-url": comando_inserir_abrir_url,
     "insert-open-program": comando_inserir_abrir_programa,
     "insert-planilha": comando_inserir_planilha,
+    "insert-report-result": comando_inserir_resultado_relatorio,
     "insert-loop-start": comando_inserir_inicio_loop,
     "insert-loop-end": comando_inserir_fim_loop,
     "update-text": comando_atualizar_texto,
@@ -4734,6 +5329,7 @@ COMANDOS = {
     "update-open-url": comando_atualizar_abrir_url,
     "update-open-program": comando_atualizar_abrir_programa,
     "update-planilha": comando_atualizar_planilha,
+    "update-report-result": comando_atualizar_resultado_relatorio,
     "update-delay": comando_atualizar_atraso,
     "update-delay-all": comando_atualizar_atraso_global,
     "update-sequence-settings": comando_atualizar_configuracao_sequencia,

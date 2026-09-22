@@ -2444,7 +2444,6 @@ button:disabled {
 .insert-card-body input[type="number"],
 .hero-test-panel input[type="number"],
 .assist-actions input[type="number"],
-.map-bulk-delay-controls input[type="number"],
 .export-name-field input[type="number"] {
   text-align: center;
   font-weight: 700;
@@ -8664,59 +8663,6 @@ label span {
   color: var(--command-page-accent-soft);
 }
 
-.map-bulk-delay-controls {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  border: none;
-  background: none;
-  box-shadow: none;
-}
-
-.map-bulk-delay-label {
-  font-size: 0.56rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--command-page-accent-soft);
-}
-
-.map-bulk-delay-controls input {
-  width: 48px;
-  min-height: 24px;
-  padding: 0 6px;
-  border-radius: 999px;
-  border: 1px solid rgba(230, 247, 255, 0.1);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)),
-    rgba(230, 247, 255, 0.035);
-  color: var(--white);
-  text-align: center;
-  font-size: 0.64rem;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.18);
-}
-
-.map-bulk-delay-controls input:focus {
-  outline: none;
-  border-color: var(--command-page-accent-border);
-  box-shadow:
-    0 0 0 4px var(--command-page-accent-muted),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.18);
-}
-
-.map-delay-apply {
-  min-width: 28px;
-  min-height: 24px;
-  padding: 0 8px;
-  font-size: 0.58rem;
-  letter-spacing: 0.06em;
-}
-
 .command-map-selection-rectangle {
   position: fixed;
   z-index: 88;
@@ -8831,16 +8777,6 @@ label span {
   box-shadow: none;
 }
 
-.map-zoom-cluster {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0;
-  border: none;
-  background: none;
-  box-shadow: none;
-}
-
 .map-view-controls {
   display: inline-flex;
   align-items: center;
@@ -8880,19 +8816,6 @@ label span {
     0 0 14px var(--command-page-accent-glow);
 }
 
-.map-zoom-range {
-  width: 94px;
-  accent-color: var(--command-page-accent);
-}
-
-.map-zoom-value {
-  min-width: 36px;
-  color: var(--text-soft);
-  font-size: 0.68rem;
-  font-weight: 700;
-  text-align: right;
-}
-
 .command-map-list {
   --command-map-zoom: 0.96;
   --command-map-stage-lift: clamp(-46px, -4vh, -28px);
@@ -8913,6 +8836,9 @@ label span {
 .command-map-list.is-tree-view {
   align-items: flex-start;
   padding: 18px 18px 34px 0;
+  overflow: hidden;
+  --command-map-tree-pan-x: 0px;
+  --command-map-tree-pan-y: 0px;
 }
 
 .command-map-list.is-tree-view .command-map-tree-stage {
@@ -8985,7 +8911,13 @@ label span {
   min-width: min(100%, 1080px);
   padding: 32px clamp(42px, 6vw, 96px) 46px clamp(38px, 6vw, 90px);
   zoom: var(--command-map-zoom);
-  transform: translateY(var(--command-map-stage-lift));
+  /* A arvore e um plano livre: o arrasto desloca o plano inteiro, sem
+     depender de haver blocos suficientes para criar barras de rolagem. */
+  transform: translate3d(
+    var(--command-map-tree-pan-x),
+    calc(var(--command-map-stage-lift) + var(--command-map-tree-pan-y)),
+    0
+  );
   transform-origin: top left;
   background:
     radial-gradient(circle at 1px 1px, rgba(230, 247, 255, 0.052) 1px, transparent 0) 0 0 / 32px 32px,
@@ -9074,6 +9006,11 @@ label span {
 
 .command-map-tree-node-slot .command-flow-segment {
   align-self: start;
+}
+
+.command-map-tree-node-slot:has(.insert-card-panel),
+.command-map-tree-node-slot:has(.is-newly-created) {
+  z-index: 20;
 }
 
 .command-map-tree-edge-label {
@@ -10081,12 +10018,14 @@ label span {
 }
 
 .command-tree-card.is-newly-created {
-  animation: commandCardCreatedIn 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: commandCardCreatedIn 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
   transform-origin: center center;
 }
 
-.command-tree-card.is-morph-created {
-  animation: none !important;
+@media (prefers-reduced-motion: reduce) {
+  .command-tree-card.is-newly-created {
+    animation: none;
+  }
 }
 
 .command-tree-card.is-removing,
@@ -11697,79 +11636,26 @@ label span {
   z-index: 9;
 }
 
-.ocr-target-decision {
-  display: grid;
-  gap: 5px;
-  padding: 7px;
-  border: 1px solid rgba(230, 247, 255, 0.08);
-  border-radius: 10px;
-  background: rgba(7, 17, 31, 0.56);
+.ocr-target-outcome {
+  gap: 7px;
+  padding: 8px;
+  border-radius: 12px;
 }
 
-.ocr-target-decision.is-success {
-  border-color: rgba(34, 197, 94, 0.2);
-}
-
-.ocr-target-decision.is-failure {
-  border-color: rgba(251, 146, 60, 0.2);
-}
-
-.ocr-target-decision-heading {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.ocr-target-decision-heading strong {
-  color: rgba(230, 247, 255, 0.88);
-  font-size: 0.5rem;
-  font-weight: 900;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.ocr-target-decision-choices {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.ocr-target-outcome .recognition-choice-group {
   gap: 5px;
 }
 
-.ocr-target-decision.is-success .ocr-target-decision-button:last-child {
-  grid-column: 1 / -1;
+.ocr-target-outcome .action-target-field {
+  padding-top: 1px;
 }
 
-.ocr-target-decision-button {
-  min-height: 27px;
-  padding: 5px 6px;
-  border: 1px solid rgba(230, 247, 255, 0.1);
-  border-radius: 8px;
-  color: rgba(230, 247, 255, 0.72);
-  background: rgba(230, 247, 255, 0.035);
-  font: inherit;
-  font-size: 0.49rem;
+.ocr-target-outcome .action-target-field span {
+  color: rgba(134, 239, 172, 0.84);
+  font-size: 0.48rem;
   font-weight: 800;
-  line-height: 1.15;
-  cursor: pointer;
-  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, box-shadow 140ms ease;
-}
-
-.ocr-target-decision-button:hover {
-  border-color: rgba(94, 234, 212, 0.48);
-  color: #eafff8;
-}
-
-.ocr-target-decision.is-success .ocr-target-decision-button.is-active {
-  border-color: rgba(34, 197, 94, 0.68);
-  color: #eafff1;
-  background: rgba(34, 197, 94, 0.16);
-  box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.1), 0 0 12px rgba(34, 197, 94, 0.1);
-}
-
-.ocr-target-decision.is-failure .ocr-target-decision-button.is-active {
-  border-color: rgba(251, 146, 60, 0.72);
-  color: #fff1df;
-  background: rgba(251, 146, 60, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(251, 146, 60, 0.08), 0 0 12px rgba(251, 146, 60, 0.1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .recognition-preview-card {
@@ -14431,15 +14317,15 @@ label span {
 @keyframes commandCardCreatedIn {
   0% {
     opacity: 0;
-    transform: translateY(8px) scale(0.94);
+    transform: translateY(6px) scale(0.96);
     box-shadow:
       0 0 0 1px rgba(34, 197, 94, 0.22),
       0 0 30px rgba(34, 197, 94, 0.16),
       0 20px 44px rgba(0, 0, 0, 0.24);
   }
-  45% {
+  65% {
     opacity: 1;
-    transform: translateY(-3px) scale(1.025);
+    transform: translateY(0) scale(1.008);
     box-shadow:
       0 0 0 1px rgba(18, 181, 203, 0.22),
       0 0 34px rgba(18, 181, 203, 0.2),

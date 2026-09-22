@@ -231,6 +231,8 @@ const state = {
   commandMapAutoFitFrame: 0,
   commandConnectorLayoutFrame: 0,
   commandMapTreePan: null,
+  commandMapTreePanOffset: { x: 0, y: 0 },
+  commandMapTreePanUserMoved: false,
   commandMapSave: {
     running: false,
     percent: 0,
@@ -291,7 +293,6 @@ const state = {
   testLaunchPending: false,
   insertPanel: null,
   createdBlockAnimationOrder: null,
-  createdBlockMorphRect: null,
   captureTarget: null,
   captureBlurTimer: null,
   captureSequence: 0,
@@ -460,8 +461,6 @@ const testLoopStartInput = document.getElementById("testLoopStartInput");
 const testLoopHint = document.getElementById("testLoopHint");
 const bulkDelayInput = document.getElementById("bulkDelayInput");
 const applyBulkDelayButton = document.getElementById("applyBulkDelayButton");
-const mapBulkDelayInput = document.getElementById("mapBulkDelayInput");
-const mapApplyBulkDelayButton = document.getElementById("mapApplyBulkDelayButton");
 const mapSaveButton = document.getElementById("mapSaveButton");
 const mapSavePercent = document.getElementById("mapSavePercent");
 const mapSaveFill = document.getElementById("mapSaveFill");
@@ -628,10 +627,6 @@ const agentSchedulerRepeatSelect = document.getElementById("agentSchedulerRepeat
 const agentSchedulerCreateButton = document.getElementById("agentSchedulerCreateButton");
 const agentSchedulerList = document.getElementById("agentSchedulerList");
 const agentSchedulerStatus = document.getElementById("agentSchedulerStatus");
-const mapZoomOutButton = document.getElementById("mapZoomOutButton");
-const mapZoomInButton = document.getElementById("mapZoomInButton");
-const mapZoomRange = document.getElementById("mapZoomRange");
-const mapZoomValue = document.getElementById("mapZoomValue");
 const commandMapViewButtons = Array.from(document.querySelectorAll("[data-command-map-view]"));
 const assistDelayInput = document.getElementById("assistDelayInput");
 const assistLoopStartInput = document.getElementById("assistLoopStartInput");
@@ -1326,18 +1321,34 @@ function normalizeCommandMapZoom(value, fallback = 1) {
 }
 
 function applyCommandMapZoom() {
-  const zoomPercent = Math.max(0.1, Math.round(state.commandMapZoom * 1000) / 10);
   commandMapList.style.setProperty("--command-map-zoom", String(state.commandMapZoom));
-  if (mapZoomRange) {
-    // O controle acompanha a escala atual para nunca limitar o zoom escolhido
-    // pelo mouse ou pelos botões.
-    mapZoomRange.min = String(Math.max(0.1, Math.min(10, Math.floor(zoomPercent / 1.6))));
-    mapZoomRange.max = String(Math.max(500, Math.ceil(zoomPercent * 1.6)));
-    mapZoomRange.value = String(zoomPercent);
+  applyCommandMapTreePanOffset();
+}
+
+function commandMapTreePanCoordinate(start, movement) {
+  const origin = Number(start);
+  const delta = Number(movement);
+  return (Number.isFinite(origin) ? origin : 0) + (Number.isFinite(delta) ? delta : 0);
+}
+
+function applyCommandMapTreePanOffset() {
+  if (!commandMapList) {
+    return;
   }
-  if (mapZoomValue) {
-    mapZoomValue.textContent = `${zoomPercent}%`;
-  }
+  const pan = state.commandMapTreePanOffset || {};
+  const x = Number.isFinite(Number(pan.x)) ? Number(pan.x) : 0;
+  const y = Number.isFinite(Number(pan.y)) ? Number(pan.y) : 0;
+  commandMapList.style.setProperty("--command-map-tree-pan-x", `${Math.round(x)}px`);
+  commandMapList.style.setProperty("--command-map-tree-pan-y", `${Math.round(y)}px`);
+}
+
+function moveCommandMapTreePanOffset(deltaX = 0, deltaY = 0) {
+  const current = state.commandMapTreePanOffset || {};
+  state.commandMapTreePanOffset = {
+    x: commandMapTreePanCoordinate(current.x, deltaX),
+    y: commandMapTreePanCoordinate(current.y, deltaY),
+  };
+  applyCommandMapTreePanOffset();
 }
 
 function autoFitCommandMapZoom() {
@@ -5036,6 +5047,17 @@ function centerCommandMapOrder(order, behavior = "smooth", options = {}) {
 
   const containerRect = commandMapList.getBoundingClientRect();
   const targetRect = targetSegment.getBoundingClientRect();
+  if (normalizeCommandMapViewMode(state.commandMapViewMode) === "tree") {
+    // Depois que o usuario arrasta o plano da arvore, a navegacao manual e a
+    // fonte de verdade. Re-renderizar um card nao pode puxar o mapa de volta.
+    if (state.commandMapTreePanUserMoved) {
+      return;
+    }
+    const deltaX = containerRect.left + (commandMapList.clientWidth / 2) - (targetRect.left + targetRect.width / 2);
+    const deltaY = containerRect.top + (commandMapList.clientHeight / 2) - (targetRect.top + targetRect.height / 2);
+    moveCommandMapTreePanOffset(deltaX, deltaY);
+    return;
+  }
   if (mode === "if-needed") {
     const margin = Math.min(140, Math.max(72, commandMapList.clientWidth * 0.12));
     const leftOverflow = targetRect.left - (containerRect.left + margin);
@@ -5081,6 +5103,7 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
     return;
   }
   const mode = options.mode || "arc";
+  const zoom = normalizeCommandMapZoom(state.commandMapZoom, 1);
 
   const animatedItems = [];
   commandMapList.querySelectorAll(".command-flow-segment[data-client-key]").forEach((segment) => {
@@ -5092,8 +5115,8 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
     }
 
     const nextRect = card.getBoundingClientRect();
-    const deltaX = previousRect.left - nextRect.left;
-    const deltaY = previousRect.top - nextRect.top;
+    const deltaX = (previousRect.left - nextRect.left) / zoom;
+    const deltaY = (previousRect.top - nextRect.top) / zoom;
 
     if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) {
       return;
@@ -5121,8 +5144,8 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
     }
 
     const nextRect = connector.getBoundingClientRect();
-    const deltaX = previousRect.left - nextRect.left;
-    const deltaY = previousRect.top - nextRect.top;
+    const deltaX = (previousRect.left - nextRect.left) / zoom;
+    const deltaY = (previousRect.top - nextRect.top) / zoom;
 
     if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) {
       return;
@@ -5165,7 +5188,12 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
       const arcLift = mode === "slide" || isConnector ? 0 : distance > 20 ? Math.min(18, Math.max(8, distance * 0.085)) : 0;
       const arcY = deltaY + (deltaX > 0 ? arcLift : -arcLift);
 
+      let cleaned = false;
       const cleanup = () => {
+        if (cleaned) {
+          return;
+        }
+        cleaned = true;
         element.style.transition = "";
         element.style.transform = "";
         element.style.willChange = "";
@@ -5223,6 +5251,10 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
         element.__commandMapShiftAnimation = animation;
         animation.addEventListener("finish", cleanup, { once: true });
         animation.addEventListener("cancel", cleanup, { once: true });
+        // Alguns WebViews concluem uma animacao finalizada manualmente sem
+        // disparar o evento `finish`. A promise garante que o card e as
+        // linhas sempre retornem para a posicao definitiva.
+        animation.finished.then(cleanup, cleanup);
         return;
       }
 
@@ -6211,6 +6243,10 @@ function createInsertPanelState(targetOrder, position) {
     sheet: workbookSheetsFor(workbookId)[0]?.name ?? "",
     column: columnsForSheetInWorkbook(workbookId, workbookSheetsFor(workbookId)[0]?.name ?? "")?.[0] ?? "",
     writeValue: "OK",
+    reportStatus: "Concluida",
+    reportTone: "success",
+    reportResult: "Automacao concluida para {{empresa}}.",
+    reportConfirmation: "",
     compareExpectedColumn: columnsForSheetInWorkbook(workbookId, workbookSheetsFor(workbookId)[0]?.name ?? "")?.[0] ?? "",
     compareMode: "texto",
     compareStatusColumn: "",
@@ -9026,6 +9062,7 @@ function recognitionOcrTargetRuleSummary(details = {}) {
     const action = normalizeOcrTargetAction(layout.action);
     const failureAction = normalizeOcrTargetFailureAction(layout.failureAction ?? layout.failure_action);
     const targetBlock = String(layout.block ?? "").trim();
+    const failureBlock = String(layout.failureBlock ?? layout.failure_block ?? layout.bloco_falha ?? "").trim();
     const next = index + 1 < total ? `OCR ${index + 2}` : "Continuar";
     let success = next;
     if (action === "clicar_ir_para_bloco") {
@@ -9036,7 +9073,11 @@ function recognitionOcrTargetRuleSummary(details = {}) {
     rules.push({
       label: `OCR ${index + 1}`,
       success,
-      failure: failureAction === "parar" ? "Parar" : next,
+      failure: failureAction === "parar"
+        ? "Parar"
+        : failureAction === "ir_para_bloco"
+          ? (failureBlock ? `Bloco ${failureBlock}` : "Outro bloco")
+          : next,
       color: OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length],
     });
   }
@@ -9259,11 +9300,38 @@ function normalizeOcrTargetAction(value = "continuar") {
 
 function normalizeOcrTargetFailureAction(value = "continuar") {
   const normalized = String(value || "continuar").trim().toLowerCase();
-  return ["parar", "stop", "interromper"].includes(normalized) ? "parar" : "continuar";
+  if (["parar", "stop", "interromper"].includes(normalized)) return "parar";
+  if (["ir_para_bloco", "bloco", "navegar", "goto", "jump"].includes(normalized)) return "ir_para_bloco";
+  return "continuar";
 }
 
 function ocrTargetMatchNeedsBlock(action = "continuar") {
-  return ["clicar_ir_para_bloco", "confirmar_ir_para_bloco", "clicar"].includes(normalizeOcrTargetAction(action));
+  return ["clicar_ir_para_bloco", "confirmar_ir_para_bloco"].includes(normalizeOcrTargetAction(action));
+}
+
+function ocrTargetFailureNeedsBlock(action = "continuar") {
+  return normalizeOcrTargetFailureAction(action) === "ir_para_bloco";
+}
+
+function ocrTargetClickChoiceFromAction(action = "continuar", clicks = 1) {
+  const normalizedAction = normalizeOcrTargetAction(action);
+  if (!["clicar", "clicar_ir_para_bloco"].includes(normalizedAction)) {
+    return "confirm";
+  }
+  return Math.max(1, Math.trunc(parseNumber(clicks, 1))) >= 2 ? "double" : "single";
+}
+
+function ocrTargetNextStepFromAction(action = "continuar") {
+  return ["clicar_ir_para_bloco", "confirmar_ir_para_bloco"].includes(normalizeOcrTargetAction(action))
+    ? "goto"
+    : "continue";
+}
+
+function ocrTargetActionFromChoices(clickChoice = "confirm", nextStep = "continue") {
+  const click = ["single", "double"].includes(String(clickChoice || "").trim().toLowerCase());
+  const goto = String(nextStep || "").trim().toLowerCase() === "goto";
+  if (goto) return click ? "clicar_ir_para_bloco" : "confirmar_ir_para_bloco";
+  return click ? "clicar" : "continuar";
 }
 
 function ocrTargetLayoutsFromContainer(container) {
@@ -9298,6 +9366,7 @@ function ocrTargetLayoutsFromContainer(container) {
       block: String(blockField?.value || "").trim(),
       clicks: Math.max(1, Math.trunc(parseNumber(clicksField?.value, 1))),
       failureAction: normalizeOcrTargetFailureAction(row.querySelector("[data-ocr-target-failure-action]")?.value),
+      failureBlock: String(row.querySelector("[data-ocr-target-failure-block]")?.value || "").trim(),
     };
   });
 }
@@ -9326,6 +9395,7 @@ function renderOcrTargetRows(fieldAttr, actionAttr, text = "", layouts = []) {
               <input ${fieldAttr}="ocrTargetBlock" data-ocr-target-block type="hidden" value="${escapeHtml(layouts?.[index]?.block ?? "")}" />
               <input ${fieldAttr}="ocrTargetClicks" data-ocr-target-clicks type="hidden" value="${escapeHtml(Math.max(1, Math.trunc(parseNumber(layouts?.[index]?.clicks, 1))))}" />
               <input ${fieldAttr}="ocrTargetFailureAction" data-ocr-target-failure-action type="hidden" value="${escapeHtml(normalizeOcrTargetFailureAction(layouts?.[index]?.failureAction ?? layouts?.[index]?.failure_action))}" />
+              <input ${fieldAttr}="ocrTargetFailureBlock" data-ocr-target-failure-block type="hidden" value="${escapeHtml(layouts?.[index]?.failureBlock ?? layouts?.[index]?.failure_block ?? layouts?.[index]?.bloco_falha ?? "")}" />
             </label>
             <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo" ${targets.length <= 1 ? "disabled" : ""}>&times;</button>
           </div>
@@ -9369,6 +9439,7 @@ function addOcrTargetRow(container, fieldAttr, actionAttr, value = "") {
       <input ${fieldAttr}="ocrTargetBlock" data-ocr-target-block type="hidden" value="" />
       <input ${fieldAttr}="ocrTargetClicks" data-ocr-target-clicks type="hidden" value="1" />
       <input ${fieldAttr}="ocrTargetFailureAction" data-ocr-target-failure-action type="hidden" value="continuar" />
+      <input ${fieldAttr}="ocrTargetFailureBlock" data-ocr-target-failure-block type="hidden" value="" />
     </label>
     <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo">&times;</button>
   `;
@@ -9400,6 +9471,7 @@ function ocrTargetActionLayout(layouts = [], index = 0) {
     block: String(layout.block ?? "").trim(),
     clicks: Math.max(1, Math.trunc(parseNumber(layout.clicks, 1))),
     failureAction: normalizeOcrTargetFailureAction(layout.failureAction ?? layout.failure_action),
+    failureBlock: String(layout.failureBlock ?? layout.failure_block ?? layout.bloco_falha ?? "").trim(),
   };
 }
 
@@ -9432,7 +9504,8 @@ function renderOcrTargetActionRows(details = {}, currentOrder = null) {
       ${targets.map((target, index) => {
         const targetAction = ocrTargetActionLayout(layouts, index);
         const hasNextTarget = index < targets.length - 1;
-        const visibleAction = targetAction.action === "clicar" ? "clicar_ir_para_bloco" : targetAction.action;
+        const clickChoice = ocrTargetClickChoiceFromAction(targetAction.action, targetAction.clicks);
+        const nextStep = ocrTargetNextStepFromAction(targetAction.action);
         const nextTargetLabel = hasNextTarget ? `Continuar para OCR ${index + 2}` : "Continuar automacao";
         const failureContinueLabel = hasNextTarget ? `Procurar OCR ${index + 2}` : "Continuar automacao";
         return `
@@ -9449,27 +9522,50 @@ function renderOcrTargetActionRows(details = {}, currentOrder = null) {
             </div>
             <input data-ocr-target-action-control="action" type="hidden" value="${escapeHtml(targetAction.action)}" />
             <input data-ocr-target-action-control="failureAction" type="hidden" value="${escapeHtml(targetAction.failureAction)}" />
+            <input data-ocr-target-action-control="failureBlock" type="hidden" value="${escapeHtml(targetAction.failureBlock)}" />
             <input data-ocr-target-action-control="clicks" type="hidden" value="${targetAction.clicks}" />
-            <section class="ocr-target-decision is-success" aria-label="Quando encontrar este OCR">
-              <div class="ocr-target-decision-heading"><strong>Se encontrar</strong></div>
-              <div class="ocr-target-decision-choices">
-                <button class="ocr-target-decision-button ${visibleAction === "clicar_ir_para_bloco" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="clicar_ir_para_bloco" type="button">Clicar e ir ao bloco</button>
-                <button class="ocr-target-decision-button ${visibleAction === "confirmar_ir_para_bloco" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="confirmar_ir_para_bloco" type="button">Confirmar e ir ao bloco</button>
-                <button class="ocr-target-decision-button ${visibleAction === "continuar" ? "is-active" : ""}" data-ocr-target-action-choice="action" data-ocr-target-action-value="continuar" type="button">${escapeHtml(nextTargetLabel)}</button>
+            <input data-ocr-target-action-control="clickChoice" type="hidden" value="${escapeHtml(clickChoice)}" />
+            <input data-ocr-target-action-control="nextStep" type="hidden" value="${escapeHtml(nextStep)}" />
+            <section class="insert-outcome-group is-success ocr-target-outcome" aria-label="Quando encontrar este OCR">
+              <div class="insert-outcome-header"><strong>OCR encontrado</strong></div>
+              <div class="recognition-choice-group">
+                <span>Clique</span>
+                <div class="recognition-choice-row">
+                  <button class="recognition-choice-button ${clickChoice === "single" ? "is-active" : ""}" data-ocr-target-action-choice="clickChoice" data-ocr-target-action-value="single" type="button">1 clique</button>
+                  <button class="recognition-choice-button ${clickChoice === "double" ? "is-active" : ""}" data-ocr-target-action-choice="clickChoice" data-ocr-target-action-value="double" type="button">2 cliques</button>
+                  <button class="recognition-choice-button ${clickChoice === "confirm" ? "is-active" : ""}" data-ocr-target-action-choice="clickChoice" data-ocr-target-action-value="confirm" type="button">So confirmar</button>
+                </div>
               </div>
+              <div class="recognition-choice-group">
+                <span>Proximo passo</span>
+                <div class="recognition-choice-row">
+                  <button class="recognition-choice-button ${nextStep === "continue" ? "is-active" : ""}" data-ocr-target-action-choice="nextStep" data-ocr-target-action-value="continue" type="button">${escapeHtml(nextTargetLabel)}</button>
+                  <button class="recognition-choice-button ${nextStep === "goto" ? "is-active" : ""}" data-ocr-target-action-choice="nextStep" data-ocr-target-action-value="goto" type="button">Ir para bloco</button>
+                </div>
+              </div>
+              <label class="action-target-field ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "is-ocr-target-action-hidden"}" data-ocr-target-action-fields="block" ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "hidden"}>
+                <span>Abrir este bloco</span>
+                <select data-ocr-target-action-control="block">
+                  ${blockTargetOptions(targetAction.block, currentOrder, "Escolha o bloco")}
+                </select>
+              </label>
             </section>
-            <label class="recognition-cell recognition-cell-full ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "is-ocr-target-action-hidden"}" data-ocr-target-action-fields="block" ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "hidden"}>
-              <span>Ir para este bloco</span>
-              <select data-ocr-target-action-control="block">
-                ${blockTargetOptions(targetAction.block, currentOrder, "Escolha o bloco")}
-              </select>
-            </label>
-            <section class="ocr-target-decision is-failure" aria-label="Quando nao encontrar este OCR">
-              <div class="ocr-target-decision-heading"><strong>Se nao encontrar</strong></div>
-              <div class="ocr-target-decision-choices">
-                <button class="ocr-target-decision-button ${targetAction.failureAction === "continuar" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="continuar" type="button">${escapeHtml(failureContinueLabel)}</button>
-                <button class="ocr-target-decision-button ${targetAction.failureAction === "parar" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="parar" type="button">Parar automacao</button>
+            <section class="insert-outcome-group is-failure ocr-target-outcome" aria-label="Quando nao encontrar este OCR">
+              <div class="insert-outcome-header"><strong>OCR nao encontrado</strong></div>
+              <div class="recognition-choice-group">
+                <span>O que fazer</span>
+                <div class="recognition-choice-row">
+                  <button class="recognition-choice-button ${targetAction.failureAction === "parar" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="parar" type="button">Parar</button>
+                  <button class="recognition-choice-button ${targetAction.failureAction === "continuar" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="continuar" type="button">${escapeHtml(failureContinueLabel)}</button>
+                  <button class="recognition-choice-button ${targetAction.failureAction === "ir_para_bloco" ? "is-active" : ""}" data-ocr-target-action-choice="failureAction" data-ocr-target-action-value="ir_para_bloco" type="button">Ir para bloco</button>
+                </div>
               </div>
+              <label class="action-target-field ${ocrTargetFailureNeedsBlock(targetAction.failureAction) ? "" : "is-ocr-target-action-hidden"}" data-ocr-target-failure-action-fields="block" ${ocrTargetFailureNeedsBlock(targetAction.failureAction) ? "" : "hidden"}>
+                <span>Abrir este bloco</span>
+                <select data-ocr-target-action-control="failureBlock">
+                  ${blockTargetOptions(targetAction.failureBlock, currentOrder, "Escolha o bloco")}
+                </select>
+              </label>
             </section>
           </section>
         `;
@@ -9482,6 +9578,15 @@ function applyOcrTargetActionVisibility(row) {
   if (!row) return;
   const action = normalizeOcrTargetAction(row.querySelector('[data-ocr-target-action-control="action"]')?.value);
   const failureAction = normalizeOcrTargetFailureAction(row.querySelector('[data-ocr-target-action-control="failureAction"]')?.value);
+  const clickChoice = ocrTargetClickChoiceFromAction(
+    action,
+    row.querySelector('[data-ocr-target-action-control="clicks"]')?.value,
+  );
+  const nextStep = ocrTargetNextStepFromAction(action);
+  const clickChoiceControl = row.querySelector('[data-ocr-target-action-control="clickChoice"]');
+  const nextStepControl = row.querySelector('[data-ocr-target-action-control="nextStep"]');
+  if (clickChoiceControl) clickChoiceControl.value = clickChoice;
+  if (nextStepControl) nextStepControl.value = nextStep;
   row.querySelectorAll("[data-ocr-target-action-fields]").forEach((field) => {
     const shouldShow = field.dataset.ocrTargetActionFields === "block" && ocrTargetMatchNeedsBlock(action);
     field.hidden = !shouldShow;
@@ -9490,9 +9595,17 @@ function applyOcrTargetActionVisibility(row) {
     field.classList.toggle("is-ocr-target-action-hidden", !shouldShow);
     field.setAttribute("aria-hidden", String(!shouldShow));
   });
-  row.querySelectorAll('[data-ocr-target-action-choice="action"]').forEach((button) => {
-    const choice = String(button.dataset.ocrTargetActionValue || "");
-    button.classList.toggle("is-active", choice === (action === "clicar" ? "clicar_ir_para_bloco" : action));
+  row.querySelectorAll("[data-ocr-target-failure-action-fields]").forEach((field) => {
+    const shouldShow = field.dataset.ocrTargetFailureActionFields === "block" && ocrTargetFailureNeedsBlock(failureAction);
+    field.hidden = !shouldShow;
+    field.classList.toggle("is-ocr-target-action-hidden", !shouldShow);
+    field.setAttribute("aria-hidden", String(!shouldShow));
+  });
+  row.querySelectorAll('[data-ocr-target-action-choice="clickChoice"]').forEach((button) => {
+    button.classList.toggle("is-active", String(button.dataset.ocrTargetActionValue || "") === clickChoice);
+  });
+  row.querySelectorAll('[data-ocr-target-action-choice="nextStep"]').forEach((button) => {
+    button.classList.toggle("is-active", String(button.dataset.ocrTargetActionValue || "") === nextStep);
   });
   row.querySelectorAll('[data-ocr-target-action-choice="failureAction"]').forEach((button) => {
     button.classList.toggle("is-active", String(button.dataset.ocrTargetActionValue || "") === failureAction);
@@ -9510,14 +9623,21 @@ function syncOcrTargetActionRows(container) {
     const block = source?.querySelector("[data-ocr-target-block]")?.value || "";
     const clicks = source?.querySelector("[data-ocr-target-clicks]")?.value || "1";
     const failureAction = source?.querySelector("[data-ocr-target-failure-action]")?.value || "continuar";
+    const failureBlock = source?.querySelector("[data-ocr-target-failure-block]")?.value || "";
     const actionControl = actionRow.querySelector('[data-ocr-target-action-control="action"]');
     if (actionControl) actionControl.value = normalizeOcrTargetAction(action);
     const blockControl = actionRow.querySelector('[data-ocr-target-action-control="block"]');
     if (blockControl) blockControl.value = block;
     const clicksControl = actionRow.querySelector('[data-ocr-target-action-control="clicks"]');
     if (clicksControl) clicksControl.value = clicks;
+    const clickChoiceControl = actionRow.querySelector('[data-ocr-target-action-control="clickChoice"]');
+    if (clickChoiceControl) clickChoiceControl.value = ocrTargetClickChoiceFromAction(action, clicks);
+    const nextStepControl = actionRow.querySelector('[data-ocr-target-action-control="nextStep"]');
+    if (nextStepControl) nextStepControl.value = ocrTargetNextStepFromAction(action);
     const failureControl = actionRow.querySelector('[data-ocr-target-action-control="failureAction"]');
     if (failureControl) failureControl.value = normalizeOcrTargetFailureAction(failureAction);
+    const failureBlockControl = actionRow.querySelector('[data-ocr-target-action-control="failureBlock"]');
+    if (failureBlockControl) failureBlockControl.value = failureBlock;
     applyOcrTargetActionVisibility(actionRow);
   });
 }
@@ -9528,16 +9648,34 @@ function syncOcrTargetActionControlToSource(target) {
   const container = target.closest(".command-tree-card, .flow-card, .insert-card-panel");
   const index = Number(actionRow?.dataset.ocrTargetActionIndex);
   if (!container || !Number.isInteger(index) || index < 0) return false;
+  const control = target.dataset.ocrTargetActionControl;
+  if (["clickChoice", "nextStep"].includes(control)) {
+    const clickChoice = String(
+      actionRow.querySelector('[data-ocr-target-action-control="clickChoice"]')?.value || "confirm",
+    ).trim().toLowerCase();
+    const nextStep = String(
+      actionRow.querySelector('[data-ocr-target-action-control="nextStep"]')?.value || "continue",
+    ).trim().toLowerCase();
+    const actionControl = actionRow.querySelector('[data-ocr-target-action-control="action"]');
+    const clicksControl = actionRow.querySelector('[data-ocr-target-action-control="clicks"]');
+    if (!actionControl || !clicksControl) return false;
+    actionControl.value = ocrTargetActionFromChoices(clickChoice, nextStep);
+    clicksControl.value = clickChoice === "double" ? "2" : "1";
+    const actionChanged = syncOcrTargetActionControlToSource(actionControl);
+    const clicksChanged = syncOcrTargetActionControlToSource(clicksControl);
+    applyOcrTargetActionVisibility(actionRow);
+    return actionChanged || clicksChanged;
+  }
   const source = ocrTargetRowByIndex(container, index);
   const fieldMap = {
     action: "[data-ocr-target-action]",
     block: "[data-ocr-target-block]",
     clicks: "[data-ocr-target-clicks]",
     failureAction: "[data-ocr-target-failure-action]",
+    failureBlock: "[data-ocr-target-failure-block]",
   };
   const destination = source?.querySelector(fieldMap[target.dataset.ocrTargetActionControl]);
   if (!destination) return false;
-  const control = target.dataset.ocrTargetActionControl;
   const nextValue = control === "action"
     ? normalizeOcrTargetAction(target.value)
     : control === "failureAction"
@@ -9844,6 +9982,20 @@ function renderCompactTreeEditorFields(event) {
       ${hiddenTreeField("sheet", details.aba || details.sheet || "")}
       ${hiddenTreeField("column", details.coluna || details.column || "")}
       ${hiddenTreeField("writeValue", details.valor || details.value || "OK")}
+      ${renderSuccessHiddenTreeFields(details)}
+    `);
+  }
+
+  if (event.type === "resultado_relatorio") {
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Status", value: details.status || "Concluida" },
+      { label: "Resultado", value: details.resultado || "Mensagem padrao" },
+      { label: "Evidencia", value: details.confirmacao || "Nao informada" },
+    ], `
+      ${hiddenTreeField("reportStatus", details.status ?? "Concluida")}
+      ${hiddenTreeField("reportTone", details.tom ?? details.tone ?? "success")}
+      ${hiddenTreeField("reportResult", details.resultado ?? details.result ?? "")}
+      ${hiddenTreeField("reportConfirmation", details.confirmacao ?? details.confirmation ?? "")}
       ${renderSuccessHiddenTreeFields(details)}
     `);
   }
@@ -10294,6 +10446,8 @@ function typeChipLabel(type) {
       return "SEQUENCIA PLANILHA";
     case "escrever_planilha":
       return "ESCREVER PLANILHA";
+    case "resultado_relatorio":
+      return "RESULTADO PDF";
     case "comparar_planilha_tela":
       return "CONFERIR VALOR";
     case "inicio_loop":
@@ -13053,6 +13207,7 @@ function renderLauncherLibrary() {
 
                     <div class="automation-library-actions">
                       <button class="ghost-button secondary-inline-action" data-library-action="edit-meta">Editar dados</button>
+                      <button class="ghost-button secondary-inline-action" data-library-action="export-chrome">Exportar para Chrome</button>
                       <button class="ghost-button secondary-inline-action" data-library-action="export-zip">Exportar ZIP</button>
                       <button class="danger-button secondary-inline-action" data-library-action="delete">Excluir</button>
                     </div>
@@ -13148,6 +13303,9 @@ function studioControlEventTitle(event = {}) {
   if (event.type === "escrever_planilha") {
     return "Escrever na planilha";
   }
+  if (event.type === "resultado_relatorio") {
+    return "Resultado do relatorio";
+  }
   if (event.type === "comparar_planilha_tela") {
     return "Conferir valor";
   }
@@ -13191,6 +13349,9 @@ function studioControlEventSubtitle(event = {}) {
   if (event.type === "escrever_planilha") {
     return `${details.aba || "aba"} -> ${details.coluna || "coluna"} = ${details.valor || ""}`;
   }
+  if (event.type === "resultado_relatorio") {
+    return `${details.status || "Concluida"}: ${details.resultado || "Mensagem padrao"}`;
+  }
   if (event.type === "comparar_planilha_tela") {
     return `${details.aba || "aba"} -> ${details.coluna_esperada || "coluna"} x OCR`;
   }
@@ -13232,6 +13393,10 @@ function studioControlEventDetails(event = {}) {
     rows.push(["Coluna", details.coluna || "-"]);
     rows.push(["Valor", details.valor || "-"]);
     rows.push(["Linha", "Linha atual do loop"]);
+  } else if (event.type === "resultado_relatorio") {
+    rows.push(["Status", details.status || "Concluida"]);
+    rows.push(["Resultado", details.resultado || "Mensagem padrao"]);
+    rows.push(["Evidencia", details.confirmacao || "-"]);
   } else if (event.type === "comparar_planilha_tela") {
     rows.push(["Arquivo", details.arquivo || "-"]);
     rows.push(["Aba", details.aba || "-"]);
@@ -17577,6 +17742,42 @@ function renderWriteSpreadsheetFields(fieldAttr, details = {}, currentOrder = nu
   `;
 }
 
+function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) {
+  const tone = String(details.tom ?? details.tone ?? "success");
+  return `
+    <div class="field-stack spreadsheet-write-editor">
+      <p class="spreadsheet-write-hint">Registra o resultado da linha atual no PDF. Coloque este bloco no caminho de sucesso ou no caminho de falha que voce quiser documentar.</p>
+      <div class="tree-inline-fields">
+        <label>
+          <span>Status no relatorio</span>
+          <input ${fieldAttr}="reportStatus" type="text" value="${escapeHtml(details.status ?? "Concluida")}" placeholder="Concluida, Sem debitos, Revisar..." />
+        </label>
+        <label>
+          <span>Cor do status</span>
+          <select ${fieldAttr}="reportTone">
+            <option value="success" ${tone === "success" ? "selected" : ""}>Concluido (verde)</option>
+            <option value="info" ${tone === "info" ? "selected" : ""}>Informativo (azul)</option>
+            <option value="warning" ${tone === "warning" ? "selected" : ""}>Revisar (amarelo)</option>
+            <option value="danger" ${tone === "danger" ? "selected" : ""}>Falhou (vermelho)</option>
+          </select>
+        </label>
+      </div>
+      <label>
+        <span>Resultado exibido</span>
+        <textarea ${fieldAttr}="reportResult" rows="2" placeholder="Ex.: Guia emitida com sucesso.">${escapeHtml(details.resultado ?? details.result ?? "")}</textarea>
+      </label>
+      <label>
+        <span>Confirmacao ou evidencia (opcional)</span>
+        <input ${fieldAttr}="reportConfirmation" type="text" value="${escapeHtml(details.confirmacao ?? details.confirmation ?? "")}" placeholder="Ex.: OCR confirmou: Sem debitos" />
+      </label>
+      <p class="spreadsheet-write-hint">Use {{empresa}}, {{linha_atual}} e os nomes das colunas da planilha para montar a mensagem.</p>
+      <div class="tree-inline-fields">
+        ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
+      </div>
+    </div>
+  `;
+}
+
 function renderCompareSpreadsheetFields(fieldAttr, details = {}, currentOrder = null) {
   const workbooks = availableWorkbooks();
   const requestedWorkbookId = details.arquivo || details.workbook || "";
@@ -17972,6 +18173,13 @@ function renderEditorFields(event) {
     `;
   }
 
+  if (event.type === "resultado_relatorio") {
+    return `
+      ${renderReportResultFields("data-field", details, event.order)}
+      ${delayField}
+    `;
+  }
+
   if (event.type === "comparar_planilha_tela") {
     return `
       ${renderCompareSpreadsheetFields("data-field", details, event.order)}
@@ -18238,6 +18446,10 @@ function renderTreeEditorFields(event) {
 
   if (event.type === "escrever_planilha") {
     return renderWriteSpreadsheetFields("data-tree-field", details, event.order);
+  }
+
+  if (event.type === "resultado_relatorio") {
+    return renderReportResultFields("data-tree-field", details, event.order);
   }
 
   if (event.type === "comparar_planilha_tela") {
@@ -18725,6 +18937,12 @@ function renderInsertPanel(order) {
       description: "Para marcar um status ou texto na linha atual do loop.",
       hint: selectedColumn ? `Vai comeÃ§ar escrevendo na coluna ${selectedColumn}.` : "Importe uma planilha para configurar esse bloco.",
     },
+    report_result: {
+      title: "Resultado do relatorio",
+      label: "PDF",
+      description: "Para definir o status, o resultado e a confirmacao da linha atual no relatorio final.",
+      hint: "Coloque no caminho que representa o resultado daquela linha, inclusive em uma falha.",
+    },
     spreadsheet_context: {
       title: "Loop de dados",
       label: "Dados",
@@ -18778,6 +18996,7 @@ function renderInsertPanel(order) {
         <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Planilha</button>
         <button class="insert-type-button ${panel.type === "spreadsheet_context" ? "is-active" : ""}" data-insert-type="spreadsheet_context" type="button" ${panel.isSaving ? "disabled" : ""}>Loop de dados</button>
         <button class="insert-type-button ${panel.type === "write_spreadsheet" ? "is-active" : ""}" data-insert-type="write_spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Escrever celula</button>
+        <button class="insert-type-button ${panel.type === "report_result" ? "is-active" : ""}" data-insert-type="report_result" type="button" ${panel.isSaving ? "disabled" : ""}>Resultado PDF</button>
         <button class="insert-type-button ${panel.type === "compare_spreadsheet" ? "is-active" : ""}" data-insert-type="compare_spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Conferir valor</button>
         <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start" type="button" ${panel.isSaving ? "disabled" : ""}>Inicio loop</button>
         <button class="insert-type-button ${panel.type === "loop_end" ? "is-active" : ""}" data-insert-type="loop_end" type="button" ${panel.isSaving ? "disabled" : ""}>Fim loop</button>
@@ -19127,6 +19346,17 @@ function renderInsertPanel(order) {
       sequencia_sucesso: panel.successSequence,
       atraso_antes_sequencia_sucesso: panel.successSequenceDelay,
     }, order);
+  } else if (panel.type === "report_result") {
+    body = renderReportResultFields("data-insert-field", {
+      status: panel.reportStatus,
+      tom: panel.reportTone,
+      resultado: panel.reportResult,
+      confirmacao: panel.reportConfirmation,
+      ao_sucesso: panel.successAction,
+      bloco_sucesso: panel.successBlock,
+      sequencia_sucesso: panel.successSequence,
+      atraso_antes_sequencia_sucesso: panel.successSequenceDelay,
+    }, order);
   } else {
     body = `
       <div class="tree-inline-fields">
@@ -19179,6 +19409,7 @@ function renderInsertPanel(order) {
         <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet">Planilha</button>
         <button class="insert-type-button ${panel.type === "spreadsheet_context" ? "is-active" : ""}" data-insert-type="spreadsheet_context">Loop de dados</button>
         <button class="insert-type-button ${panel.type === "write_spreadsheet" ? "is-active" : ""}" data-insert-type="write_spreadsheet">Escrever celula</button>
+        <button class="insert-type-button ${panel.type === "report_result" ? "is-active" : ""}" data-insert-type="report_result">Resultado PDF</button>
         <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start">Inicio loop</button>
         <button class="insert-type-button ${panel.type === "loop_end" ? "is-active" : ""}" data-insert-type="loop_end">Fim loop</button>
       </div>
@@ -19568,6 +19799,91 @@ function rememberCommandMapTreeNodePosition(order, x, y, pageSequence = state.co
   rememberCommandMapTreeItemPosition(String(numericOrder), x, y, pageSequence);
 }
 
+function captureCommandMapTreeInsertion(targetOrder, position) {
+  const events = getCommandMapEvents();
+  const pageSequence = state.commandMapPageSequence;
+  return {
+    targetOrder: Number(targetOrder),
+    position,
+    pageSequence,
+    previousEvents: [...(state.roadmap?.events || [])],
+    layout: buildCommandMapTreeStageLayout(events, getCommandMapPageDefinition(pageSequence), { includeInsertPreview: false }),
+  };
+}
+
+function placeCreatedCommandMapTreeNode(roadmap, insertion) {
+  const previous = insertion.previousEvents;
+  const events = roadmap?.events || [];
+  if (events.length !== previous.length + 1) return roadmap;
+  const createdOrder = insertion.targetOrder > 0
+    ? insertion.targetOrder + (insertion.position === "before" ? 0 : 1)
+    : Number(events.at(-1)?.order);
+  const created = events.find(event => Number(event.order) === createdOrder);
+  if (!created) return roadmap;
+  insertion.createdOrder = createdOrder;
+
+  // O backend renumera todos os blocos. Preserve a identidade dos existentes,
+  // inclusive quando ha dois blocos iguais ou rotas com numeros alterados.
+  const remaining = events.filter(event => event !== created);
+  const orders = new Map(previous.map((event, index) => [Number(event.order), Number(remaining[index].order)]));
+  const clientKeys = new Map(previous.map((event, index) => [Number(remaining[index].order), event.clientKey]));
+  const nodes = insertion.layout.nodes;
+  const originIndex = nodes.findIndex(node => node.order === insertion.targetOrder);
+  const origin = nodes[originIndex];
+  const constants = getCommandMapTreeStageConstants(nodes.map(node => node.event));
+  const newPosition = {
+    x: origin ? origin.x + (insertion.position === "before" ? 0 : constants.columnGap) : constants.paddingX,
+    y: origin ? origin.y : constants.rowTop,
+  };
+  const following = origin ? nodes.slice(originIndex + (insertion.position === "before" ? 0 : 1)) : [];
+  const shiftX = following.length
+    ? Math.max(0, newPosition.x + constants.columnGap - Math.min(...following.map(node => node.x)))
+    : 0;
+  const shiftedOrders = new Set(following.map(node => node.order));
+
+  // Descarte ordens antigas sem bloco correspondente: a nova ordem nao pode
+  // herdar uma posicao deixada por um bloco removido anteriormente.
+  const layouts = {};
+  for (const [page, positions] of Object.entries(state.commandMapTreeLayouts || {})) {
+    const remapped = {};
+    for (const [key, point] of Object.entries(positions || {})) {
+      if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) continue;
+      const edge = key.match(/^edge:(\d+):(block|terminal):([^:]+):(.*)$/);
+      const oldSource = Number(edge ? edge[1] : key);
+      const source = orders.get(oldSource);
+      if (!source) continue;
+      let newKey = String(source);
+      if (edge) {
+        const target = /^\d+$/.test(edge[3]) ? orders.get(Number(edge[3])) : edge[3];
+        if (!target) continue;
+        newKey = `edge:${source}:${edge[2]}:${target}:${edge[4]}`;
+      }
+      remapped[newKey] = {
+        ...point,
+        x: Number(point.x) + (page === insertion.pageSequence && shiftedOrders.has(oldSource) ? shiftX : 0),
+      };
+    }
+    layouts[page] = remapped;
+  }
+  const pageLayout = layouts[insertion.pageSequence] || {};
+  for (const node of nodes) {
+    pageLayout[String(orders.get(node.order))] = {
+      x: node.x + (shiftedOrders.has(node.order) ? shiftX : 0), y: node.y,
+    };
+  }
+  pageLayout[String(createdOrder)] = newPosition;
+  layouts[insertion.pageSequence] = pageLayout;
+  state.commandMapTreeLayouts = layouts;
+  persistCommandMapTreeLayouts();
+  return {
+    ...roadmap,
+    events: events.map(event => ({
+      ...event,
+      clientKey: event === created ? nextCommandMapClientKey() : clientKeys.get(Number(event.order)),
+    })),
+  };
+}
+
 function commandMapTreeEdgeLayoutKey(edge) {
   const source = Number(edge?.sourceOrder || 0);
   const target = Number(edge?.targetOrder || 0);
@@ -19606,7 +19922,7 @@ function renderCommandMapCardSegment(event, index = 0, events = [], options = {}
   const isRecognitionCard = event.type === "clicar_imagem";
   const isOcrTextCard = event.type === "procurar_texto_ocr";
   const isInlineExpanded = Number(state.expandedTreeCardOrder) === Number(event.order);
-  const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "comparar_planilha_tela";
+  const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "resultado_relatorio" || event.type === "comparar_planilha_tela";
   const isLoopMarker = isLoopMarkerType(event.type);
   const isRuntimeEditable = event.type === "texto_livre" && Boolean(event.details?.editavel_execucao);
   const isNewlyCreated = Number(state.createdBlockAnimationOrder) === Number(event.order);
@@ -19645,7 +19961,7 @@ function renderCommandMapCardSegment(event, index = 0, events = [], options = {}
           <div class="command-tree-main">
             <span class="command-index">${String(event.order).padStart(2, "0")}</span>
             <div>
-              ${event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "comparar_planilha_tela"
+              ${event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "resultado_relatorio" || event.type === "comparar_planilha_tela"
                 ? `
                   <span class="command-title-row">
                     <span class="type-chip ${escapeHtml(event.type)} command-title-chip">${escapeHtml(event.title)}</span>
@@ -20044,7 +20360,7 @@ function getCommandMapTreeCardLayoutWidth(event = {}) {
   if (Number(state.expandedTreeCardOrder) === Number(event.order)) {
     return 324;
   }
-  if (["clicar_imagem", "procurar_texto_ocr", "sequencia_planilha", "escrever_planilha", "comparar_planilha_tela"].includes(String(event.type || ""))) {
+  if (["clicar_imagem", "procurar_texto_ocr", "sequencia_planilha", "escrever_planilha", "resultado_relatorio", "comparar_planilha_tela"].includes(String(event.type || ""))) {
     return 236;
   }
   if (isLoopMarkerType(event.type)) {
@@ -20112,7 +20428,7 @@ function renderCommandMapTreeDelayControl(edge) {
   return `<strong>${escapeHtml(edge.displayDelayLabel || commandMapBranchDelayLabel(edge.delay))}</strong>`;
 }
 
-function buildCommandMapTreeStageLayout(events, pageDefinition) {
+function buildCommandMapTreeStageLayout(events, pageDefinition, { includeInsertPreview = true } = {}) {
   const constants = getCommandMapTreeStageConstants(events);
   const orderToEvent = new Map(events.map((event) => [Number(event.order), event]));
   const orderToIndex = new Map(events.map((event, index) => [Number(event.order), index]));
@@ -20137,7 +20453,7 @@ function buildCommandMapTreeStageLayout(events, pageDefinition) {
       node.y = Math.max(24, manualY);
     }
   });
-  const insertPreview = getCommandMapTreeInsertPreview(events, nodes, constants);
+  const insertPreview = includeInsertPreview ? getCommandMapTreeInsertPreview(events, nodes, constants) : null;
   if (insertPreview) {
     // O painel de criacao ocupa uma coluna inteira entre o card de origem e
     // os seguintes. Abra esse espaco apenas enquanto ele estiver visivel;
@@ -20555,11 +20871,6 @@ function startCommandMapTreePan(event) {
   ) {
     return false;
   }
-  const treeSurface = event.target.closest(".command-map-tree-stage, .command-map-tree, .command-map-tree-link-layer, .command-map-tree-link-svg");
-  if (!treeSurface) {
-    return false;
-  }
-
   event.preventDefault();
   event.stopPropagation();
   clearCommandMapCardSelection();
@@ -20569,8 +20880,8 @@ function startCommandMapTreePan(event) {
     startY: event.clientY,
     latestX: event.clientX,
     latestY: event.clientY,
-    scrollLeft: commandMapList.scrollLeft,
-    scrollTop: commandMapList.scrollTop,
+    panX: Number(state.commandMapTreePanOffset?.x || 0),
+    panY: Number(state.commandMapTreePanOffset?.y || 0),
     frame: 0,
   };
   commandMapList.classList.add("is-tree-panning");
@@ -20595,8 +20906,12 @@ function updateCommandMapTreePan(event) {
     if (state.commandMapTreePan !== pan || !commandMapList) {
       return;
     }
-    commandMapList.scrollLeft = Math.max(0, pan.scrollLeft - (pan.latestX - pan.startX));
-    commandMapList.scrollTop = Math.max(0, pan.scrollTop - (pan.latestY - pan.startY));
+    state.commandMapTreePanOffset = {
+      x: commandMapTreePanCoordinate(pan.panX, pan.latestX - pan.startX),
+      y: commandMapTreePanCoordinate(pan.panY, pan.latestY - pan.startY),
+    };
+    state.commandMapTreePanUserMoved = true;
+    applyCommandMapTreePanOffset();
   });
 }
 
@@ -20611,13 +20926,23 @@ function stopCommandMapTreePan(event) {
     pan.frame = 0;
   }
   if (commandMapList) {
-    commandMapList.scrollLeft = Math.max(0, pan.scrollLeft - (pan.latestX - pan.startX));
-    commandMapList.scrollTop = Math.max(0, pan.scrollTop - (pan.latestY - pan.startY));
+    state.commandMapTreePanOffset = {
+      x: commandMapTreePanCoordinate(pan.panX, pan.latestX - pan.startX),
+      y: commandMapTreePanCoordinate(pan.panY, pan.latestY - pan.startY),
+    };
+    state.commandMapTreePanUserMoved = true;
+    applyCommandMapTreePanOffset();
   }
   commandMapList?.classList.remove("is-tree-panning");
   builderShell?.classList.remove("is-map-dragging");
   state.commandMapTreePan = null;
   scheduleCommandConnectorLayout({ burstMs: 120 });
+}
+
+function commandMapWheelZoomFactor(delta, deltaMode = 0) {
+  const limitedDelta = Math.max(-240, Math.min(240, Number(delta) || 0));
+  const sensitivity = Number(deltaMode) === 1 ? 0.014 : 0.00035;
+  return Math.exp(-limitedDelta * sensitivity);
 }
 
 function handleCommandMapTreeWheelZoom(event) {
@@ -20630,7 +20955,7 @@ function handleCommandMapTreeWheelZoom(event) {
     !commandMapList
     || !isCommandMapTreeModeActive()
     || event.target.closest("input, textarea, select, button, a")
-    || !event.target.closest(".command-map-tree, .command-map-tree-stage")
+    || !(event.target === commandMapList || event.target.closest(".command-map-tree, .command-map-tree-stage"))
   ) {
     return;
   }
@@ -20642,7 +20967,9 @@ function handleCommandMapTreeWheelZoom(event) {
   event.preventDefault();
   const listRect = commandMapList.getBoundingClientRect();
   const currentZoom = normalizeCommandMapZoom(state.commandMapZoom, 0.96);
-  const zoomFactor = delta > 0 ? 0.92 : 1.08;
+  // Cada entalhe do mouse altera poucos pontos percentuais. O limite evita
+  // que um scroll muito longo de uma vez salte para uma escala distante.
+  const zoomFactor = commandMapWheelZoomFactor(delta, event.deltaMode);
   const nextZoom = currentZoom * zoomFactor;
   setCommandMapZoom(nextZoom, {
     preservePoint: {
@@ -20800,7 +21127,7 @@ function renderCommandMap(options = {}) {
   applyCommandMapFocus("auto", { suppressScroll: suppressFocusScroll, suppressVisualFocus });
   if (state.createdBlockAnimationOrder) {
     const createdOrder = Number(state.createdBlockAnimationOrder);
-    const usedMorphAnimation = animateCreatedBlockFromPreview(createdOrder);
+    scheduleCommandConnectorLayout({ burstMs: 460 });
     window.setTimeout(() => {
       if (Number(state.createdBlockAnimationOrder) === createdOrder) {
         state.createdBlockAnimationOrder = null;
@@ -20808,7 +21135,8 @@ function renderCommandMap(options = {}) {
       commandMapList
         ?.querySelector(`.command-tree-card.is-newly-created[data-order="${createdOrder}"]`)
         ?.classList.remove("is-newly-created");
-    }, usedMorphAnimation ? 520 : 520);
+      scheduleCommandConnectorLayout({ burstMs: 140 });
+    }, 460);
   }
   if (layoutSnapshot && !quietUpdate) {
     requestAnimationFrame(() => {
@@ -20909,14 +21237,10 @@ async function refreshRoadmap(message = "Roteiro atualizado.") {
   setMessage(message, "success");
 }
 
-async function applyBulkDelayToAllBlocks(source = "top") {
-  const sourceInput = source === "map" ? mapBulkDelayInput : bulkDelayInput;
-  const delay = Math.max(0, parseNumber(sourceInput?.value, 0));
+async function applyBulkDelayToAllBlocks() {
+  const delay = Math.max(0, parseNumber(bulkDelayInput?.value, 0));
   if (bulkDelayInput) {
     bulkDelayInput.value = String(delay);
-  }
-  if (mapBulkDelayInput) {
-    mapBulkDelayInput.value = String(delay);
   }
   const totalEvents = state.roadmap?.events?.length ?? 0;
   if (!totalEvents) {
@@ -20999,6 +21323,7 @@ async function runMutation(label, promiseFactory, focusResolver = null, options 
     setBusy("Pronto");
     setMessage(`${label} com sucesso.`, "success");
   } catch (error) {
+    options.onError?.(error);
     setBusy("Erro");
     setMessage(String(error), "error");
   }
@@ -21147,6 +21472,10 @@ function formValuesFromCard(card) {
     sheet: get("sheet")?.value ?? "",
     column: get("column")?.value ?? "",
     writeValue: get("writeValue")?.value ?? "",
+    reportStatus: get("reportStatus")?.value ?? "Concluida",
+    reportTone: get("reportTone")?.value ?? "success",
+    reportResult: get("reportResult")?.value ?? "",
+    reportConfirmation: get("reportConfirmation")?.value ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
@@ -21292,6 +21621,10 @@ function treeValuesFromCard(card) {
     sheet: get("sheet")?.value ?? "",
     column: get("column")?.value ?? "",
     writeValue: get("writeValue")?.value ?? "",
+    reportStatus: get("reportStatus")?.value ?? "Concluida",
+    reportTone: get("reportTone")?.value ?? "success",
+    reportResult: get("reportResult")?.value ?? "",
+    reportConfirmation: get("reportConfirmation")?.value ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
@@ -21785,6 +22118,16 @@ function commandCardHasUnsavedChanges(snapshot) {
     );
   }
 
+  if (snapshot.type === "resultado_relatorio") {
+    return (
+      normalizeStringValue(values.reportStatus) !== normalizeStringValue(details.status ?? "Concluida")
+      || normalizeStringValue(values.reportTone) !== normalizeStringValue(details.tom ?? details.tone ?? "success")
+      || normalizeStringValue(values.reportResult) !== normalizeStringValue(details.resultado ?? details.result ?? "")
+      || normalizeStringValue(values.reportConfirmation) !== normalizeStringValue(details.confirmacao ?? details.confirmation ?? "")
+      || successFlowChanged(values, details)
+    );
+  }
+
   if (snapshot.type === "comparar_planilha_tela") {
     return (
       normalizeStringValue(values.workbook) !== normalizeStringValue(details.arquivo)
@@ -22130,6 +22473,23 @@ async function invokeCommandCardUpdate(snapshot) {
     });
   }
 
+  if (type === "resultado_relatorio") {
+    return invoke("update_report_result_block", {
+      order,
+      status: values.reportStatus || "Concluida",
+      tom: values.reportTone || "success",
+      resultado: values.reportResult || "",
+      confirmacao: values.reportConfirmation || "",
+      delay: values.delay,
+      aoSucesso: values.successAction,
+      blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
+    });
+  }
+
   if (type === "comparar_planilha_tela") {
     if (!normalizeStringValue(values.sheet) || !normalizeStringValue(values.compareExpectedColumn)) {
       throw new Error(`Configure a aba e a coluna esperada do bloco ${order} de conferencia.`);
@@ -22425,6 +22785,10 @@ function insertValuesFromPanel(panelElement) {
     sheet: get("sheet")?.value ?? state.insertPanel?.sheet ?? "",
     column: get("column")?.value ?? state.insertPanel?.column ?? "",
     writeValue: get("writeValue")?.value ?? state.insertPanel?.writeValue ?? "OK",
+    reportStatus: get("reportStatus")?.value ?? state.insertPanel?.reportStatus ?? "Concluida",
+    reportTone: get("reportTone")?.value ?? state.insertPanel?.reportTone ?? "success",
+    reportResult: get("reportResult")?.value ?? state.insertPanel?.reportResult ?? "",
+    reportConfirmation: get("reportConfirmation")?.value ?? state.insertPanel?.reportConfirmation ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? state.insertPanel?.compareExpectedColumn ?? state.insertPanel?.column ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? state.insertPanel?.compareOcrSource ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? state.insertPanel?.compareMode ?? "texto",
@@ -22508,103 +22872,10 @@ function playInsertCreateAnimation(panelElement) {
     return Promise.resolve();
   }
 
-  const rect = panelElement.getBoundingClientRect();
-  state.createdBlockMorphRect = {
-    left: rect.left,
-    top: rect.top,
-    width: rect.width,
-    height: rect.height,
-  };
   panelElement.classList.add("is-creating");
   return new Promise((resolve) => {
     window.setTimeout(resolve, 120);
   });
-}
-
-function animateCreatedBlockFromPreview(order) {
-  const fromRect = state.createdBlockMorphRect;
-  if (!fromRect) {
-    return false;
-  }
-
-  const card = commandMapList?.querySelector(`.command-tree-card[data-order="${order}"]`);
-  if (!card) {
-    return false;
-  }
-
-  const toRect = card.getBoundingClientRect();
-  if (!toRect.width || !toRect.height) {
-    return false;
-  }
-
-  const deltaX = fromRect.left - toRect.left;
-  const deltaY = fromRect.top - toRect.top;
-  const scaleX = Math.max(0.72, Math.min(1.35, fromRect.width / toRect.width));
-  const scaleY = Math.max(0.72, Math.min(1.35, fromRect.height / toRect.height));
-  const fromTransform = `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`;
-
-  card.classList.remove("is-newly-created");
-  card.classList.add("is-morph-created");
-  card.style.transformOrigin = "top left";
-  card.style.willChange = "transform, opacity";
-
-  if (card.__commandMapShiftAnimation) {
-    card.__commandMapShiftAnimation.cancel();
-    card.__commandMapShiftAnimation = null;
-  }
-
-  const cleanup = () => {
-    card.classList.remove("is-morph-created");
-    card.style.transformOrigin = "";
-    card.style.willChange = "";
-    card.style.transform = "";
-    card.style.opacity = "";
-    card.__commandMapShiftAnimation = null;
-    state.createdBlockMorphRect = null;
-    // Durante o morph o card ainda possui transformacao temporaria. As linhas
-    // precisam ser refeitas depois da limpeza para usar a posicao final, sem
-    // exigir que o usuario mova o mapa para elas se acertarem.
-    scheduleCommandConnectorLayout({ burstMs: 140 });
-  };
-
-  if (typeof card.animate === "function") {
-    const animation = card.animate(
-      [
-        {
-          opacity: 0.82,
-          transform: fromTransform,
-        },
-        {
-          opacity: 1,
-          transform: "translate(0px, -3px) scale(1.015, 1.015)",
-          offset: 0.62,
-        },
-        {
-          opacity: 1,
-          transform: "translate(0px, 0px) scale(1, 1)",
-        },
-      ],
-      {
-        duration: 420,
-        easing: "cubic-bezier(0.16, 1, 0.3, 1)",
-        fill: "both",
-      }
-    );
-    card.__commandMapShiftAnimation = animation;
-    animation.addEventListener("finish", cleanup, { once: true });
-    animation.addEventListener("cancel", cleanup, { once: true });
-    return true;
-  }
-
-  card.style.transition = "transform 420ms cubic-bezier(0.16, 1, 0.3, 1), opacity 280ms ease";
-  card.style.opacity = "0.82";
-  card.style.transform = fromTransform;
-  requestAnimationFrame(() => {
-    card.style.opacity = "";
-    card.style.transform = "";
-  });
-  window.setTimeout(cleanup, 460);
-  return true;
 }
 
 async function persistCommandMapDrafts() {
@@ -22773,18 +23044,6 @@ document.getElementById("addTextButton").addEventListener("click", () => {
       rotuloExecucao: null,
     })
   , focusLastCommandMapCard);
-});
-
-mapZoomRange.addEventListener("input", (event) => {
-  setCommandMapZoom(Number(event.target.value) / 100);
-});
-
-mapZoomOutButton.addEventListener("click", () => {
-  setCommandMapZoom(normalizeCommandMapZoom(state.commandMapZoom, 0.96) * 0.9);
-});
-
-mapZoomInButton.addEventListener("click", () => {
-  setCommandMapZoom(normalizeCommandMapZoom(state.commandMapZoom, 0.96) * 1.1);
 });
 
 commandMapViewButtons.forEach((button) => {
@@ -24132,6 +24391,40 @@ launcherList.addEventListener("click", async (event) => {
       return;
     }
 
+    if (action === "export-chrome") {
+      const isActiveAutomation = String(automationId || "") === String(state.library.activeId || "");
+      if (isActiveAutomation && !ensureCommandMapSavedBefore("enviar a automacao para o Chrome")) {
+        return;
+      }
+      const item = state.library.items.find((entry) => String(entry.id) === String(automationId));
+      const defaultFileName = `${String(item?.nome || exportNameInput.value.trim() || "Automacao").trim() || "Automacao"}_Chrome.json`;
+      setBusy("Escolhendo local");
+      let pickedPath = null;
+      try {
+        pickedPath = await saveNativeFileDialog({
+          defaultPath: defaultFileName,
+          filters: [{ name: "Automacao FlowDetect para Chrome", extensions: ["json"] }],
+        });
+      } catch (dialogError) {
+        console.warn("Nao foi possivel abrir o seletor de destino do Chrome.", dialogError);
+      }
+      setBusy("Preparando Chrome");
+      const result = await invoke("export_saved_automation_chrome", {
+        id: automationId,
+        destino: pickedPath || null,
+        destinationPath: pickedPath || null,
+      });
+      setBusy("Pronto");
+      const warnings = Array.isArray(result.warnings) && result.warnings.length
+        ? ` ${result.warnings.length} bloco(s) ficaram como aviso.`
+        : "";
+      setMessage(
+        `Arquivo do Chrome criado com ${result.exported_steps || 0} etapa(s): ${result.json_path}.${warnings}`,
+        "success"
+      );
+      return;
+    }
+
     if (action === "edit-meta") {
       setLibraryEditOpen(automationId, true);
       card.classList.add("is-flipped");
@@ -25051,10 +25344,6 @@ document.getElementById("legacyButton").addEventListener("click", async () => {
 
 applyBulkDelayButton?.addEventListener("click", async () => {
   await applyBulkDelayToAllBlocks("top");
-});
-
-mapApplyBulkDelayButton?.addEventListener("click", async () => {
-  await applyBulkDelayToAllBlocks("map");
 });
 
 mapSelectionMenuTargets?.addEventListener("click", (event) => {
@@ -26992,6 +27281,35 @@ commandMapList.addEventListener("click", async (event) => {
               sequenciaSucesso: common.sequenciaSucesso,
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
+    } else if (values.type === "report_result") {
+      promiseFactory = () =>
+        isFirstBlock
+          ? invoke("add_report_result_block", {
+              status: values.reportStatus || "Concluida",
+              tom: values.reportTone || "success",
+              resultado: values.reportResult || "",
+              confirmacao: values.reportConfirmation || "",
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            })
+          : invoke("insert_report_result_block", {
+              targetOrder: common.targetOrder,
+              position: common.position,
+              status: values.reportStatus || "Concluida",
+              tom: values.reportTone || "success",
+              resultado: values.reportResult || "",
+              confirmacao: values.reportConfirmation || "",
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            });
     } else if (values.type === "compare_spreadsheet") {
       const expectedColumn = values.compareExpectedColumn || values.column;
       if (!values.sheet.trim() || !String(expectedColumn || "").trim()) {
@@ -27111,6 +27429,8 @@ commandMapList.addEventListener("click", async (event) => {
             });
     }
 
+    const insertion = captureCommandMapTreeInsertion(common.targetOrder, common.position);
+    const creationLayoutSnapshot = captureCommandMapCardPositions();
     state.insertPanel = {
       ...state.insertPanel,
       ...values,
@@ -27150,15 +27470,17 @@ commandMapList.addEventListener("click", async (event) => {
       );
       state.insertPanel = null;
       window.clearTimeout(savingWatchdog);
-      return roadmap;
+      return placeCreatedCommandMapTreeNode(roadmap, insertion);
     }, (roadmap) => {
       const createdOrder = resolveNearestCommandMapFocus(
         roadmap,
-        isFirstBlock ? roadmap?.events?.[0]?.order ?? null : common.position === "before" ? common.targetOrder : common.targetOrder + 1
+        insertion.createdOrder ?? (common.position === "before" ? common.targetOrder : common.targetOrder + 1)
       );
       state.createdBlockAnimationOrder = createdOrder;
       return createdOrder;
     }, {
+      commandMapLayoutSnapshot: creationLayoutSnapshot,
+      commandMapLayoutAnimationMode: "slide",
       onError: () => {
         window.clearTimeout(savingWatchdog);
         if (state.insertPanel) {

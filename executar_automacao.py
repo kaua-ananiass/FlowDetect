@@ -103,13 +103,17 @@ except Exception:
     TK_DISPONIVEL = False
 
 try:
+    from reportlab.lib.colors import HexColor
     from reportlab.lib.pagesizes import A4
+    from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.pdfgen import canvas
 
     PDF_RELATORIO_DISPONIVEL = True
 except Exception:
     A4 = None
     canvas = None
+    HexColor = None
+    stringWidth = None
     PDF_RELATORIO_DISPONIVEL = False
 
 
@@ -180,6 +184,7 @@ TEMPO_RESPIRO_ANTES_DIGITACAO = 0.05
 TIPOS_SEQUENCIA_PLANILHA = {"sequencia_planilha"}
 TIPOS_ESCRITA_PLANILHA = {"escrever_planilha"}
 TIPOS_COMPARACAO_PLANILHA = {"comparar_planilha_tela"}
+TIPOS_RESULTADO_RELATORIO = {"resultado_relatorio"}
 TIPOS_MARCADORES_LOOP = {"inicio_loop", "fim_loop"}
 TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
@@ -195,6 +200,7 @@ TIPOS_SUPORTADOS_EXECUTOR = {
     *TIPOS_SEQUENCIA_PLANILHA,
     *TIPOS_ESCRITA_PLANILHA,
     *TIPOS_COMPARACAO_PLANILHA,
+    *TIPOS_RESULTADO_RELATORIO,
     *TIPOS_MARCADORES_LOOP,
     *TIPOS_MOUSE,
     *TIPOS_IMAGEM,
@@ -1407,10 +1413,11 @@ class ExecutorAutomacao:
         margem=16,
     ):
         if not TK_DISPONIVEL:
-            return
+            safe_print("Marcador visual indisponivel: Tk nao esta carregado.", flush=True)
+            return False
 
         esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
-        self.marcar_regiao_absoluta(
+        exibido = self.marcar_regiao_absoluta(
             esquerda,
             topo,
             largura,
@@ -1421,6 +1428,24 @@ class ExecutorAutomacao:
             etiqueta=etiqueta,
             margem=margem,
         )
+        # A primeira criacao da janela transparente pode ser descartada pelo
+        # Windows enquanto o Studio esta minimizado para o botao Procurar.
+        # Repetimos uma unica vez para o usuario sempre ver a confirmacao.
+        if exibido is False and self.feedback_visual_habilitado():
+            safe_print("Marcador visual nao abriu na primeira tentativa; repetindo.", flush=True)
+            time.sleep(0.06)
+            exibido = self.marcar_regiao_absoluta(
+                esquerda,
+                topo,
+                largura,
+                altura,
+                duracao=duracao,
+                bloqueante=bloqueante,
+                tema=tema,
+                etiqueta=etiqueta,
+                margem=margem,
+            )
+        return bool(exibido)
 
     def feedback_visual_habilitado(self):
         """Indica se os contornos de OCR/reconhecimento podem ser exibidos.
@@ -1431,6 +1456,19 @@ class ExecutorAutomacao:
         nao precisam mais ficar restritos ao botao de teste.
         """
         return bool(TK_DISPONIVEL and not bool(getattr(self, "ocultar_feedback_visual", False)))
+
+    def duracao_confirmacao_visual(self, duracao):
+        """Mantem a confirmacao do botao Procurar visivel tempo suficiente."""
+        try:
+            valor = max(0.12, float(duracao or 0.24))
+        except (TypeError, ValueError):
+            valor = 0.24
+        # O Studio retorna logo apos o worker responder. Uma borda de 0,36 s
+        # podia desaparecer durante a restauracao da janela e parecer que a
+        # confirmacao nao tinha sido desenhada.
+        if bool(getattr(self, "modo_teste_reconhecimento", False)):
+            return max(0.72, valor)
+        return valor
 
     def aplicar_estilo_marcador_passivo(self, janela):
         """Torna um marcador Tk visivel e sem ativacao no Windows.
@@ -1510,7 +1548,7 @@ class ExecutorAutomacao:
         # click-through/no-activate. Assim eles voltam a aparecer tambem na
         # execucao assistida sem cobrir a interacao nem trocar o foco do alvo.
         if not self.feedback_visual_habilitado():
-            return
+            return False
 
         esquerda = int(esquerda)
         topo = int(topo)
@@ -1720,6 +1758,14 @@ class ExecutorAutomacao:
                 # A borda fica no topo apenas para ser vista; os estilos
                 # passivos garantem que nem o mouse nem o foco sejam retidos
                 # pela janela temporaria.
+                try:
+                    overlay.deiconify()
+                    overlay.lift()
+                    overlay.attributes("-topmost", True)
+                    overlay.update_idletasks()
+                    overlay.update()
+                except Exception:
+                    pass
                 self.aplicar_estilo_marcador_passivo(overlay)
 
                 retangulo_x1 = max(6, int(area_visivel_esquerda - overlay_esquerda) + 4)
@@ -1822,19 +1868,21 @@ class ExecutorAutomacao:
                 # que uma captura imediatamente seguinte leia a borda colorida.
                 if not bool(getattr(self, "modo_teste_reconhecimento", False)):
                     time.sleep(0.03)
+                safe_print(f"Marcador visual exibido: {texto_marcador}.", flush=True)
+                return True
             except Exception as erro:
                 safe_print(f"Falha ao exibir marcador visual: {erro}", flush=True)
-                return
+                return False
 
         # Marcadores assincronos podem permanecer visiveis enquanto a proxima
         # captura OCR/template e feita. Fora do botao Procurar, executamos o
         # pequeno feedback de forma sincronizada: ele aparece, fecha e so entao
         # a automacao continua a capturar pixels.
         if bloqueante or not bool(getattr(self, "modo_teste_reconhecimento", False)):
-            exibir()
-            return
+            return exibir()
 
         threading.Thread(target=exibir, daemon=True).start()
+        return True
 
     def marcar_regiao_ocr(self, regiao, confirmado=True, duracao=0.9):
         if not regiao:
@@ -2531,12 +2579,17 @@ class ExecutorAutomacao:
         ).strip().lower()
         if falha in {"stop", "interromper"}:
             falha = "parar"
-        if falha not in {"continuar", "parar"}:
+        if falha in {"bloco", "navegar", "goto", "jump"}:
+            falha = "ir_para_bloco"
+        if falha not in {"continuar", "parar", "ir_para_bloco"}:
             falha = "continuar"
         return {
             "acao": acao,
             "falha": falha,
             "bloco": str(dados.get("block", dados.get("bloco", "")) or "").strip(),
+            "bloco_falha": str(
+                dados.get("failureBlock", dados.get("failure_block", dados.get("bloco_falha", ""))) or ""
+            ).strip(),
             "clicks": max(1, int(dados.get("clicks", dados.get("cliques", 1)) or 1)),
         }
 
@@ -2731,6 +2784,27 @@ class ExecutorAutomacao:
                     "ocr_target_action": layout_origem,
                     "ocr_target_flow": {"acao": "parar"},
                 }
+            if regra["falha"] == "ir_para_bloco":
+                bloco_falha = regra["bloco_falha"]
+                if bloco_falha:
+                    safe_print(
+                        f"OCR {indice + 1} nao foi confirmado. Regra: ir para bloco {bloco_falha}.",
+                        flush=True,
+                    )
+                    return {
+                        "ocr_target_individual": True,
+                        "ocr_target_index": indice,
+                        "ocr_target_action": layout_origem,
+                        "ocr_target_flow": {
+                            "acao": "ir_para_bloco",
+                            "bloco": bloco_falha,
+                            "origem": "falha_ocr",
+                        },
+                    }
+                safe_print(
+                    f"OCR {indice + 1} nao foi confirmado. A regra Ir para bloco nao possui destino; continuando.",
+                    flush=True,
+                )
             if indice < len(partes) - 1:
                 safe_print(
                     f"OCR {indice + 1} nao foi confirmado. Regra: procurar OCR {indice + 2}.",
@@ -2888,6 +2962,7 @@ class ExecutorAutomacao:
         quantidade_esperada = self.quantidade_alvos_ocr_esperados(esperado, leitura_relativa)
         partes_obrigatorias = self.partes_alvos_ocr_esperados(esperado, leitura_relativa)
         partes_compostas = partes_obrigatorias or (spec_composto.get("partes", []) if spec_composto else [])
+
         if quantidade_esperada > 1 and len([parte for parte in partes_compostas if str(parte or "").strip()]) < quantidade_esperada:
             safe_print(
                 "Hibrido OCR + imagem bloqueado: existem varios alvos OCR, mas o texto de busca chegou incompleto. "
@@ -2944,6 +3019,7 @@ class ExecutorAutomacao:
             return None
 
         partes = partes_compostas or [esperado]
+        pendente_ocr = None
         for candidato in candidatos_ocr:
             if self.cancelamento_solicitado():
                 return None
@@ -3127,7 +3203,9 @@ class ExecutorAutomacao:
                 "Hibrido OCR + imagem: os OCRs foram confirmados, mas a imagem ainda nao confirmou a referencia.",
                 flush=True,
             )
-            return local
+            pendente_ocr = local
+        if pendente_ocr:
+            return pendente_ocr
         # A leitura nativa e muito mais rapida, mas labels pequenos podem
         # gerar um candidato parecido sem atingir a confirmacao estrita. Nesse
         # caso fazemos uma unica releitura ampliada antes de repetir o ciclo;
@@ -5244,7 +5322,39 @@ class ExecutorAutomacao:
             "linha_inicial": int(linha_inicial_real),
             "total_iteracoes": int(total_iteracoes),
             "linhas_loop": [int(linha) for linha in (linhas_loop or []) if linha is not None],
+            "marcacoes": {},
             "resultados": [],
+        }
+
+    def registrar_marcacao_relatorio_loop(
+        self,
+        *,
+        indice,
+        status="",
+        tom="success",
+        resultado="",
+        confirmacao="",
+    ):
+        """Guarda o resultado escolhido pelo bloco para a iteracao atual.
+
+        A marcacao fica separada do encerramento da iteracao: assim o mesmo
+        bloco pode ser usado em um caminho normal ou em um caminho de falha e
+        o PDF ainda recebe a duracao e o horario reais ao final daquele item.
+        """
+        if not self._relatorio_loop:
+            return
+        try:
+            chave = str(int(indice))
+        except (TypeError, ValueError):
+            return
+        tom_normalizado = str(tom or "success").strip().lower()
+        if tom_normalizado not in {"success", "info", "warning", "danger"}:
+            tom_normalizado = "success"
+        self._relatorio_loop.setdefault("marcacoes", {})[chave] = {
+            "status": str(status or "").strip(),
+            "tom": tom_normalizado,
+            "resultado": str(resultado or "").strip(),
+            "confirmacao": str(confirmacao or "").strip(),
         }
 
     def registrar_resultado_relatorio_loop(
@@ -5259,13 +5369,30 @@ class ExecutorAutomacao:
     ):
         if not self._relatorio_loop:
             return
+        try:
+            chave = str(int(indice))
+        except (TypeError, ValueError):
+            chave = ""
+        marcacao = (self._relatorio_loop.get("marcacoes") or {}).get(chave, {}) or {}
+        sucesso = bool(sucesso)
+        erro = str(erro or "").strip()
+        status_padrao = "Concluida" if sucesso else "Falhou"
+        resultado_padrao = (
+            "Todas as etapas do loop foram executadas com sucesso."
+            if sucesso
+            else (erro or "Falha durante a execucao desta linha.")
+        )
         self._relatorio_loop["resultados"].append(
             {
                 "indice": int(indice) + 1,
                 "linha": int(linha_referencia) if linha_referencia not in (None, "") else None,
                 "empresa": str(empresa or "").strip(),
-                "sucesso": bool(sucesso),
-                "erro": str(erro or "").strip(),
+                "sucesso": sucesso,
+                "erro": erro,
+                "status": str(marcacao.get("status") or status_padrao).strip(),
+                "tom": str(marcacao.get("tom") or ("success" if sucesso else "danger")).strip(),
+                "resultado": str(marcacao.get("resultado") or resultado_padrao).strip(),
+                "confirmacao": str(marcacao.get("confirmacao") or "").strip(),
                 "duracao_segundos": round(max(0.0, float(duracao_segundos or 0.0)), 2),
                 "finalizado_em": datetime.now(),
             }
@@ -5288,82 +5415,236 @@ class ExecutorAutomacao:
         caminho_pdf = PASTA_RELATORIOS_LOOP / nome_arquivo
 
         largura, altura = A4
-        margem_x = 42
-        topo = altura - 42
-        rodape = 42
-        largura_texto = 94
-        y = topo
-
-        def nova_pagina(pdf):
-            pdf.showPage()
-            pdf.setTitle("Relatorio de execucao do loop")
-            return topo
-
-        def escrever(pdf, texto, *, fonte="Helvetica", tamanho=10, espacamento=14):
-            nonlocal y
-            for linha in wrap(str(texto or ""), width=largura_texto) or [""]:
-                if y <= rodape:
-                    y = nova_pagina(pdf)
-                pdf.setFont(fonte, tamanho)
-                pdf.drawString(margem_x, y, linha)
-                y -= espacamento
+        margem_x = 26
+        margem_direita = 26
+        largura_util = largura - margem_x - margem_direita
+        topo = altura - 28
+        rodape = 26
+        cores = {
+            "fundo": HexColor("#041116"),
+            "painel": HexColor("#08232b"),
+            "linha": HexColor("#12505c"),
+            "texto": HexColor("#e9f7fa"),
+            "muted": HexColor("#8eaab2"),
+            "ciano": HexColor("#22dfd0"),
+            "verde": HexColor("#13d27b"),
+            "azul": HexColor("#32adff"),
+            "amarelo": HexColor("#f3bf37"),
+            "vermelho": HexColor("#ff6579"),
+        }
+        estilos_status = {
+            "success": (cores["verde"], HexColor("#063d30")),
+            "info": (cores["azul"], HexColor("#07344a")),
+            "warning": (cores["amarelo"], HexColor("#443515")),
+            "danger": (cores["vermelho"], HexColor("#4a1723")),
+        }
 
         pdf = canvas.Canvas(str(caminho_pdf), pagesize=A4)
-        pdf.setTitle("Relatorio de execucao do loop")
+        pdf.setTitle("FlowDetect - Relatorio de execucao")
+        pdf.setAuthor("FlowDetect")
+        pagina = 0
+
+        def texto_limpo(valor):
+            return self.limpar_saida_status(str(valor or "")).replace("\n", " ").strip()
+
+        def linhas(texto, fonte, tamanho, largura_max, limite=2):
+            conteudo = texto_limpo(texto) or "-"
+            palavras = conteudo.split()
+            resultado = []
+            atual = ""
+            for palavra in palavras:
+                tentativa = f"{atual} {palavra}".strip()
+                if atual and stringWidth(tentativa, fonte, tamanho) > largura_max:
+                    resultado.append(atual)
+                    atual = palavra
+                    if len(resultado) >= limite:
+                        break
+                else:
+                    atual = tentativa
+            if len(resultado) < limite and atual:
+                resultado.append(atual)
+            if not resultado:
+                return ["-"]
+            if len(resultado) >= limite and len(" ".join(resultado)) < len(conteudo):
+                ultimo = resultado[-1]
+                while ultimo and stringWidth(f"{ultimo}...", fonte, tamanho) > largura_max:
+                    ultimo = ultimo[:-1]
+                resultado[-1] = f"{ultimo.rstrip()}..."
+            return resultado
+
+        def desenhar_cabecalho():
+            nonlocal pagina
+            pagina += 1
+            pdf.setFillColor(cores["fundo"])
+            pdf.rect(0, 0, largura, altura, fill=1, stroke=0)
+            pdf.setFillColor(cores["ciano"])
+            pdf.circle(margem_x + 14, topo - 11, 13, fill=1, stroke=0)
+            pdf.setFillColor(cores["fundo"])
+            pdf.circle(margem_x + 9, topo - 8, 2.2, fill=1, stroke=0)
+            pdf.circle(margem_x + 19, topo - 8, 2.2, fill=1, stroke=0)
+            pdf.setFillColor(cores["ciano"])
+            pdf.setFont("Helvetica-Bold", 7.5)
+            pdf.drawString(margem_x + 35, topo + 3, "FLOWDETECT")
+            pdf.setFillColor(cores["texto"])
+            pdf.setFont("Helvetica-Bold", 15)
+            pdf.drawString(margem_x + 35, topo - 10, "Relatorio de execucao")
+            pdf.setFillColor(cores["azul"])
+            pdf.setFont("Helvetica-Bold", 7.5)
+            pdf.drawRightString(largura - margem_direita, topo + 3, "RELATORIO")
+            pdf.setFillColor(cores["muted"])
+            pdf.setFont("Helvetica", 7.5)
+            pdf.drawRightString(largura - margem_direita, topo - 10, f"Gerado em {datetime.now().strftime('%d/%m/%Y as %H:%M')}")
+            pdf.setStrokeColor(cores["linha"])
+            pdf.setLineWidth(1)
+            pdf.line(margem_x, topo - 30, largura - margem_direita, topo - 30)
+            return topo - 53
+
+        def desenhar_rodape():
+            pdf.setStrokeColor(cores["linha"])
+            pdf.setLineWidth(0.6)
+            pdf.line(margem_x, rodape, largura - margem_direita, rodape)
+            pdf.setFillColor(cores["muted"])
+            pdf.setFont("Helvetica", 7)
+            pdf.drawString(margem_x, rodape - 11, "FlowDetect | Resultado gerado automaticamente pela automacao")
+            pdf.drawRightString(largura - margem_direita, rodape - 11, f"Pagina {pagina}")
+
+        def proxima_pagina():
+            desenhar_rodape()
+            pdf.showPage()
+            return desenhar_cabecalho()
 
         resultados = relatorio.get("resultados", [])
         total_linhas = len(resultados)
-        total_ok = sum(1 for item in resultados if item.get("sucesso"))
-        total_erro = total_linhas - total_ok
-        status_final = str(relatorio.get("status") or "desconhecido").upper()
-
-        escrever(pdf, "Relatorio de execucao do loop", fonte="Helvetica-Bold", tamanho=16, espacamento=18)
-        escrever(pdf, f"Status final: {status_final}", fonte="Helvetica-Bold")
-        escrever(pdf, f"Iniciado em: {iniciado_em.strftime('%d/%m/%Y %H:%M:%S')}")
-        finalizado_em = relatorio.get("finalizado_em")
-        if isinstance(finalizado_em, datetime):
-            escrever(pdf, f"Finalizado em: {finalizado_em.strftime('%d/%m/%Y %H:%M:%S')}")
-        escrever(pdf, f"Arquivo da planilha: {relatorio.get('arquivo') or '-'}")
-        escrever(pdf, f"Aba: {relatorio.get('aba') or '-'} | Coluna: {relatorio.get('coluna') or '-'}")
-        escrever(
-            pdf,
-            f"Inicio do loop: iteracao {relatorio.get('iteracao_inicial') or 1} | linha real {relatorio.get('linha_inicial') or '-'}",
+        total_emitidas = sum(1 for item in resultados if str(item.get("tom") or "").lower() == "success")
+        total_sem_debitos = sum(
+            1
+            for item in resultados
+            if "sem debito" in self.normalizar_texto_ocr(item.get("status", ""))
         )
-        escrever(
-            pdf,
-            f"Resumo: {total_ok} linha(s) com sucesso | {total_erro} linha(s) com erro/interrupcao | {total_linhas} linha(s) processada(s)",
-            fonte="Helvetica-Bold",
+        total_revisao = sum(
+            1
+            for item in resultados
+            if str(item.get("tom") or "").lower() in {"warning", "danger"}
         )
+        nome_fluxo = Path(str(relatorio.get("arquivo") or "Automacao")).stem.replace("_", " ").strip() or "Automacao"
+        nome_fluxo = nome_fluxo.title()
 
-        erro_fatal = str(relatorio.get("erro_fatal") or "").strip()
-        if erro_fatal:
-            escrever(pdf, f"Erro fatal: {erro_fatal}", fonte="Helvetica-Bold")
+        y = desenhar_cabecalho()
+        pdf.setFillColor(cores["texto"])
+        pdf.setFont("Helvetica-Bold", 20)
+        pdf.drawString(margem_x, y, f"{nome_fluxo} - Relatorio compacto")
+        y -= 17
+        pdf.setFillColor(cores["muted"])
+        pdf.setFont("Helvetica", 9)
+        pdf.drawString(margem_x, y, "Formato objetivo para exportacao, impressao e arquivamento mensal.")
+        y -= 30
+        pdf.setFillColor(cores["ciano"])
+        pdf.setFont("Helvetica-Bold", 8)
+        pdf.drawString(margem_x, y, "RESUMO")
+        y -= 13
+        pdf.setFillColor(cores["muted"])
+        pdf.setFont("Helvetica", 8.5)
+        pdf.drawString(margem_x, y, f"{total_linhas} linha(s) processada(s) | planilha: {texto_limpo(relatorio.get('aba')) or '-'}")
+        y -= 36
 
-        y -= 6
-        escrever(pdf, "Detalhamento por linha", fonte="Helvetica-Bold", tamanho=13, espacamento=16)
+        card_y = y - 42
+        card_largura = largura_util / 4
+        pdf.setFillColor(cores["painel"])
+        pdf.roundRect(margem_x, card_y, largura_util, 50, 12, fill=1, stroke=0)
+        pdf.setStrokeColor(cores["linha"])
+        pdf.roundRect(margem_x, card_y, largura_util, 50, 12, fill=0, stroke=1)
+        resumo = [
+            ("EXECUTADAS", total_linhas, cores["texto"]),
+            ("EMITIDAS", total_emitidas, cores["verde"]),
+            ("SEM DEBITOS", total_sem_debitos, cores["azul"]),
+            ("REVISAO", total_revisao, cores["amarelo"]),
+        ]
+        for indice, (rotulo, numero, cor) in enumerate(resumo):
+            x = margem_x + indice * card_largura + 15
+            pdf.setFillColor(cores["muted"])
+            pdf.setFont("Helvetica-Bold", 7)
+            pdf.drawString(x, card_y + 31, rotulo)
+            pdf.setFillColor(cor)
+            pdf.setFont("Helvetica-Bold", 17)
+            pdf.drawString(x, card_y + 12, str(numero))
+        y = card_y - 28
 
+        colunas = [
+            ("LINHA", 39),
+            ("EMPRESA", 185),
+            ("RESULTADO", 184),
+            ("HORARIO", 60),
+            ("STATUS", 82),
+        ]
+        inicio_x = margem_x + 6
+
+        def cabecalho_tabela(y_atual):
+            x = inicio_x
+            pdf.setFillColor(cores["ciano"])
+            pdf.setFont("Helvetica-Bold", 7)
+            for rotulo, largura_coluna in colunas:
+                pdf.drawString(x, y_atual, rotulo)
+                x += largura_coluna
+            pdf.setStrokeColor(cores["linha"])
+            pdf.setLineWidth(1)
+            pdf.line(margem_x, y_atual - 8, largura - margem_direita, y_atual - 8)
+            return y_atual - 16
+
+        y = cabecalho_tabela(y)
         if not resultados:
-            escrever(pdf, "Nenhuma linha da planilha foi processada.")
+            pdf.setFillColor(cores["painel"])
+            pdf.roundRect(margem_x, y - 38, largura_util, 38, 8, fill=1, stroke=0)
+            pdf.setFillColor(cores["muted"])
+            pdf.setFont("Helvetica", 9)
+            pdf.drawString(margem_x + 14, y - 22, "Nenhuma linha foi processada durante esta execucao.")
         else:
             for item in resultados:
+                empresa_linhas = linhas(item.get("empresa") or "Valor da linha", "Helvetica-Bold", 8, 174, 2)
+                resultado_texto = item.get("resultado") or item.get("erro") or "-"
+                confirmacao = texto_limpo(item.get("confirmacao"))
+                if confirmacao:
+                    resultado_texto = f"{resultado_texto} | {confirmacao}"
+                resultado_linhas = linhas(resultado_texto, "Helvetica", 7.6, 173, 2)
+                altura_linha = max(42, 17 + max(len(empresa_linhas), len(resultado_linhas)) * 9)
+                if y - altura_linha < rodape + 28:
+                    y = proxima_pagina()
+                    y = cabecalho_tabela(y)
+                pdf.setFillColor(cores["painel"])
+                pdf.roundRect(margem_x, y - altura_linha + 4, largura_util, altura_linha - 2, 7, fill=1, stroke=0)
+                x = inicio_x
+                pdf.setFillColor(cores["texto"])
+                pdf.setFont("Helvetica-Bold", 8)
                 linha = item.get("linha")
-                empresa = item.get("empresa") or "-"
-                status_linha = "OK" if item.get("sucesso") else "ERRO"
-                duracao = item.get("duracao_segundos", 0)
-                cabecalho = (
-                    f"Linha {linha if linha is not None else '-'} | "
-                    f"Iteracao {item.get('indice')} | "
-                    f"Status: {status_linha} | "
-                    f"Duracao: {duracao:.2f}s"
-                )
-                escrever(pdf, cabecalho, fonte="Helvetica-Bold")
-                escrever(pdf, f"Empresa/valor: {empresa}")
-                if item.get("sucesso"):
-                    escrever(pdf, "Resultado: todas as etapas do loop foram executadas com sucesso.")
-                else:
-                    escrever(pdf, f"Resultado: {item.get('erro') or 'Falha durante a execucao desta linha.'}")
-                y -= 4
+                pdf.drawString(x, y - 14, f"{int(linha):02d}" if isinstance(linha, int) else "--")
+                x += colunas[0][1]
+                pdf.setFont("Helvetica-Bold", 8)
+                for posicao, parte in enumerate(empresa_linhas):
+                    pdf.drawString(x, y - 14 - posicao * 9, parte)
+                x += colunas[1][1]
+                pdf.setFillColor(cores["muted"])
+                pdf.setFont("Helvetica", 7.6)
+                for posicao, parte in enumerate(resultado_linhas):
+                    pdf.drawString(x, y - 14 - posicao * 9, parte)
+                x += colunas[2][1]
+                finalizado_em = item.get("finalizado_em")
+                horario = finalizado_em.strftime("%H:%M:%S") if isinstance(finalizado_em, datetime) else "--:--"
+                pdf.setFillColor(cores["muted"])
+                pdf.setFont("Helvetica", 7.5)
+                pdf.drawString(x, y - 14, horario)
+                x += colunas[3][1]
+                tom = str(item.get("tom") or ("success" if item.get("sucesso") else "danger")).lower()
+                cor_borda, cor_fundo = estilos_status.get(tom, estilos_status["success"])
+                status = texto_limpo(item.get("status") or ("Concluida" if item.get("sucesso") else "Falhou"))
+                largura_badge = min(colunas[4][1] - 4, max(54, stringWidth(status.upper(), "Helvetica-Bold", 6.6) + 16))
+                pdf.setFillColor(cor_fundo)
+                pdf.setStrokeColor(cor_borda)
+                pdf.roundRect(x, y - 23, largura_badge, 17, 8, fill=1, stroke=1)
+                pdf.setFillColor(cor_borda)
+                pdf.setFont("Helvetica-Bold", 6.6)
+                pdf.drawCentredString(x + largura_badge / 2, y - 17, status.upper()[:19])
+                y -= altura_linha
 
+        desenhar_rodape()
         pdf.save()
         return str(caminho_pdf)
 
@@ -6577,6 +6858,11 @@ class ExecutorAutomacao:
             detalhes = evento.get("detalhes", {})
             return f"Evento #{ordem}: conferir {detalhes.get('coluna_esperada', 'valor')} com OCR"
 
+        if tipo in TIPOS_RESULTADO_RELATORIO:
+            detalhes = evento.get("detalhes", {})
+            status = self.limpar_saida_status(detalhes.get("status", "Concluida"))
+            return f"Evento #{ordem}: resultado do relatorio {status[:35]}"
+
         if tipo in TIPOS_MOUSE:
             detalhes = evento.get("detalhes", {})
             cliques = max(1, int(detalhes.get("cliques", 1) or 1))
@@ -6827,6 +7113,41 @@ class ExecutorAutomacao:
             bloco=detalhes.get("bloco_divergir", ""),
             atraso=detalhes.get("atraso_antes_sequencia_divergir", 0),
         )
+
+    def executar_bloco_resultado_relatorio(self, evento, contexto_loop=None):
+        detalhes = evento.get("detalhes") or {}
+        if contexto_loop is None:
+            safe_print(
+                "Resultado do relatorio ignorado: esse bloco deve ficar dentro de um loop de planilha.",
+                flush=True,
+            )
+            return self.resultado_sucesso_evento(evento)
+
+        indice = contexto_loop.get("indice")
+        if indice is None:
+            safe_print(
+                "Resultado do relatorio ignorado: nao foi possivel identificar a linha atual.",
+                flush=True,
+            )
+            return self.resultado_sucesso_evento(evento)
+
+        status = self.substituir_variaveis_texto(str(detalhes.get("status") or "Concluida"), contexto_loop)
+        resultado = self.substituir_variaveis_texto(str(detalhes.get("resultado") or ""), contexto_loop)
+        confirmacao = self.substituir_variaveis_texto(str(detalhes.get("confirmacao") or ""), contexto_loop)
+        tom = str(detalhes.get("tom") or "success").strip().lower()
+        self.registrar_marcacao_relatorio_loop(
+            indice=indice,
+            status=status,
+            tom=tom,
+            resultado=resultado,
+            confirmacao=confirmacao,
+        )
+        linha = contexto_loop.get("linha_referencia", contexto_loop.get("linha_atual", "-"))
+        safe_print(
+            f"Resultado do relatorio registrado para linha {linha}: {self.limpar_saida_status(status) or 'Concluida'}",
+            flush=True,
+        )
+        return self.resultado_sucesso_evento(evento)
 
     def similaridade_texto(self, esperado, capturado):
         esperado_norm = self.normalizar_texto_ocr(esperado)
@@ -7561,6 +7882,110 @@ class ExecutorAutomacao:
         }
         return captura, int(base_left), int(base_top), itens, regiao_ocr
 
+    def localizar_texto_por_ocr_em_controles_coloridos(
+        self,
+        captura,
+        texto_alvo,
+        confianca=0.72,
+        base_left=0,
+        base_top=0,
+    ):
+        """L? textos claros dentro de botoes coloridos que o OCR amplo ignora.
+
+        O alvo continua sendo confirmado pelo texto lido. A cor serve apenas
+        para obter recortes pequenos e legiveis antes da etapa normal de
+        reconhecimento visual, preservando a ordem OCR -> imagem do bloco.
+        """
+        if not OPENCV_DISPONIVEL or np is None or pytesseract is None or captura is None:
+            return None
+        esperado = self.normalizar_texto_ocr(texto_alvo)
+        if len(esperado.replace(" ", "")) < 3:
+            return None
+        try:
+            imagem_bgr = cv2.cvtColor(np.array(captura), cv2.COLOR_RGB2BGR)
+            imagem_hsv = cv2.cvtColor(imagem_bgr, cv2.COLOR_BGR2HSV)
+            mascara_colorida = cv2.inRange(
+                imagem_hsv,
+                np.array([0, 80, 70], dtype=np.uint8),
+                np.array([179, 255, 255], dtype=np.uint8),
+            )
+            contornos, _ = cv2.findContours(mascara_colorida, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        except Exception:
+            return None
+
+        tamanho_minimo = min(180, max(46, len(esperado.replace(" ", "")) * 5))
+        proporcao_esperada = min(6.0, max(1.4, len(esperado.replace(" ", "")) / 3.0))
+        controles = []
+        for contorno in contornos:
+            try:
+                esquerda, topo, largura, altura = cv2.boundingRect(contorno)
+                preenchimento = float(cv2.contourArea(contorno)) / max(1.0, float(largura * altura))
+            except Exception:
+                continue
+            if (
+                largura < tamanho_minimo or largura > 520
+                or altura < 20 or altura > 140
+                or largura / max(1.0, altura) < 1.25
+                or preenchimento < 0.25
+            ):
+                continue
+            controles.append((
+                abs((largura / max(1.0, altura)) - proporcao_esperada),
+                -preenchimento,
+                esquerda,
+                topo,
+                largura,
+                altura,
+            ))
+        controles.sort()
+
+        limite_ratio = max(0.80, min(0.86, float(confianca or 0.72)))
+        for _distancia, _preenchimento, esquerda, topo, largura, altura in controles[:14]:
+            if self.cancelamento_solicitado():
+                return None
+            recorte_bgr = imagem_bgr[topo : topo + altura, esquerda : esquerda + largura]
+            if recorte_bgr.size == 0:
+                continue
+            try:
+                recorte_hsv = cv2.cvtColor(recorte_bgr, cv2.COLOR_BGR2HSV)
+                # Letras brancas ou muito claras sobre o fundo saturado viram
+                # tinta preta em uma tela branca, que o Tesseract le melhor.
+                mascara_texto = cv2.inRange(
+                    recorte_hsv,
+                    np.array([0, 0, 165], dtype=np.uint8),
+                    np.array([179, 100, 255], dtype=np.uint8),
+                )
+                if cv2.countNonZero(mascara_texto) < 14:
+                    continue
+                leitura = np.full(mascara_texto.shape, 255, dtype=np.uint8)
+                leitura[mascara_texto > 0] = 0
+                leitura = cv2.copyMakeBorder(leitura, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=255)
+                leitura = cv2.resize(leitura, None, fx=3, fy=3, interpolation=cv2.INTER_NEAREST)
+            except Exception:
+                continue
+            for psm in (7, 6):
+                try:
+                    texto_lido = str(pytesseract.image_to_string(leitura, config=f"--psm {psm}") or "").strip()
+                except Exception:
+                    continue
+                if not texto_lido or not self.texto_ocr_confirma_alvo(esperado, texto_lido, limite_ratio=limite_ratio):
+                    continue
+                score = self.similaridade_texto(esperado, texto_lido)
+                safe_print(
+                    f"OCR confirmou texto em controle colorido: esperado='{texto_alvo}' | capturado='{texto_lido}'.",
+                    flush=True,
+                )
+                return {
+                    "left": int(base_left) + int(esquerda),
+                    "top": int(base_top) + int(topo),
+                    "width": max(12, int(largura)),
+                    "height": max(10, int(altura)),
+                    "text": texto_lido,
+                    "score": float(score),
+                    "source": "ocr_colored_control",
+                }
+        return None
+
     def localizar_texto_por_ocr_screenshot(
         self,
         texto,
@@ -7671,6 +8096,17 @@ class ExecutorAutomacao:
                             "score": score,
                             "source": "ocr",
                         })
+
+        if not candidatos:
+            candidato_colorido = self.localizar_texto_por_ocr_em_controles_coloridos(
+                captura,
+                texto_alvo,
+                confianca=confianca,
+                base_left=base_left,
+                base_top=base_top,
+            )
+            if candidato_colorido:
+                candidatos.append(candidato_colorido)
 
         if not candidatos and itens:
             amostras = " | ".join(str(item.get("text", "")) for item in itens[:24])
@@ -8545,7 +8981,7 @@ class ExecutorAutomacao:
                     )
                     if (
                         isinstance(fluxo_ocr_individual, dict)
-                        and str(fluxo_ocr_individual.get("acao") or "") in {"continuar", "parar"}
+                        and str(fluxo_ocr_individual.get("acao") or "") in {"continuar", "parar", "ir_para_bloco"}
                     ):
                         # Uma falha individual nao e uma tentativa pendente de
                         # OCR: ela ja decidiu o fluxo. Antes esse resultado era
@@ -8918,7 +9354,7 @@ class ExecutorAutomacao:
         if not local:
             return None
         fluxo_individual = local.get("ocr_target_flow") if isinstance(local, dict) else None
-        if isinstance(fluxo_individual, dict) and str(fluxo_individual.get("acao") or "") in {"continuar", "parar"}:
+        if isinstance(fluxo_individual, dict) and str(fluxo_individual.get("acao") or "") in {"continuar", "parar", "ir_para_bloco"}:
             # A regra de falha de um OCR individual encerra a busca do bloco
             # antes da confirmacao visual/click padrao.
             return local
@@ -9112,14 +9548,17 @@ class ExecutorAutomacao:
                 titulo_janela = str(janela_ativa_teste.get("title") or titulo_janela or "").strip()
                 self.janela_alvo = titulo_janela
                 janela_teste = janela_ativa_teste
+                # Areas personalizadas sao relativas a janela. Usar left/top
+                # da tela aqui somava a posicao novamente em esperar_imagem,
+                # recortando o canto inferior direito e excluindo os rotulos.
                 area_teste = {
-                    "x": int(janela_ativa_teste.get("left", 0) or 0),
-                    "y": int(janela_ativa_teste.get("top", 0) or 0),
+                    "x": 0,
+                    "y": 0,
                     "width": int(janela_ativa_teste.get("width", 0) or 0),
                     "height": int(janela_ativa_teste.get("height", 0) or 0),
                 }
                 modo_area_teste = "custom_area"
-                regiao_teste = self.construir_regiao_personalizada(area_teste)
+                regiao_teste = self.construir_regiao_personalizada(area_teste, janela_info=janela_teste)
                 safe_print(
                     "Teste rapido: usando a janela externa em primeiro plano "
                     f"({janela_ativa_teste.get('title', 'janela atual')}).",
@@ -9177,7 +9616,7 @@ class ExecutorAutomacao:
             safe_print("OCR_VALIDATION_JSON|" + json.dumps(diagnostico, ensure_ascii=True), flush=True)
             if mostrar_marcador and diagnostico.get("visual_confirmed"):
                 self.marcar_area_reconhecida(
-                    local, duracao=max(0.12, float(duracao_marcador or 0.24)),
+                    local, duracao=self.duracao_confirmacao_visual(duracao_marcador),
                     bloqueante=bool(marcador_bloqueante), etiqueta="Reconhecimento",
                 )
             sucesso = bool(diagnostico.get("success"))
@@ -9229,7 +9668,7 @@ class ExecutorAutomacao:
         if mostrar_marcador:
             self.marcar_area_reconhecida(
                 local,
-                duracao=max(0.12, float(duracao_marcador or 0.24)),
+                duracao=self.duracao_confirmacao_visual(duracao_marcador),
                 bloqueante=bool(marcador_bloqueante),
             )
         if clicar:
@@ -9539,6 +9978,9 @@ class ExecutorAutomacao:
         if tipo in TIPOS_COMPARACAO_PLANILHA:
             return self.executar_bloco_comparar_planilha(evento, contexto_loop=contexto_loop)
 
+        if tipo in TIPOS_RESULTADO_RELATORIO:
+            return self.executar_bloco_resultado_relatorio(evento, contexto_loop=contexto_loop)
+
         if tipo in TIPOS_MOUSE:
             if self.cancelamento_solicitado():
                 return self.resultado_fluxo("parar")
@@ -9675,8 +10117,14 @@ class ExecutorAutomacao:
                     if acao_fluxo_ocr == "ir_para_bloco":
                         bloco_destino_ocr = str(fluxo_ocr.get("bloco") or "").strip()
                         if bloco_destino_ocr:
+                            origem_fluxo_ocr = str(fluxo_ocr.get("origem") or "").strip()
+                            mensagem_ocr = (
+                                f"Bloco {ordem_evento}: OCR individual nao foi confirmado. Indo para bloco {bloco_destino_ocr}."
+                                if origem_fluxo_ocr == "falha_ocr"
+                                else f"Bloco {ordem_evento}: OCR individual confirmou {nome_imagem}. Indo para bloco {bloco_destino_ocr}."
+                            )
                             safe_print(
-                                f"Bloco {ordem_evento}: OCR individual confirmou {nome_imagem}. Indo para bloco {bloco_destino_ocr}.",
+                                mensagem_ocr,
                                 flush=True,
                             )
                             return self.resultado_fluxo("ir_para_bloco", bloco=bloco_destino_ocr)
