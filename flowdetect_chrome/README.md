@@ -32,7 +32,7 @@ Extensão que executa automações web exportadas pelo FlowDetect Studio na aba 
 5. Abra o site de destino e clique em **Executar**.
 
 Para remover uma automacao armazenada na extensao, clique no botao **×** ao lado da quantidade de blocos e confirme a exclusao.
-Quando a automacao possuir uma planilha, escolha a linha inicial no card antes de executar. A extensao mostra o intervalo restante e pula as linhas anteriores.
+Quando a automacao possuir uma planilha, escolha no card o elemento que deve iniciar o loop. A extensao mostra os valores da coluna e pula os itens anteriores.
 
 O Studio exporta os blocos web de URL, Chrome/Web, texto, tecla, clique, OCR, reconhecimento visual, verificação de estado e marcadores de loop. As imagens de referência seguem dentro do próprio `.json`, portanto a extensão não depende da pasta `imagens` do computador que gerou a automação.
 

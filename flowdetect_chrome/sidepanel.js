@@ -62,7 +62,8 @@ function spreadsheetLoopInfo(automation) {
   if (!source) return null;
   return {
     name: String(source.name || "valor"),
-    total: source.values.length
+    total: source.values.length,
+    values: source.values.map((value) => String(value ?? ""))
   };
 }
 
@@ -123,17 +124,21 @@ function renderAutomation(automation) {
   fragment.querySelector(".step-count").textContent = `${automation.steps.length} blocos`;
   const loop = spreadsheetLoopInfo(automation);
   const loopStart = fragment.querySelector(".loop-start");
-  const loopStartInput = fragment.querySelector(".loop-start-row");
+  const loopStartChoice = fragment.querySelector(".loop-start-choice");
   if (loop) {
     loopStart.hidden = false;
-    loopStartInput.max = String(loop.total);
+    loopStartChoice.replaceChildren(...loop.values.map((value, index) => {
+      const option = document.createElement("option");
+      option.value = String(index + 1);
+      option.textContent = `${index + 1} · ${value || "(vazio)"}`;
+      return option;
+    }));
     const atualizarResumoLoop = () => {
-      const startRow = clampSpreadsheetStartRow(loopStartInput.value, loop.total);
-      loopStartInput.value = String(startRow);
-      fragment.querySelector(".loop-start-summary").textContent = `Loop ${loop.name}: linhas ${startRow}-${loop.total}`;
+      const startRow = clampSpreadsheetStartRow(loopStartChoice.value, loop.total);
+      loopStartChoice.value = String(startRow);
+      fragment.querySelector(".loop-start-summary").textContent = `Loop ${loop.name}: ${loop.total} itens`;
     };
-    loopStartInput.addEventListener("change", atualizarResumoLoop);
-    loopStartInput.addEventListener("blur", atualizarResumoLoop);
+    loopStartChoice.addEventListener("change", atualizarResumoLoop);
     atualizarResumoLoop();
   }
 
@@ -160,7 +165,7 @@ function renderAutomation(automation) {
   }
 
   fragment.querySelector(".run-automation").addEventListener("click", () => {
-    const startRow = loop ? clampSpreadsheetStartRow(loopStartInput.value, loop.total) : 1;
+    const startRow = loop ? clampSpreadsheetStartRow(loopStartChoice.value, loop.total) : 1;
     return runAutomation(automation, startRow).catch((error) => {
     updateRun({
       automationId: automation.id,
