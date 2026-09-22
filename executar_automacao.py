@@ -2912,6 +2912,68 @@ class ExecutorAutomacao:
             return "ir_para_bloco"
         return "clicar"
 
+    def localizar_referencia_visual_quando_ocr_nao_ler(
+        self,
+        caminho_referencia,
+        region=None,
+        confianca_visual=0.8,
+        perfil_busca="balanced",
+    ):
+        """Usa a referencia visual exata quando um unico OCR nao consegue ler o alvo.
+
+        Botoes com texto branco, badges coloridos e fontes muito pequenas podem
+        estar perfeitamente visiveis para o template e ainda assim nao gerar uma
+        palavra confiavel no Tesseract. Esta rota continua exigindo uma imagem
+        forte e so e usada para um alvo OCR; blocos com varios OCRs preservam a
+        validacao conjunta e as regras de cada etapa.
+        """
+        try:
+            confianca = max(0.84, min(0.95, float(confianca_visual or 0.8)))
+        except (TypeError, ValueError):
+            confianca = 0.84
+        try:
+            visual = self.procurar_imagem_por_template(
+                caminho_referencia,
+                confianca=confianca,
+                region=region,
+                perfil_busca=perfil_busca,
+                incluir_ocr_referencia=False,
+            )
+        except Exception:
+            return None
+        if not visual:
+            return None
+        try:
+            if not self.validar_correspondencia_visual(
+                caminho_referencia,
+                visual,
+                confianca,
+                perfil_busca=perfil_busca,
+            ):
+                return None
+            confirmado = self.confirmar_localizacao_imagem(
+                caminho_referencia,
+                visual,
+                confianca,
+                perfil_busca=perfil_busca,
+            )
+        except Exception:
+            return None
+        if not confirmado:
+            return None
+        resultado = dict(confirmado)
+        resultado.update({
+            "search_stage": "ocr_visual_fallback",
+            "visual_confirmed": True,
+            "ocr_anchor_confirmed": False,
+            "ocr_visual_fallback": True,
+        })
+        safe_print(
+            "OCR nao leu o texto do alvo, mas a imagem exata confirmou a referencia visual.",
+            flush=True,
+        )
+        return resultado
+
     def localizar_referencia_hibrida_ocr_visual(
         self,
         caminho_referencia,
@@ -3009,10 +3071,28 @@ class ExecutorAutomacao:
                     _escala_ocr=_escala_ocr,
                     _tentativa_ampliada=bool(_escala_ocr is not None),
                 )
-        if not candidatos_ocr:
-            return None
-
         partes = partes_compostas or [esperado]
+
+        def tentar_fallback_visual_unico():
+            if quantidade_esperada != 1:
+                return None
+            if self.modo_acao_alvos_ocr(leitura_configurada) == "individual":
+                regra = self.regra_acao_individual_ocr(
+                    leitura_configurada.get("ocr_target_action")
+                    or (leitura_configurada.get("ocr_target_layouts") or [{}])[0]
+                )
+                if not leitura_configurada.get("_testar_todos_alvos_ocr") and regra.get("falha") != "continuar":
+                    return None
+            return self.localizar_referencia_visual_quando_ocr_nao_ler(
+                caminho_referencia,
+                region=region,
+                confianca_visual=confianca_visual,
+                perfil_busca=perfil_busca,
+            )
+
+        if not candidatos_ocr:
+            return tentar_fallback_visual_unico()
+
         pendente_ocr = None
         for candidato in candidatos_ocr:
             if self.cancelamento_solicitado():
@@ -3200,6 +3280,9 @@ class ExecutorAutomacao:
             pendente_ocr = local
         if pendente_ocr:
             return pendente_ocr
+        fallback_visual = tentar_fallback_visual_unico()
+        if fallback_visual:
+            return fallback_visual
         # A leitura nativa e muito mais rapida, mas labels pequenos podem
         # gerar um candidato parecido sem atingir a confirmacao estrita. Nesse
         # caso fazemos uma unica releitura ampliada antes de repetir o ciclo;
@@ -9034,7 +9117,12 @@ class ExecutorAutomacao:
                 )
             )
         )
-        if texto_ocr_esperado and ocr_ja_confirmado:
+        if texto_ocr_esperado and bool(local.get("ocr_visual_fallback")):
+            safe_print(
+                "OCR nao leu o texto do alvo; a imagem exata foi confirmada e o bloco pode continuar.",
+                flush=True,
+            )
+        elif texto_ocr_esperado and ocr_ja_confirmado:
             capturado_ocr = str(local.get("ocr_text") or texto_ocr_esperado).strip()
             if capturado_ocr:
                 self.salvar_variavel_contexto("ultimo_ocr", capturado_ocr)
@@ -9272,7 +9360,12 @@ class ExecutorAutomacao:
         )
         caminho_imagem, _imagem_id = self.resolver_imagem(imagem)
         dimensoes_referencia = self.obter_dimensoes_imagem(caminho_imagem) if caminho_imagem.exists() else None
-        if texto_ocr_esperado and isinstance(local, dict) and self.ocr_hibrido_tem_todos_alvos(local, texto_ocr_esperado, leitura_relativa):
+        if texto_ocr_esperado and isinstance(local, dict) and local.get("ocr_visual_fallback"):
+            safe_print(
+                "Teste de reconhecimento: OCR nao leu o texto, mas a imagem exata confirmou o alvo.",
+                flush=True,
+            )
+        elif texto_ocr_esperado and isinstance(local, dict) and self.ocr_hibrido_tem_todos_alvos(local, texto_ocr_esperado, leitura_relativa):
             capturado_ocr = str(local.get("ocr_text") or texto_ocr_esperado).strip()
             safe_print(
                 f"Teste de reconhecimento: OCR confirmado pela ancora '{capturado_ocr}'.",
