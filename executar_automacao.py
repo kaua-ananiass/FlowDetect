@@ -3016,6 +3016,30 @@ class ExecutorAutomacao:
                     _tentativa_ampliada=bool(_escala_ocr is not None),
                 )
         if not candidatos_ocr:
+            # A primeira leitura do hibrido privilegia a resolucao nativa para
+            # manter o fluxo rapido. Em paginas Chromium, porem, rotulos como
+            # "Trocar Perfil" podem ter poucos pixels e nao formar candidato
+            # suficiente no PSM esparso. Antes de declarar a falha, relemos a
+            # mesma area uma unica vez ampliada. A ordem continua OCR primeiro
+            # e reconhecimento visual depois; a imagem nao libera o bloco sem
+            # que o texto seja confirmado.
+            if _escala_ocr is None:
+                safe_print(
+                    "OCR nao gerou candidato na escala nativa; relendo a mesma area ampliada.",
+                    flush=True,
+                )
+                return self.localizar_referencia_hibrida_ocr_visual(
+                    caminho_referencia,
+                    texto_ocr_esperado=texto_ocr_esperado,
+                    region=region,
+                    dimensoes_referencia=dimensoes_referencia,
+                    confianca_ocr=confianca_ocr,
+                    confianca_visual=confianca_visual,
+                    perfil_busca=perfil_busca,
+                    leitura_relativa=leitura_relativa,
+                    ocr_confirmado=None,
+                    _escala_ocr=1.45,
+                )
             return None
 
         partes = partes_compostas or [esperado]
