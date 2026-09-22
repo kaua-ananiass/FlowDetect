@@ -988,6 +988,16 @@ def converter_evento_para_chrome(evento):
         })
         return passo, None
 
+    if tipo == "resultado_relatorio":
+        passo = passo_chrome_base(evento, "report_result", detalhes)
+        passo.update({
+            "status": str(detalhes.get("status") or "Concluida").strip() or "Concluida",
+            "tone": str(detalhes.get("tom") or detalhes.get("tone") or "success").strip().lower(),
+            "result": str(detalhes.get("resultado") or detalhes.get("result") or "").strip(),
+            "confirmation": str(detalhes.get("confirmacao") or detalhes.get("confirmation") or "").strip(),
+        })
+        return passo, None
+
     if tipo in {"inicio_loop", "fim_loop"}:
         return passo_chrome_base(evento, "loop_start" if tipo == "inicio_loop" else "loop_end", detalhes), None
 

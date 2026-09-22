@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.17";
+const RUNTIME_VERSION = "0.2.21";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -20,6 +20,12 @@ function createRun(automation, tabId, startRow = 1) {
     lastMessage: "",
     logs: [],
     variables: {},
+    report: {
+      sourceName: "",
+      rows: [],
+      summary: {},
+      requestedStartRow: Math.max(1, Math.trunc(Number(startRow) || 1))
+    },
     requestedStartRow: Math.max(1, Math.trunc(Number(startRow) || 1))
   };
 }
@@ -34,6 +40,77 @@ async function addLog(run, message, level = "info") {
   run.lastMessage = String(message || "");
   run.logs.push({ at: new Date().toISOString(), message: run.lastMessage, level });
   await persistRun(run);
+}
+
+function reportTone(value, fallback = "success") {
+  const tone = String(value || fallback).trim().toLowerCase();
+  return ["success", "info", "warning", "danger"].includes(tone) ? tone : fallback;
+}
+
+function beginReportRow(run, { index, value, sourceName, total }) {
+  if (!run.report) run.report = { sourceName: "", rows: [], summary: {} };
+  run.report.sourceName = String(sourceName || run.report.sourceName || "valor");
+  const entry = {
+    index: Math.max(1, Number(index) || 1),
+    value: String(value ?? ""),
+    total: Math.max(0, Number(total) || 0),
+    startedAt: new Date().toISOString(),
+    finishedAt: "",
+    success: null,
+    status: "",
+    tone: "",
+    result: "",
+    confirmation: "",
+    error: ""
+  };
+  run.report.rows.push(entry);
+  run.reportCurrentRow = entry;
+  return entry;
+}
+
+function finalizeReportRow(run, success, error = "") {
+  const entry = run.reportCurrentRow;
+  if (!entry) return;
+  entry.success = Boolean(success);
+  entry.error = String(error || "").trim();
+  entry.finishedAt = new Date().toISOString();
+  if (!entry.status) entry.status = entry.success ? "Concluida" : "Falhou";
+  if (!entry.tone) entry.tone = entry.success ? "success" : "danger";
+  if (!entry.result) {
+    entry.result = entry.success
+      ? "Todas as etapas da linha foram executadas."
+      : (entry.error || "A automacao foi interrompida nesta linha.");
+  }
+  delete run.reportCurrentRow;
+}
+
+function recordReportResult(run, step) {
+  if (!run.report) run.report = { sourceName: "", rows: [], summary: {} };
+  const result = {
+    status: String(step.status || "Concluida").trim() || "Concluida",
+    tone: reportTone(step.tone),
+    result: String(step.result || "").trim(),
+    confirmation: String(step.confirmation || "").trim()
+  };
+  if (run.reportCurrentRow) {
+    Object.assign(run.reportCurrentRow, result);
+  } else {
+    run.report.summary = result;
+  }
+  return result;
+}
+
+function registerRunFailureInReport(run, error) {
+  const message = String(error?.message || error || "Falha durante a execucao.").trim();
+  if (run.reportCurrentRow) {
+    finalizeReportRow(run, false, message);
+    return;
+  }
+  if (!run.report) run.report = { sourceName: "", rows: [], summary: {} };
+  if (!run.report.rows.length) {
+    beginReportRow(run, { index: 1, value: "Execucao", sourceName: "Execucao", total: 1 });
+    finalizeReportRow(run, false, message);
+  }
 }
 
 function timeoutDaPagina(message, fallback = 12000) {
@@ -359,6 +436,12 @@ async function executeStep(run, rawStep) {
     run.dataSource = source;
     return `${source.values.length} valor(es) preparados para o loop ${source.name}.`;
   }
+  if (step.type === "report_result") {
+    const result = recordReportResult(run, step);
+    return result.confirmation
+      ? `Resultado do relatorio: ${result.status}. Evidencia: ${result.confirmation}`
+      : `Resultado do relatorio: ${result.status}.`;
+  }
   if (step.type === "loop_end" || step.type === "loop_start") return "Marcador de loop processado.";
   if (["element_action", "ocr_text", "focused_text", "viewport_click", "wait_text"].includes(step.type)) {
     try {
@@ -468,6 +551,7 @@ async function executeSpreadsheetLoop(run, source, executeIteration) {
   const firstRow = spreadsheetStartRow(run.requestedStartRow, source.values.length) - 1;
   run.totalSteps = Math.max(1, Number(run.stepsPerIteration || 1) * (source.values.length - firstRow));
   run.spreadsheetStartRow = firstRow + 1;
+  if (run.report) run.report.sourceName = source.name;
   try {
     if (firstRow > 0) await addLog(run, `Planilha ${source.name}: iniciando na linha ${firstRow + 1} de ${source.values.length}.`);
     for (let row = firstRow; row < source.values.length; row += 1) {
@@ -480,7 +564,19 @@ async function executeSpreadsheetLoop(run, source, executeIteration) {
         total: source.values.length
       };
       await addLog(run, "Planilha " + source.name + ": " + (row + 1) + "/" + source.values.length + " - " + source.values[row] + ".");
-      await executeIteration();
+      beginReportRow(run, {
+        index: row + 1,
+        value: source.values[row],
+        sourceName: source.name,
+        total: source.values.length
+      });
+      try {
+        await executeIteration();
+        finalizeReportRow(run, true);
+      } catch (error) {
+        finalizeReportRow(run, false, String(error?.message || error));
+        throw error;
+      }
       if (row < source.values.length - 1 && source.interval) await sleep(source.interval);
     }
   } finally {
@@ -513,6 +609,7 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       if (!Number.isInteger(loopEnd)) throw new Error("O bloco Início do loop não possui um Fim do loop.");
       const source = run.dataSource || { name: "valor", values: [] };
       if (!source.values.length) throw new Error("O loop não possui valores da planilha para executar.");
+      if (run.report) run.report.sourceName = source.name;
       const firstRow = run.manualSpreadsheetLoopStarted
         ? 0
         : spreadsheetStartRow(run.requestedStartRow, source.values.length) - 1;
@@ -525,7 +622,19 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
         run.variables[source.name] = source.values[row];
         run.spreadsheetLoop = { sourceIndex: source.index, row, total: source.values.length };
         await addLog(run, `Loop ${source.name}: ${row + 1}/${source.values.length} · ${source.values[row]}`);
-        await executeRange(run, steps, index + 1, loopEnd, pairs, indexes, depth + 1);
+        beginReportRow(run, {
+          index: row + 1,
+          value: source.values[row],
+          sourceName: source.name,
+          total: source.values.length
+        });
+        try {
+          await executeRange(run, steps, index + 1, loopEnd, pairs, indexes, depth + 1);
+          finalizeReportRow(run, true);
+        } catch (error) {
+          finalizeReportRow(run, false, String(error?.message || error));
+          throw error;
+        }
         if (row < source.values.length - 1 && source.interval) await sleep(source.interval);
       }
       const nextAfterLoop = indexes.nextByIndex.get(loopEnd);
@@ -597,12 +706,36 @@ async function executeAutomation(automation, tabId, startRow = 1) {
       await executeRange(run, steps, firstStep, steps.length, pairs, indexes);
     }
     run.status = "completed";
+    if (run.report) {
+      run.report.status = "completed";
+      if (!run.report.rows.length && !run.report.summary?.status) {
+        run.report.summary = {
+          status: "Concluida",
+          tone: "success",
+          result: "Automacao concluida com sucesso.",
+          confirmation: ""
+        };
+      }
+    }
     await addLog(run, "Automação concluída com sucesso.", "success");
   } catch (error) {
     run.status = run.cancelled ? "stopped" : "failed";
+    registerRunFailureInReport(run, error);
+    if (run.report) {
+      run.report.status = run.status;
+      if (!run.report.summary?.status && !run.report.rows.length) {
+        run.report.summary = {
+          status: run.status === "stopped" ? "Interrompida" : "Falhou",
+          tone: run.status === "stopped" ? "warning" : "danger",
+          result: String(error?.message || error || "Falha durante a execucao."),
+          confirmation: ""
+        };
+      }
+    }
     await addLog(run, String(error?.message || error), "error");
   } finally {
     run.finishedAt = new Date().toISOString();
+    if (run.report) run.report.finishedAt = run.finishedAt;
     activeRuns.delete(run.id);
     await persistRun(run);
   }

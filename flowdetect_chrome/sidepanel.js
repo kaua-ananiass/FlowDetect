@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.17";
+const REQUIRED_RUNTIME_VERSION = "0.2.21";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
@@ -97,6 +97,21 @@ function updateRun(run = {}) {
   renderAutomations();
 }
 
+function hasFinishedRun(status) {
+  return ["completed", "failed", "stopped"].includes(String(status || "").toLowerCase());
+}
+
+async function downloadExecutionReport(run) {
+  if (!globalThis.FlowDetectExecutionReport?.download) {
+    throw new Error("O gerador de relatorio ainda nao foi carregado.");
+  }
+  const filename = globalThis.FlowDetectExecutionReport.download(run);
+  const updated = { ...run, reportGeneratedAt: new Date().toISOString(), reportFilename: filename };
+  currentRun = updated;
+  await chrome.storage.local.set({ [RUN_STORAGE_KEY]: updated });
+  renderAutomations();
+}
+
 async function deleteAutomation(automation) {
   const nome = automation?.automation?.nome || "esta automacao";
   if (!window.confirm(`Excluir "${nome}"? Essa acao nao pode ser desfeita.`)) return;
@@ -161,6 +176,15 @@ function renderAutomation(automation) {
     const stop = fragment.querySelector(".stop-button");
     stop.hidden = status !== "running";
     stop.addEventListener("click", () => chrome.runtime.sendMessage({ type: "flowdetect-stop" }));
+    const reportButton = fragment.querySelector(".report-button");
+    const canGenerateReport = hasFinishedRun(status);
+    reportButton.hidden = !canGenerateReport;
+    if (canGenerateReport) {
+      reportButton.textContent = currentRun.reportGeneratedAt ? "Gerar novo relatorio PDF" : "Gerar relatorio PDF";
+      reportButton.addEventListener("click", () => downloadExecutionReport(currentRun).catch((error) => {
+        window.alert(`Nao foi possivel gerar o relatorio: ${String(error.message || error)}`);
+      }));
+    }
     appendLogs(fragment.querySelector(".run-log"), currentRun.logs);
   }
 

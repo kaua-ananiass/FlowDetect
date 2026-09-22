@@ -169,6 +169,7 @@ h1, h2, p { margin: 0; }
 .add-automation:hover,
 .play-button:hover,
 .stop-button:hover,
+.report-button:hover,
 .delete-automation:hover {
   transform: translateY(-1px);
 }
@@ -349,6 +350,7 @@ h1, h2, p { margin: 0; }
 .play-button:hover { box-shadow: 0 16px 30px rgba(18, 181, 203, 0.3); filter: brightness(1.08); }
 .play-button:active,
 .stop-button:active,
+.report-button:active,
 .delete-automation:active { transform: translateY(0) scale(0.98); }
 .play-icon { font-size: 11px; }
 
@@ -409,6 +411,21 @@ h1, h2, p { margin: 0; }
 }
 
 .stop-button:hover { border-color: rgba(255, 140, 152, 0.7); background: rgba(127, 32, 32, 0.5); }
+
+.report-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border-color: rgba(94, 234, 212, 0.42);
+  border-radius: 10px;
+  color: #c9fff4;
+  background: rgba(13, 96, 87, 0.32);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.report-button:hover { border-color: rgba(94, 234, 212, 0.78); background: rgba(13, 118, 105, 0.46); }
 
 .run-log-heading { justify-content: space-between; margin-top: 2px; color: var(--text-muted); }
 .run-log-heading span:last-child { color: var(--accent-soft); font-size: 8px; letter-spacing: 0.04em; text-transform: none; }
@@ -472,7 +489,8 @@ h1, h2, p { margin: 0; }
 
 button:focus-visible,
 .import-automation:focus-visible,
-.loop-start-choice:focus-visible {
+.loop-start-choice:focus-visible,
+.report-button:focus-visible {
   outline: 2px solid var(--accent-soft);
   outline-offset: 2px;
 }
