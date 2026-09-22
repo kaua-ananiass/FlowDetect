@@ -2,6 +2,7 @@
 import ctypes
 import difflib
 import json
+import math
 import os
 import re
 import shlex
@@ -2522,6 +2523,44 @@ class ExecutorAutomacao:
             and sum(origem != destino for origem, destino in zip(referencia, leitura)) == 1
         ):
             return True
+
+        # Em controles compactos do navegador, o Tesseract pode manter todas
+        # as palavras relevantes e ainda cortar a ultima ("Trocar Perfil"
+        # vira, por exemplo, "C trocar Perf L"). O ratio da frase inteira
+        # fica logo abaixo do limite, embora o alvo tenha sido lido. Para nao
+        # transformar a tolerancia em uma busca vaga, este caminho exige que
+        # *cada* palavra relevante da referencia esteja presente; a unica
+        # aproximacao aceita e um prefixo suficientemente longo da palavra.
+        # Codigos e rotulos de uma palavra permanecem no criterio estrito.
+        if limite_ratio <= 0.87 and not re.search(r"\d", referencia + leitura):
+            palavras_esperadas = [palavra for palavra in referencia.split() if len(palavra) >= 3]
+            palavras_lidas = [palavra for palavra in leitura.split() if len(palavra) >= 3]
+            if len(palavras_esperadas) >= 2 and palavras_lidas:
+                restantes = list(palavras_lidas)
+                todas_confirmadas = True
+                for palavra_esperada in palavras_esperadas:
+                    minimo_prefixo = max(3, int(math.ceil(len(palavra_esperada) * 0.60)))
+                    indice_compativel = next(
+                        (
+                            indice
+                            for indice, palavra_lida in enumerate(restantes)
+                            if (
+                                palavra_lida == palavra_esperada
+                                or (
+                                    len(palavra_esperada) >= 4
+                                    and len(palavra_lida) >= minimo_prefixo
+                                    and palavra_esperada.startswith(palavra_lida)
+                                )
+                            )
+                        ),
+                        None,
+                    )
+                    if indice_compativel is None:
+                        todas_confirmadas = False
+                        break
+                    restantes.pop(indice_compativel)
+                if todas_confirmadas:
+                    return True
         esperado_digitos = re.sub(r"\D+", "", texto_esperado)
         if esperado_digitos and esperado_digitos == texto_esperado.replace(" ", ""):
             grupos = re.findall(r"\d+", texto_capturado)
