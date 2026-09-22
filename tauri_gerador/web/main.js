@@ -230,6 +230,7 @@ const state = {
   commandMapOrderCache: [],
   commandMapAutoFitFrame: 0,
   commandConnectorLayoutFrame: 0,
+  commandMapRoutePreviewFrame: 0,
   commandMapTreePan: null,
   commandMapTreePanOffset: { x: 0, y: 0 },
   commandMapTreePanUserMoved: false,
@@ -2000,6 +2001,24 @@ function renderCommandMapTreeReferenceLinks() {
   layer.appendChild(svg);
   energyDots.forEach((energy) => layer.appendChild(energy));
   tree.prepend(layer);
+}
+
+function scheduleCommandMapRoutePreviewRefresh() {
+  if (!commandMapList || state.activeTab !== "commands") {
+    return;
+  }
+  if (state.commandMapRoutePreviewFrame) {
+    return;
+  }
+  // Aguarda o fim do evento de select/input para nao remover o controle
+  // enquanto o navegador ainda conclui a mudanca de valor.
+  state.commandMapRoutePreviewFrame = requestAnimationFrame(() => {
+    state.commandMapRoutePreviewFrame = 0;
+    if (state.activeTab !== "commands") {
+      return;
+    }
+    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+  });
 }
 
 function scheduleCommandConnectorLayout(options = {}) {
@@ -9687,11 +9706,10 @@ function syncOcrTargetActionControlToSource(target) {
     applyOcrTargetActionVisibility(actionRow);
   }
   if (container.classList.contains("command-tree-card")) {
-    // As escolhas sao campos internos do card. Atualiza o rascunho, mas nao
-    // reconstrói o mapa inteiro e nem desloca o usuario enquanto ele decide.
-    // As linhas da arvore sao atualizadas na proxima renderizacao normal
-    // (salvar, trocar pagina, mover card etc.).
-    if (changed) syncCommandMapDraftFromCard(container);
+    if (changed) {
+      syncCommandMapDraftFromCard(container);
+      scheduleCommandMapRoutePreviewRefresh();
+    }
   } else if (container.classList.contains("insert-card-panel") && state.insertPanel) {
     if (changed) state.insertPanel = { ...state.insertPanel, ...insertValuesFromPanel(container) };
   }
@@ -20117,18 +20135,21 @@ function resolveCommandMapTreeTarget(route, event, index, events, context) {
 }
 
 function getCommandMapTreeBranchTargetKey(branch) {
+  const kind = String(branch?.kind || "success").trim().toLowerCase() || "success";
   const targetOrder = Number(branch?.targetEvent?.order || branch?.targetOrder || 0);
   if (Number.isFinite(targetOrder) && targetOrder > 0) {
-    if (String(branch?.kind || "").trim().toLowerCase() === "ocr_action") {
+    if (kind === "ocr_action") {
       return `ocr:${String(branch?.ocrColor || "").trim().toLowerCase()}:${targetOrder}`;
     }
-    return `block:${targetOrder}`;
+    // Caminhos diferentes podem terminar no mesmo bloco. Mante-los separados
+    // preserva o tracejado vermelho do "Se nao achar" ao lado do caminho normal.
+    return `${kind}:block:${targetOrder}`;
   }
   const targetLabel = String(branch?.targetLabel || "").trim().toLowerCase();
   if (targetLabel) {
-    return `terminal:${targetLabel}`;
+    return `${kind}:terminal:${targetLabel}`;
   }
-  return `branch:${String(branch?.kind || "success")}:${String(branch?.label || "")}`;
+  return `branch:${kind}:${String(branch?.label || "")}`;
 }
 
 function mergeCommandMapTreeBranchLabels(firstLabel = "", secondLabel = "") {
@@ -20172,27 +20193,60 @@ function getCommandMapOcrActionBranches(event, index, events, context) {
   if (String(details.modo_reconhecimento || "").trim().toLowerCase() !== "texto_ocr") return [];
   const layouts = Array.isArray(details.ocr_target_layouts) ? details.ocr_target_layouts : [];
   return layouts.flatMap((layout, indexOcr) => {
-    const action = normalizeOcrTargetAction(layout?.action);
-    if (!layout || !["clicar_ir_para_bloco", "confirmar_ir_para_bloco"].includes(action)) return [];
+    if (!layout || typeof layout !== "object") return [];
+    const branches = [];
+    const action = normalizeOcrTargetAction(layout.action);
     const targetBlock = Number(layout.block);
-    if (!Number.isFinite(targetBlock) || targetBlock <= 0) return [];
-    const target = resolveCommandMapTreeTarget(
-      { action: "ir_para_bloco", block: targetBlock, delay: 0 },
-      event,
-      index,
-      events,
-      context,
+
+    if (["clicar_ir_para_bloco", "confirmar_ir_para_bloco"].includes(action)
+      && Number.isFinite(targetBlock) && targetBlock > 0) {
+      const target = resolveCommandMapTreeTarget(
+        { action: "ir_para_bloco", block: targetBlock, delay: 0 },
+        event,
+        index,
+        events,
+        context,
+      );
+      if (target.targetEvent || target.terminal) {
+        branches.push({
+          kind: "ocr_action",
+          ocrColor: OCR_TARGET_COLORS[indexOcr % OCR_TARGET_COLORS.length],
+          ocrIndex: indexOcr,
+          label: `OCR ${indexOcr + 1}`,
+          ...target,
+          editableDelay: "",
+          hideDelay: true,
+        });
+      }
+    }
+
+    const failureAction = normalizeOcrTargetFailureAction(
+      layout.failureAction ?? layout.failure_action,
     );
-    if (!target.targetEvent && !target.terminal) return [];
-    return [{
-      kind: "ocr_action",
-      ocrColor: OCR_TARGET_COLORS[indexOcr % OCR_TARGET_COLORS.length],
-      ocrIndex: indexOcr,
-      label: `OCR ${indexOcr + 1}`,
-      ...target,
-      editableDelay: "",
-      hideDelay: true,
-    }];
+    const failureBlock = Number(
+      layout.failureBlock ?? layout.failure_block ?? layout.bloco_falha,
+    );
+    if (failureAction === "ir_para_bloco" && Number.isFinite(failureBlock) && failureBlock > 0) {
+      const failureTarget = resolveCommandMapTreeTarget(
+        { action: "ir_para_bloco", block: failureBlock, delay: 0 },
+        event,
+        index,
+        events,
+        context,
+      );
+      if (failureTarget.targetEvent || failureTarget.terminal) {
+        branches.push({
+          kind: "failure",
+          ocrIndex: indexOcr,
+          label: `OCR ${indexOcr + 1} nao achou`,
+          ...failureTarget,
+          editableDelay: "",
+          hideDelay: true,
+        });
+      }
+    }
+
+    return branches;
   });
 }
 
@@ -25686,17 +25740,17 @@ commandMapList.addEventListener("change", (event) => {
     }
     if (container?.classList.contains("command-tree-card")) {
       syncCommandMapDraftFromCard(container);
-      scheduleCommandConnectorLayout();
+      scheduleCommandMapRoutePreviewRefresh();
     }
     return;
   }
 
   if (
-    target.matches('[data-tree-field="successBlock"], [data-tree-field="successSequenceDelay"], [data-tree-field="chromeSuccessBlock"], [data-tree-field="chromeSuccessSequenceDelay"], [data-tree-field="failureBlock"], [data-tree-field="failureSequenceDelay"], [data-tree-field="chromeFailureBlock"], [data-tree-field="chromeFailureSequenceDelay"]')
+    target.matches('[data-tree-field="successBlock"], [data-tree-field="successSequenceDelay"], [data-tree-field="chromeSuccessBlock"], [data-tree-field="chromeSuccessSequenceDelay"], [data-tree-field="failureBlock"], [data-tree-field="failureSequenceDelay"], [data-tree-field="ocrFailureBlock"], [data-tree-field="ocrFailureSequenceDelay"], [data-tree-field="chromeFailureBlock"], [data-tree-field="chromeFailureSequenceDelay"]')
   ) {
     const card = target.closest(".command-tree-card");
     syncCommandMapDraftFromCard(card);
-    scheduleCommandConnectorLayout();
+    scheduleCommandMapRoutePreviewRefresh();
     return;
   }
 
