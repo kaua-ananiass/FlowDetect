@@ -10,10 +10,16 @@
     <main class="app-shell">
       <input id="importInput" type="file" accept="application/json,.json" hidden>
       <header class="popup-toolbar">
-        <span>Automa&ccedil;&otilde;es</span>
+        <div class="popup-brand">
+          <img class="popup-brand-icon" src="icons/icon-48.png" alt="">
+          <div>
+            <p class="brand-kicker">FlowDetect para Chrome</p>
+            <h1>Automa&ccedil;&otilde;es</h1>
+          </div>
+        </div>
         <div class="popup-tools">
           <label class="import-automation" for="importInput">Importar</label>
-          <button id="newButton" class="add-automation" type="button">+ Adicionar</button>
+          <button id="newButton" class="add-automation" type="button"><span>+</span> Adicionar</button>
         </div>
       </header>
       <section id="automationList" class="automation-list" aria-live="polite"></section>
@@ -22,23 +28,27 @@
     <template id="automationTemplate">
       <article class="automation-card">
         <div class="automation-card-top">
-          <div class="automation-card-title"><p class="eyebrow automation-source"></p><h1 class="automation-name"></h1></div>
+          <div class="automation-card-title">
+            <div class="automation-card-marker" aria-hidden="true">FD</div>
+            <div class="automation-card-copy"><p class="eyebrow automation-source"></p><h2 class="automation-name"></h2></div>
+          </div>
           <div class="automation-card-actions">
             <span class="step-count"></span>
             <button class="delete-automation" type="button" aria-label="Excluir automacao" title="Excluir automacao">&times;</button>
           </div>
         </div>
         <div class="loop-start" hidden>
-          <span class="loop-start-summary"></span>
-          <label class="loop-start-label">Comecar em <select class="loop-start-choice" aria-label="Elemento inicial do loop"></select></label>
+          <div class="loop-start-copy"><span class="loop-start-kicker">Loop de planilha</span><span class="loop-start-summary"></span></div>
+          <label class="loop-start-label"><span>Come&ccedil;ar em</span><select class="loop-start-choice" aria-label="Elemento inicial do loop"></select></label>
         </div>
-        <button class="play-button run-automation" type="button"><span>&#9654;</span> Executar</button>
+        <button class="play-button run-automation" type="button"><span class="play-icon" aria-hidden="true">&#9654;</span><span>Executar automacao</span></button>
         <section class="execution" hidden>
-          <div class="execution-top"><span class="execution-status"></span><strong class="execution-percent">0%</strong></div>
+          <div class="execution-heading"><p class="execution-kicker">Execu&ccedil;&atilde;o assistida</p><div class="execution-top"><span class="execution-status"></span><strong class="execution-percent">0%</strong></div></div>
           <p class="execution-summary">0 de 0 blocos</p>
-          <div class="progress-track" aria-label="Progresso da automação"><i class="progress-bar"></i></div>
-          <button class="stop-button" type="button" hidden>Parar execução</button>
-          <ul class="run-log" aria-label="Logs da execução" aria-live="polite"></ul>
+          <div class="progress-track" aria-label="Progresso da automacao"><i class="progress-bar"></i></div>
+          <button class="stop-button" type="button" hidden>Parar execucao</button>
+          <div class="run-log-heading"><span>Atividade da execu&ccedil;&atilde;o</span><span>ao vivo</span></div>
+          <ul class="run-log" aria-label="Logs da execucao" aria-live="polite"></ul>
         </section>
       </article>
     </template>
