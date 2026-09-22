@@ -6243,6 +6243,10 @@ function createInsertPanelState(targetOrder, position) {
     sheet: workbookSheetsFor(workbookId)[0]?.name ?? "",
     column: columnsForSheetInWorkbook(workbookId, workbookSheetsFor(workbookId)[0]?.name ?? "")?.[0] ?? "",
     writeValue: "OK",
+    reportStatus: "Concluida",
+    reportTone: "success",
+    reportResult: "Automacao concluida para {{empresa}}.",
+    reportConfirmation: "",
     compareExpectedColumn: columnsForSheetInWorkbook(workbookId, workbookSheetsFor(workbookId)[0]?.name ?? "")?.[0] ?? "",
     compareMode: "texto",
     compareStatusColumn: "",
@@ -9982,6 +9986,20 @@ function renderCompactTreeEditorFields(event) {
     `);
   }
 
+  if (event.type === "resultado_relatorio") {
+    return renderGenericCompactTreeEditor(event, [
+      { label: "Status", value: details.status || "Concluida" },
+      { label: "Resultado", value: details.resultado || "Mensagem padrao" },
+      { label: "Evidencia", value: details.confirmacao || "Nao informada" },
+    ], `
+      ${hiddenTreeField("reportStatus", details.status ?? "Concluida")}
+      ${hiddenTreeField("reportTone", details.tom ?? details.tone ?? "success")}
+      ${hiddenTreeField("reportResult", details.resultado ?? details.result ?? "")}
+      ${hiddenTreeField("reportConfirmation", details.confirmacao ?? details.confirmation ?? "")}
+      ${renderSuccessHiddenTreeFields(details)}
+    `);
+  }
+
   if (event.type === "comparar_planilha_tela") {
     return renderGenericCompactTreeEditor(event, [
       { label: "Esperado", value: details.coluna_esperada || details.column || "Coluna" },
@@ -10428,6 +10446,8 @@ function typeChipLabel(type) {
       return "SEQUENCIA PLANILHA";
     case "escrever_planilha":
       return "ESCREVER PLANILHA";
+    case "resultado_relatorio":
+      return "RESULTADO PDF";
     case "comparar_planilha_tela":
       return "CONFERIR VALOR";
     case "inicio_loop":
@@ -13283,6 +13303,9 @@ function studioControlEventTitle(event = {}) {
   if (event.type === "escrever_planilha") {
     return "Escrever na planilha";
   }
+  if (event.type === "resultado_relatorio") {
+    return "Resultado do relatorio";
+  }
   if (event.type === "comparar_planilha_tela") {
     return "Conferir valor";
   }
@@ -13326,6 +13349,9 @@ function studioControlEventSubtitle(event = {}) {
   if (event.type === "escrever_planilha") {
     return `${details.aba || "aba"} -> ${details.coluna || "coluna"} = ${details.valor || ""}`;
   }
+  if (event.type === "resultado_relatorio") {
+    return `${details.status || "Concluida"}: ${details.resultado || "Mensagem padrao"}`;
+  }
   if (event.type === "comparar_planilha_tela") {
     return `${details.aba || "aba"} -> ${details.coluna_esperada || "coluna"} x OCR`;
   }
@@ -13367,6 +13393,10 @@ function studioControlEventDetails(event = {}) {
     rows.push(["Coluna", details.coluna || "-"]);
     rows.push(["Valor", details.valor || "-"]);
     rows.push(["Linha", "Linha atual do loop"]);
+  } else if (event.type === "resultado_relatorio") {
+    rows.push(["Status", details.status || "Concluida"]);
+    rows.push(["Resultado", details.resultado || "Mensagem padrao"]);
+    rows.push(["Evidencia", details.confirmacao || "-"]);
   } else if (event.type === "comparar_planilha_tela") {
     rows.push(["Arquivo", details.arquivo || "-"]);
     rows.push(["Aba", details.aba || "-"]);
@@ -17712,6 +17742,42 @@ function renderWriteSpreadsheetFields(fieldAttr, details = {}, currentOrder = nu
   `;
 }
 
+function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) {
+  const tone = String(details.tom ?? details.tone ?? "success");
+  return `
+    <div class="field-stack spreadsheet-write-editor">
+      <p class="spreadsheet-write-hint">Registra o resultado da linha atual no PDF. Coloque este bloco no caminho de sucesso ou no caminho de falha que voce quiser documentar.</p>
+      <div class="tree-inline-fields">
+        <label>
+          <span>Status no relatorio</span>
+          <input ${fieldAttr}="reportStatus" type="text" value="${escapeHtml(details.status ?? "Concluida")}" placeholder="Concluida, Sem debitos, Revisar..." />
+        </label>
+        <label>
+          <span>Cor do status</span>
+          <select ${fieldAttr}="reportTone">
+            <option value="success" ${tone === "success" ? "selected" : ""}>Concluido (verde)</option>
+            <option value="info" ${tone === "info" ? "selected" : ""}>Informativo (azul)</option>
+            <option value="warning" ${tone === "warning" ? "selected" : ""}>Revisar (amarelo)</option>
+            <option value="danger" ${tone === "danger" ? "selected" : ""}>Falhou (vermelho)</option>
+          </select>
+        </label>
+      </div>
+      <label>
+        <span>Resultado exibido</span>
+        <textarea ${fieldAttr}="reportResult" rows="2" placeholder="Ex.: Guia emitida com sucesso.">${escapeHtml(details.resultado ?? details.result ?? "")}</textarea>
+      </label>
+      <label>
+        <span>Confirmacao ou evidencia (opcional)</span>
+        <input ${fieldAttr}="reportConfirmation" type="text" value="${escapeHtml(details.confirmacao ?? details.confirmation ?? "")}" placeholder="Ex.: OCR confirmou: Sem debitos" />
+      </label>
+      <p class="spreadsheet-write-hint">Use {{empresa}}, {{linha_atual}} e os nomes das colunas da planilha para montar a mensagem.</p>
+      <div class="tree-inline-fields">
+        ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
+      </div>
+    </div>
+  `;
+}
+
 function renderCompareSpreadsheetFields(fieldAttr, details = {}, currentOrder = null) {
   const workbooks = availableWorkbooks();
   const requestedWorkbookId = details.arquivo || details.workbook || "";
@@ -18107,6 +18173,13 @@ function renderEditorFields(event) {
     `;
   }
 
+  if (event.type === "resultado_relatorio") {
+    return `
+      ${renderReportResultFields("data-field", details, event.order)}
+      ${delayField}
+    `;
+  }
+
   if (event.type === "comparar_planilha_tela") {
     return `
       ${renderCompareSpreadsheetFields("data-field", details, event.order)}
@@ -18373,6 +18446,10 @@ function renderTreeEditorFields(event) {
 
   if (event.type === "escrever_planilha") {
     return renderWriteSpreadsheetFields("data-tree-field", details, event.order);
+  }
+
+  if (event.type === "resultado_relatorio") {
+    return renderReportResultFields("data-tree-field", details, event.order);
   }
 
   if (event.type === "comparar_planilha_tela") {
@@ -18860,6 +18937,12 @@ function renderInsertPanel(order) {
       description: "Para marcar um status ou texto na linha atual do loop.",
       hint: selectedColumn ? `Vai comeÃ§ar escrevendo na coluna ${selectedColumn}.` : "Importe uma planilha para configurar esse bloco.",
     },
+    report_result: {
+      title: "Resultado do relatorio",
+      label: "PDF",
+      description: "Para definir o status, o resultado e a confirmacao da linha atual no relatorio final.",
+      hint: "Coloque no caminho que representa o resultado daquela linha, inclusive em uma falha.",
+    },
     spreadsheet_context: {
       title: "Loop de dados",
       label: "Dados",
@@ -18913,6 +18996,7 @@ function renderInsertPanel(order) {
         <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Planilha</button>
         <button class="insert-type-button ${panel.type === "spreadsheet_context" ? "is-active" : ""}" data-insert-type="spreadsheet_context" type="button" ${panel.isSaving ? "disabled" : ""}>Loop de dados</button>
         <button class="insert-type-button ${panel.type === "write_spreadsheet" ? "is-active" : ""}" data-insert-type="write_spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Escrever celula</button>
+        <button class="insert-type-button ${panel.type === "report_result" ? "is-active" : ""}" data-insert-type="report_result" type="button" ${panel.isSaving ? "disabled" : ""}>Resultado PDF</button>
         <button class="insert-type-button ${panel.type === "compare_spreadsheet" ? "is-active" : ""}" data-insert-type="compare_spreadsheet" type="button" ${panel.isSaving ? "disabled" : ""}>Conferir valor</button>
         <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start" type="button" ${panel.isSaving ? "disabled" : ""}>Inicio loop</button>
         <button class="insert-type-button ${panel.type === "loop_end" ? "is-active" : ""}" data-insert-type="loop_end" type="button" ${panel.isSaving ? "disabled" : ""}>Fim loop</button>
@@ -19262,6 +19346,17 @@ function renderInsertPanel(order) {
       sequencia_sucesso: panel.successSequence,
       atraso_antes_sequencia_sucesso: panel.successSequenceDelay,
     }, order);
+  } else if (panel.type === "report_result") {
+    body = renderReportResultFields("data-insert-field", {
+      status: panel.reportStatus,
+      tom: panel.reportTone,
+      resultado: panel.reportResult,
+      confirmacao: panel.reportConfirmation,
+      ao_sucesso: panel.successAction,
+      bloco_sucesso: panel.successBlock,
+      sequencia_sucesso: panel.successSequence,
+      atraso_antes_sequencia_sucesso: panel.successSequenceDelay,
+    }, order);
   } else {
     body = `
       <div class="tree-inline-fields">
@@ -19314,6 +19409,7 @@ function renderInsertPanel(order) {
         <button class="insert-type-button ${panel.type === "spreadsheet" ? "is-active" : ""}" data-insert-type="spreadsheet">Planilha</button>
         <button class="insert-type-button ${panel.type === "spreadsheet_context" ? "is-active" : ""}" data-insert-type="spreadsheet_context">Loop de dados</button>
         <button class="insert-type-button ${panel.type === "write_spreadsheet" ? "is-active" : ""}" data-insert-type="write_spreadsheet">Escrever celula</button>
+        <button class="insert-type-button ${panel.type === "report_result" ? "is-active" : ""}" data-insert-type="report_result">Resultado PDF</button>
         <button class="insert-type-button ${panel.type === "loop_start" ? "is-active" : ""}" data-insert-type="loop_start">Inicio loop</button>
         <button class="insert-type-button ${panel.type === "loop_end" ? "is-active" : ""}" data-insert-type="loop_end">Fim loop</button>
       </div>
@@ -19826,7 +19922,7 @@ function renderCommandMapCardSegment(event, index = 0, events = [], options = {}
   const isRecognitionCard = event.type === "clicar_imagem";
   const isOcrTextCard = event.type === "procurar_texto_ocr";
   const isInlineExpanded = Number(state.expandedTreeCardOrder) === Number(event.order);
-  const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "comparar_planilha_tela";
+  const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "resultado_relatorio" || event.type === "comparar_planilha_tela";
   const isLoopMarker = isLoopMarkerType(event.type);
   const isRuntimeEditable = event.type === "texto_livre" && Boolean(event.details?.editavel_execucao);
   const isNewlyCreated = Number(state.createdBlockAnimationOrder) === Number(event.order);
@@ -19865,7 +19961,7 @@ function renderCommandMapCardSegment(event, index = 0, events = [], options = {}
           <div class="command-tree-main">
             <span class="command-index">${String(event.order).padStart(2, "0")}</span>
             <div>
-              ${event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "comparar_planilha_tela"
+              ${event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "resultado_relatorio" || event.type === "comparar_planilha_tela"
                 ? `
                   <span class="command-title-row">
                     <span class="type-chip ${escapeHtml(event.type)} command-title-chip">${escapeHtml(event.title)}</span>
@@ -20264,7 +20360,7 @@ function getCommandMapTreeCardLayoutWidth(event = {}) {
   if (Number(state.expandedTreeCardOrder) === Number(event.order)) {
     return 324;
   }
-  if (["clicar_imagem", "procurar_texto_ocr", "sequencia_planilha", "escrever_planilha", "comparar_planilha_tela"].includes(String(event.type || ""))) {
+  if (["clicar_imagem", "procurar_texto_ocr", "sequencia_planilha", "escrever_planilha", "resultado_relatorio", "comparar_planilha_tela"].includes(String(event.type || ""))) {
     return 236;
   }
   if (isLoopMarkerType(event.type)) {
@@ -21376,6 +21472,10 @@ function formValuesFromCard(card) {
     sheet: get("sheet")?.value ?? "",
     column: get("column")?.value ?? "",
     writeValue: get("writeValue")?.value ?? "",
+    reportStatus: get("reportStatus")?.value ?? "Concluida",
+    reportTone: get("reportTone")?.value ?? "success",
+    reportResult: get("reportResult")?.value ?? "",
+    reportConfirmation: get("reportConfirmation")?.value ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
@@ -21521,6 +21621,10 @@ function treeValuesFromCard(card) {
     sheet: get("sheet")?.value ?? "",
     column: get("column")?.value ?? "",
     writeValue: get("writeValue")?.value ?? "",
+    reportStatus: get("reportStatus")?.value ?? "Concluida",
+    reportTone: get("reportTone")?.value ?? "success",
+    reportResult: get("reportResult")?.value ?? "",
+    reportConfirmation: get("reportConfirmation")?.value ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
@@ -22014,6 +22118,16 @@ function commandCardHasUnsavedChanges(snapshot) {
     );
   }
 
+  if (snapshot.type === "resultado_relatorio") {
+    return (
+      normalizeStringValue(values.reportStatus) !== normalizeStringValue(details.status ?? "Concluida")
+      || normalizeStringValue(values.reportTone) !== normalizeStringValue(details.tom ?? details.tone ?? "success")
+      || normalizeStringValue(values.reportResult) !== normalizeStringValue(details.resultado ?? details.result ?? "")
+      || normalizeStringValue(values.reportConfirmation) !== normalizeStringValue(details.confirmacao ?? details.confirmation ?? "")
+      || successFlowChanged(values, details)
+    );
+  }
+
   if (snapshot.type === "comparar_planilha_tela") {
     return (
       normalizeStringValue(values.workbook) !== normalizeStringValue(details.arquivo)
@@ -22359,6 +22473,23 @@ async function invokeCommandCardUpdate(snapshot) {
     });
   }
 
+  if (type === "resultado_relatorio") {
+    return invoke("update_report_result_block", {
+      order,
+      status: values.reportStatus || "Concluida",
+      tom: values.reportTone || "success",
+      resultado: values.reportResult || "",
+      confirmacao: values.reportConfirmation || "",
+      delay: values.delay,
+      aoSucesso: values.successAction,
+      blocoSucesso: optionalPositiveInt(values.successBlock),
+      sequenciaSucesso: values.successAction === "ir_para_sequencia"
+        ? optionalSequenceValue(values.successSequence)
+        : null,
+      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
+    });
+  }
+
   if (type === "comparar_planilha_tela") {
     if (!normalizeStringValue(values.sheet) || !normalizeStringValue(values.compareExpectedColumn)) {
       throw new Error(`Configure a aba e a coluna esperada do bloco ${order} de conferencia.`);
@@ -22654,6 +22785,10 @@ function insertValuesFromPanel(panelElement) {
     sheet: get("sheet")?.value ?? state.insertPanel?.sheet ?? "",
     column: get("column")?.value ?? state.insertPanel?.column ?? "",
     writeValue: get("writeValue")?.value ?? state.insertPanel?.writeValue ?? "OK",
+    reportStatus: get("reportStatus")?.value ?? state.insertPanel?.reportStatus ?? "Concluida",
+    reportTone: get("reportTone")?.value ?? state.insertPanel?.reportTone ?? "success",
+    reportResult: get("reportResult")?.value ?? state.insertPanel?.reportResult ?? "",
+    reportConfirmation: get("reportConfirmation")?.value ?? state.insertPanel?.reportConfirmation ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? state.insertPanel?.compareExpectedColumn ?? state.insertPanel?.column ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? state.insertPanel?.compareOcrSource ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? state.insertPanel?.compareMode ?? "texto",
@@ -27139,6 +27274,35 @@ commandMapList.addEventListener("click", async (event) => {
               pastaDestino: values.downloadDestination,
               nomeArquivo: values.downloadFileName || "",
               timeout: values.downloadTimeout,
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            });
+    } else if (values.type === "report_result") {
+      promiseFactory = () =>
+        isFirstBlock
+          ? invoke("add_report_result_block", {
+              status: values.reportStatus || "Concluida",
+              tom: values.reportTone || "success",
+              resultado: values.reportResult || "",
+              confirmacao: values.reportConfirmation || "",
+              delay: common.delay,
+              sequencia: currentSequenceName(),
+              aoSucesso: common.aoSucesso,
+              blocoSucesso: common.blocoSucesso,
+              sequenciaSucesso: common.sequenciaSucesso,
+              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
+            })
+          : invoke("insert_report_result_block", {
+              targetOrder: common.targetOrder,
+              position: common.position,
+              status: values.reportStatus || "Concluida",
+              tom: values.reportTone || "success",
+              resultado: values.reportResult || "",
+              confirmacao: values.reportConfirmation || "",
               delay: common.delay,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
