@@ -8,49 +8,24 @@
   </head>
   <body>
     <main class="app-shell">
-      <header class="hero">
-        <div class="brand-row">
-          <div class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></div>
-          <div><p class="eyebrow">FLOWDETECT</p><h1>Execução no Chrome</h1></div>
-          <span class="live-chip"><b></b> ATIVO</span>
-        </div>
-        <p class="hero-copy">Automatize a aba atual com blocos do Studio, OCR da página e reconhecimento visual.</p>
-        <div class="tab-context"><span class="tab-context-label">ABA ATUAL</span><strong id="activeTabName">Conectando à aba…</strong></div>
-      </header>
-
-      <section class="overview" aria-label="Recursos da extensão">
-        <article class="metric-card"><span class="metric-symbol play">▶</span><strong id="automationCount">0</strong><small>automações</small></article>
-        <article class="metric-card"><span class="metric-symbol ocr">OCR</span><strong id="ocrCount">0</strong><small>blocos OCR</small></article>
-        <article class="metric-card"><span class="metric-symbol visual">◉</span><strong id="visualCount">0</strong><small>visuais</small></article>
-      </section>
-
-      <section class="library-section" aria-label="Automações">
-        <div class="section-heading"><div><p class="eyebrow">BIBLIOTECA</p><h2>Automações prontas</h2></div><span id="libraryCount" class="count-badge">0</span></div>
-        <div class="toolbar" aria-label="Ações da biblioteca">
-          <label class="button primary" for="importInput"><span>+</span> Importar do Studio</label>
-          <input id="importInput" type="file" accept="application/json,.json" hidden>
-          <button id="newButton" class="button icon-button" type="button" title="Criar rascunho">＋</button>
-        </div>
-        <section id="automationList" class="automation-list" aria-live="polite"></section>
-      </section>
-
-      <section class="run-panel" aria-label="Execução atual">
-        <div class="run-panel-top"><div><p class="eyebrow">EXECUÇÃO ASSISTIDA</p><h2 id="runTitle">Pronto para executar</h2></div><span id="runStatus" class="status-chip ready">Pronto</span></div>
-        <p id="runProgress" class="run-progress">Selecione uma automação e execute na aba aberta.</p>
-        <div class="progress-track" aria-hidden="true"><i id="progressBar"></i></div>
-        <div class="run-actions"><button id="captureButton" class="button secondary" type="button">Ver aba</button><button id="stopButton" class="button danger" type="button">Parar</button></div>
-        <img id="tabPreview" class="tab-preview" alt="Preview da aba atual" hidden>
-        <ul id="runLog" class="run-log" aria-live="polite"></ul>
-      </section>
+      <input id="importInput" type="file" accept="application/json,.json" hidden>
+      <section id="automationList" class="automation-list" aria-live="polite"></section>
     </main>
 
     <template id="automationTemplate">
       <article class="automation-card">
-        <div class="automation-card-top"><span class="automation-index"></span><div class="automation-card-title"><p class="eyebrow automation-source"></p><h2 class="automation-name"></h2></div><span class="step-count"></span></div>
-        <p class="automation-description"></p>
-        <div class="step-preview" aria-label="Tipos de blocos exportados"></div>
-        <p class="automation-warning" hidden></p>
-        <div class="automation-actions"><button class="button primary run-automation" type="button"><span>▶</span> Executar</button><button class="text-button export-automation" type="button">Exportar</button><button class="text-button delete-automation" type="button">Excluir</button></div>
+        <div class="automation-card-top">
+          <div class="automation-card-title"><p class="eyebrow automation-source"></p><h1 class="automation-name"></h1></div>
+          <span class="step-count"></span>
+        </div>
+        <button class="play-button run-automation" type="button"><span>&#9654;</span> Executar</button>
+        <section class="execution" hidden>
+          <div class="execution-top"><span class="execution-status"></span><strong class="execution-percent">0%</strong></div>
+          <p class="execution-summary">0 de 0 blocos</p>
+          <div class="progress-track" aria-label="Progresso da automacao"><i class="progress-bar"></i></div>
+          <button class="stop-button" type="button" hidden>Parar execucao</button>
+          <ul class="run-log" aria-label="Logs da execucao" aria-live="polite"></ul>
+        </section>
       </article>
     </template>
     <script src="sidepanel.js"></script>
