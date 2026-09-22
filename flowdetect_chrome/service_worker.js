@@ -270,6 +270,61 @@ async function executePageStep(run, step) {
   return response.message || "Etapa concluída.";
 }
 
+function normalizedOcrTargetAction(value) {
+  const action = String(value || "continuar").trim().toLowerCase();
+  if (["continue", "seguir"].includes(action)) return "continuar";
+  if (["click", "clique"].includes(action)) return "clicar";
+  if (["click_and_jump", "click_goto", "clicar_e_ir_para_bloco"].includes(action)) return "clicar_ir_para_bloco";
+  if (["confirm_and_jump", "confirm_goto", "confirmar_e_ir_para_bloco", "ir_para_bloco", "bloco", "navegar"].includes(action)) return "confirmar_ir_para_bloco";
+  return action || "continuar";
+}
+
+async function executeOcrTargets(run, step) {
+  const targets = Array.isArray(step.ocr_targets)
+    ? step.ocr_targets.filter((target) => String(target?.text || "").trim())
+    : [];
+  if (!targets.length) return null;
+
+  for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
+    const target = targets[targetIndex];
+    const isLastTarget = targetIndex === targets.length - 1;
+    const action = normalizedOcrTargetAction(target.action);
+    const targetStep = {
+      ...step,
+      ...target,
+      type: "ocr_text",
+      text: String(target.text || "").trim(),
+      click: Boolean(target.click),
+      clicks: Math.max(1, Number(target.clicks || 1)),
+      ocr_targets: undefined
+    };
+
+    try {
+      const message = await executePageStep(run, targetStep);
+      if (action === "continuar" && !isLastTarget) {
+        await addLog(run, `OCR ${targetIndex + 1} confirmado; procurando OCR ${targetIndex + 2} conforme a regra do bloco.`, "info");
+        continue;
+      }
+      return { message, flow: target.on_success || step.on_success };
+    } catch (error) {
+      const flow = target.on_failure || step.on_failure;
+      const detail = `OCR ${targetIndex + 1} nao encontrou o texto: ${targetStep.text}.`;
+      if (String(flow?.action || "continuar").toLowerCase() === "continuar" && !isLastTarget) {
+        await addLog(run, `${detail} Procurando OCR ${targetIndex + 2} conforme a regra do bloco.`, "warning");
+        continue;
+      }
+      if (flowContinues(flow)) {
+        await addLog(run, `${detail} ${flowLabel(flow)}`, "warning");
+        return { message: detail, flow };
+      }
+      error.message = `${detail} Regra configurada: parar automacao.`;
+      error.flowdetectOcrTargetFailure = true;
+      throw error;
+    }
+  }
+  throw new Error("Nenhum OCR configurado confirmou o alvo.");
+}
+
 async function executeStep(run, rawStep) {
   const step = replaceVariables(rawStep, run.variables);
   if (step.delay_ms) await sleep(Number(step.delay_ms));
@@ -282,6 +337,9 @@ async function executeStep(run, rawStep) {
   if (step.type === "visual_match") return executeVisualMatch(run, step);
   if (step.type === "visual_state") return executeVisualState(run, step);
   if (step.type === "key_sequence") return executePageStep(run, step);
+  if (step.type === "ocr_text" && Array.isArray(step.ocr_targets) && step.ocr_targets.length) {
+    return executeOcrTargets(run, step);
+  }
   if (step.type === "data_source") {
     const source = {
       name: step.name || "valor",
@@ -492,6 +550,7 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       if (nextIndex !== indexes.nextByIndex.get(index)) await addLog(run, flowLabel(flow), "info");
       index = nextIndex;
     } catch (error) {
+      if (error?.flowdetectOcrTargetFailure) throw error;
       if (!flowContinues(step.on_failure)) throw error;
       const nextIndex = actionToIndex(step.on_failure, indexes, indexes.nextByIndex.get(index));
       await addLog(run, `${String(error?.message || error)} ${flowLabel(step.on_failure)}`, "warning");

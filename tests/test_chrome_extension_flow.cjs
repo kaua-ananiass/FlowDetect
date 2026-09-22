@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
+const names = ["loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -123,6 +123,77 @@ test("Chrome runner applies the selected row to loops with start and end markers
 
   assert.deepEqual(executed, ["03", "04"]);
   assert.equal(run.spreadsheetStartRow, 3);
+});
+
+test("Chrome runner follows the failure route of each OCR target", async () => {
+  const logs = [];
+  const queried = [];
+  const context = runner({
+    addLog: async (_run, message, level) => logs.push({ message, level }),
+    executePageStep: async (_run, step) => {
+      queried.push(step.text);
+      if (step.text === "Competencia") throw new Error("Nao encontrado");
+      return `OCR encontrou ${step.text}.`;
+    },
+  });
+
+  const result = await context.executeOcrTargets({}, {
+    on_success: { action: "continuar" },
+    on_failure: { action: "parar" },
+    ocr_targets: [
+      {
+        text: "Competencia",
+        action: "continuar",
+        on_success: { action: "continuar" },
+        on_failure: { action: "continuar" },
+      },
+      {
+        text: "09/2026",
+        action: "confirmar_ir_para_bloco",
+        on_success: { action: "ir_para_bloco", block: "15" },
+        on_failure: { action: "ir_para_bloco", block: "12" },
+      },
+    ],
+  });
+
+  assert.deepEqual(queried, ["Competencia", "09/2026"]);
+  assert.equal(result.flow.action, "ir_para_bloco");
+  assert.equal(result.flow.block, "15");
+  assert.match(logs[0].message, /Procurando OCR 2/);
+});
+
+test("Chrome runner routes the final failed OCR instead of using the card failure", async () => {
+  const logs = [];
+  const context = runner({
+    addLog: async (_run, message, level) => logs.push({ message, level }),
+    executePageStep: async (_run, step) => {
+      if (step.text === "OCR 1") return "OCR 1 confirmado.";
+      throw new Error("Nao encontrado");
+    },
+  });
+
+  const result = await context.executeOcrTargets({}, {
+    on_success: { action: "continuar" },
+    on_failure: { action: "parar" },
+    ocr_targets: [
+      {
+        text: "OCR 1",
+        action: "continuar",
+        on_success: { action: "continuar" },
+        on_failure: { action: "continuar" },
+      },
+      {
+        text: "OCR 2",
+        action: "confirmar_ir_para_bloco",
+        on_success: { action: "ir_para_bloco", block: "15" },
+        on_failure: { action: "ir_para_bloco", block: "12" },
+      },
+    ],
+  });
+
+  assert.equal(result.flow.action, "ir_para_bloco");
+  assert.equal(result.flow.block, "12");
+  assert.match(logs.at(-1).message, /bloco 12/i);
 });
 
 test("Chrome runner advances the spreadsheet row when a flow returns to its first block", async () => {

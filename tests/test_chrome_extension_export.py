@@ -216,6 +216,45 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertEqual(exported["steps"][0]["clicks"], 2)
         self.assertFalse(exported["warnings"])
 
+    def test_exports_each_route_of_multiple_ocr_targets(self):
+        automation_id = "auto_multiple_ocr_routes"
+        payload = self.roadmap.criar_payload_vazio()
+        payload["eventos"] = [{
+            "ordem": 9,
+            "sequencia": "principal",
+            "tipo": "clicar_imagem",
+            "detalhes": {
+                "modo_reconhecimento": "texto_ocr",
+                "texto_ocr_busca": "Competencia\n09/2026",
+                "acao_ocr": "clicar",
+                "ao_nao_encontrar": "parar",
+                "ocr_target_layouts": [
+                    {
+                        "texto": "Competencia",
+                        "action": "continuar",
+                        "failureAction": "continuar",
+                    },
+                    {
+                        "texto": "09/2026",
+                        "action": "confirmar_ir_para_bloco",
+                        "block": "15",
+                        "failureAction": "ir_para_bloco",
+                        "failureBlock": "12",
+                    },
+                ],
+            },
+        }]
+        self.roadmap.salvar_payload_em_automacao(automation_id, payload, incluir_recursos=False)
+
+        result = self.roadmap.exportar_automacao_para_chrome(automation_id, {"nome": "Rotas OCR"})
+        exported = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+        step = exported["steps"][0]
+
+        self.assertEqual([target["text"] for target in step["ocr_targets"]], ["Competencia", "09/2026"])
+        self.assertEqual(step["ocr_targets"][0]["on_failure"], {"action": "continuar", "block": "", "sequence": ""})
+        self.assertEqual(step["ocr_targets"][1]["on_success"], {"action": "ir_para_bloco", "block": "15", "sequence": ""})
+        self.assertEqual(step["ocr_targets"][1]["on_failure"], {"action": "ir_para_bloco", "block": "12", "sequence": ""})
+
 
 if __name__ == "__main__":
     unittest.main()

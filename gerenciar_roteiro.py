@@ -697,21 +697,14 @@ def fluxo_configurado_para_chrome(configuracao, padrao="continuar"):
 
 
 def alvo_ocr_individual_para_chrome(detalhes):
-    """Retorna a regra do unico OCR configurado dentro de um bloco visual.
-
-    Na interface "Acoes por OCR", cada alvo pode ter uma rota diferente. A
-    extensao executa um alvo por etapa; portanto a regra e transferida quando
-    o bloco possui exatamente um OCR. Blocos com varios alvos continuam com a
-    rota geral do card, para nunca adivinhar qual deles deve decidir o salto.
-    """
+    """Retorna a regra do unico OCR configurado dentro de um bloco visual."""
     layouts = detalhes.get("ocr_target_layouts") if isinstance(detalhes, dict) else []
     layouts = [layout for layout in (layouts or []) if isinstance(layout, dict)]
     return layouts[0] if len(layouts) == 1 else {}
 
 
-def fluxo_ocr_individual_para_chrome(detalhes, fluxo_padrao, resultado="sucesso"):
-    """Converte a decisao do OCR individual para o fluxo da extensao."""
-    alvo = alvo_ocr_individual_para_chrome(detalhes)
+def fluxo_alvo_ocr_para_chrome(alvo, fluxo_padrao, resultado="sucesso"):
+    """Converte a rota de um alvo OCR para o formato da extensao Chrome."""
     if not alvo:
         return fluxo_padrao
 
@@ -727,6 +720,8 @@ def fluxo_ocr_individual_para_chrome(detalhes, fluxo_padrao, resultado="sucesso"
         "interromper": "parar",
         "bloco": "ir_para_bloco",
         "navegar": "ir_para_bloco",
+        "goto": "ir_para_bloco",
+        "jump": "ir_para_bloco",
         "clicar_ir_para_bloco": "ir_para_bloco",
         "clicar_e_ir_para_bloco": "ir_para_bloco",
         "confirmar_ir_para_bloco": "ir_para_bloco",
@@ -738,6 +733,59 @@ def fluxo_ocr_individual_para_chrome(detalhes, fluxo_padrao, resultado="sucesso"
     if resultado == "falha" and acao in {"continuar", "parar", "ir_para_sequencia"}:
         return {"action": acao, "block": bloco, "sequence": ""}
     return fluxo_padrao
+
+
+def fluxo_ocr_individual_para_chrome(detalhes, fluxo_padrao, resultado="sucesso"):
+    """Converte a decisao do unico OCR para o fluxo da extensao."""
+    return fluxo_alvo_ocr_para_chrome(
+        alvo_ocr_individual_para_chrome(detalhes),
+        fluxo_padrao,
+        resultado,
+    )
+
+
+def acao_alvo_ocr_para_chrome(alvo):
+    """Normaliza a acao visual de um alvo OCR sem perder a intencao de clique."""
+    acao = str((alvo or {}).get("action", (alvo or {}).get("acao", "continuar")) or "continuar").strip().lower()
+    aliases = {
+        "click": "clicar",
+        "clique": "clicar",
+        "click_and_jump": "clicar_ir_para_bloco",
+        "click_goto": "clicar_ir_para_bloco",
+        "clicar_e_ir_para_bloco": "clicar_ir_para_bloco",
+        "confirm_and_jump": "confirmar_ir_para_bloco",
+        "confirm_goto": "confirmar_ir_para_bloco",
+        "confirmar_e_ir_para_bloco": "confirmar_ir_para_bloco",
+        "ir_para_bloco": "confirmar_ir_para_bloco",
+        "bloco": "confirmar_ir_para_bloco",
+        "navegar": "confirmar_ir_para_bloco",
+    }
+    return aliases.get(acao, acao or "continuar")
+
+
+def alvos_ocr_para_chrome(detalhes, passo):
+    """Exporta cada OCR do card para que o Chrome respeite suas rotas proprias."""
+    layouts = detalhes.get("ocr_target_layouts") if isinstance(detalhes, dict) else []
+    layouts = [layout for layout in (layouts or []) if isinstance(layout, dict)]
+    if len(layouts) < 2:
+        return []
+
+    alvos = []
+    for indice, layout in enumerate(layouts, start=1):
+        texto = str(layout.get("texto", layout.get("text", layout.get("ocrText", ""))) or "").strip()
+        if not texto:
+            continue
+        acao = acao_alvo_ocr_para_chrome(layout)
+        alvos.append({
+            "index": indice,
+            "text": texto,
+            "action": acao,
+            "click": acao in {"clicar", "clicar_ir_para_bloco"},
+            "clicks": max(1, int(layout.get("clicks", layout.get("cliques", passo.get("clicks", 1))) or 1)),
+            "on_success": fluxo_alvo_ocr_para_chrome(layout, passo.get("on_success", {}), "sucesso"),
+            "on_failure": fluxo_alvo_ocr_para_chrome(layout, passo.get("on_failure", {}), "falha"),
+        })
+    return alvos if len(alvos) >= 2 else []
 
 
 def aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes):
@@ -885,6 +933,10 @@ def converter_evento_para_chrome(evento):
             imagem_visual, _ = recurso_imagem_para_chrome(detalhes.get("imagem"))
             if imagem_visual:
                 passo["visual_fallback"] = imagem_visual
+            alvos = alvos_ocr_para_chrome(detalhes, passo)
+            if alvos:
+                passo["ocr_targets"] = alvos
+                return passo, None
             return aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes), None
         imagem, erro = recurso_imagem_para_chrome(detalhes.get("imagem"))
         if not imagem:
