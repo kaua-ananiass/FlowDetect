@@ -17800,12 +17800,14 @@ function renderWriteSpreadsheetFields(fieldAttr, details = {}, currentOrder = nu
 function reportColumnChoices(details = {}, currentOrder = null) {
   const events = Array.isArray(state.roadmap?.events) ? state.roadmap.events : [];
   const current = Number(currentOrder || 0);
+  const isSpreadsheetLoop = (event) => String(event?.type ?? event?.tipo ?? "") === "sequencia_planilha";
+  const eventOrder = (event) => Number(event?.order ?? event?.ordem ?? 0);
   const candidates = events
-    .filter((event) => event?.type === "sequencia_planilha")
-    .filter((event) => !current || Number(event.order || 0) <= current)
-    .sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
-  const loop = candidates.at(-1) || events.find((event) => event?.type === "sequencia_planilha");
-  const loopDetails = loop?.detalhes || {};
+    .filter(isSpreadsheetLoop)
+    .filter((event) => !current || eventOrder(event) <= current)
+    .sort((left, right) => eventOrder(left) - eventOrder(right));
+  const loop = candidates.at(-1) || events.find(isSpreadsheetLoop);
+  const loopDetails = loop?.details || loop?.detalhes || {};
   const workbookId = resolveWorkbookId(loopDetails.arquivo || loopDetails.workbook || state.composerWorkbookId || "");
   const sheet = String(loopDetails.aba || loopDetails.sheet || workbookSheetsFor(workbookId)[0]?.name || "");
   const selectedColumn = String(details.coluna_relatorio ?? details.report_column ?? "").trim();
@@ -17817,11 +17819,11 @@ function reportColumnChoices(details = {}, currentOrder = null) {
 
   return {
     sourceName,
-    loopLabel: loop ? `${sourceName} (${sheet || "planilha"})` : "Nenhum loop de planilha configurado",
+    loopLabel: loop ? `Loop da planilha: ${sourceName} (${sheet || "planilha"})` : "Nenhum loop de planilha configurado",
     hasColumns: available.length > 0,
     companyOptions: (value) => [
-      `<option value="" ${value ? "" : "selected"}>Coluna do loop: ${escapeHtml(sourceName)}</option>`,
-      ...available.map((column) => `<option value="${escapeHtml(column)}" ${column === value ? "selected" : ""}>Coluna: ${escapeHtml(column)}</option>`),
+      `<option value="" ${value ? "" : "selected"}>Coluna do loop da planilha: ${escapeHtml(sourceName)}</option>`,
+      ...available.map((column) => `<option value="${escapeHtml(column)}" ${column === value ? "selected" : ""}>Coluna da planilha: ${escapeHtml(column)}</option>`),
     ].join(""),
   };
 }
@@ -17842,7 +17844,7 @@ function syncReportResultPreview(container) {
   if (companyCaption) {
     companyCaption.textContent = companyColumn
       ? `Coluna ${companyColumn} da linha atual`
-      : `Coluna do loop: ${sourceName}`;
+      : `Coluna do loop da planilha: ${sourceName}`;
   }
 
   preview.dataset.reportTone = safeTone;
@@ -17891,7 +17893,7 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
             <div class="report-document-field report-document-company">
               <span>Empresa no PDF</span>
               <select ${fieldAttr}="reportColumn" aria-label="Coluna da empresa no PDF">${reportColumns.companyOptions(companyColumn)}</select>
-              <small data-report-company-caption>${escapeHtml(companyColumn ? `Coluna ${companyColumn} da linha atual` : `Coluna do loop: ${reportColumns.sourceName}`)}</small>
+              <small data-report-company-caption>${escapeHtml(companyColumn ? `Coluna ${companyColumn} da linha atual` : `Coluna do loop da planilha: ${reportColumns.sourceName}`)}</small>
             </div>
             <div class="report-document-field report-document-result">
               <span>Resultado no PDF</span>
