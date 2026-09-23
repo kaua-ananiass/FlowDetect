@@ -1600,6 +1600,12 @@ function clearCommandMapTreeReferenceLayer(tree) {
   tree?.querySelectorAll(".command-map-tree-link-layer").forEach((layer) => layer.remove());
 }
 
+function commandMapTreeEnergyAnimationDelay(duration = 1.55) {
+  const durationMs = Math.max(100, Math.round(Number(duration || 1.55) * 1000));
+  const phaseMs = Date.now() % durationMs;
+  return `-${(phaseMs / 1000).toFixed(3)}s`;
+}
+
 function createCommandMapTreeLinkEnergy(pathData, kind = "success", duration = 1.55) {
   const normalizedKind = String(kind || "success").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "success";
   const normalizedPath = String(pathData || "").trim();
@@ -1610,6 +1616,9 @@ function createCommandMapTreeLinkEnergy(pathData, kind = "success", duration = 1
   energy.className = `command-map-tree-link-energy is-${normalizedKind}`;
   energy.setAttribute("aria-hidden", "true");
   energy.style.setProperty("--tree-energy-duration", `${duration}s`);
+  // As conexoes sao recalculadas quando o mapa muda. Atrasar a animacao pela
+  // fase atual impede que o ponto volte ao inicio a cada nova camada.
+  energy.style.setProperty("--tree-energy-delay", commandMapTreeEnergyAnimationDelay(duration));
   energy.style.offsetPath = `path("${normalizedPath.replace(/"/g, "'")}")`;
   energy.style.offsetRotate = "0deg";
   return energy;
@@ -2085,7 +2094,8 @@ function setCommandMapZoom(nextZoom, options = {}) {
     commandMapList.scrollLeft = Math.max(0, anchor.x * state.commandMapZoom - point.x);
     commandMapList.scrollTop = Math.max(0, anchor.y * state.commandMapZoom - point.y);
   }
-  scheduleCommandConnectorLayout({ burstMs: 180 });
+  // O zoom escala o proprio plano da arvore. Recriar as conexoes aqui removia
+  // e recriava os pontos animados em cada entalhe do mouse, causando travadas.
   if (!options.suppressFocusCenter && state.activeTab === "commands" && state.commandMapFocusOrder) {
     requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
   }

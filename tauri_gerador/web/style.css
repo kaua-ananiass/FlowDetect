@@ -9710,6 +9710,7 @@ label span {
   pointer-events: none;
   will-change: offset-distance;
   animation: command-map-tree-energy-flow var(--tree-energy-duration, 1.55s) linear infinite;
+  animation-delay: var(--tree-energy-delay, 0s);
 }
 
 .command-map-tree-link-energy.is-failure {
