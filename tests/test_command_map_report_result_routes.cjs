@@ -53,6 +53,7 @@ test("report-result draft immediately exposes its selected block route in the ma
     reportTone: "info",
     reportResult: "Nenhum debito encontrado.",
     reportConfirmation: "Alerta confirmado.",
+    reportColumn: "Empresa",
     successAction: "ir_para_bloco",
     successBlock: "18",
     successSequence: "",
@@ -66,6 +67,7 @@ test("report-result draft immediately exposes its selected block route in the ma
 
   assert.equal(updated.details.status, "Sem debitos");
   assert.equal(updated.details.tom, "info");
+  assert.equal(updated.details.coluna_relatorio, "Empresa");
   assert.equal(updated.details.ao_sucesso, "ir_para_bloco");
   assert.equal(updated.details.bloco_sucesso, 18);
   assert.deepEqual(

@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "recordReportResult", "replaceVariables", "setSpreadsheetRowVariables", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
+const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "spreadsheetRowData", "spreadsheetColumnValue", "recordReportResult", "replaceVariables", "setSpreadsheetRowVariables", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -49,6 +49,31 @@ test("the report-result block records its configured status, message and evidenc
   assert.equal(row.tone, "info");
   assert.equal(row.result, "Nao ha debitos para a empresa.");
   assert.equal(row.confirmation, "Alerta confirmado na tela.");
+});
+
+test("the selected report column identifies the row and replaces the report alias", () => {
+  const context = runner();
+  const run = { variables: {}, report: { sourceName: "CNPJ", rows: [], summary: {} } };
+  const source = {
+    name: "CNPJ",
+    values: ["03943209000187"],
+    rows: [{ Empresa: "Empresa Modelo", CNPJ: "03943209000187" }],
+  };
+
+  context.setSpreadsheetRowVariables(run, source, 0);
+  run.spreadsheetLoop = { rowData: source.rows[0] };
+  context.beginReportRow(run, { index: 1, value: run.variables.CNPJ, sourceName: "CNPJ", total: 1 });
+  context.recordReportResult(run, {
+    status: "Concluida",
+    tone: "success",
+    result: context.replaceVariables("Automacao concluida para {{empresa}}.", { ...run.variables, empresa: source.rows[0].Empresa }),
+    report_column: "Empresa",
+  });
+
+  const row = JSON.parse(JSON.stringify(run.report.rows[0]));
+  assert.equal(run.report.sourceName, "Empresa");
+  assert.equal(row.value, "Empresa Modelo");
+  assert.equal(row.result, "Automacao concluida para Empresa Modelo.");
 });
 
 test("spreadsheet aliases replace the default report message with the current item", () => {

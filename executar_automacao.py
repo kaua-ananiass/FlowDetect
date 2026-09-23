@@ -5397,6 +5397,8 @@ class ExecutorAutomacao:
         tom="success",
         resultado="",
         confirmacao="",
+        coluna_relatorio="",
+        item_relatorio="",
     ):
         """Guarda o resultado escolhido pelo bloco para a iteracao atual.
 
@@ -5418,6 +5420,8 @@ class ExecutorAutomacao:
             "tom": tom_normalizado,
             "resultado": str(resultado or "").strip(),
             "confirmacao": str(confirmacao or "").strip(),
+            "coluna_relatorio": str(coluna_relatorio or "").strip(),
+            "item_relatorio": str(item_relatorio or "").strip(),
         }
 
     def registrar_resultado_relatorio_loop(
@@ -5452,7 +5456,8 @@ class ExecutorAutomacao:
             {
                 "indice": int(indice) + 1,
                 "linha": int(linha_referencia) if linha_referencia not in (None, "") else None,
-                "empresa": str(empresa or "").strip(),
+                "empresa": str(marcacao.get("item_relatorio") or empresa or "").strip(),
+                "coluna_relatorio": str(marcacao.get("coluna_relatorio") or "").strip(),
                 "sucesso": sucesso,
                 "erro": erro,
                 "status": str(marcacao.get("status") or status_padrao).strip(),
@@ -5635,9 +5640,15 @@ class ExecutorAutomacao:
             pdf.drawString(x, card_y + 12, str(numero))
         y = card_y - 28
 
+        coluna_relatorio = str(relatorio.get("coluna_relatorio") or "").strip()
+        if not coluna_relatorio:
+            coluna_relatorio = next(
+                (str(item.get("coluna_relatorio") or "").strip() for item in resultados if str(item.get("coluna_relatorio") or "").strip()),
+                "EMPRESA",
+            )
         colunas = [
             ("LINHA", 39),
-            ("EMPRESA", 185),
+            (coluna_relatorio.upper()[:22] or "EMPRESA", 185),
             ("RESULTADO", 184),
             ("HORARIO", 60),
             ("STATUS", 82),
@@ -7197,9 +7208,18 @@ class ExecutorAutomacao:
             )
             return self.resultado_sucesso_evento(evento)
 
-        status = self.substituir_variaveis_texto(str(detalhes.get("status") or "Concluida"), contexto_loop)
-        resultado = self.substituir_variaveis_texto(str(detalhes.get("resultado") or ""), contexto_loop)
-        confirmacao = self.substituir_variaveis_texto(str(detalhes.get("confirmacao") or ""), contexto_loop)
+        coluna_relatorio = str(detalhes.get("coluna_relatorio") or detalhes.get("report_column") or "").strip()
+        contexto_relatorio = dict(contexto_loop)
+        item_relatorio = ""
+        if coluna_relatorio:
+            linha_atual = self.obter_contexto_linha_loop(contexto_loop)
+            item_relatorio = str(linha_atual.get(coluna_relatorio) or "").strip() if isinstance(linha_atual, dict) else ""
+            if item_relatorio:
+                contexto_relatorio["empresa"] = item_relatorio
+
+        status = self.substituir_variaveis_texto(str(detalhes.get("status") or "Concluida"), contexto_relatorio)
+        resultado = self.substituir_variaveis_texto(str(detalhes.get("resultado") or ""), contexto_relatorio)
+        confirmacao = self.substituir_variaveis_texto(str(detalhes.get("confirmacao") or ""), contexto_relatorio)
         tom = str(detalhes.get("tom") or "success").strip().lower()
         self.registrar_marcacao_relatorio_loop(
             indice=indice,
@@ -7207,6 +7227,8 @@ class ExecutorAutomacao:
             tom=tom,
             resultado=resultado,
             confirmacao=confirmacao,
+            coluna_relatorio=coluna_relatorio,
+            item_relatorio=item_relatorio,
         )
         linha = contexto_loop.get("linha_referencia", contexto_loop.get("linha_atual", "-"))
         safe_print(

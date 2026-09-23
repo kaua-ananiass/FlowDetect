@@ -23,6 +23,24 @@ class LoopReportStatusTest(unittest.TestCase):
         self.assertEqual(result["tom"], "warning")
         self.assertEqual(result["resultado"], "Execucao interrompida pelo usuario.")
 
+    def test_selected_report_column_replaces_the_default_loop_item(self):
+        self.executor.registrar_marcacao_relatorio_loop(
+            indice=0,
+            status="Concluida",
+            coluna_relatorio="Empresa",
+            item_relatorio="Empresa Modelo",
+        )
+        self.executor.registrar_resultado_relatorio_loop(
+            indice=0,
+            linha_referencia=2,
+            empresa="03943209000187",
+            sucesso=True,
+        )
+
+        result = self.executor._relatorio_loop["resultados"][0]
+        self.assertEqual(result["empresa"], "Empresa Modelo")
+        self.assertEqual(result["coluna_relatorio"], "Empresa")
+
     def test_result_block_values_are_preserved_in_the_pdf_row(self):
         self.executor.registrar_marcacao_relatorio_loop(
             indice=0,

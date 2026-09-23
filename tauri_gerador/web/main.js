@@ -4523,6 +4523,7 @@ function applyCommandMapDraftToEvent(event) {
     details.tom = values.reportTone ?? details.tom ?? details.tone ?? "success";
     details.resultado = values.reportResult ?? details.resultado ?? details.result ?? "";
     details.confirmacao = values.reportConfirmation ?? details.confirmacao ?? details.confirmation ?? "";
+    details.coluna_relatorio = values.reportColumn ?? details.coluna_relatorio ?? details.report_column ?? "";
     applySuccessFlowDraft(details, values);
     return nextEvent;
   }
@@ -6275,6 +6276,7 @@ function createInsertPanelState(targetOrder, position) {
     reportTone: "success",
     reportResult: "Automacao concluida para {{empresa}}.",
     reportConfirmation: "",
+    reportColumn: "",
     compareExpectedColumn: columnsForSheetInWorkbook(workbookId, workbookSheetsFor(workbookId)[0]?.name ?? "")?.[0] ?? "",
     compareMode: "texto",
     compareStatusColumn: "",
@@ -10018,12 +10020,14 @@ function renderCompactTreeEditorFields(event) {
       { label: "Status", value: details.status || "Concluida" },
       { label: "Resultado", value: details.resultado || "Mensagem padrao" },
       { label: "Evidencia", value: details.confirmacao || "Nao informada" },
+      { label: "Coluna no PDF", value: details.coluna_relatorio || "Valor atual do loop" },
       { label: "Depois de registrar", value: formatFlowActionLabel(details.ao_sucesso || "continuar", details.bloco_sucesso, details.sequencia_sucesso) },
     ], `
       ${hiddenTreeField("reportStatus", details.status ?? "Concluida")}
       ${hiddenTreeField("reportTone", details.tom ?? details.tone ?? "success")}
       ${hiddenTreeField("reportResult", details.resultado ?? details.result ?? "")}
       ${hiddenTreeField("reportConfirmation", details.confirmacao ?? details.confirmation ?? "")}
+      ${hiddenTreeField("reportColumn", details.coluna_relatorio ?? details.report_column ?? "")}
       ${renderSuccessHiddenTreeFields(details)}
     `);
   }
@@ -17770,8 +17774,32 @@ function renderWriteSpreadsheetFields(fieldAttr, details = {}, currentOrder = nu
   `;
 }
 
+function reportColumnChoices(details = {}, currentOrder = null) {
+  const events = Array.isArray(state.roadmap?.events) ? state.roadmap.events : [];
+  const current = Number(currentOrder || 0);
+  const loops = events
+    .filter((event) => event?.type === "sequencia_planilha")
+    .filter((event) => !current || Number(event.order || 0) <= current)
+    .sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
+  const loop = loops.at(-1) || events.find((event) => event?.type === "sequencia_planilha");
+  const loopDetails = loop?.detalhes || {};
+  const workbookId = resolveWorkbookId(loopDetails.arquivo || loopDetails.workbook || state.composerWorkbookId || "");
+  const sheet = String(loopDetails.aba || loopDetails.sheet || workbookSheetsFor(workbookId)[0]?.name || "");
+  const columns = columnsForSheetInWorkbook(workbookId, sheet) || [];
+  const selected = String(details.coluna_relatorio ?? details.report_column ?? "");
+  const available = [...new Set(columns.map((column) => String(column || "").trim()).filter(Boolean))];
+  if (selected && !available.includes(selected)) available.push(selected);
+  const sourceName = String(loopDetails.coluna || "valor").trim() || "valor";
+  const options = [
+    `<option value="" ${selected ? "" : "selected"}>Valor atual do loop (${escapeHtml(sourceName)})</option>`,
+    ...available.map((column) => `<option value="${escapeHtml(column)}" ${column === selected ? "selected" : ""}>${escapeHtml(column)}</option>`),
+  ].join("");
+  return { options, hasColumns: available.length > 0 };
+}
+
 function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) {
   const tone = String(details.tom ?? details.tone ?? "success");
+  const reportColumns = reportColumnChoices(details, currentOrder);
   return `
     <div class="field-stack spreadsheet-write-editor">
       <p class="spreadsheet-write-hint">Registra o resultado da linha atual no PDF. Coloque este bloco no caminho de sucesso ou no caminho de falha que voce quiser documentar.</p>
@@ -17791,6 +17819,11 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
         </label>
       </div>
       <label>
+        <span>Coluna usada em {{empresa}} e no PDF</span>
+        <select ${fieldAttr}="reportColumn">${reportColumns.options}</select>
+      </label>
+      <p class="spreadsheet-write-hint">${reportColumns.hasColumns ? "A coluna escolhida identifica a linha no PDF e substitui {{empresa}} nesta mensagem." : "Adicione um loop de planilha para escolher uma coluna. Ate la, o valor atual do loop sera usado."}</p>
+      <label>
         <span>Resultado exibido</span>
         <textarea ${fieldAttr}="reportResult" rows="2" placeholder="Ex.: Guia emitida com sucesso.">${escapeHtml(details.resultado ?? details.result ?? "")}</textarea>
       </label>
@@ -17798,7 +17831,7 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
         <span>Confirmacao ou evidencia (opcional)</span>
         <input ${fieldAttr}="reportConfirmation" type="text" value="${escapeHtml(details.confirmacao ?? details.confirmation ?? "")}" placeholder="Ex.: OCR confirmou: Sem debitos" />
       </label>
-      <p class="spreadsheet-write-hint">Use {{empresa}}, {{linha_atual}} e os nomes das colunas da planilha para montar a mensagem.</p>
+      <p class="spreadsheet-write-hint">Tambem pode usar {{linha_atual}} e os nomes das colunas da planilha na mensagem.</p>
       <div class="tree-inline-fields">
         ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
       </div>
@@ -19380,6 +19413,7 @@ function renderInsertPanel(order) {
       tom: panel.reportTone,
       resultado: panel.reportResult,
       confirmacao: panel.reportConfirmation,
+      coluna_relatorio: panel.reportColumn,
       ao_sucesso: panel.successAction,
       bloco_sucesso: panel.successBlock,
       sequencia_sucesso: panel.successSequence,
@@ -21540,6 +21574,7 @@ function formValuesFromCard(card) {
     reportTone: get("reportTone")?.value ?? "success",
     reportResult: get("reportResult")?.value ?? "",
     reportConfirmation: get("reportConfirmation")?.value ?? "",
+    reportColumn: get("reportColumn")?.value ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
@@ -21689,6 +21724,7 @@ function treeValuesFromCard(card) {
     reportTone: get("reportTone")?.value ?? "success",
     reportResult: get("reportResult")?.value ?? "",
     reportConfirmation: get("reportConfirmation")?.value ?? "",
+    reportColumn: get("reportColumn")?.value ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
@@ -22188,6 +22224,7 @@ function commandCardHasUnsavedChanges(snapshot) {
       || normalizeStringValue(values.reportTone) !== normalizeStringValue(details.tom ?? details.tone ?? "success")
       || normalizeStringValue(values.reportResult) !== normalizeStringValue(details.resultado ?? details.result ?? "")
       || normalizeStringValue(values.reportConfirmation) !== normalizeStringValue(details.confirmacao ?? details.confirmation ?? "")
+      || normalizeStringValue(values.reportColumn) !== normalizeStringValue(details.coluna_relatorio ?? details.report_column ?? "")
       || successFlowChanged(values, details)
     );
   }
@@ -22544,6 +22581,7 @@ async function invokeCommandCardUpdate(snapshot) {
       tom: values.reportTone || "success",
       resultado: values.reportResult || "",
       confirmacao: values.reportConfirmation || "",
+      reportColumn: values.reportColumn || "",
       delay: values.delay,
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
@@ -22853,6 +22891,7 @@ function insertValuesFromPanel(panelElement) {
     reportTone: get("reportTone")?.value ?? state.insertPanel?.reportTone ?? "success",
     reportResult: get("reportResult")?.value ?? state.insertPanel?.reportResult ?? "",
     reportConfirmation: get("reportConfirmation")?.value ?? state.insertPanel?.reportConfirmation ?? "",
+    reportColumn: get("reportColumn")?.value ?? state.insertPanel?.reportColumn ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? state.insertPanel?.compareExpectedColumn ?? state.insertPanel?.column ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? state.insertPanel?.compareOcrSource ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? state.insertPanel?.compareMode ?? "texto",
@@ -27353,6 +27392,7 @@ commandMapList.addEventListener("click", async (event) => {
               tom: values.reportTone || "success",
               resultado: values.reportResult || "",
               confirmacao: values.reportConfirmation || "",
+              reportColumn: values.reportColumn || "",
               delay: common.delay,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
@@ -27367,6 +27407,7 @@ commandMapList.addEventListener("click", async (event) => {
               tom: values.reportTone || "success",
               resultado: values.reportResult || "",
               confirmacao: values.reportConfirmation || "",
+              reportColumn: values.reportColumn || "",
               delay: common.delay,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,

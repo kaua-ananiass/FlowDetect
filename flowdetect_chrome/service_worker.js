@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.23";
+const RUNTIME_VERSION = "0.2.24";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -90,6 +90,20 @@ function finalizeReportRow(run, success, error = "") {
   delete run.reportCurrentRow;
 }
 
+function spreadsheetRowData(source, row) {
+  const value = source?.rows?.[row];
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function spreadsheetColumnValue(rowData, column) {
+  const requested = String(column || "").trim();
+  if (!requested || !rowData || typeof rowData !== "object") return "";
+  if (Object.prototype.hasOwnProperty.call(rowData, requested)) return String(rowData[requested] ?? "").trim();
+  const normalized = requested.toLocaleLowerCase();
+  const key = Object.keys(rowData).find((name) => String(name).trim().toLocaleLowerCase() === normalized);
+  return key ? String(rowData[key] ?? "").trim() : "";
+}
+
 function recordReportResult(run, step) {
   if (!run.report) run.report = { sourceName: "", rows: [], summary: {} };
   const result = {
@@ -99,6 +113,12 @@ function recordReportResult(run, step) {
     confirmation: String(step.confirmation || "").trim()
   };
   if (run.reportCurrentRow) {
+    const reportColumn = String(step.report_column || "").trim();
+    const selectedValue = spreadsheetColumnValue(run.spreadsheetLoop?.rowData, reportColumn);
+    if (reportColumn) {
+      run.report.sourceName = reportColumn;
+      if (selectedValue) run.reportCurrentRow.value = selectedValue;
+    }
     Object.assign(run.reportCurrentRow, result);
   } else {
     run.report.summary = result;
@@ -187,10 +207,15 @@ function setSpreadsheetRowVariables(run, source, row) {
   if (!run.variables) run.variables = {};
   const value = String(source?.values?.[row] ?? "");
   const sourceName = String(source?.name || "valor").trim() || "valor";
+  const rowData = spreadsheetRowData(source, row);
   const line = String(Math.max(1, Number(row) + 1));
+  Object.entries(rowData).forEach(([name, item]) => {
+    const key = String(name || "").trim();
+    if (key) run.variables[key] = String(item ?? "");
+  });
   run.variables[sourceName] = value;
   run.variables.valor = value;
-  run.variables.empresa = value;
+  run.variables.empresa = spreadsheetColumnValue(rowData, "empresa") || value;
   run.variables.linha_atual = line;
   run.variables.linha = line;
   return value;
@@ -440,6 +465,7 @@ async function executeStep(run, rawStep) {
     const source = {
       name: step.name || "valor",
       values: Array.isArray(step.values) ? step.values.map((value) => String(value ?? "")) : [],
+      rows: Array.isArray(step.rows) ? step.rows : [],
       interval: Math.max(0, Number(step.interval_ms || 0)),
       index: run.currentIndex
     };
@@ -456,7 +482,11 @@ async function executeStep(run, rawStep) {
     return `${source.values.length} valor(es) preparados para o loop ${source.name}.`;
   }
   if (step.type === "report_result") {
-    const result = recordReportResult(run, step);
+    const reportColumn = String(rawStep.report_column || "").trim();
+    const selectedValue = spreadsheetColumnValue(run.spreadsheetLoop?.rowData, reportColumn);
+    const reportVariables = selectedValue ? { ...(run.variables || {}), empresa: selectedValue } : run.variables;
+    const reportStep = replaceVariables(rawStep, reportVariables);
+    const result = recordReportResult(run, reportStep);
     return result.confirmation
       ? `Resultado do relatorio: ${result.status}. Evidencia: ${result.confirmation}`
       : `Resultado do relatorio: ${result.status}.`;
@@ -557,6 +587,7 @@ function findSpreadsheetLoopSource(steps) {
     index,
     name: String(step.name || "valor"),
     values: step.values.map((value) => String(value ?? "")),
+    rows: Array.isArray(step.rows) ? step.rows : [],
     interval: Math.max(0, Number(step.interval_ms || 0))
   };
 }
@@ -580,6 +611,7 @@ async function executeSpreadsheetLoop(run, source, executeIteration) {
         sourceIndex: source.index,
         iterationStart: source.iterationStart,
         row,
+        rowData: spreadsheetRowData(source, row),
         total: source.values.length
       };
       await addLog(run, "Planilha " + source.name + ": " + (row + 1) + "/" + source.values.length + " - " + value + ".");
@@ -639,7 +671,12 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       }
       for (let row = firstRow; row < source.values.length; row += 1) {
         const value = setSpreadsheetRowVariables(run, source, row);
-        run.spreadsheetLoop = { sourceIndex: source.index, row, total: source.values.length };
+        run.spreadsheetLoop = {
+          sourceIndex: source.index,
+          row,
+          rowData: spreadsheetRowData(source, row),
+          total: source.values.length
+        };
         await addLog(run, `Loop ${source.name}: ${row + 1}/${source.values.length} · ${source.values[row]}`);
         beginReportRow(run, {
           index: row + 1,
