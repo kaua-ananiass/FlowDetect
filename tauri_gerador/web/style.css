@@ -8608,6 +8608,22 @@ label span {
   font-size: 0.72rem;
 }
 
+.command-map-reorganize-button {
+  min-height: 32px;
+  padding-inline: 11px;
+  border-color: rgba(94, 234, 212, 0.32);
+  color: var(--command-page-accent-soft);
+  font-size: 0.66rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.command-map-reorganize-button:hover:not(:disabled) {
+  border-color: var(--command-page-accent-border);
+  background: var(--command-page-accent-surface);
+  box-shadow: 0 0 0 3px var(--command-page-accent-muted);
+}
+
 .command-map-save-percent {
   min-width: 42px;
   text-align: right;

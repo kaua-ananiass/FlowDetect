@@ -463,6 +463,7 @@ const testLoopHint = document.getElementById("testLoopHint");
 const bulkDelayInput = document.getElementById("bulkDelayInput");
 const applyBulkDelayButton = document.getElementById("applyBulkDelayButton");
 const mapSaveButton = document.getElementById("mapSaveButton");
+const mapReorganizeButton = document.getElementById("mapReorganizeButton");
 const mapSavePercent = document.getElementById("mapSavePercent");
 const mapSaveFill = document.getElementById("mapSaveFill");
 const mapSaveStatus = document.getElementById("mapSaveStatus");
@@ -4181,6 +4182,9 @@ function updateCommandMapSaveUI() {
   mapSaveFill.style.width = `${percent}%`;
   mapSaveStatus.textContent = state.commandMapSave.status || "Mapa ainda nao salvo.";
   mapSaveButton.disabled = Boolean(state.commandMapSave.running);
+  if (mapReorganizeButton) {
+    mapReorganizeButton.disabled = Boolean(state.commandMapSave.running);
+  }
   mapSaveButton.textContent = state.commandMapSave.running ? "Salvando..." : "Salvar mapa";
 
   shell?.classList.toggle("is-running", Boolean(state.commandMapSave.running));
@@ -19917,6 +19921,42 @@ function getCommandMapTreeManualPosition(itemKey, pageSequence = state.commandMa
     : null;
 }
 
+function clearCommandMapTreeManualPositions(pageSequence = state.commandMapPageSequence) {
+  const key = commandMapTreeLayoutPageKey(pageSequence);
+  const layouts = state.commandMapTreeLayouts && typeof state.commandMapTreeLayouts === "object"
+    ? state.commandMapTreeLayouts
+    : {};
+  if (!Object.prototype.hasOwnProperty.call(layouts, key)) {
+    return false;
+  }
+  const nextLayouts = { ...layouts };
+  delete nextLayouts[key];
+  state.commandMapTreeLayouts = nextLayouts;
+  persistCommandMapTreeLayouts();
+  return true;
+}
+
+function reorganizeCommandMapTree(pageSequence = state.commandMapPageSequence) {
+  const page = commandMapTreeLayoutPageKey(pageSequence);
+  const removedManualPositions = clearCommandMapTreeManualPositions(page);
+  state.commandMapTreePanOffset = { x: 0, y: 0 };
+  state.commandMapTreePanUserMoved = false;
+  state.commandMapFocusOrder = null;
+  applyCommandMapTreePanOffset();
+  renderCommandMap({
+    preserveScroll: false,
+    suppressFocusScroll: true,
+    quietUpdate: true,
+  });
+  const label = getCommandMapPageDefinition(page).label;
+  setMessage(
+    removedManualPositions
+      ? `${label} reorganizada automaticamente.`
+      : `${label} ja estava no layout automatico.`,
+    "success",
+  );
+}
+
 function rememberCommandMapTreeItemPosition(itemKey, x, y, pageSequence = state.commandMapPageSequence) {
   const normalizedKey = normalizeCommandMapTreeLayoutItemKey(itemKey);
   if (!normalizedKey) {
@@ -25136,6 +25176,10 @@ mapSaveButton?.addEventListener("click", async () => {
     setBusy("Erro");
     setMessage(String(error), "error");
   }
+});
+
+mapReorganizeButton?.addEventListener("click", () => {
+  reorganizeCommandMapTree();
 });
 
 testDelayInput.addEventListener("input", () => syncTestInputsFrom("top"));
