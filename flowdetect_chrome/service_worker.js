@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.21";
+const RUNTIME_VERSION = "0.2.22";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -47,6 +47,11 @@ function reportTone(value, fallback = "success") {
   return ["success", "info", "warning", "danger"].includes(tone) ? tone : fallback;
 }
 
+function runWasInterrupted(run, error = "") {
+  const message = String(error?.message || error || "").toLowerCase();
+  return Boolean(run?.cancelled) || message.includes("interrompid") || message.includes("parada solicitada");
+}
+
 function beginReportRow(run, { index, value, sourceName, total }) {
   if (!run.report) run.report = { sourceName: "", rows: [], summary: {} };
   run.report.sourceName = String(sourceName || run.report.sourceName || "valor");
@@ -74,7 +79,7 @@ function finalizeReportRow(run, success, error = "") {
   entry.success = Boolean(success);
   entry.error = String(error || "").trim();
   entry.finishedAt = new Date().toISOString();
-  const interrupted = Boolean(run.cancelled);
+  const interrupted = !entry.success && runWasInterrupted(run, error);
   if (!entry.status) entry.status = entry.success ? "Concluida" : (interrupted ? "Interrompida" : "Falhou");
   if (!entry.tone) entry.tone = entry.success ? "success" : (interrupted ? "warning" : "danger");
   if (!entry.result) {
@@ -720,7 +725,7 @@ async function executeAutomation(automation, tabId, startRow = 1) {
     }
     await addLog(run, "Automação concluída com sucesso.", "success");
   } catch (error) {
-    run.status = run.cancelled ? "stopped" : "failed";
+    run.status = runWasInterrupted(run, error) ? "stopped" : "failed";
     registerRunFailureInReport(run, error);
     if (run.report) {
       run.report.status = run.status;

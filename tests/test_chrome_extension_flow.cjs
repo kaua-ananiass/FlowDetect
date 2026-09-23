@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["reportTone", "beginReportRow", "finalizeReportRow", "recordReportResult", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
+const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "recordReportResult", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -20,7 +20,7 @@ function runner(extra = {}) {
 
 test("a manually stopped row is reported as interrupted instead of failed", () => {
   const context = runner();
-  const run = { cancelled: true, report: { sourceName: "CNPJ", rows: [], summary: {} } };
+  const run = { cancelled: false, report: { sourceName: "CNPJ", rows: [], summary: {} } };
 
   context.beginReportRow(run, { index: 2, value: "12.345.678/0001-90", sourceName: "CNPJ", total: 5 });
   context.finalizeReportRow(run, false, "Execucao interrompida pelo usuario.");

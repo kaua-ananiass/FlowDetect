@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.21";
+const REQUIRED_RUNTIME_VERSION = "0.2.22";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
@@ -88,8 +88,12 @@ async function runAutomation(automation, startRow = 1) {
   };
   renderAutomations();
   const response = await chrome.runtime.sendMessage({ type: "flowdetect-start", automation, tabId: tab.id, startRow: selectedStartRow });
-  if (response?.run) updateRun(response.run);
+  if (response?.run) {
+    updateRun(response.run);
+    return response.run;
+  }
   if (!response?.ok) throw new Error(response?.run?.logs?.at(-1)?.message || response?.error || "A automacao falhou.");
+  return response;
 }
 
 function updateRun(run = {}) {
