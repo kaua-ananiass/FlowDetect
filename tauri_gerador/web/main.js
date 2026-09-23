@@ -2031,34 +2031,45 @@ function scheduleCommandMapRoutePreviewRefresh() {
 }
 
 function scheduleCommandConnectorLayout(options = {}) {
+  const refreshTreeLinks = Boolean(options.refreshTreeLinks || state.commandConnectorNeedsTreeRefresh);
+  state.commandConnectorNeedsTreeRefresh = refreshTreeLinks;
   if (state.commandConnectorLayoutFrame) {
     cancelAnimationFrame(state.commandConnectorLayoutFrame);
   }
   state.commandConnectorLayoutFrame = requestAnimationFrame(() => {
     state.commandConnectorLayoutFrame = 0;
+    const shouldRefreshTreeLinks = Boolean(state.commandConnectorNeedsTreeRefresh);
+    state.commandConnectorNeedsTreeRefresh = false;
     updateCommandConnectorPositions();
     renderCommandJumpPaths();
-    renderCommandMapTreeReferenceLinks();
+    if (shouldRefreshTreeLinks) {
+      renderCommandMapTreeReferenceLinks();
+    }
   });
 
   const duration = Math.max(0, Number(options.burstMs || 0));
   if (duration > 0) {
-    scheduleCommandConnectorLayoutBurst(duration);
+    scheduleCommandConnectorLayoutBurst(duration, { refreshTreeLinks });
   }
 }
 
-function scheduleCommandConnectorLayoutBurst(duration = 420) {
+function scheduleCommandConnectorLayoutBurst(duration = 420, options = {}) {
   if (!commandMapList || state.activeTab !== "commands") {
     return;
   }
 
+  const refreshTreeLinks = Boolean(options.refreshTreeLinks);
   updateCommandConnectorPositions();
   renderCommandJumpPaths();
-  renderCommandMapTreeReferenceLinks();
+  if (refreshTreeLinks) {
+    renderCommandMapTreeReferenceLinks();
+  }
   window.setTimeout(() => {
     updateCommandConnectorPositions();
     renderCommandJumpPaths();
-    renderCommandMapTreeReferenceLinks();
+    if (refreshTreeLinks) {
+      renderCommandMapTreeReferenceLinks();
+    }
   }, duration);
 }
 
@@ -2069,7 +2080,7 @@ function scheduleCommandMapAutoFit() {
   state.commandMapAutoFitFrame = requestAnimationFrame(() => {
     state.commandMapAutoFitFrame = 0;
     autoFitCommandMapZoom();
-    scheduleCommandConnectorLayout();
+    scheduleCommandConnectorLayout({ refreshTreeLinks: true });
   });
 }
 
@@ -5039,7 +5050,7 @@ function updateRecognitionStatusUIForOrder(order, overrideImagePath = null) {
         resultEl.hidden = !content;
       });
     });
-  scheduleCommandConnectorLayout();
+  scheduleCommandConnectorLayout({ refreshTreeLinks: true });
 }
 
 function showCaptureOverlay(text) {
@@ -5207,7 +5218,7 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
   }
 
   const animationDuration = mode === "slide" ? 360 : 320;
-  scheduleCommandConnectorLayoutBurst(animationDuration + 60);
+  scheduleCommandConnectorLayoutBurst(animationDuration + 60, { refreshTreeLinks: true });
 
   animatedItems.forEach(({ element, initialTransform, kind }) => {
     if (element.__commandMapShiftAnimation) {
@@ -8893,7 +8904,7 @@ function setRecognitionTreeTab(order, tabName) {
       updateRelativeOcrPreviewOverlay(card);
     });
   });
-  scheduleCommandConnectorLayout();
+  scheduleCommandConnectorLayout({ refreshTreeLinks: true });
 }
 
 function setSpreadsheetTreeTab(order, tabName) {
@@ -8906,7 +8917,7 @@ function setSpreadsheetTreeTab(order, tabName) {
   commandMapList.querySelectorAll(`.command-tree-card[data-order="${order}"]`).forEach((card) => {
     applySpreadsheetTreeTabState(card, activeTab);
   });
-  scheduleCommandConnectorLayout();
+  scheduleCommandConnectorLayout({ refreshTreeLinks: true });
 }
 
 function setDownloadTreeTab(order, tabName) {
@@ -8919,7 +8930,7 @@ function setDownloadTreeTab(order, tabName) {
   commandMapList.querySelectorAll(`.command-tree-card[data-order="${order}"]`).forEach((card) => {
     applyDownloadTreeTabState(card, activeTab);
   });
-  scheduleCommandConnectorLayout();
+  scheduleCommandConnectorLayout({ refreshTreeLinks: true });
 }
 
 function openExpandedTreeCard(order, sourceElement = null) {
@@ -21018,7 +21029,7 @@ function updateCommandMapTreeNodeDrag(event) {
     drag.nodeSlot.style.top = `${Math.round(drag.latestY)}px`;
     expandCommandMapTreeStageForNode(drag.stage, drag.nodeSlot, drag.latestX, drag.latestY);
     rememberCommandMapTreeItemPosition(drag.itemKey, drag.latestX, drag.latestY);
-    scheduleCommandConnectorLayout();
+    scheduleCommandConnectorLayout({ refreshTreeLinks: true });
   });
 }
 
@@ -21042,7 +21053,7 @@ function stopCommandMapTreeNodeDrag(event, commit = true) {
   drag.nodeSlot.classList.remove("is-tree-position-dragging");
   builderShell?.classList.remove("is-map-dragging");
   state.commandMapTreeNodeDrag = null;
-  scheduleCommandConnectorLayout({ burstMs: 220 });
+  scheduleCommandConnectorLayout({ burstMs: 220, refreshTreeLinks: true });
 }
 
 function isCommandMapTreeModeActive() {
@@ -21125,7 +21136,6 @@ function stopCommandMapTreePan(event) {
   commandMapList?.classList.remove("is-tree-panning");
   builderShell?.classList.remove("is-map-dragging");
   state.commandMapTreePan = null;
-  scheduleCommandConnectorLayout({ burstMs: 120 });
 }
 
 function commandMapWheelZoomFactor(delta, deltaMode = 0) {
@@ -21309,14 +21319,14 @@ function renderCommandMap(options = {}) {
   syncCommandMapCardSelectionVisuals();
   applyCommandMapZoom();
   if (skipAutoFit) {
-    scheduleCommandConnectorLayout({ burstMs: layoutSnapshot ? 440 : 0 });
+    scheduleCommandConnectorLayout({ burstMs: layoutSnapshot ? 440 : 0, refreshTreeLinks: true });
   } else {
     scheduleCommandMapAutoFit();
   }
   applyCommandMapFocus("auto", { suppressScroll: suppressFocusScroll, suppressVisualFocus });
   if (state.createdBlockAnimationOrder) {
     const createdOrder = Number(state.createdBlockAnimationOrder);
-    scheduleCommandConnectorLayout({ burstMs: 460 });
+    scheduleCommandConnectorLayout({ burstMs: 460, refreshTreeLinks: true });
     window.setTimeout(() => {
       if (Number(state.createdBlockAnimationOrder) === createdOrder) {
         state.createdBlockAnimationOrder = null;
@@ -21324,7 +21334,7 @@ function renderCommandMap(options = {}) {
       commandMapList
         ?.querySelector(`.command-tree-card.is-newly-created[data-order="${createdOrder}"]`)
         ?.classList.remove("is-newly-created");
-      scheduleCommandConnectorLayout({ burstMs: 140 });
+      scheduleCommandConnectorLayout({ burstMs: 140, refreshTreeLinks: true });
     }, 460);
   }
   if (layoutSnapshot && !quietUpdate) {
@@ -21332,9 +21342,9 @@ function renderCommandMap(options = {}) {
       animateCommandMapLayoutShift(layoutSnapshot, { mode: layoutAnimationMode });
     });
   } else if (state.insertPanel && !quietUpdate) {
-    scheduleCommandConnectorLayout({ burstMs: 460 });
+    scheduleCommandConnectorLayout({ burstMs: 460, refreshTreeLinks: true });
   } else if (!quietUpdate) {
-    scheduleCommandConnectorLayout();
+    scheduleCommandConnectorLayout({ refreshTreeLinks: true });
   }
 }
 

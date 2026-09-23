@@ -56,3 +56,37 @@ test("zoom scales the existing map without rebuilding its connector layer", () =
   assert.ok(zoomFunction, "Production function setCommandMapZoom");
   assert.doesNotMatch(zoomFunction[0], /scheduleCommandConnectorLayout/);
 });
+
+test("ordinary connector updates keep the tree layer, while layout changes refresh it", () => {
+  const names = ["scheduleCommandConnectorLayoutBurst", "scheduleCommandConnectorLayout"];
+  const functions = names.map((name) => {
+    const found = source.match(new RegExp(`^function ${name}\\(.*?^}`, "ms"));
+    assert.ok(found, `Production function ${name}`);
+    return found[0];
+  }).join("\n");
+  const frames = [];
+  let treeRefreshes = 0;
+  const context = vm.createContext({
+    state: {},
+    Math,
+    commandMapList: {},
+    requestAnimationFrame: (callback) => {
+      frames.push(callback);
+      return frames.length;
+    },
+    cancelAnimationFrame: () => {},
+    updateCommandConnectorPositions: () => {},
+    renderCommandJumpPaths: () => {},
+    renderCommandMapTreeReferenceLinks: () => { treeRefreshes += 1; },
+    window: { setTimeout: () => {} },
+  });
+  vm.runInContext(functions, context);
+
+  context.scheduleCommandConnectorLayout();
+  frames.shift()();
+  assert.equal(treeRefreshes, 0);
+
+  context.scheduleCommandConnectorLayout({ refreshTreeLinks: true });
+  frames.shift()();
+  assert.equal(treeRefreshes, 1);
+});
