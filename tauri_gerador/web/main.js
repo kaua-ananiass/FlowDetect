@@ -17912,8 +17912,7 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
       <section class="report-pdf-preview report-pdf-preview-full" aria-label="Previa editavel do relatorio PDF" data-report-loop-column="${escapeHtml(reportColumns.sourceName)}" data-report-tone="${escapeHtml(safeTone)}">
         <header class="report-document-header">
           <div class="report-document-brand">
-            <div class="report-document-mark" aria-hidden="true">FD</div>
-            <div><strong>FLOWDETECT</strong></div>
+            <img src="./assets/flowdetect-report-wordmark.png" alt="FlowDetect" />
           </div>
           <div class="report-document-generated"><strong>RELATORIO DE EXECUCAO</strong><small>Modelo editavel do PDF</small></div>
         </header>

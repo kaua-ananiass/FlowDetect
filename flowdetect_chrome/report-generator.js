@@ -137,32 +137,24 @@
     const line = (x1, top1, x2, top2, color, width = 1) => {
       commands.push(`${colorCommand(color)} RG ${width.toFixed(2)} w ${x1.toFixed(2)} ${(PAGE_HEIGHT - top1).toFixed(2)} m ${x2.toFixed(2)} ${(PAGE_HEIGHT - top2).toFixed(2)} l S`);
     };
-    const strokeRect = (x, top, width, height, color, strokeWidth = 1) => {
-      commands.push(`${colorCommand(color)} RG ${strokeWidth.toFixed(2)} w ${x.toFixed(2)} ${(PAGE_HEIGHT - top - height).toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re S`);
-    };
     const text = (x, top, value, size = 10, color = COLORS.white, bold = false) => {
       commands.push(`BT /${bold ? "F2" : "F1"} ${size.toFixed(2)} Tf ${colorCommand(color)} rg 1 0 0 1 ${x.toFixed(2)} ${(PAGE_HEIGHT - top - size).toFixed(2)} Tm (${pdfText(value)}) Tj ET`);
     };
     rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT, COLORS.background);
-    return { commands, rect, line, strokeRect, text, y: 0 };
+    return { commands, rect, line, text, y: 0 };
   }
 
   function drawHeader(page, run, pageNumber = 1) {
-    page.strokeRect(MARGIN, 27, 17, 17, "#244D76", 1);
-    page.strokeRect(MARGIN + 4, 30, 17, 17, "#2C74A9", 1);
-    page.rect(MARGIN + 8, 33, 19, 19, COLORS.panelStrong);
-    page.strokeRect(MARGIN + 8, 33, 19, 19, COLORS.accent, 1.1);
-    page.text(MARGIN + 12.2, 38, "FD", 6.6, COLORS.accentSoft, true);
-    page.text(MARGIN + 38, 31, "FLOWDETECT", 9.2, COLORS.white, true);
+    page.text(MARGIN, 30, "FlowDetect", 13, COLORS.white, true);
     page.text(PAGE_WIDTH - MARGIN - 145, 29, "RELATORIO DE EXECUCAO", 7.1, COLORS.accentSoft, true);
     page.text(PAGE_WIDTH - MARGIN - 130, 40, `Gerado em ${dateLabel(new Date())}`, 7.1, COLORS.muted, false);
-    page.line(MARGIN, 64, PAGE_WIDTH - MARGIN, 64, COLORS.border, 0.8);
+    page.line(MARGIN, 59, PAGE_WIDTH - MARGIN, 59, COLORS.border, 0.8);
     if (pageNumber > 1) {
-      page.text(MARGIN, 80, "Resultados da execucao", 12.5, COLORS.white, true);
-      page.text(PAGE_WIDTH - MARGIN - 38, 82, `Pagina ${pageNumber}`, 7.2, COLORS.muted, false);
-      page.y = 103;
+      page.text(MARGIN, 75, "Resultados da execucao", 12.5, COLORS.white, true);
+      page.text(PAGE_WIDTH - MARGIN - 38, 77, `Pagina ${pageNumber}`, 7.2, COLORS.muted, false);
+      page.y = 98;
     } else {
-      page.y = 80;
+      page.y = 75;
     }
   }
 

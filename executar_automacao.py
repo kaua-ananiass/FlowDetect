@@ -5551,28 +5551,29 @@ class ExecutorAutomacao:
             pdf.setFillColor(cores["fundo"])
             pdf.rect(0, 0, largura, altura, fill=1, stroke=0)
 
+        def encontrar_wordmark_flowdetect():
+            candidatos = [
+                APP_ROOT / "tauri_gerador" / "web" / "assets" / "flowdetect-report-wordmark.png",
+                APP_ROOT / "web" / "assets" / "flowdetect-report-wordmark.png",
+                APP_ROOT / "assets" / "flowdetect-report-wordmark.png",
+            ]
+            return next((candidato for candidato in candidatos if candidato.is_file()), None)
+
+        wordmark_flowdetect = encontrar_wordmark_flowdetect()
+
         def desenhar_marca(x, y):
-            """Versao vetorial compacta do icone FlowDetect (cartoes FD sobrepostos)."""
-            pdf.setLineWidth(1.1)
-            pdf.setStrokeColor(HexColor("#244D76"))
-            pdf.roundRect(x, y - 17, 17, 17, 4, fill=0, stroke=1)
-            pdf.setStrokeColor(HexColor("#2C74A9"))
-            pdf.roundRect(x + 4, y - 20, 17, 17, 4, fill=0, stroke=1)
-            pdf.setStrokeColor(cores["accent"])
-            pdf.setFillColor(cores["superficie_forte"])
-            pdf.roundRect(x + 8, y - 23, 19, 19, 4.5, fill=1, stroke=1)
-            pdf.setFillColor(cores["accent_suave"])
-            pdf.setFont("Helvetica-Bold", 6.6)
-            pdf.drawCentredString(x + 17.5, y - 16.8, "FD")
+            if wordmark_flowdetect:
+                pdf.drawImage(str(wordmark_flowdetect), x, y - 19, width=126, height=21.5, mask="auto")
+                return
+            pdf.setFillColor(cores["texto"])
+            pdf.setFont("Helvetica-Bold", 12)
+            pdf.drawString(x, y - 14, "FlowDetect")
 
         def desenhar_cabecalho(continuacao=False):
             nonlocal pagina
             pagina += 1
             desenhar_fundo()
             desenhar_marca(margem_x, topo - 1)
-            pdf.setFillColor(cores["texto"])
-            pdf.setFont("Helvetica-Bold", 9.4)
-            pdf.drawString(margem_x + 38, topo - 10, "FLOWDETECT")
             pdf.setFillColor(cores["accent_suave"])
             pdf.setFont("Helvetica-Bold", 7.1)
             pdf.drawRightString(largura - margem_direita, topo - 7, "RELATORIO DE EXECUCAO")

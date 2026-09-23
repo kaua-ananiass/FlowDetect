@@ -11480,46 +11480,13 @@ label span {
   gap: 10px;
 }
 
-.report-document-mark {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 28px;
-  border: 1px solid var(--report-accent);
-  border-radius: 7px;
-  color: var(--report-accent-soft);
-  font-family: var(--font-display);
-  font-size: 0.56rem;
-  font-weight: 800;
-  letter-spacing: -0.08em;
-  background:
-    linear-gradient(var(--report-panel-strong), var(--report-panel-strong)) padding-box,
-    linear-gradient(135deg, rgba(18, 181, 203, 0.68), rgba(44, 116, 169, 0.44)) border-box;
-  box-shadow: -4px -3px 0 -3px #244d76, -7px -6px 0 -6px #2c74a9;
-}
-
-.report-document-brand div:last-child {
-  display: grid;
-  gap: 1px;
-}
-
-.report-document-brand strong,
-.report-document-generated strong,
-.report-document-summary span,
-.report-document-table-head,
-.report-document-field > span {
-  font-family: var(--font-display);
-  font-size: 0.5rem;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-}
-
-.report-document-brand strong {
-  color: var(--report-text);
-  font-family: var(--font-display);
-  font-size: 0.78rem;
-  line-height: 1.15;
+.report-document-brand img {
+  display: block;
+  width: 126px;
+  height: auto;
+  max-height: 22px;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .report-document-generated {
