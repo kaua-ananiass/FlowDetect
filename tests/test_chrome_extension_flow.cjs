@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "spreadsheetRowData", "spreadsheetColumnValue", "recordReportResult", "replaceVariables", "setSpreadsheetRowVariables", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
+const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "spreadsheetRowData", "spreadsheetColumnValue", "reportColumnValue", "reportStepForRow", "recordReportResult", "replaceVariables", "setSpreadsheetRowVariables", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -49,6 +49,20 @@ test("the report-result block records its configured status, message and evidenc
   assert.equal(row.tone, "info");
   assert.equal(row.result, "Nao ha debitos para a empresa.");
   assert.equal(row.confirmation, "Alerta confirmado na tela.");
+});
+
+test("report preview column choices resolve result and evidence from the active loop row", () => {
+  const context = runner();
+  const step = context.reportStepForRow({
+    report_column: "Empresa",
+    result_column: "Cidade",
+    confirmation_column: "Empresa",
+    result: "Mensagem guardada para {{empresa}}.",
+    confirmation: "Evidencia guardada.",
+  }, { CNPJ: "03943209000187" }, { Empresa: "Empresa Modelo", Cidade: "Sao Paulo" });
+
+  assert.equal(step.result, "Sao Paulo");
+  assert.equal(step.confirmation, "Empresa Modelo");
 });
 
 test("the selected report column identifies the row and replaces the report alias", () => {

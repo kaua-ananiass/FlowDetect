@@ -4524,6 +4524,8 @@ function applyCommandMapDraftToEvent(event) {
     details.resultado = values.reportResult ?? details.resultado ?? details.result ?? "";
     details.confirmacao = values.reportConfirmation ?? details.confirmacao ?? details.confirmation ?? "";
     details.coluna_relatorio = values.reportColumn ?? details.coluna_relatorio ?? details.report_column ?? "";
+    details.coluna_resultado = values.reportResultColumn ?? details.coluna_resultado ?? details.result_column ?? "";
+    details.coluna_confirmacao = values.reportConfirmationColumn ?? details.coluna_confirmacao ?? details.confirmation_column ?? "";
     applySuccessFlowDraft(details, values);
     return nextEvent;
   }
@@ -6277,6 +6279,8 @@ function createInsertPanelState(targetOrder, position) {
     reportResult: "Automacao concluida para {{empresa}}.",
     reportConfirmation: "",
     reportColumn: "",
+    reportResultColumn: "",
+    reportConfirmationColumn: "",
     compareExpectedColumn: columnsForSheetInWorkbook(workbookId, workbookSheetsFor(workbookId)[0]?.name ?? "")?.[0] ?? "",
     compareMode: "texto",
     compareStatusColumn: "",
@@ -10018,9 +10022,9 @@ function renderCompactTreeEditorFields(event) {
   if (event.type === "resultado_relatorio") {
     return renderGenericCompactTreeEditor(event, [
       { label: "Status", value: details.status || "Concluida" },
-      { label: "Resultado", value: details.resultado || "Mensagem padrao" },
-      { label: "Evidencia", value: details.confirmacao || "Nao informada" },
-      { label: "Coluna no PDF", value: details.coluna_relatorio || "Valor atual do loop" },
+      { label: "Resultado", value: details.coluna_resultado || details.resultado || "Mensagem padrao" },
+      { label: "Evidencia", value: details.coluna_confirmacao || details.confirmacao || "Nao informada" },
+      { label: "Item no PDF", value: details.coluna_relatorio || "Valor atual do loop" },
       { label: "Depois de registrar", value: formatFlowActionLabel(details.ao_sucesso || "continuar", details.bloco_sucesso, details.sequencia_sucesso) },
     ], `
       ${hiddenTreeField("reportStatus", details.status ?? "Concluida")}
@@ -10028,6 +10032,8 @@ function renderCompactTreeEditorFields(event) {
       ${hiddenTreeField("reportResult", details.resultado ?? details.result ?? "")}
       ${hiddenTreeField("reportConfirmation", details.confirmacao ?? details.confirmation ?? "")}
       ${hiddenTreeField("reportColumn", details.coluna_relatorio ?? details.report_column ?? "")}
+      ${hiddenTreeField("reportResultColumn", details.coluna_resultado ?? details.result_column ?? "")}
+      ${hiddenTreeField("reportConfirmationColumn", details.coluna_confirmacao ?? details.confirmation_column ?? "")}
       ${renderSuccessHiddenTreeFields(details)}
     `);
   }
@@ -17777,32 +17783,110 @@ function renderWriteSpreadsheetFields(fieldAttr, details = {}, currentOrder = nu
 function reportColumnChoices(details = {}, currentOrder = null) {
   const events = Array.isArray(state.roadmap?.events) ? state.roadmap.events : [];
   const current = Number(currentOrder || 0);
-  const loops = events
+  const candidates = events
     .filter((event) => event?.type === "sequencia_planilha")
     .filter((event) => !current || Number(event.order || 0) <= current)
     .sort((left, right) => Number(left.order || 0) - Number(right.order || 0));
-  const loop = loops.at(-1) || events.find((event) => event?.type === "sequencia_planilha");
+  const loop = candidates.at(-1) || events.find((event) => event?.type === "sequencia_planilha");
   const loopDetails = loop?.detalhes || {};
   const workbookId = resolveWorkbookId(loopDetails.arquivo || loopDetails.workbook || state.composerWorkbookId || "");
   const sheet = String(loopDetails.aba || loopDetails.sheet || workbookSheetsFor(workbookId)[0]?.name || "");
   const columns = columnsForSheetInWorkbook(workbookId, sheet) || [];
-  const selected = String(details.coluna_relatorio ?? details.report_column ?? "");
+  const selected = [
+    details.coluna_relatorio ?? details.report_column ?? "",
+    details.coluna_resultado ?? details.result_column ?? "",
+    details.coluna_confirmacao ?? details.confirmation_column ?? "",
+  ].map((value) => String(value || "").trim());
   const available = [...new Set(columns.map((column) => String(column || "").trim()).filter(Boolean))];
-  if (selected && !available.includes(selected)) available.push(selected);
+  selected.filter(Boolean).forEach((column) => {
+    if (!available.includes(column)) available.push(column);
+  });
   const sourceName = String(loopDetails.coluna || "valor").trim() || "valor";
-  const options = [
-    `<option value="" ${selected ? "" : "selected"}>Valor atual do loop (${escapeHtml(sourceName)})</option>`,
-    ...available.map((column) => `<option value="${escapeHtml(column)}" ${column === selected ? "selected" : ""}>${escapeHtml(column)}</option>`),
+  const columnOptions = (value, messageLabel = "Mensagem personalizada") => [
+    `<option value="" ${value ? "" : "selected"}>${escapeHtml(messageLabel)}</option>`,
+    ...available.map((column) => `<option value="${escapeHtml(column)}" ${column === value ? "selected" : ""}>Coluna: ${escapeHtml(column)}</option>`),
   ].join("");
-  return { options, hasColumns: available.length > 0 };
+  return {
+    sourceName,
+    loopLabel: loop ? `${sourceName} (${sheet || "planilha"})` : "Nenhum loop de planilha configurado",
+    hasColumns: available.length > 0,
+    itemOptions: (value) => [
+      `<option value="" ${value ? "" : "selected"}>Valor do loop (${escapeHtml(sourceName)})</option>`,
+      ...available.map((column) => `<option value="${escapeHtml(column)}" ${column === value ? "selected" : ""}>Coluna: ${escapeHtml(column)}</option>`),
+    ].join(""),
+    messageOptions: columnOptions,
+  };
+}
+
+function reportPreviewValue(column, fallback) {
+  const selected = String(column || "").trim();
+  return selected ? `{{${selected}}}` : String(fallback || "Mensagem personalizada");
+}
+
+function syncReportResultPreview(container) {
+  const preview = container?.querySelector?.(".report-pdf-preview");
+  if (!preview) return;
+
+  const field = (name) => container.querySelector(
+    `[data-tree-field="${name}"], [data-field="${name}"], [data-insert-field="${name}"]`,
+  );
+  const sourceName = String(preview.dataset.reportLoopColumn || "valor").trim() || "valor";
+  const item = reportPreviewValue(field("reportColumn")?.value, `{{${sourceName}}}`);
+  const result = reportPreviewValue(field("reportResultColumn")?.value, field("reportResult")?.value);
+  const confirmation = reportPreviewValue(field("reportConfirmationColumn")?.value, field("reportConfirmation")?.value || "-");
+  const status = String(field("reportStatus")?.value || "Concluida").trim() || "Concluida";
+  const tone = String(field("reportTone")?.value || "success").trim();
+
+  const itemNode = preview.querySelector("[data-report-preview-item]");
+  const resultNode = preview.querySelector("[data-report-preview-result]");
+  const confirmationNode = preview.querySelector("[data-report-preview-confirmation]");
+  const statusNode = preview.querySelector("[data-report-preview-status]");
+  if (itemNode) itemNode.textContent = item;
+  if (resultNode) resultNode.textContent = result;
+  if (confirmationNode) confirmationNode.textContent = confirmation;
+  if (statusNode) {
+    statusNode.textContent = status;
+    statusNode.className = `is-${["success", "info", "warning", "danger"].includes(tone) ? tone : "success"}`;
+  }
 }
 
 function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) {
   const tone = String(details.tom ?? details.tone ?? "success");
   const reportColumns = reportColumnChoices(details, currentOrder);
+  const itemColumn = String(details.coluna_relatorio ?? details.report_column ?? "");
+  const resultColumn = String(details.coluna_resultado ?? details.result_column ?? "");
+  const confirmationColumn = String(details.coluna_confirmacao ?? details.confirmation_column ?? "");
+  const previewItem = reportPreviewValue(itemColumn, `{{${reportColumns.sourceName}}}`);
+  const previewResult = reportPreviewValue(resultColumn, details.resultado ?? details.result ?? "");
+  const previewConfirmation = reportPreviewValue(confirmationColumn, details.confirmacao ?? details.confirmation ?? "-");
   return `
-    <div class="field-stack spreadsheet-write-editor">
-      <p class="spreadsheet-write-hint">Registra o resultado da linha atual no PDF. Coloque este bloco no caminho de sucesso ou no caminho de falha que voce quiser documentar.</p>
+    <div class="field-stack spreadsheet-write-editor report-result-editor">
+      <p class="spreadsheet-write-hint">O loop continua usando <strong>${escapeHtml(reportColumns.sourceName)}</strong>. Escolha abaixo apenas os dados que cada campo mostrara no PDF.</p>
+      <section class="report-pdf-preview" aria-label="Previa do relatorio PDF" data-report-loop-column="${escapeHtml(reportColumns.sourceName)}">
+        <div class="report-pdf-preview-head"><span>FLOWDETECT</span><strong>Previa do PDF</strong><i></i></div>
+        <div class="report-pdf-preview-title">RELATORIO DA EXECUCAO</div>
+        <div class="report-pdf-preview-grid">
+          <div><span>LINHA</span><strong>{{linha_atual}}</strong></div>
+          <div><span>ITEM PROCESSADO</span><strong data-report-preview-item>${escapeHtml(previewItem)}</strong></div>
+          <div class="is-wide"><span>RESULTADO / CONFIRMACAO</span><strong data-report-preview-result>${escapeHtml(previewResult)}</strong><small data-report-preview-confirmation>${escapeHtml(previewConfirmation)}</small></div>
+          <div><span>STATUS</span><b class="is-${escapeHtml(tone)}" data-report-preview-status>${escapeHtml(details.status ?? "Concluida")}</b></div>
+        </div>
+      </section>
+      <div class="tree-inline-fields">
+        <label>
+          <span>Item processado no PDF</span>
+          <select ${fieldAttr}="reportColumn">${reportColumns.itemOptions(itemColumn)}</select>
+        </label>
+        <label>
+          <span>Resultado no PDF</span>
+          <select ${fieldAttr}="reportResultColumn">${reportColumns.messageOptions(resultColumn, "Mensagem personalizada abaixo")}</select>
+        </label>
+        <label>
+          <span>Confirmacao no PDF</span>
+          <select ${fieldAttr}="reportConfirmationColumn">${reportColumns.messageOptions(confirmationColumn, "Mensagem personalizada abaixo")}</select>
+        </label>
+      </div>
+      <p class="spreadsheet-write-hint">Loop identificado: ${escapeHtml(reportColumns.loopLabel)}. ${reportColumns.hasColumns ? "As opcoes sao colunas dessa mesma planilha." : "Adicione o loop de planilha para liberar as colunas."}</p>
       <div class="tree-inline-fields">
         <label>
           <span>Status no relatorio</span>
@@ -17819,19 +17903,14 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
         </label>
       </div>
       <label>
-        <span>Coluna usada em {{empresa}} e no PDF</span>
-        <select ${fieldAttr}="reportColumn">${reportColumns.options}</select>
-      </label>
-      <p class="spreadsheet-write-hint">${reportColumns.hasColumns ? "A coluna escolhida identifica a linha no PDF e substitui {{empresa}} nesta mensagem." : "Adicione um loop de planilha para escolher uma coluna. Ate la, o valor atual do loop sera usado."}</p>
-      <label>
-        <span>Resultado exibido</span>
+        <span>Mensagem do resultado</span>
         <textarea ${fieldAttr}="reportResult" rows="2" placeholder="Ex.: Guia emitida com sucesso.">${escapeHtml(details.resultado ?? details.result ?? "")}</textarea>
       </label>
       <label>
-        <span>Confirmacao ou evidencia (opcional)</span>
+        <span>Mensagem da confirmacao</span>
         <input ${fieldAttr}="reportConfirmation" type="text" value="${escapeHtml(details.confirmacao ?? details.confirmation ?? "")}" placeholder="Ex.: OCR confirmou: Sem debitos" />
       </label>
-      <p class="spreadsheet-write-hint">Tambem pode usar {{linha_atual}} e os nomes das colunas da planilha na mensagem.</p>
+      <p class="spreadsheet-write-hint">Quando um campo usar uma coluna, a mensagem correspondente fica guardada, mas o PDF mostra o valor da coluna selecionada.</p>
       <div class="tree-inline-fields">
         ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
       </div>
@@ -19414,6 +19493,8 @@ function renderInsertPanel(order) {
       resultado: panel.reportResult,
       confirmacao: panel.reportConfirmation,
       coluna_relatorio: panel.reportColumn,
+      coluna_resultado: panel.reportResultColumn,
+      coluna_confirmacao: panel.reportConfirmationColumn,
       ao_sucesso: panel.successAction,
       bloco_sucesso: panel.successBlock,
       sequencia_sucesso: panel.successSequence,
@@ -21575,6 +21656,8 @@ function formValuesFromCard(card) {
     reportResult: get("reportResult")?.value ?? "",
     reportConfirmation: get("reportConfirmation")?.value ?? "",
     reportColumn: get("reportColumn")?.value ?? "",
+    reportResultColumn: get("reportResultColumn")?.value ?? "",
+    reportConfirmationColumn: get("reportConfirmationColumn")?.value ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
@@ -21725,6 +21808,8 @@ function treeValuesFromCard(card) {
     reportResult: get("reportResult")?.value ?? "",
     reportConfirmation: get("reportConfirmation")?.value ?? "",
     reportColumn: get("reportColumn")?.value ?? "",
+    reportResultColumn: get("reportResultColumn")?.value ?? "",
+    reportConfirmationColumn: get("reportConfirmationColumn")?.value ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
@@ -22225,6 +22310,8 @@ function commandCardHasUnsavedChanges(snapshot) {
       || normalizeStringValue(values.reportResult) !== normalizeStringValue(details.resultado ?? details.result ?? "")
       || normalizeStringValue(values.reportConfirmation) !== normalizeStringValue(details.confirmacao ?? details.confirmation ?? "")
       || normalizeStringValue(values.reportColumn) !== normalizeStringValue(details.coluna_relatorio ?? details.report_column ?? "")
+      || normalizeStringValue(values.reportResultColumn) !== normalizeStringValue(details.coluna_resultado ?? details.result_column ?? "")
+      || normalizeStringValue(values.reportConfirmationColumn) !== normalizeStringValue(details.coluna_confirmacao ?? details.confirmation_column ?? "")
       || successFlowChanged(values, details)
     );
   }
@@ -22582,6 +22669,8 @@ async function invokeCommandCardUpdate(snapshot) {
       resultado: values.reportResult || "",
       confirmacao: values.reportConfirmation || "",
       reportColumn: values.reportColumn || "",
+      resultColumn: values.reportResultColumn || "",
+      confirmationColumn: values.reportConfirmationColumn || "",
       delay: values.delay,
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
@@ -22892,6 +22981,8 @@ function insertValuesFromPanel(panelElement) {
     reportResult: get("reportResult")?.value ?? state.insertPanel?.reportResult ?? "",
     reportConfirmation: get("reportConfirmation")?.value ?? state.insertPanel?.reportConfirmation ?? "",
     reportColumn: get("reportColumn")?.value ?? state.insertPanel?.reportColumn ?? "",
+    reportResultColumn: get("reportResultColumn")?.value ?? state.insertPanel?.reportResultColumn ?? "",
+    reportConfirmationColumn: get("reportConfirmationColumn")?.value ?? state.insertPanel?.reportConfirmationColumn ?? "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? state.insertPanel?.compareExpectedColumn ?? state.insertPanel?.column ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? state.insertPanel?.compareOcrSource ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? state.insertPanel?.compareMode ?? "texto",
@@ -25013,6 +25104,13 @@ commandMapList?.addEventListener("input", (event) => {
   if (syncOcrTargetActionControlToSource(target)) {
     return;
   }
+  if (target?.matches?.('[data-tree-field^="report"], [data-insert-field^="report"]')) {
+    const container = target.closest(".command-tree-card, .insert-card-panel");
+    syncReportResultPreview(container);
+    if (container?.classList.contains("insert-card-panel") && state.insertPanel) {
+      state.insertPanel = { ...state.insertPanel, ...insertValuesFromPanel(container) };
+    }
+  }
   if (
     target?.matches?.('[data-tree-field="imagePath"], [data-insert-field="imagePath"]')
   ) {
@@ -25493,6 +25591,10 @@ document.getElementById("clearButton").addEventListener("click", () => {
 
 timelineList.addEventListener("change", (event) => {
   const target = event.target;
+  if (target.matches('[data-field^="report"]')) {
+    syncReportResultPreview(target.closest(".flow-card"));
+    return;
+  }
   if (target.matches('[data-field="imagePath"]')) {
     const card = target.closest(".flow-card");
     setRecognitionTestStatusForOrder(Number(card?.dataset.order), target.value, false);
@@ -25521,6 +25623,13 @@ timelineList.addEventListener("change", (event) => {
     const columns = columnsForSheetInWorkbook(workbookField?.value, target.value);
     setColumnSuggestionsForField(columnField, columns);
     return;
+  }
+});
+
+timelineList.addEventListener("input", (event) => {
+  const target = event.target;
+  if (target.matches('[data-field^="report"]')) {
+    syncReportResultPreview(target.closest(".flow-card"));
   }
 });
 
@@ -25707,6 +25816,16 @@ timelineList.addEventListener("click", (event) => {
 commandMapList.addEventListener("change", (event) => {
   const target = event.target;
   if (syncOcrTargetActionControlToSource(target)) {
+    return;
+  }
+  if (target.matches('[data-tree-field^="report"], [data-insert-field^="report"]')) {
+    const container = target.closest(".command-tree-card, .insert-card-panel");
+    syncReportResultPreview(container);
+    if (container?.classList.contains("command-tree-card")) {
+      syncCommandMapDraftFromCard(container);
+    } else if (container?.classList.contains("insert-card-panel") && state.insertPanel) {
+      state.insertPanel = { ...state.insertPanel, ...insertValuesFromPanel(container) };
+    }
     return;
   }
   if (
@@ -27393,6 +27512,8 @@ commandMapList.addEventListener("click", async (event) => {
               resultado: values.reportResult || "",
               confirmacao: values.reportConfirmation || "",
               reportColumn: values.reportColumn || "",
+              resultColumn: values.reportResultColumn || "",
+              confirmationColumn: values.reportConfirmationColumn || "",
               delay: common.delay,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
@@ -27408,6 +27529,8 @@ commandMapList.addEventListener("click", async (event) => {
               resultado: values.reportResult || "",
               confirmacao: values.reportConfirmation || "",
               reportColumn: values.reportColumn || "",
+              resultColumn: values.reportResultColumn || "",
+              confirmationColumn: values.reportConfirmationColumn || "",
               delay: common.delay,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,

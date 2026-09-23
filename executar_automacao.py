@@ -7209,17 +7209,24 @@ class ExecutorAutomacao:
             return self.resultado_sucesso_evento(evento)
 
         coluna_relatorio = str(detalhes.get("coluna_relatorio") or detalhes.get("report_column") or "").strip()
+        coluna_resultado = str(detalhes.get("coluna_resultado") or detalhes.get("result_column") or "").strip()
+        coluna_confirmacao = str(detalhes.get("coluna_confirmacao") or detalhes.get("confirmation_column") or "").strip()
         contexto_relatorio = dict(contexto_loop)
-        item_relatorio = ""
-        if coluna_relatorio:
-            linha_atual = self.obter_contexto_linha_loop(contexto_loop)
-            item_relatorio = str(linha_atual.get(coluna_relatorio) or "").strip() if isinstance(linha_atual, dict) else ""
-            if item_relatorio:
-                contexto_relatorio["empresa"] = item_relatorio
+        linha_atual = self.obter_contexto_linha_loop(contexto_loop)
+
+        def valor_da_coluna(coluna):
+            if not coluna or not isinstance(linha_atual, dict):
+                return ""
+            valor = linha_atual.get(coluna)
+            return "" if valor is None else str(valor).strip()
+
+        item_relatorio = valor_da_coluna(coluna_relatorio)
+        if item_relatorio:
+            contexto_relatorio["empresa"] = item_relatorio
 
         status = self.substituir_variaveis_texto(str(detalhes.get("status") or "Concluida"), contexto_relatorio)
-        resultado = self.substituir_variaveis_texto(str(detalhes.get("resultado") or ""), contexto_relatorio)
-        confirmacao = self.substituir_variaveis_texto(str(detalhes.get("confirmacao") or ""), contexto_relatorio)
+        resultado = valor_da_coluna(coluna_resultado) if coluna_resultado else self.substituir_variaveis_texto(str(detalhes.get("resultado") or ""), contexto_relatorio)
+        confirmacao = valor_da_coluna(coluna_confirmacao) if coluna_confirmacao else self.substituir_variaveis_texto(str(detalhes.get("confirmacao") or ""), contexto_relatorio)
         tom = str(detalhes.get("tom") or "success").strip().lower()
         self.registrar_marcacao_relatorio_loop(
             indice=indice,

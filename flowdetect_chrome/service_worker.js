@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.24";
+const RUNTIME_VERSION = "0.2.25";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -102,6 +102,25 @@ function spreadsheetColumnValue(rowData, column) {
   const normalized = requested.toLocaleLowerCase();
   const key = Object.keys(rowData).find((name) => String(name).trim().toLocaleLowerCase() === normalized);
   return key ? String(rowData[key] ?? "").trim() : "";
+}
+
+function reportColumnValue(rowData, column, variables = {}) {
+  const selected = spreadsheetColumnValue(rowData, column);
+  if (selected) return selected;
+  const requested = String(column || "").trim();
+  return requested ? String(variables?.[requested] ?? "").trim() : "";
+}
+
+function reportStepForRow(rawStep, variables = {}, rowData = {}) {
+  const reportColumn = String(rawStep?.report_column || "").trim();
+  const itemValue = reportColumnValue(rowData, reportColumn, variables);
+  const reportVariables = itemValue ? { ...variables, empresa: itemValue } : variables;
+  const step = replaceVariables(rawStep, reportVariables);
+  const resultColumn = String(rawStep?.result_column || "").trim();
+  const confirmationColumn = String(rawStep?.confirmation_column || "").trim();
+  if (resultColumn) step.result = reportColumnValue(rowData, resultColumn, reportVariables);
+  if (confirmationColumn) step.confirmation = reportColumnValue(rowData, confirmationColumn, reportVariables);
+  return step;
 }
 
 function recordReportResult(run, step) {
@@ -482,10 +501,7 @@ async function executeStep(run, rawStep) {
     return `${source.values.length} valor(es) preparados para o loop ${source.name}.`;
   }
   if (step.type === "report_result") {
-    const reportColumn = String(rawStep.report_column || "").trim();
-    const selectedValue = spreadsheetColumnValue(run.spreadsheetLoop?.rowData, reportColumn);
-    const reportVariables = selectedValue ? { ...(run.variables || {}), empresa: selectedValue } : run.variables;
-    const reportStep = replaceVariables(rawStep, reportVariables);
+    const reportStep = reportStepForRow(rawStep, run.variables || {}, run.spreadsheetLoop?.rowData || {});
     const result = recordReportResult(run, reportStep);
     return result.confirmation
       ? `Resultado do relatorio: ${result.status}. Evidencia: ${result.confirmation}`

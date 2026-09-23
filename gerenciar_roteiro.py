@@ -1013,6 +1013,8 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
             "result": str(detalhes.get("resultado") or detalhes.get("result") or "").strip(),
             "confirmation": str(detalhes.get("confirmacao") or detalhes.get("confirmation") or "").strip(),
             "report_column": str(detalhes.get("coluna_relatorio") or detalhes.get("report_column") or "").strip(),
+            "result_column": str(detalhes.get("coluna_resultado") or detalhes.get("result_column") or "").strip(),
+            "confirmation_column": str(detalhes.get("coluna_confirmacao") or detalhes.get("confirmation_column") or "").strip(),
         })
         return passo, None
 
@@ -1045,9 +1047,10 @@ def exportar_automacao_para_chrome(automacao_id, item, destino_json=None):
         if str(evento.get("tipo") or "") != "resultado_relatorio":
             continue
         detalhes_resultado = evento.get("detalhes") or {}
-        coluna = str(detalhes_resultado.get("coluna_relatorio") or detalhes_resultado.get("report_column") or "").strip()
-        if coluna and coluna not in colunas_relatorio:
-            colunas_relatorio.append(coluna)
+        for chave in ("coluna_relatorio", "coluna_resultado", "coluna_confirmacao", "report_column", "result_column", "confirmation_column"):
+            coluna = str(detalhes_resultado.get(chave) or "").strip()
+            if coluna and coluna not in colunas_relatorio:
+                colunas_relatorio.append(coluna)
 
     passos = []
     avisos = []
@@ -3065,6 +3068,8 @@ def criar_bloco_resultado_relatorio(
     sequencia_sucesso="",
     atraso_sequencia_sucesso=0,
     coluna_relatorio="",
+    coluna_resultado="",
+    coluna_confirmacao="",
 ):
     tom_normalizado = str(tom or "success").strip().lower()
     if tom_normalizado not in {"success", "info", "warning", "danger"}:
@@ -3076,6 +3081,8 @@ def criar_bloco_resultado_relatorio(
             "resultado": str(resultado or "").strip(),
             "confirmacao": str(confirmacao or "").strip(),
             "coluna_relatorio": str(coluna_relatorio or "").strip(),
+            "coluna_resultado": str(coluna_resultado or "").strip(),
+            "coluna_confirmacao": str(coluna_confirmacao or "").strip(),
         },
         ao_sucesso,
         bloco_sucesso,
@@ -3951,6 +3958,8 @@ def comando_adicionar_resultado_relatorio(args):
             args.sequencia_sucesso,
             args.atraso_sequencia_sucesso,
             coluna_relatorio=args.report_column,
+            coluna_resultado=args.result_column,
+            coluna_confirmacao=args.confirmation_column,
         )
     )
     return salvar_e_retornar(payload)
@@ -4264,6 +4273,8 @@ def comando_inserir_resultado_relatorio(args):
             args.sequencia_sucesso,
             args.atraso_sequencia_sucesso,
             coluna_relatorio=args.report_column,
+            coluna_resultado=args.result_column,
+            coluna_confirmacao=args.confirmation_column,
         ),
         args.target_order,
         args.position,
@@ -4599,6 +4610,8 @@ def comando_atualizar_resultado_relatorio(args):
         args.sequencia_sucesso,
         args.atraso_sequencia_sucesso,
         coluna_relatorio=args.report_column,
+        coluna_resultado=args.result_column,
+        coluna_confirmacao=args.confirmation_column,
     )
     evento.update(bloco)
     return salvar_e_retornar(payload)
@@ -4992,6 +5005,8 @@ def build_parser():
     add_report_result.add_argument("--resultado", default="")
     add_report_result.add_argument("--confirmacao", default="")
     add_report_result.add_argument("--report-column", default="")
+    add_report_result.add_argument("--result-column", default="")
+    add_report_result.add_argument("--confirmation-column", default="")
     add_report_result.add_argument("--delay", type=float, default=0)
     add_report_result.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(add_report_result)
@@ -5163,6 +5178,8 @@ def build_parser():
     insert_report_result.add_argument("--resultado", default="")
     insert_report_result.add_argument("--confirmacao", default="")
     insert_report_result.add_argument("--report-column", default="")
+    insert_report_result.add_argument("--result-column", default="")
+    insert_report_result.add_argument("--confirmation-column", default="")
     insert_report_result.add_argument("--delay", type=float, default=0)
     insert_report_result.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(insert_report_result)
@@ -5326,6 +5343,8 @@ def build_parser():
     update_report_result.add_argument("--resultado", default="")
     update_report_result.add_argument("--confirmacao", default="")
     update_report_result.add_argument("--report-column", default="")
+    update_report_result.add_argument("--result-column", default="")
+    update_report_result.add_argument("--confirmation-column", default="")
     update_report_result.add_argument("--delay", type=float)
     update_report_result.add_argument("--sequencia")
     adicionar_argumentos_fluxo_sucesso(update_report_result)

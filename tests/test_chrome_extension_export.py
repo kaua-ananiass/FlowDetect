@@ -204,6 +204,8 @@ class ChromeExtensionExportTest(unittest.TestCase):
                     "tom": "success",
                     "resultado": "Automacao concluida para {{empresa}}.",
                     "coluna_relatorio": "Empresa",
+                    "coluna_resultado": "Cidade",
+                    "coluna_confirmacao": "Empresa",
                 },
             },
         ]
@@ -214,8 +216,16 @@ class ChromeExtensionExportTest(unittest.TestCase):
 
         source, report = exported["steps"]
         self.assertEqual(source["values"], ["03943209000187", "51708970000187"])
-        self.assertEqual(source["rows"], [{"Empresa": "Empresa Modelo"}, {"Empresa": "Outra Empresa"}])
+        self.assertEqual(
+            source["rows"],
+            [
+                {"Empresa": "Empresa Modelo", "Cidade": "Sao Paulo"},
+                {"Empresa": "Outra Empresa", "Cidade": "Campinas"},
+            ],
+        )
         self.assertEqual(report["report_column"], "Empresa")
+        self.assertEqual(report["result_column"], "Cidade")
+        self.assertEqual(report["confirmation_column"], "Empresa")
 
     def test_exports_report_result_for_the_chrome_execution_report(self):
         automation_id = "auto_report"
