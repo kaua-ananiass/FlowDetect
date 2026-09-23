@@ -1,7 +1,16 @@
 (() => {
   const PAGE_WIDTH = 595.28;
   const PAGE_HEIGHT = 841.89;
-  const MARGIN = 27;
+  const MARGIN = 30;
+  const REPORT_TABLE = Object.freeze({
+    lineOffset: 12,
+    companyOffset: 59,
+    companyWidth: 153,
+    resultOffset: 224,
+    resultWidth: 193,
+    statusOffset: 431,
+    statusWidth: 92
+  });
 
   const COLORS = {
     background: "#07111F",
@@ -97,7 +106,17 @@
   }
 
   function approximateWidth(value, size, bold = false) {
-    return String(value || "").length * size * (bold ? 0.54 : 0.48);
+    const text = String(value || "");
+    let units = 0;
+    for (const character of text) {
+      if (/\s/.test(character)) units += 0.28;
+      else if (/[ilI1'`.,;:!|]/.test(character)) units += 0.28;
+      else if (/[MW@#%&]/.test(character)) units += 0.86;
+      else if (/[A-Z\xC0-\xDE]/.test(character)) units += 0.67;
+      else if (/[0-9]/.test(character)) units += 0.56;
+      else units += 0.54;
+    }
+    return units * size * (bold ? 1.02 : 1);
   }
 
   function truncate(value, maxWidth, size, bold = false) {
@@ -112,19 +131,26 @@
     const words = String(value || "-").replace(/\s+/g, " ").trim().split(" ");
     const lines = [];
     let current = "";
-    for (const word of words) {
+    let omitted = false;
+    for (const rawWord of words) {
+      const word = approximateWidth(rawWord, size, bold) > maxWidth
+        ? truncate(rawWord, maxWidth, size, bold)
+        : rawWord;
       const candidate = current ? `${current} ${word}` : word;
-      if (approximateWidth(candidate, size, bold) <= maxWidth || !current) {
+      if (approximateWidth(candidate, size, bold) <= maxWidth) {
         current = candidate;
         continue;
       }
-      lines.push(current);
+      if (current) lines.push(current);
+      if (lines.length >= maxLines) {
+        omitted = true;
+        current = "";
+        break;
+      }
       current = word;
-      if (lines.length === maxLines) break;
     }
     if (current && lines.length < maxLines) lines.push(current);
-    if (lines.length > maxLines) lines.length = maxLines;
-    if (words.join(" ") !== lines.join(" ") && lines.length) lines[lines.length - 1] = truncate(lines[lines.length - 1], maxWidth, size, bold);
+    if (omitted && lines.length) lines[lines.length - 1] = truncate(`${lines[lines.length - 1]}...`, maxWidth, size, bold);
     return lines.length ? lines : ["-"];
   }
 
@@ -188,32 +214,32 @@
     page.text(MARGIN, y, "RESULTADOS POR LINHA", 7.2, COLORS.accentSoft, true);
     page.y += 12;
     page.rect(MARGIN, page.y, contentWidth, 23, COLORS.panelSoft);
-    page.text(MARGIN + 11, page.y + 8, "LINHA", 6.4, COLORS.textSoft, true);
-    page.text(MARGIN + 53, page.y + 8, String(sourceName || "ITEM").toUpperCase().slice(0, 20), 6.4, COLORS.textSoft, true);
-    page.text(MARGIN + 213, page.y + 8, "RESULTADO", 6.4, COLORS.textSoft, true);
-    page.text(PAGE_WIDTH - MARGIN - 94, page.y + 8, "STATUS", 6.4, COLORS.textSoft, true);
+    page.text(MARGIN + REPORT_TABLE.lineOffset, page.y + 8, "LINHA", 6.4, COLORS.textSoft, true);
+    page.text(MARGIN + REPORT_TABLE.companyOffset, page.y + 8, truncate(String(sourceName || "ITEM").toUpperCase(), REPORT_TABLE.companyWidth, 6.4, true), 6.4, COLORS.textSoft, true);
+    page.text(MARGIN + REPORT_TABLE.resultOffset, page.y + 8, "RESULTADO", 6.4, COLORS.textSoft, true);
+    page.text(MARGIN + REPORT_TABLE.statusOffset, page.y + 8, "STATUS", 6.4, COLORS.textSoft, true);
     page.y += 32;
   }
 
   function drawRow(page, row, sourceName, rowIndex = 1) {
     const contentWidth = PAGE_WIDTH - (MARGIN * 2);
-    const valueLines = wrap(row.value || "(vazio)", 144, 8.2, true, 2);
+    const valueLines = wrap(row.value || "(vazio)", REPORT_TABLE.companyWidth, 8.2, true, 2);
     const result = row.result || row.error || "Sem mensagem registrada.";
-    const resultLines = wrap(result, 210, 7.6, false, 2);
-    const statusLines = wrap(row.status || (row.success === false ? "Falhou" : "Concluida"), 88, 6.7, true, 2);
+    const resultLines = wrap(result, REPORT_TABLE.resultWidth, 7.6, false, 2);
+    const statusLines = wrap(row.status || (row.success === false ? "Falhou" : "Concluida"), REPORT_TABLE.statusWidth, 6.7, true, 2);
     const lineCount = Math.max(valueLines.length, resultLines.length, statusLines.length);
-    const height = Math.max(54, 22 + (lineCount * 10));
+    const height = Math.max(64, 30 + (lineCount * 10));
     page.rect(MARGIN, page.y, contentWidth, height, rowIndex % 2 ? COLORS.panel : COLORS.panelStrong);
     const tone = toneColor(row.tone || (row.success === false ? "danger" : "success"));
     page.rect(MARGIN, page.y, 3, height, tone);
-    page.text(MARGIN + 11, page.y + 13, String(row.index || rowIndex).padStart(2, "0"), 9.8, COLORS.white, true);
+    page.text(MARGIN + REPORT_TABLE.lineOffset, page.y + 14, String(row.index || rowIndex).padStart(2, "0"), 9.8, COLORS.white, true);
     const time = row.finishedAt ? dateLabel(row.finishedAt).slice(-5) : "--:--";
-    page.text(MARGIN + 11, page.y + 27, time, 6.3, COLORS.muted, false);
-    valueLines.forEach((line, index) => page.text(MARGIN + 53, page.y + 12 + (index * 10), line, 8.2, COLORS.white, true));
-    resultLines.forEach((line, index) => page.text(MARGIN + 213, page.y + 12 + (index * 10), line, 7.6, COLORS.textSoft, false));
-    statusLines.forEach((line, index) => page.text(PAGE_WIDTH - MARGIN - 94, page.y + 14 + (index * 9), line.toUpperCase(), 6.7, tone, true));
+    page.text(MARGIN + REPORT_TABLE.lineOffset, page.y + 31, time, 6.3, COLORS.muted, false);
+    valueLines.forEach((line, index) => page.text(MARGIN + REPORT_TABLE.companyOffset, page.y + 14 + (index * 10), line, 8.2, COLORS.white, true));
+    resultLines.forEach((line, index) => page.text(MARGIN + REPORT_TABLE.resultOffset, page.y + 14 + (index * 10), line, 7.6, COLORS.textSoft, false));
+    statusLines.forEach((line, index) => page.text(MARGIN + REPORT_TABLE.statusOffset, page.y + 15 + (index * 10), line.toUpperCase(), 6.7, tone, true));
     const detail = `${sourceName || "item"} ${row.index || rowIndex} | ${durationLabel(row.startedAt, row.finishedAt)}`;
-    page.text(MARGIN + 53, page.y + height - 12, truncate(detail, 144, 6.4), 6.4, COLORS.muted, false);
+    page.text(MARGIN + REPORT_TABLE.companyOffset, page.y + height - 14, truncate(detail, REPORT_TABLE.companyWidth, 6.4), 6.4, COLORS.muted, false);
     page.y += height + 7;
   }
 

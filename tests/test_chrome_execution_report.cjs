@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/report-generator.js"), "utf8");
-const names = ["reportTone", "statusLabel", "reportRows", "reportCounters", "latin1Bytes", "joinBytes", "buildPdf"];
+const names = ["reportTone", "statusLabel", "reportRows", "reportCounters", "approximateWidth", "truncate", "wrap", "latin1Bytes", "joinBytes", "buildPdf"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp(`^  function ${name}\\(.*?^  }`, "ms"));
   assert.ok(found, `Missing production function ${name}`);
@@ -42,4 +42,14 @@ test("the generated PDF declares WinAnsi so Portuguese accents render in Helveti
 
   assert.match(raw, /\/Encoding \/WinAnsiEncoding/);
   assert.ok(raw.includes(noDebts));
+});
+
+test("report rows wrap long values inside their column width", () => {
+  const context = runner();
+  const companyLines = context.wrap("BUG CONTROLE DE PRAGAS E VETORES", 153, 8.2, true, 2);
+  const statusLines = context.wrap("NAO ENCONTRADO - 09/2026", 92, 6.7, true, 2);
+
+  assert.equal(companyLines.length, 2);
+  assert.ok(companyLines.every((line) => context.approximateWidth(line, 8.2, true) <= 153));
+  assert.ok(statusLines.every((line) => context.approximateWidth(line, 6.7, true) <= 92));
 });
