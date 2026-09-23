@@ -17839,102 +17839,137 @@ function reportColumnChoices(details = {}, currentOrder = null) {
   };
 }
 
-function reportPreviewValue(column, fallback) {
-  const selected = String(column || "").trim();
-  return selected ? `{{${selected}}}` : String(fallback || "Mensagem personalizada");
-}
-
 function syncReportResultPreview(container) {
-  const preview = container?.querySelector?.(".report-pdf-preview");
+  const preview = container?.querySelector?.(".report-pdf-preview-full");
   if (!preview) return;
 
   const field = (name) => container.querySelector(
     `[data-tree-field="${name}"], [data-field="${name}"], [data-insert-field="${name}"]`,
   );
   const sourceName = String(preview.dataset.reportLoopColumn || "valor").trim() || "valor";
-  const item = reportPreviewValue(field("reportColumn")?.value, `{{${sourceName}}}`);
-  const result = reportPreviewValue(field("reportResultColumn")?.value, field("reportResult")?.value);
-  const confirmation = reportPreviewValue(field("reportConfirmationColumn")?.value, field("reportConfirmation")?.value || "-");
-  const status = String(field("reportStatus")?.value || "Concluida").trim() || "Concluida";
   const tone = String(field("reportTone")?.value || "success").trim();
+  const safeTone = ["success", "info", "warning", "danger"].includes(tone) ? tone : "success";
+  const status = String(field("reportStatus")?.value || "Concluida").trim() || "Concluida";
 
-  const itemNode = preview.querySelector("[data-report-preview-item]");
-  const resultNode = preview.querySelector("[data-report-preview-result]");
-  const confirmationNode = preview.querySelector("[data-report-preview-confirmation]");
-  const statusNode = preview.querySelector("[data-report-preview-status]");
-  if (itemNode) itemNode.textContent = item;
-  if (resultNode) resultNode.textContent = result;
-  if (confirmationNode) confirmationNode.textContent = confirmation;
-  if (statusNode) {
-    statusNode.textContent = status;
-    statusNode.className = `is-${["success", "info", "warning", "danger"].includes(tone) ? tone : "success"}`;
+  const syncSource = (name, columnField, messageField, fallback) => {
+    const slot = preview.querySelector(`[data-report-field-source="${name}"]`);
+    const column = String(field(columnField)?.value || "").trim();
+    const message = field(messageField);
+    if (!slot) return;
+    slot.classList.toggle("is-column-source", Boolean(column));
+    slot.dataset.source = column || "";
+    const sourceLabel = slot.querySelector("[data-report-source-caption]");
+    if (sourceLabel) {
+      sourceLabel.textContent = column
+        ? `Coluna ${column} da linha atual`
+        : fallback;
+    }
+    if (message) {
+      message.disabled = Boolean(column);
+      message.setAttribute("aria-disabled", String(Boolean(column)));
+    }
+  };
+
+  const itemSlot = preview.querySelector('[data-report-field-source="item"]');
+  const itemColumn = String(field("reportColumn")?.value || "").trim();
+  if (itemSlot) {
+    itemSlot.classList.toggle("is-column-source", Boolean(itemColumn));
+    const itemCaption = itemSlot.querySelector("[data-report-source-caption]");
+    if (itemCaption) {
+      itemCaption.textContent = itemColumn
+        ? `Coluna ${itemColumn} da linha atual`
+        : `Valor do loop ${sourceName}`;
+    }
   }
+
+  syncSource("result", "reportResultColumn", "reportResult", "Mensagem personalizada");
+  syncSource("confirmation", "reportConfirmationColumn", "reportConfirmation", "Confirmacao opcional");
+
+  preview.dataset.reportTone = safeTone;
+  const statusPreview = preview.querySelector("[data-report-preview-status]");
+  if (statusPreview) statusPreview.textContent = status;
+  const statusCell = preview.querySelector("[data-report-status-cell]");
+  if (statusCell) statusCell.dataset.tone = safeTone;
 }
 
 function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) {
   const tone = String(details.tom ?? details.tone ?? "success");
+  const safeTone = ["success", "info", "warning", "danger"].includes(tone) ? tone : "success";
   const reportColumns = reportColumnChoices(details, currentOrder);
   const itemColumn = String(details.coluna_relatorio ?? details.report_column ?? "");
   const resultColumn = String(details.coluna_resultado ?? details.result_column ?? "");
   const confirmationColumn = String(details.coluna_confirmacao ?? details.confirmation_column ?? "");
-  const previewItem = reportPreviewValue(itemColumn, `{{${reportColumns.sourceName}}}`);
-  const previewResult = reportPreviewValue(resultColumn, details.resultado ?? details.result ?? "");
-  const previewConfirmation = reportPreviewValue(confirmationColumn, details.confirmacao ?? details.confirmation ?? "-");
+  const status = String(details.status ?? "Concluida");
+  const resultMessage = String(details.resultado ?? details.result ?? "");
+  const confirmationMessage = String(details.confirmacao ?? details.confirmation ?? "");
+  const loopHint = reportColumns.hasColumns
+    ? `Use as colunas da planilha que alimenta o loop ${reportColumns.sourceName}.`
+    : "Adicione um loop de planilha para liberar as colunas deste relatorio.";
   return `
     <div class="field-stack spreadsheet-write-editor report-result-editor">
-      <p class="spreadsheet-write-hint">O loop continua usando <strong>${escapeHtml(reportColumns.sourceName)}</strong>. Escolha abaixo apenas os dados que cada campo mostrara no PDF.</p>
-      <section class="report-pdf-preview" aria-label="Previa do relatorio PDF" data-report-loop-column="${escapeHtml(reportColumns.sourceName)}">
-        <div class="report-pdf-preview-head"><span>FLOWDETECT</span><strong>Previa do PDF</strong><i></i></div>
-        <div class="report-pdf-preview-title">RELATORIO DA EXECUCAO</div>
-        <div class="report-pdf-preview-grid">
-          <div><span>LINHA</span><strong>{{linha_atual}}</strong></div>
-          <div><span>ITEM PROCESSADO</span><strong data-report-preview-item>${escapeHtml(previewItem)}</strong></div>
-          <div class="is-wide"><span>RESULTADO / CONFIRMACAO</span><strong data-report-preview-result>${escapeHtml(previewResult)}</strong><small data-report-preview-confirmation>${escapeHtml(previewConfirmation)}</small></div>
-          <div><span>STATUS</span><b class="is-${escapeHtml(tone)}" data-report-preview-status>${escapeHtml(details.status ?? "Concluida")}</b></div>
+      <section class="report-pdf-preview report-pdf-preview-full" aria-label="Previa editavel do relatorio PDF" data-report-loop-column="${escapeHtml(reportColumns.sourceName)}" data-report-tone="${escapeHtml(safeTone)}">
+        <header class="report-document-header">
+          <div class="report-document-brand">
+            <div class="report-document-mark" aria-hidden="true"><i></i><i></i></div>
+            <div><span>FLOWDETECT</span><strong>Relatorio de execucao</strong></div>
+          </div>
+          <div class="report-document-generated"><strong>PREVIA EDITAVEL</strong><small>Modelo do PDF final</small></div>
+        </header>
+        <div class="report-document-rule"></div>
+        <section class="report-document-heading">
+          <h4>Relatorio compacto da automacao</h4>
+          <p>${escapeHtml(loopHint)}</p>
+        </section>
+        <section class="report-document-summary" aria-label="Resumo ilustrativo do PDF">
+          <div><span>EXECUTADAS</span><strong>1</strong></div>
+          <div><span>EMITIDAS</span><strong>1</strong></div>
+          <div><span>SEM DEBITOS</span><strong>0</strong></div>
+          <div><span>REVISAO</span><strong>0</strong></div>
+        </section>
+        <section class="report-document-table" aria-label="Linha editavel do relatorio">
+          <div class="report-document-table-head"><span>LINHA</span><span>ITEM PROCESSADO</span><span>RESULTADO / CONFIRMACAO</span><span>HORARIO</span><span>STATUS</span></div>
+          <article class="report-document-row">
+            <div class="report-document-line"><strong>{{linha_atual}}</strong><small>Linha do loop</small></div>
+            <div class="report-document-field ${itemColumn ? "is-column-source" : ""}" data-report-field-source="item">
+              <span>Item processado</span>
+              <select ${fieldAttr}="reportColumn" aria-label="Item processado no PDF">${reportColumns.itemOptions(itemColumn)}</select>
+              <small data-report-source-caption>${escapeHtml(itemColumn ? `Coluna ${itemColumn} da linha atual` : `Valor do loop ${reportColumns.sourceName}`)}</small>
+            </div>
+            <div class="report-document-result-stack">
+              <div class="report-document-field ${resultColumn ? "is-column-source" : ""}" data-report-field-source="result">
+                <span>Resultado</span>
+                <select ${fieldAttr}="reportResultColumn" aria-label="Origem do resultado">${reportColumns.messageOptions(resultColumn, "Mensagem personalizada")}</select>
+                <textarea ${fieldAttr}="reportResult" rows="2" aria-label="Mensagem do resultado" placeholder="Ex.: Guia emitida com sucesso." ${resultColumn ? "disabled aria-disabled=\"true\"" : ""}>${escapeHtml(resultMessage)}</textarea>
+                <small data-report-source-caption>${escapeHtml(resultColumn ? `Coluna ${resultColumn} da linha atual` : "Mensagem personalizada")}</small>
+              </div>
+              <div class="report-document-field report-document-confirmation ${confirmationColumn ? "is-column-source" : ""}" data-report-field-source="confirmation">
+                <span>Confirmacao / evidencia</span>
+                <select ${fieldAttr}="reportConfirmationColumn" aria-label="Origem da confirmacao">${reportColumns.messageOptions(confirmationColumn, "Confirmacao personalizada")}</select>
+                <input ${fieldAttr}="reportConfirmation" type="text" aria-label="Mensagem da confirmacao" value="${escapeHtml(confirmationMessage)}" placeholder="Ex.: OCR confirmou o alerta" ${confirmationColumn ? "disabled aria-disabled=\"true\"" : ""} />
+                <small data-report-source-caption>${escapeHtml(confirmationColumn ? `Coluna ${confirmationColumn} da linha atual` : "Confirmacao opcional")}</small>
+              </div>
+            </div>
+            <div class="report-document-time"><strong>--:--:--</strong><small>Ao finalizar</small></div>
+            <div class="report-document-status" data-report-status-cell data-tone="${escapeHtml(safeTone)}">
+              <input ${fieldAttr}="reportStatus" type="text" value="${escapeHtml(status)}" aria-label="Status no relatorio" placeholder="Concluida" />
+              <select ${fieldAttr}="reportTone" aria-label="Cor do status">
+                <option value="success" ${safeTone === "success" ? "selected" : ""}>Concluido</option>
+                <option value="info" ${safeTone === "info" ? "selected" : ""}>Informativo</option>
+                <option value="warning" ${safeTone === "warning" ? "selected" : ""}>Revisar</option>
+                <option value="danger" ${safeTone === "danger" ? "selected" : ""}>Falhou</option>
+              </select>
+              <small data-report-preview-status>${escapeHtml(status)}</small>
+            </div>
+          </article>
+        </section>
+        <footer class="report-document-footer"><span>Loop: ${escapeHtml(reportColumns.loopLabel)}</span><span>Edite os campos destacados para personalizar o PDF.</span></footer>
+      </section>
+      <section class="report-pdf-next-step" aria-label="Proximo passo da automacao">
+        <div><strong>Depois de registrar esta linha</strong><span>Defina para onde a automacao segue apos gravar o resultado.</span></div>
+        <div class="tree-inline-fields">
+          ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
         </div>
       </section>
-      <div class="tree-inline-fields">
-        <label>
-          <span>Item processado no PDF</span>
-          <select ${fieldAttr}="reportColumn">${reportColumns.itemOptions(itemColumn)}</select>
-        </label>
-        <label>
-          <span>Resultado no PDF</span>
-          <select ${fieldAttr}="reportResultColumn">${reportColumns.messageOptions(resultColumn, "Mensagem personalizada abaixo")}</select>
-        </label>
-        <label>
-          <span>Confirmacao no PDF</span>
-          <select ${fieldAttr}="reportConfirmationColumn">${reportColumns.messageOptions(confirmationColumn, "Mensagem personalizada abaixo")}</select>
-        </label>
-      </div>
-      <p class="spreadsheet-write-hint">Loop identificado: ${escapeHtml(reportColumns.loopLabel)}. ${reportColumns.hasColumns ? "As opcoes sao colunas dessa mesma planilha." : "Adicione o loop de planilha para liberar as colunas."}</p>
-      <div class="tree-inline-fields">
-        <label>
-          <span>Status no relatorio</span>
-          <input ${fieldAttr}="reportStatus" type="text" value="${escapeHtml(details.status ?? "Concluida")}" placeholder="Concluida, Sem debitos, Revisar..." />
-        </label>
-        <label>
-          <span>Cor do status</span>
-          <select ${fieldAttr}="reportTone">
-            <option value="success" ${tone === "success" ? "selected" : ""}>Concluido (verde)</option>
-            <option value="info" ${tone === "info" ? "selected" : ""}>Informativo (azul)</option>
-            <option value="warning" ${tone === "warning" ? "selected" : ""}>Revisar (amarelo)</option>
-            <option value="danger" ${tone === "danger" ? "selected" : ""}>Falhou (vermelho)</option>
-          </select>
-        </label>
-      </div>
-      <label>
-        <span>Mensagem do resultado</span>
-        <textarea ${fieldAttr}="reportResult" rows="2" placeholder="Ex.: Guia emitida com sucesso.">${escapeHtml(details.resultado ?? details.result ?? "")}</textarea>
-      </label>
-      <label>
-        <span>Mensagem da confirmacao</span>
-        <input ${fieldAttr}="reportConfirmation" type="text" value="${escapeHtml(details.confirmacao ?? details.confirmation ?? "")}" placeholder="Ex.: OCR confirmou: Sem debitos" />
-      </label>
-      <p class="spreadsheet-write-hint">Quando um campo usar uma coluna, a mensagem correspondente fica guardada, mas o PDF mostra o valor da coluna selecionada.</p>
-      <div class="tree-inline-fields">
-        ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
-      </div>
     </div>
   `;
 }
