@@ -10,7 +10,7 @@ function productionFunction(name) {
   assert.ok(found, `Production function ${name}`);
   return found[0];
 }
-const names = ["isVisible", "focusableTarget", "clickTarget"];
+const names = ["isVisible", "focusableTarget", "isClickReady", "waitForClickableTarget", "clickTarget"];
 const functions = names.map(productionFunction).join("\n");
 
 test("OCR click ignores a hidden menu and presses the option at the recognized point", () => {
@@ -74,6 +74,40 @@ test("OCR click ignores a hidden menu and presses the option at the recognized p
   assert.deepEqual(option.events.filter((type) => type !== "focus"), ["pointerdown", "mousedown", "pointerup", "mouseup"]);
 });
 
+
+test("click waits for a temporarily disabled target before continuing", async () => {
+  class Element {
+    constructor() {
+      this.parentElement = null;
+      this.disabled = true;
+      this.className = "";
+      this.style = { display: "block", visibility: "visible", opacity: "1", pointerEvents: "auto" };
+    }
+    getAttribute(name) { return name === "aria-hidden" ? "false" : null; }
+    getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 30 }; }
+    closest() { return this; }
+  }
+
+  let now = 0;
+  const button = new Element();
+  const context = vm.createContext({
+    Element,
+    Number,
+    Math,
+    Date: { now: () => now },
+    Error,
+    document: {},
+    getComputedStyle: (element) => element.style,
+    sleep: async (milliseconds) => { now += milliseconds; button.disabled = false; },
+  });
+  vm.runInContext(functions, context);
+
+  const ready = await context.waitForClickableTarget(button, null, 1000);
+
+  assert.equal(ready, button);
+  assert.equal(now, 140);
+  assert.equal(context.isClickReady(button), true);
+});
 
 test("OCR waits for a delayed static banner instead of failing on the first check", async () => {
   let now = 0;

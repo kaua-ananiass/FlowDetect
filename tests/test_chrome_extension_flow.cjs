@@ -245,6 +245,18 @@ test("Chrome runner follows the failure route of each OCR target", async () => {
   assert.match(logs[0].message, /Procurando OCR 2/);
 });
 
+test("Chrome runner stops when OCR found a target that stayed disabled", async () => {
+  const context = runner({
+    executePageStep: async () => { throw new Error("O alvo encontrado permaneceu desativado e nao recebeu o clique."); },
+    addLog: async () => {},
+  });
+
+  await assert.rejects(() => context.executeOcrTargets({}, {
+    on_failure: { action: "ir_para_bloco", block: "9" },
+    ocr_targets: [{ text: "Baixar guias", click: true }],
+  }), /encontrou o texto, mas o alvo ficou desativado/);
+});
+
 test("Chrome runner routes the final failed OCR instead of using the card failure", async () => {
   const logs = [];
   const context = runner({

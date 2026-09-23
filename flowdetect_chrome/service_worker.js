@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.26";
+const RUNTIME_VERSION = "0.2.27";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -371,6 +371,7 @@ async function clickVisualResult(run, step, match, label = "VISUAL") {
     x,
     y,
     clicks: step.click ? Math.max(1, Number(step.clicks || 1)) : 0,
+    timeout_ms: Math.max(500, Number(step.timeout_ms || 10000)),
     label,
     color: label === "OCR" ? "#44b9ff" : "#cf8cff",
     width: (match.width / Math.max(.001, match.screenshotScale || 1)) / screenshotScaleX,
@@ -446,6 +447,12 @@ async function executeOcrTargets(run, step) {
       }
       return { message, flow: target.on_success || step.on_success };
     } catch (error) {
+      const reason = String(error?.message || error || "");
+      if (reason.includes("desativado") && reason.includes("clique")) {
+        error.message = `OCR ${targetIndex + 1} encontrou o texto, mas o alvo ficou desativado. ${reason}`;
+        error.flowdetectOcrTargetFailure = true;
+        throw error;
+      }
       const flow = target.on_failure || step.on_failure;
       const detail = `OCR ${targetIndex + 1} nao encontrou o texto: ${targetStep.text}.`;
       if (String(flow?.action || "continuar").toLowerCase() === "continuar" && !isLastTarget) {
