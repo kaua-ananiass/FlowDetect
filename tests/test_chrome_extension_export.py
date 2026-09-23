@@ -181,6 +181,9 @@ class ChromeExtensionExportTest(unittest.TestCase):
                 "tom": "info",
                 "resultado": "Nenhum debito encontrado para {{CNPJ}}.",
                 "confirmacao": "Alerta confirmado na tela.",
+                "ao_sucesso": "ir_para_sequencia",
+                "sequencia_sucesso": "pagina_2",
+                "atraso_antes_sequencia_sucesso": 0.8,
             },
         }]
         self.roadmap.salvar_payload_em_automacao(automation_id, payload, incluir_recursos=False)
@@ -192,6 +195,11 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertEqual(exported["steps"][0]["status"], "Sem debitos")
         self.assertEqual(exported["steps"][0]["tone"], "info")
         self.assertEqual(exported["steps"][0]["confirmation"], "Alerta confirmado na tela.")
+        self.assertEqual(exported["steps"][0]["on_success"], {
+            "action": "ir_para_sequencia",
+            "block": "",
+            "sequence": "pagina_2",
+        })
 
     def test_exports_ocr_routes_and_secondary_page_targets(self):
         automation_id = "auto_ocr_route"

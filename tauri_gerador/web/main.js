@@ -4518,6 +4518,15 @@ function applyCommandMapDraftToEvent(event) {
     return nextEvent;
   }
 
+  if (nextEvent.type === "resultado_relatorio") {
+    details.status = values.reportStatus ?? details.status ?? "Concluida";
+    details.tom = values.reportTone ?? details.tom ?? details.tone ?? "success";
+    details.resultado = values.reportResult ?? details.resultado ?? details.result ?? "";
+    details.confirmacao = values.reportConfirmation ?? details.confirmacao ?? details.confirmation ?? "";
+    applySuccessFlowDraft(details, values);
+    return nextEvent;
+  }
+
   return nextEvent;
 }
 
@@ -10009,6 +10018,7 @@ function renderCompactTreeEditorFields(event) {
       { label: "Status", value: details.status || "Concluida" },
       { label: "Resultado", value: details.resultado || "Mensagem padrao" },
       { label: "Evidencia", value: details.confirmacao || "Nao informada" },
+      { label: "Depois de registrar", value: formatFlowActionLabel(details.ao_sucesso || "continuar", details.bloco_sucesso, details.sequencia_sucesso) },
     ], `
       ${hiddenTreeField("reportStatus", details.status ?? "Concluida")}
       ${hiddenTreeField("reportTone", details.tom ?? details.tone ?? "success")}
@@ -25746,7 +25756,7 @@ commandMapList.addEventListener("change", (event) => {
   }
 
   if (
-    target.matches('[data-tree-field="successBlock"], [data-tree-field="successSequenceDelay"], [data-tree-field="chromeSuccessBlock"], [data-tree-field="chromeSuccessSequenceDelay"], [data-tree-field="failureBlock"], [data-tree-field="failureSequenceDelay"], [data-tree-field="ocrFailureBlock"], [data-tree-field="ocrFailureSequenceDelay"], [data-tree-field="chromeFailureBlock"], [data-tree-field="chromeFailureSequenceDelay"]')
+    target.matches('[data-tree-field="successBlock"], [data-tree-field="successSequence"], [data-tree-field="successSequenceDelay"], [data-tree-field="chromeSuccessBlock"], [data-tree-field="chromeSuccessSequenceDelay"], [data-tree-field="failureBlock"], [data-tree-field="failureSequenceDelay"], [data-tree-field="ocrFailureBlock"], [data-tree-field="ocrFailureSequenceDelay"], [data-tree-field="chromeFailureBlock"], [data-tree-field="chromeFailureSequenceDelay"]')
   ) {
     const card = target.closest(".command-tree-card");
     syncCommandMapDraftFromCard(card);
