@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.25";
+const REQUIRED_RUNTIME_VERSION = "0.2.26";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
@@ -55,16 +55,80 @@ function appendLogs(container, logs) {
   }));
 }
 
+function normalizedSpreadsheetColumn(value) {
+  return String(value || "").trim().toLocaleLowerCase();
+}
+
+function spreadsheetLoopColumns(rows = [], sourceName = "valor") {
+  const columns = [];
+  const seen = new Set();
+  const add = (value) => {
+    const name = String(value || "").trim();
+    const normalized = normalizedSpreadsheetColumn(name);
+    if (!name || seen.has(normalized)) return;
+    seen.add(normalized);
+    columns.push(name);
+  };
+  add(sourceName);
+  rows.forEach((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return;
+    Object.keys(row).forEach(add);
+  });
+  return columns;
+}
+
+function spreadsheetLoopCellValue(row, column) {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return "";
+  const requested = normalizedSpreadsheetColumn(column);
+  if (!requested) return "";
+  const exact = Object.keys(row).find((name) => normalizedSpreadsheetColumn(name) === requested);
+  return exact ? String(row[exact] ?? "").trim() : "";
+}
+
 function spreadsheetLoopInfo(automation) {
   const source = (automation?.steps || []).find((step) => (
     step?.type === "data_source" && Array.isArray(step.values) && step.values.length
   ));
   if (!source) return null;
+  const name = String(source.name || "valor").trim() || "valor";
+  const rows = Array.isArray(source.rows) ? source.rows : [];
   return {
-    name: String(source.name || "valor"),
+    name,
     total: source.values.length,
-    values: source.values.map((value) => String(value ?? ""))
+    values: source.values.map((value) => String(value ?? "")),
+    rows,
+    columns: spreadsheetLoopColumns(rows, name)
   };
+}
+
+function loopDisplayColumn(automation, loop) {
+  const columns = Array.isArray(loop?.columns) ? loop.columns : [];
+  const requested = String(automation?.ui?.loopDisplayColumn || "").trim();
+  const find = (value) => columns.find((column) => normalizedSpreadsheetColumn(column) === normalizedSpreadsheetColumn(value));
+  return find(requested) || find("Empresa") || find(loop?.name) || columns[0] || "";
+}
+
+function currentLoopDisplayValue(run, loop, column) {
+  const rowIndex = Number(run?.spreadsheetLoop?.row);
+  if (!Number.isInteger(rowIndex) || rowIndex < 0) return "";
+  const row = run?.spreadsheetLoop?.rowData || loop?.rows?.[rowIndex] || {};
+  const value = spreadsheetLoopCellValue(row, column);
+  if (value) return value;
+  return normalizedSpreadsheetColumn(column) === normalizedSpreadsheetColumn(loop?.name)
+    ? String(loop?.values?.[rowIndex] ?? "").trim()
+    : "";
+}
+
+async function saveLoopDisplayColumn(automationId, column) {
+  const selected = String(column || "").trim();
+  const automations = await getAutomations();
+  const updated = automations.map((automation) => (
+    String(automation.id) === String(automationId)
+      ? { ...automation, ui: { ...(automation.ui || {}), loopDisplayColumn: selected } }
+      : automation
+  ));
+  automationsCache = updated;
+  await setAutomations(updated);
 }
 
 function clampSpreadsheetStartRow(value, total) {
@@ -149,16 +213,10 @@ function renderAutomation(automation) {
     loopStartChoice.replaceChildren(...loop.values.map((value, index) => {
       const option = document.createElement("option");
       option.value = String(index + 1);
-      option.textContent = `${index + 1} · ${value || "(vazio)"}`;
+      option.textContent = `#${index + 1} - ${value || "(vazio)"}`;
       return option;
     }));
-    const atualizarResumoLoop = () => {
-      const startRow = clampSpreadsheetStartRow(loopStartChoice.value, loop.total);
-      loopStartChoice.value = String(startRow);
-      fragment.querySelector(".loop-start-summary").textContent = `Loop ${loop.name}: ${loop.total} itens`;
-    };
-    loopStartChoice.addEventListener("change", atualizarResumoLoop);
-    atualizarResumoLoop();
+    loopStartChoice.value = "1";
   }
 
   const isCurrent = String(currentRun?.automationId || "") === String(automation.id);
@@ -173,9 +231,40 @@ function renderAutomation(automation) {
     statusElement.textContent = labels[status] || status;
     statusElement.className = `execution-status ${status}`;
     fragment.querySelector(".execution-percent").textContent = `${progress.percent}%`;
-    fragment.querySelector(".execution-summary").textContent = progress.total
-      ? `${progress.completed} de ${progress.total} blocos`
-      : "Preparando execucao";
+    const executionSummary = fragment.querySelector(".execution-summary");
+    const executionColumnLabel = fragment.querySelector(".execution-column-label");
+    const executionColumnChoice = fragment.querySelector(".execution-column-choice");
+    const refreshExecutionLoopSummary = () => {
+      if (!loop?.columns?.length) {
+        executionSummary.textContent = "Preparando execucao";
+        return;
+      }
+      const selectedColumn = loopDisplayColumn(automation, loop);
+      executionColumnChoice.value = selectedColumn;
+      const value = currentLoopDisplayValue(currentRun, loop, selectedColumn);
+      executionSummary.textContent = value
+        ? `${selectedColumn}: ${value}`
+        : `${selectedColumn}: aguardando a proxima linha`;
+    };
+    if (loop?.columns?.length) {
+      executionColumnLabel.hidden = false;
+      const selectedColumn = loopDisplayColumn(automation, loop);
+      executionColumnChoice.replaceChildren(...loop.columns.map((column) => {
+        const option = document.createElement("option");
+        option.value = column;
+        option.textContent = column;
+        option.selected = column === selectedColumn;
+        return option;
+      }));
+      executionColumnChoice.addEventListener("change", () => {
+        automation.ui = { ...(automation.ui || {}), loopDisplayColumn: executionColumnChoice.value };
+        refreshExecutionLoopSummary();
+        saveLoopDisplayColumn(automation.id, executionColumnChoice.value).catch((error) => {
+          window.alert(`Nao foi possivel salvar a coluna exibida: ${String(error.message || error)}`);
+        });
+      });
+    }
+    refreshExecutionLoopSummary();
     fragment.querySelector(".progress-bar").style.width = `${progress.percent}%`;
     const stop = fragment.querySelector(".stop-button");
     stop.hidden = status !== "running";
@@ -195,14 +284,14 @@ function renderAutomation(automation) {
   fragment.querySelector(".run-automation").addEventListener("click", () => {
     const startRow = loop ? clampSpreadsheetStartRow(loopStartChoice.value, loop.total) : 1;
     return runAutomation(automation, startRow).catch((error) => {
-    updateRun({
-      automationId: automation.id,
-      automationName: automation.automation?.nome,
-      status: "failed",
-      totalSteps: automation.steps.length,
-      currentStep: 0,
-      logs: [{ level: "error", message: String(error.message || error) }]
-    });
+      updateRun({
+        automationId: automation.id,
+        automationName: automation.automation?.nome,
+        status: "failed",
+        totalSteps: automation.steps.length,
+        currentStep: 0,
+        logs: [{ level: "error", message: String(error.message || error) }]
+      });
     });
   });
   fragment.querySelector(".delete-automation").addEventListener("click", () => deleteAutomation(automation).catch((error) => {
