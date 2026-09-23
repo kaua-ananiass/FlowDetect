@@ -4,18 +4,20 @@
   const MARGIN = 27;
 
   const COLORS = {
-    background: "#04131a",
-    panel: "#08232e",
-    panelSoft: "#0b2d39",
-    border: "#165060",
-    accent: "#48e0d0",
-    accentBlue: "#4db9f2",
-    white: "#e8f7fa",
-    muted: "#87a8b1",
-    success: "#37df94",
-    info: "#4db9f2",
-    warning: "#f5be63",
-    danger: "#ff8695"
+    background: "#07111F",
+    panel: "#0E1B2E",
+    panelStrong: "#091525",
+    panelSoft: "#11243B",
+    border: "#28465F",
+    accent: "#12B5CB",
+    accentSoft: "#5EEAD4",
+    white: "#E6F7FF",
+    textSoft: "#B5CAD8",
+    muted: "#7895A9",
+    success: "#22C55E",
+    info: "#4DB9F2",
+    warning: "#F59E0B",
+    danger: "#FF7185"
   };
 
   function dateLabel(value) {
@@ -143,87 +145,91 @@
   }
 
   function drawHeader(page, run, pageNumber = 1) {
-    page.rect(MARGIN, 24, 30, 30, COLORS.accent);
-    page.rect(MARGIN + 8, 35, 5, 5, COLORS.background);
-    page.rect(MARGIN + 18, 35, 5, 5, COLORS.background);
-    page.text(MARGIN + 42, 26, "FLOWDETECT", 7.5, COLORS.accent, true);
-    page.text(MARGIN + 42, 36, "Relatorio de execucao", 15, COLORS.white, true);
-    page.text(PAGE_WIDTH - MARGIN - 124, 28, statusLabel(run), 7.5, COLORS.accentBlue, true);
-    page.text(PAGE_WIDTH - MARGIN - 124, 39, `Gerado em ${dateLabel(new Date())}`, 7.5, COLORS.muted, false);
-    page.line(MARGIN, 66, PAGE_WIDTH - MARGIN, 66, COLORS.border, 1);
+    page.rect(MARGIN, 26, 24, 24, COLORS.accent);
+    page.rect(MARGIN + 6, 35, 4, 4, COLORS.background);
+    page.rect(MARGIN + 14, 35, 4, 4, COLORS.background);
+    page.rect(MARGIN + 7, 42, 10, 2.5, COLORS.background);
+    page.text(MARGIN + 34, 27, "FLOWDETECT", 7.3, COLORS.accentSoft, true);
+    page.text(MARGIN + 34, 37, "Relatorio de execucao", 14, COLORS.white, true);
+    page.text(PAGE_WIDTH - MARGIN - 112, 28, statusLabel(run), 7.2, COLORS.accent, true);
+    page.text(PAGE_WIDTH - MARGIN - 112, 39, `Gerado em ${dateLabel(new Date())}`, 7.1, COLORS.muted, false);
+    page.line(MARGIN, 65, PAGE_WIDTH - MARGIN, 65, COLORS.border, 0.8);
     if (pageNumber > 1) {
-      page.text(MARGIN, 81, "Detalhes da execucao", 13, COLORS.white, true);
-      page.text(PAGE_WIDTH - MARGIN - 50, 83, `Pagina ${pageNumber}`, 7.5, COLORS.muted, false);
-      page.y = 104;
+      page.text(MARGIN, 82, "Resultados da execucao", 13, COLORS.white, true);
+      page.text(PAGE_WIDTH - MARGIN - 38, 84, `Pagina ${pageNumber}`, 7.2, COLORS.muted, false);
+      page.y = 106;
     } else {
       page.y = 84;
     }
   }
 
   function drawCounters(page, counters) {
-    const gap = 8;
-    const width = (PAGE_WIDTH - (MARGIN * 2) - (gap * 3)) / 4;
-    const cards = [
-      ["EXECUTADAS", counters.total, COLORS.white],
+    const width = PAGE_WIDTH - (MARGIN * 2);
+    const items = [
+      ["LINHAS", counters.total, COLORS.white],
       ["CONFIRMADAS", counters.success, COLORS.success],
       ["INFORMATIVAS", counters.info, COLORS.info],
-      ["REVISAR / FALHAS", counters.review + counters.failed, counters.failed ? COLORS.danger : COLORS.warning]
+      ["REVISAR", counters.review + counters.failed, counters.failed ? COLORS.danger : COLORS.warning]
     ];
-    cards.forEach(([label, value, color], index) => {
-      const x = MARGIN + ((width + gap) * index);
-      page.rect(x, page.y, width, 59, COLORS.panel);
-      page.text(x + 11, page.y + 11, label, 6.7, COLORS.muted, true);
-      page.text(x + 11, page.y + 25, String(value), 19, color, true);
+    page.text(MARGIN, page.y, "RESUMO DA EXECUCAO", 7.2, COLORS.accentSoft, true);
+    page.y += 12;
+    page.rect(MARGIN, page.y, width, 50, COLORS.panel);
+    const itemWidth = width / items.length;
+    items.forEach(([label, value, color], index) => {
+      const x = MARGIN + (itemWidth * index);
+      if (index) page.line(x, page.y + 10, x, page.y + 40, COLORS.border, 0.55);
+      page.text(x + 13, page.y + 12, label, 6.4, COLORS.muted, true);
+      page.text(x + 13, page.y + 25, String(value), 18, color, true);
     });
-    page.y += 82;
+    page.y += 73;
   }
 
   function toneColor(tone) {
     return COLORS[reportTone(tone)] || COLORS.accent;
   }
 
-  function drawTableHeader(page) {
+  function drawTableHeader(page, sourceName) {
     const y = page.y;
-    page.text(MARGIN, y, "LINHA", 7, COLORS.accent, true);
-    page.text(MARGIN + 48, y, "ITEM PROCESSADO", 7, COLORS.accent, true);
-    page.text(MARGIN + 226, y, "RESULTADO / CONFIRMACAO", 7, COLORS.accent, true);
-    page.text(PAGE_WIDTH - MARGIN - 89, y, "STATUS", 7, COLORS.accent, true);
-    page.line(MARGIN, y + 14, PAGE_WIDTH - MARGIN, y + 14, COLORS.border, 1);
-    page.y += 23;
+    const contentWidth = PAGE_WIDTH - (MARGIN * 2);
+    page.text(MARGIN, y, "RESULTADOS POR LINHA", 7.2, COLORS.accentSoft, true);
+    page.y += 12;
+    page.rect(MARGIN, page.y, contentWidth, 23, COLORS.panelSoft);
+    page.text(MARGIN + 11, page.y + 8, "LINHA", 6.4, COLORS.textSoft, true);
+    page.text(MARGIN + 53, page.y + 8, String(sourceName || "ITEM").toUpperCase().slice(0, 20), 6.4, COLORS.textSoft, true);
+    page.text(MARGIN + 213, page.y + 8, "RESULTADO / CONFIRMACAO", 6.4, COLORS.textSoft, true);
+    page.text(PAGE_WIDTH - MARGIN - 94, page.y + 8, "STATUS", 6.4, COLORS.textSoft, true);
+    page.y += 32;
   }
 
-  function drawRow(page, row, sourceName) {
+  function drawRow(page, row, sourceName, rowIndex = 1) {
     const contentWidth = PAGE_WIDTH - (MARGIN * 2);
-    const valueLines = wrap(row.value || "(vazio)", 166, 8.4, true, 2);
+    const valueLines = wrap(row.value || "(vazio)", 144, 8.2, true, 2);
     const result = row.result || row.error || "Sem mensagem registrada.";
-    const resultLines = wrap(result, 202, 8, false, 2);
-    const confirmationLines = row.confirmation ? wrap(`Confirma: ${row.confirmation}`, 202, 7.2, false, 1) : [];
-    const statusLines = wrap(row.status || (row.success === false ? "Falhou" : "Concluida"), 76, 7.1, true, 3);
+    const resultLines = wrap(result, 210, 7.6, false, 2);
+    const confirmationLines = row.confirmation ? wrap(`Confirmacao: ${row.confirmation}`, 210, 6.8, false, 1) : [];
+    const statusLines = wrap(row.status || (row.success === false ? "Falhou" : "Concluida"), 88, 6.7, true, 2);
     const lineCount = Math.max(valueLines.length, resultLines.length + confirmationLines.length, statusLines.length);
-    const height = Math.max(49, 26 + (lineCount * 10));
-    page.rect(MARGIN, page.y, contentWidth, height, COLORS.panel);
+    const height = Math.max(54, 22 + (lineCount * 10));
+    page.rect(MARGIN, page.y, contentWidth, height, rowIndex % 2 ? COLORS.panel : COLORS.panelStrong);
     const tone = toneColor(row.tone || (row.success === false ? "danger" : "success"));
     page.rect(MARGIN, page.y, 3, height, tone);
-    page.text(MARGIN + 11, page.y + 12, String(row.index || "-"), 10, COLORS.white, true);
-    valueLines.forEach((line, index) => page.text(MARGIN + 48, page.y + 10 + (index * 10), line, 8.4, COLORS.white, true));
-    resultLines.forEach((line, index) => page.text(MARGIN + 226, page.y + 10 + (index * 10), line, 8, COLORS.muted, false));
-    confirmationLines.forEach((line, index) => page.text(MARGIN + 226, page.y + 10 + ((resultLines.length + index) * 10), line, 7.2, COLORS.accent, false));
-    const badgeWidth = 82;
-    const badgeX = PAGE_WIDTH - MARGIN - badgeWidth - 5;
-    const badgeHeight = Math.max(18, 8 + (statusLines.length * 9));
-    const badgeTop = page.y + Math.max(8, Math.round((height - badgeHeight) / 2));
-    page.rect(badgeX, badgeTop, badgeWidth, badgeHeight, COLORS.panelSoft);
-    statusLines.forEach((line, index) => page.text(badgeX + 6, badgeTop + 5 + (index * 9), line.toUpperCase(), 7.1, tone, true));
-    const detail = `${sourceName || "item"} ${row.index || "-"}  |  ${durationLabel(row.startedAt, row.finishedAt)}`;
-    page.text(MARGIN + 48, page.y + height - 12, truncate(detail, 166, 6.7), 6.7, COLORS.muted, false);
-    page.y += height + 8;
+    page.text(MARGIN + 11, page.y + 13, String(row.index || rowIndex).padStart(2, "0"), 9.8, COLORS.white, true);
+    const time = row.finishedAt ? dateLabel(row.finishedAt).slice(-5) : "--:--";
+    page.text(MARGIN + 11, page.y + 27, time, 6.3, COLORS.muted, false);
+    valueLines.forEach((line, index) => page.text(MARGIN + 53, page.y + 12 + (index * 10), line, 8.2, COLORS.white, true));
+    resultLines.forEach((line, index) => page.text(MARGIN + 213, page.y + 12 + (index * 10), line, 7.6, COLORS.textSoft, false));
+    confirmationLines.forEach((line, index) => page.text(MARGIN + 213, page.y + 12 + ((resultLines.length + index) * 10), line, 6.8, COLORS.accentSoft, false));
+    statusLines.forEach((line, index) => page.text(PAGE_WIDTH - MARGIN - 94, page.y + 14 + (index * 9), line.toUpperCase(), 6.7, tone, true));
+    const detail = `${sourceName || "item"} ${row.index || rowIndex} | ${durationLabel(row.startedAt, row.finishedAt)}`;
+    page.text(MARGIN + 53, page.y + height - 12, truncate(detail, 144, 6.4), 6.4, COLORS.muted, false);
+    page.y += height + 7;
   }
 
   function appendPageFooters(pages) {
     pages.forEach((page, index) => {
-      page.line(MARGIN, PAGE_HEIGHT - 33, PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 33, COLORS.border, 0.7);
-      page.text(MARGIN, PAGE_HEIGHT - 24, "FlowDetect - relatorio gerado pela extensao Chrome", 6.8, COLORS.muted, false);
-      page.text(PAGE_WIDTH - MARGIN - 39, PAGE_HEIGHT - 24, `${index + 1}/${pages.length}`, 6.8, COLORS.muted, false);
+      page.line(MARGIN, PAGE_HEIGHT - 34, PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 34, COLORS.border, 0.6);
+      page.text(MARGIN, PAGE_HEIGHT - 24, "FlowDetect | Relatorio gerado pela extensao Chrome", 6.7, COLORS.muted, false);
+      page.text(PAGE_WIDTH - MARGIN - 32, PAGE_HEIGHT - 24, `${index + 1}`, 6.7, COLORS.muted, false);
     });
   }
 
@@ -291,18 +297,16 @@
     page.text(MARGIN, page.y, "Relatorio compacto da execucao no Chrome", 10, COLORS.muted, false);
     page.y += 27;
     drawCounters(page, counters);
-    page.text(MARGIN, page.y, "LINHAS PROCESSADAS", 8, COLORS.accent, true);
-    page.y += 15;
-    drawTableHeader(page);
-    rows.forEach((row) => {
+    drawTableHeader(page, run?.report?.sourceName || "item");
+    rows.forEach((row, rowIndex) => {
       const estimatedHeight = 77;
       if (page.y + estimatedHeight > PAGE_HEIGHT - 47) {
         page = createPage();
         pages.push(page);
         drawHeader(page, run, pages.length);
-        drawTableHeader(page);
+        drawTableHeader(page, run?.report?.sourceName || "item");
       }
-      drawRow(page, row, run?.report?.sourceName || "item");
+      drawRow(page, row, run?.report?.sourceName || "item", rowIndex + 1);
     });
     appendPageFooters(pages);
     return buildPdf(pages);

@@ -17890,6 +17890,8 @@ function syncReportResultPreview(container) {
   if (statusPreview) statusPreview.textContent = status;
   const statusCell = preview.querySelector("[data-report-status-cell]");
   if (statusCell) statusCell.dataset.tone = safeTone;
+  const reportRow = preview.querySelector("[data-report-row]");
+  if (reportRow) reportRow.dataset.tone = safeTone;
 }
 
 function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) {
@@ -17928,7 +17930,7 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
         </section>
         <section class="report-document-table" aria-label="Linha editavel do relatorio">
           <div class="report-document-table-head"><span>LINHA</span><span>ITEM PROCESSADO</span><span>RESULTADO / CONFIRMACAO</span><span>HORARIO</span><span>STATUS</span></div>
-          <article class="report-document-row">
+          <article class="report-document-row" data-report-row data-tone="${escapeHtml(safeTone)}">
             <div class="report-document-line"><strong>{{linha_atual}}</strong><small>Linha do loop</small></div>
             <div class="report-document-field ${itemColumn ? "is-column-source" : ""}" data-report-field-source="item">
               <span>Item processado</span>

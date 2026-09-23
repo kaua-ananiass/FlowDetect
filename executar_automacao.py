@@ -5486,28 +5486,32 @@ class ExecutorAutomacao:
         caminho_pdf = PASTA_RELATORIOS_LOOP / nome_arquivo
 
         largura, altura = A4
-        margem_x = 26
-        margem_direita = 26
+        margem_x = 30
+        margem_direita = 30
         largura_util = largura - margem_x - margem_direita
         topo = altura - 28
-        rodape = 26
+        rodape = 28
         cores = {
-            "fundo": HexColor("#041116"),
-            "painel": HexColor("#08232b"),
-            "linha": HexColor("#12505c"),
-            "texto": HexColor("#e9f7fa"),
-            "muted": HexColor("#8eaab2"),
-            "ciano": HexColor("#22dfd0"),
-            "verde": HexColor("#13d27b"),
-            "azul": HexColor("#32adff"),
-            "amarelo": HexColor("#f3bf37"),
-            "vermelho": HexColor("#ff6579"),
+            "fundo": HexColor("#07111F"),
+            "superficie": HexColor("#0E1B2E"),
+            "superficie_forte": HexColor("#091525"),
+            "superficie_suave": HexColor("#11243B"),
+            "linha": HexColor("#28465F"),
+            "texto": HexColor("#E6F7FF"),
+            "texto_suave": HexColor("#B5CAD8"),
+            "muted": HexColor("#7895A9"),
+            "accent": HexColor("#12B5CB"),
+            "accent_suave": HexColor("#5EEAD4"),
+            "verde": HexColor("#22C55E"),
+            "azul": HexColor("#4DB9F2"),
+            "amarelo": HexColor("#F59E0B"),
+            "vermelho": HexColor("#FF7185"),
         }
-        estilos_status = {
-            "success": (cores["verde"], HexColor("#063d30")),
-            "info": (cores["azul"], HexColor("#07344a")),
-            "warning": (cores["amarelo"], HexColor("#443515")),
-            "danger": (cores["vermelho"], HexColor("#4a1723")),
+        cores_tom = {
+            "success": cores["verde"],
+            "info": cores["azul"],
+            "warning": cores["amarelo"],
+            "danger": cores["vermelho"],
         }
 
         pdf = canvas.Canvas(str(caminho_pdf), pagesize=A4)
@@ -5543,183 +5547,203 @@ class ExecutorAutomacao:
                 resultado[-1] = f"{ultimo.rstrip()}..."
             return resultado
 
-        def desenhar_cabecalho():
-            nonlocal pagina
-            pagina += 1
+        def desenhar_fundo():
             pdf.setFillColor(cores["fundo"])
             pdf.rect(0, 0, largura, altura, fill=1, stroke=0)
-            pdf.setFillColor(cores["ciano"])
-            pdf.circle(margem_x + 14, topo - 11, 13, fill=1, stroke=0)
+
+        def desenhar_marca(x, y):
+            pdf.setFillColor(cores["accent"])
+            pdf.roundRect(x, y - 20, 24, 24, 7, fill=1, stroke=0)
             pdf.setFillColor(cores["fundo"])
-            pdf.circle(margem_x + 9, topo - 8, 2.2, fill=1, stroke=0)
-            pdf.circle(margem_x + 19, topo - 8, 2.2, fill=1, stroke=0)
-            pdf.setFillColor(cores["ciano"])
-            pdf.setFont("Helvetica-Bold", 7.5)
-            pdf.drawString(margem_x + 35, topo + 3, "FLOWDETECT")
+            pdf.rect(x + 6, y - 9, 3.5, 3.5, fill=1, stroke=0)
+            pdf.rect(x + 14.5, y - 9, 3.5, 3.5, fill=1, stroke=0)
+            pdf.roundRect(x + 7, y - 16.5, 10, 2.5, 1.25, fill=1, stroke=0)
+
+        def desenhar_cabecalho(continuacao=False):
+            nonlocal pagina
+            pagina += 1
+            desenhar_fundo()
+            desenhar_marca(margem_x, topo - 3)
+            pdf.setFillColor(cores["accent_suave"])
+            pdf.setFont("Helvetica-Bold", 7.4)
+            pdf.drawString(margem_x + 34, topo + 1, "FLOWDETECT")
             pdf.setFillColor(cores["texto"])
-            pdf.setFont("Helvetica-Bold", 15)
-            pdf.drawString(margem_x + 35, topo - 10, "Relatorio de execucao")
-            pdf.setFillColor(cores["azul"])
-            pdf.setFont("Helvetica-Bold", 7.5)
-            pdf.drawRightString(largura - margem_direita, topo + 3, "RELATORIO")
+            pdf.setFont("Helvetica-Bold", 14)
+            pdf.drawString(margem_x + 34, topo - 12, "Relatorio de execucao")
+            pdf.setFillColor(cores["accent"])
+            pdf.setFont("Helvetica-Bold", 7.2)
+            pdf.drawRightString(largura - margem_direita, topo + 1, "RELATORIO")
             pdf.setFillColor(cores["muted"])
-            pdf.setFont("Helvetica", 7.5)
-            pdf.drawRightString(largura - margem_direita, topo - 10, f"Gerado em {datetime.now().strftime('%d/%m/%Y as %H:%M')}")
+            pdf.setFont("Helvetica", 7.2)
+            pdf.drawRightString(largura - margem_direita, topo - 12, f"Gerado em {datetime.now().strftime('%d/%m/%Y as %H:%M')}")
             pdf.setStrokeColor(cores["linha"])
-            pdf.setLineWidth(1)
-            pdf.line(margem_x, topo - 30, largura - margem_direita, topo - 30)
-            return topo - 53
+            pdf.setLineWidth(0.8)
+            pdf.line(margem_x, topo - 31, largura - margem_direita, topo - 31)
+            if continuacao:
+                pdf.setFillColor(cores["texto"])
+                pdf.setFont("Helvetica-Bold", 13)
+                pdf.drawString(margem_x, topo - 53, "Resultados da execucao")
+                pdf.setFillColor(cores["muted"])
+                pdf.setFont("Helvetica", 8)
+                pdf.drawRightString(largura - margem_direita, topo - 51, f"Pagina {pagina}")
+                return topo - 75
+            return topo - 55
 
         def desenhar_rodape():
             pdf.setStrokeColor(cores["linha"])
             pdf.setLineWidth(0.6)
-            pdf.line(margem_x, rodape, largura - margem_direita, rodape)
+            pdf.line(margem_x, rodape + 4, largura - margem_direita, rodape + 4)
             pdf.setFillColor(cores["muted"])
-            pdf.setFont("Helvetica", 7)
-            pdf.drawString(margem_x, rodape - 11, "FlowDetect | Resultado gerado automaticamente pela automacao")
-            pdf.drawRightString(largura - margem_direita, rodape - 11, f"Pagina {pagina}")
+            pdf.setFont("Helvetica", 6.8)
+            pdf.drawString(margem_x, rodape - 8, "FlowDetect | Relatorio gerado automaticamente pela automacao")
+            pdf.drawRightString(largura - margem_direita, rodape - 8, f"{pagina}")
 
         def proxima_pagina():
             desenhar_rodape()
             pdf.showPage()
-            return desenhar_cabecalho()
+            return desenhar_cabecalho(continuacao=True)
 
         resultados = relatorio.get("resultados", [])
         total_linhas = len(resultados)
-        total_emitidas = sum(1 for item in resultados if str(item.get("tom") or "").lower() == "success")
-        total_sem_debitos = sum(
-            1
-            for item in resultados
-            if "sem debito" in self.normalizar_texto_ocr(item.get("status", ""))
-        )
+        total_confirmadas = sum(1 for item in resultados if str(item.get("tom") or "").lower() == "success")
+        total_informativas = sum(1 for item in resultados if str(item.get("tom") or "").lower() == "info")
         total_revisao = sum(
             1
             for item in resultados
             if str(item.get("tom") or "").lower() in {"warning", "danger"}
         )
         nome_fluxo = Path(str(relatorio.get("arquivo") or "Automacao")).stem.replace("_", " ").strip() or "Automacao"
-        nome_fluxo = nome_fluxo.title()
-
-        y = desenhar_cabecalho()
-        pdf.setFillColor(cores["texto"])
-        pdf.setFont("Helvetica-Bold", 20)
-        pdf.drawString(margem_x, y, f"{nome_fluxo} - Relatorio compacto")
-        y -= 17
-        pdf.setFillColor(cores["muted"])
-        pdf.setFont("Helvetica", 9)
-        pdf.drawString(margem_x, y, "Formato objetivo para exportacao, impressao e arquivamento mensal.")
-        y -= 30
-        pdf.setFillColor(cores["ciano"])
-        pdf.setFont("Helvetica-Bold", 8)
-        pdf.drawString(margem_x, y, "RESUMO")
-        y -= 13
-        pdf.setFillColor(cores["muted"])
-        pdf.setFont("Helvetica", 8.5)
-        pdf.drawString(margem_x, y, f"{total_linhas} linha(s) processada(s) | planilha: {texto_limpo(relatorio.get('aba')) or '-'}")
-        y -= 36
-
-        card_y = y - 42
-        card_largura = largura_util / 4
-        pdf.setFillColor(cores["painel"])
-        pdf.roundRect(margem_x, card_y, largura_util, 50, 12, fill=1, stroke=0)
-        pdf.setStrokeColor(cores["linha"])
-        pdf.roundRect(margem_x, card_y, largura_util, 50, 12, fill=0, stroke=1)
-        resumo = [
-            ("EXECUTADAS", total_linhas, cores["texto"]),
-            ("EMITIDAS", total_emitidas, cores["verde"]),
-            ("SEM DEBITOS", total_sem_debitos, cores["azul"]),
-            ("REVISAO", total_revisao, cores["amarelo"]),
-        ]
-        for indice, (rotulo, numero, cor) in enumerate(resumo):
-            x = margem_x + indice * card_largura + 15
-            pdf.setFillColor(cores["muted"])
-            pdf.setFont("Helvetica-Bold", 7)
-            pdf.drawString(x, card_y + 31, rotulo)
-            pdf.setFillColor(cor)
-            pdf.setFont("Helvetica-Bold", 17)
-            pdf.drawString(x, card_y + 12, str(numero))
-        y = card_y - 28
-
+        nome_fluxo = nome_fluxo if any(caractere.isupper() for caractere in nome_fluxo) else nome_fluxo.title()
         coluna_relatorio = str(relatorio.get("coluna_relatorio") or "").strip()
         if not coluna_relatorio:
             coluna_relatorio = next(
                 (str(item.get("coluna_relatorio") or "").strip() for item in resultados if str(item.get("coluna_relatorio") or "").strip()),
-                "EMPRESA",
+                "ITEM",
             )
+
+        def desenhar_resumo(y_atual):
+            pdf.setFillColor(cores["accent_suave"])
+            pdf.setFont("Helvetica-Bold", 7.2)
+            pdf.drawString(margem_x, y_atual, "RESUMO DA EXECUCAO")
+            y_atual -= 11
+            pdf.setFillColor(cores["superficie"])
+            pdf.roundRect(margem_x, y_atual - 48, largura_util, 48, 10, fill=1, stroke=0)
+            itens = [
+                ("LINHAS", total_linhas, cores["texto"]),
+                ("CONFIRMADAS", total_confirmadas, cores["verde"]),
+                ("INFORMATIVAS", total_informativas, cores["azul"]),
+                ("REVISAR", total_revisao, cores["amarelo"] if not any(str(item.get("tom") or "").lower() == "danger" for item in resultados) else cores["vermelho"]),
+            ]
+            largura_item = largura_util / len(itens)
+            for indice, (rotulo, numero, cor) in enumerate(itens):
+                x = margem_x + indice * largura_item
+                if indice:
+                    pdf.setStrokeColor(cores["linha"])
+                    pdf.setLineWidth(0.55)
+                    pdf.line(x, y_atual - 39, x, y_atual - 10)
+                pdf.setFillColor(cores["muted"])
+                pdf.setFont("Helvetica-Bold", 6.5)
+                pdf.drawString(x + 14, y_atual - 16, rotulo)
+                pdf.setFillColor(cor)
+                pdf.setFont("Helvetica-Bold", 18)
+                pdf.drawString(x + 14, y_atual - 36, str(numero))
+            return y_atual - 71
+
         colunas = [
-            ("LINHA", 39),
-            (coluna_relatorio.upper()[:22] or "EMPRESA", 185),
-            ("RESULTADO", 184),
-            ("HORARIO", 60),
-            ("STATUS", 82),
+            ("LINHA", 42),
+            (coluna_relatorio.upper()[:20] or "ITEM", 160),
+            ("RESULTADO / CONFIRMACAO", 220),
+            ("STATUS", largura_util - 42 - 160 - 220),
         ]
-        inicio_x = margem_x + 6
 
-        def cabecalho_tabela(y_atual):
-            x = inicio_x
-            pdf.setFillColor(cores["ciano"])
-            pdf.setFont("Helvetica-Bold", 7)
+        def desenhar_cabecalho_tabela(y_atual):
+            pdf.setFillColor(cores["accent_suave"])
+            pdf.setFont("Helvetica-Bold", 7.2)
+            pdf.drawString(margem_x, y_atual, "RESULTADOS POR LINHA")
+            y_atual -= 12
+            pdf.setFillColor(cores["superficie_suave"])
+            pdf.roundRect(margem_x, y_atual - 23, largura_util, 23, 7, fill=1, stroke=0)
+            x = margem_x + 11
+            pdf.setFillColor(cores["texto_suave"])
+            pdf.setFont("Helvetica-Bold", 6.4)
             for rotulo, largura_coluna in colunas:
-                pdf.drawString(x, y_atual, rotulo)
+                pdf.drawString(x, y_atual - 14, rotulo)
                 x += largura_coluna
-            pdf.setStrokeColor(cores["linha"])
-            pdf.setLineWidth(1)
-            pdf.line(margem_x, y_atual - 8, largura - margem_direita, y_atual - 8)
-            return y_atual - 16
+            return y_atual - 32
 
-        y = cabecalho_tabela(y)
-        if not resultados:
-            pdf.setFillColor(cores["painel"])
-            pdf.roundRect(margem_x, y - 38, largura_util, 38, 8, fill=1, stroke=0)
+        def desenhar_linha(y_atual, item, indice_linha):
+            tom = str(item.get("tom") or ("success" if item.get("sucesso") else "danger")).lower()
+            cor_tom = cores_tom.get(tom, cores["accent"])
+            valor_linhas = linhas(item.get("empresa") or "Valor da linha", "Helvetica-Bold", 8.2, colunas[1][1] - 21, 2)
+            resultado_texto = item.get("resultado") or item.get("erro") or "Sem mensagem registrada."
+            resultado_linhas = linhas(resultado_texto, "Helvetica", 7.6, colunas[2][1] - 18, 2)
+            confirmacao = texto_limpo(item.get("confirmacao"))
+            confirmacao_linhas = linhas(confirmacao, "Helvetica", 6.8, colunas[2][1] - 18, 1) if confirmacao else []
+            status = texto_limpo(item.get("status") or ("Concluida" if item.get("sucesso") else "Falhou"))
+            status_linhas = linhas(status.upper(), "Helvetica-Bold", 6.6, colunas[3][1] - 18, 2)
+            altura_linha = max(54, 22 + max(len(valor_linhas), len(resultado_linhas) + len(confirmacao_linhas), len(status_linhas)) * 10)
+            if y_atual - altura_linha < rodape + 30:
+                y_atual = proxima_pagina()
+                y_atual = desenhar_cabecalho_tabela(y_atual)
+            fundo_linha = cores["superficie"] if indice_linha % 2 else cores["superficie_forte"]
+            pdf.setFillColor(fundo_linha)
+            pdf.roundRect(margem_x, y_atual - altura_linha, largura_util, altura_linha - 1, 7, fill=1, stroke=0)
+            pdf.setFillColor(cor_tom)
+            pdf.roundRect(margem_x, y_atual - altura_linha, 3, altura_linha - 1, 1.5, fill=1, stroke=0)
+            x = margem_x + 11
+            linha = item.get("linha")
+            pdf.setFillColor(cores["texto"])
+            pdf.setFont("Helvetica-Bold", 10)
+            pdf.drawString(x, y_atual - 17, f"{int(linha):02d}" if isinstance(linha, int) else f"{indice_linha:02d}")
+            finalizado_em = item.get("finalizado_em")
+            horario = finalizado_em.strftime("%H:%M") if isinstance(finalizado_em, datetime) else "--:--"
             pdf.setFillColor(cores["muted"])
-            pdf.setFont("Helvetica", 9)
-            pdf.drawString(margem_x + 14, y - 22, "Nenhuma linha foi processada durante esta execucao.")
+            pdf.setFont("Helvetica", 6.5)
+            pdf.drawString(x, y_atual - 30, horario)
+            x += colunas[0][1]
+            pdf.setFillColor(cores["texto"])
+            pdf.setFont("Helvetica-Bold", 8.2)
+            for posicao, parte in enumerate(valor_linhas):
+                pdf.drawString(x, y_atual - 15 - posicao * 10, parte)
+            x += colunas[1][1]
+            pdf.setFillColor(cores["texto_suave"])
+            pdf.setFont("Helvetica", 7.6)
+            for posicao, parte in enumerate(resultado_linhas):
+                pdf.drawString(x, y_atual - 15 - posicao * 10, parte)
+            if confirmacao_linhas:
+                pdf.setFillColor(cores["accent_suave"])
+                pdf.setFont("Helvetica", 6.8)
+                for posicao, parte in enumerate(confirmacao_linhas):
+                    pdf.drawString(x, y_atual - 15 - (len(resultado_linhas) + posicao) * 10, f"Confirmacao: {parte}")
+            x += colunas[2][1]
+            pdf.setFillColor(cor_tom)
+            pdf.setFont("Helvetica-Bold", 6.7)
+            for posicao, parte in enumerate(status_linhas):
+                pdf.drawString(x, y_atual - 17 - posicao * 9, parte)
+            return y_atual - altura_linha - 7
+
+        y = desenhar_cabecalho()
+        pdf.setFillColor(cores["texto"])
+        pdf.setFont("Helvetica-Bold", 21)
+        pdf.drawString(margem_x, y, nome_fluxo)
+        y -= 17
+        pdf.setFillColor(cores["texto_suave"])
+        pdf.setFont("Helvetica", 8.7)
+        descricao = f"Relatorio da execucao | Planilha: {texto_limpo(relatorio.get('aba')) or '-'}"
+        pdf.drawString(margem_x, y, descricao)
+        y -= 30
+        y = desenhar_resumo(y)
+        y = desenhar_cabecalho_tabela(y)
+
+        if not resultados:
+            pdf.setFillColor(cores["superficie"])
+            pdf.roundRect(margem_x, y - 48, largura_util, 48, 8, fill=1, stroke=0)
+            pdf.setFillColor(cores["texto_suave"])
+            pdf.setFont("Helvetica", 8.5)
+            pdf.drawString(margem_x + 14, y - 27, "Nenhuma linha foi processada durante esta execucao.")
         else:
-            for item in resultados:
-                empresa_linhas = linhas(item.get("empresa") or "Valor da linha", "Helvetica-Bold", 8, 174, 2)
-                resultado_texto = item.get("resultado") or item.get("erro") or "-"
-                confirmacao = texto_limpo(item.get("confirmacao"))
-                if confirmacao:
-                    resultado_texto = f"{resultado_texto} | {confirmacao}"
-                resultado_linhas = linhas(resultado_texto, "Helvetica", 7.6, 173, 2)
-                altura_linha = max(42, 17 + max(len(empresa_linhas), len(resultado_linhas)) * 9)
-                if y - altura_linha < rodape + 28:
-                    y = proxima_pagina()
-                    y = cabecalho_tabela(y)
-                pdf.setFillColor(cores["painel"])
-                pdf.roundRect(margem_x, y - altura_linha + 4, largura_util, altura_linha - 2, 7, fill=1, stroke=0)
-                x = inicio_x
-                pdf.setFillColor(cores["texto"])
-                pdf.setFont("Helvetica-Bold", 8)
-                linha = item.get("linha")
-                pdf.drawString(x, y - 14, f"{int(linha):02d}" if isinstance(linha, int) else "--")
-                x += colunas[0][1]
-                pdf.setFont("Helvetica-Bold", 8)
-                for posicao, parte in enumerate(empresa_linhas):
-                    pdf.drawString(x, y - 14 - posicao * 9, parte)
-                x += colunas[1][1]
-                pdf.setFillColor(cores["muted"])
-                pdf.setFont("Helvetica", 7.6)
-                for posicao, parte in enumerate(resultado_linhas):
-                    pdf.drawString(x, y - 14 - posicao * 9, parte)
-                x += colunas[2][1]
-                finalizado_em = item.get("finalizado_em")
-                horario = finalizado_em.strftime("%H:%M:%S") if isinstance(finalizado_em, datetime) else "--:--"
-                pdf.setFillColor(cores["muted"])
-                pdf.setFont("Helvetica", 7.5)
-                pdf.drawString(x, y - 14, horario)
-                x += colunas[3][1]
-                tom = str(item.get("tom") or ("success" if item.get("sucesso") else "danger")).lower()
-                cor_borda, cor_fundo = estilos_status.get(tom, estilos_status["success"])
-                status = texto_limpo(item.get("status") or ("Concluida" if item.get("sucesso") else "Falhou"))
-                largura_badge = min(colunas[4][1] - 4, max(54, stringWidth(status.upper(), "Helvetica-Bold", 6.6) + 16))
-                pdf.setFillColor(cor_fundo)
-                pdf.setStrokeColor(cor_borda)
-                pdf.roundRect(x, y - 23, largura_badge, 17, 8, fill=1, stroke=1)
-                pdf.setFillColor(cor_borda)
-                pdf.setFont("Helvetica-Bold", 6.6)
-                pdf.drawCentredString(x + largura_badge / 2, y - 17, status.upper()[:19])
-                y -= altura_linha
+            for indice, item in enumerate(resultados, start=1):
+                y = desenhar_linha(y, item, indice)
 
         desenhar_rodape()
         pdf.save()
