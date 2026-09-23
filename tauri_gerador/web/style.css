@@ -9391,6 +9391,17 @@ label span {
   z-index: 12;
 }
 
+/* O card aberto fica acima dos tempos e rotas do mapa. */
+.command-map-tree-node-slot:has(.command-tree-card.is-inline-expanded) {
+  z-index: 32;
+}
+
+.command-map-tree-stage:has(.command-tree-card.is-inline-expanded) .command-map-tree-edge-label {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .command-map-tree-node-slot.is-tree-position-dragging .command-tree-card {
   border-color: var(--command-page-accent-border);
   box-shadow:
@@ -11427,9 +11438,13 @@ label span {
 }
 
 .command-tree-card.is-inline-expanded:has(.report-pdf-preview-full) {
-  --command-expanded-width: min(720px, calc(100vw - 128px));
+  --command-expanded-width: min(860px, calc(100vw - 60px));
   --command-compact-width: 236px;
-  max-height: min(80vh, 760px);
+  max-height: min(86vh, 860px);
+}
+
+.command-tree-card.is-inline-expanded:has(.report-pdf-preview-full) .tree-command-preview {
+  display: none;
 }
 
 .report-pdf-preview-full {
@@ -11448,10 +11463,10 @@ label span {
   --report-warning: #f59e0b;
   --report-danger: #ff7185;
   display: grid;
-  gap: 16px;
+  gap: 18px;
   width: 100%;
   min-width: 0;
-  padding: 24px;
+  padding: 22px 24px;
   border: 1px solid rgba(230, 247, 255, 0.08);
   border-radius: 12px;
   color: var(--report-text);
@@ -11500,8 +11515,8 @@ label span {
 .report-document-heading p,
 .report-document-footer {
   color: var(--report-muted);
-  font-size: 0.64rem;
-  line-height: 1.4;
+  font-size: 0.7rem;
+  line-height: 1.45;
 }
 
 .report-document-rule {
@@ -11511,14 +11526,14 @@ label span {
 
 .report-document-heading {
   display: grid;
-  gap: 4px;
+  gap: 6px;
 }
 
 .report-document-heading h4 {
   margin: 0;
   color: var(--report-text);
   font-family: var(--font-display);
-  font-size: 1.25rem;
+  font-size: 1.35rem;
   font-weight: 800;
   letter-spacing: -0.035em;
 }
@@ -11528,7 +11543,7 @@ label span {
 }
 
 .report-document-summary {
-  min-height: 58px;
+  min-height: 64px;
   overflow: hidden;
   border-radius: 9px;
   background: var(--report-panel);
@@ -11537,10 +11552,10 @@ label span {
 .report-document-summary > div {
   display: grid;
   flex: 1 1 0;
-  gap: 5px;
+  gap: 6px;
   align-content: center;
   min-width: 0;
-  padding: 10px 14px;
+  padding: 12px 16px;
 }
 
 .report-document-summary > div + div {
@@ -11549,13 +11564,13 @@ label span {
 
 .report-document-summary span {
   color: var(--report-muted);
-  font-size: 0.43rem;
+  font-size: 0.52rem;
 }
 
 .report-document-summary strong {
   color: var(--report-text);
   font-family: var(--font-display);
-  font-size: 1.08rem;
+  font-size: 1.22rem;
   line-height: 1;
 }
 
@@ -11565,21 +11580,21 @@ label span {
 
 .report-document-table {
   display: grid;
-  gap: 7px;
+  gap: 10px;
   min-width: 0;
 }
 
 .report-document-table-head,
 .report-document-row {
   display: grid;
-  grid-template-columns: 48px minmax(136px, 1fr) minmax(220px, 1.55fr) minmax(118px, 0.8fr);
-  gap: 8px;
+  grid-template-columns: 54px minmax(150px, 1fr) minmax(250px, 1.55fr) minmax(132px, 0.84fr);
+  gap: 12px;
 }
 
 .report-document-table-head {
   align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 34px;
+  padding: 0 12px;
   border-radius: 7px;
   color: var(--report-text-soft);
   background: var(--report-panel-soft);
@@ -11589,7 +11604,7 @@ label span {
 .report-document-row {
   align-items: start;
   min-width: 0;
-  padding: 10px;
+  padding: 13px 12px;
   border-left: 3px solid var(--report-success);
   background: var(--report-panel);
 }
@@ -11601,36 +11616,38 @@ label span {
 .report-document-line {
   display: grid;
   align-content: start;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
-  padding-top: 6px;
+  padding-top: 7px;
 }
 
 .report-document-line strong {
   color: var(--report-text);
   font-family: var(--font-display);
-  font-size: 0.78rem;
+  font-size: 0.9rem;
 }
 
 .report-document-line small,
 .report-document-field small,
 .report-document-status small {
   color: var(--report-muted);
-  font-size: 0.55rem;
-  line-height: 1.25;
+  font-size: 0.63rem;
+  line-height: 1.35;
 }
 
 .report-document-field,
 .report-document-status {
   display: grid;
   align-content: start;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 
 .report-document-field > span {
   color: var(--report-muted);
-  font-size: 0.42rem;
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
 }
 
 .report-document-company small,
@@ -11646,14 +11663,15 @@ label span {
   width: 100%;
   min-width: 0;
   margin: 0;
-  padding: 3px 0;
+  min-height: 29px;
+  padding: 5px 0;
   border: 0;
   border-bottom: 1px dashed rgba(94, 234, 212, 0.34);
   border-radius: 0;
   color: var(--report-text);
   font: inherit;
-  font-size: 0.65rem;
-  line-height: 1.35;
+  font-size: 0.74rem;
+  line-height: 1.4;
   outline: none;
   background: transparent;
   box-shadow: none;
@@ -11661,13 +11679,13 @@ label span {
 
 .report-document-field select,
 .report-document-status select {
-  min-height: 25px;
+  min-height: 31px;
   padding-right: 22px !important;
   background-position: calc(100% - 12px) calc(50% - 2px), calc(100% - 7px) calc(50% - 2px);
 }
 
 .report-document-field textarea {
-  min-height: 39px;
+  min-height: 54px;
   resize: vertical;
 }
 
@@ -11701,12 +11719,12 @@ label span {
 }
 
 .report-document-status {
-  padding-top: 3px;
+  padding-top: 1px;
 }
 
 .report-document-status input {
   font-family: var(--font-display);
-  font-size: 0.68rem;
+  font-size: 0.78rem;
   font-weight: 800;
 }
 
@@ -11724,32 +11742,35 @@ label span {
 
 .report-document-footer {
   justify-content: space-between;
-  gap: 12px;
-  padding-top: 9px;
+  gap: 18px;
+  padding-top: 12px;
   border-top: 1px solid var(--report-line);
 }
 
 .report-pdf-next-step {
   display: grid;
-  gap: 9px;
-  padding: 11px 12px;
+  gap: 12px;
+  padding: 14px 16px;
   border-top: 1px solid rgba(230, 247, 255, 0.1);
 }
 
 .report-pdf-next-step > div:first-child {
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.75fr) minmax(260px, 1.25fr);
+  align-items: start;
+  gap: 14px;
 }
 
 .report-pdf-next-step strong {
   color: var(--report-text-soft);
   font-family: var(--font-display);
-  font-size: 0.63rem;
+  font-size: 0.72rem;
 }
 
 .report-pdf-next-step span {
   color: var(--report-muted);
-  font-size: 0.58rem;
+  font-size: 0.66rem;
+  line-height: 1.4;
   text-align: right;
 }
 

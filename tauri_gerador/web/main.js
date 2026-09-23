@@ -11248,7 +11248,7 @@ function updateCommandMapHeaderSummary() {
     if (settings.executionMode === "loop_planilha") {
       const afterLoopLabel = settings.afterLoopSequence ? getCommandMapPageLabel(settings.afterLoopSequence) : "encerrar o loop aqui";
       commandMapMeta.textContent = total
-        ? `${total} bloco${total === 1 ? "" : "s"} nesta ${pageDefinition.label.toLowerCase()}. Essa pagina roda em loop da planilha e depois segue para ${afterLoopLabel}.`
+        ? `${pageDefinition.label} tem ${total} bloco${total === 1 ? "" : "s"}. Ela roda no loop da planilha e, ao terminar, segue para ${afterLoopLabel}.`
         : `${pageDefinition.label} esta reservada para loop da planilha. Adicione os blocos desta etapa aqui.`;
     } else {
       commandMapMeta.textContent = total
@@ -17897,7 +17897,7 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
             </div>
             <div class="report-document-field report-document-result">
               <span>Resultado no PDF</span>
-              <textarea ${fieldAttr}="reportResult" rows="3" aria-label="Mensagem do resultado" placeholder="Ex.: Guia emitida com sucesso.">${escapeHtml(resultMessage)}</textarea>
+              <textarea ${fieldAttr}="reportResult" rows="3" spellcheck="false" aria-label="Mensagem do resultado" placeholder="Ex.: Guia emitida com sucesso.">${escapeHtml(resultMessage)}</textarea>
               <small>Mensagem exibida para esta linha.</small>
             </div>
             <div class="report-document-status" data-report-status-cell data-tone="${escapeHtml(safeTone)}">
