@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_RUNTIME_VERSION = "0.2.18";
+const CONTENT_RUNTIME_VERSION = "0.2.19";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
@@ -201,13 +201,8 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
 
   function isClickReady(element) {
     if (!element || !(element instanceof Element)) return false;
-    for (let current = element; current && current instanceof Element; current = current.parentElement) {
-      if (current.disabled || current.getAttribute("disabled") !== null || current.getAttribute("aria-disabled") === "true") return false;
-      const className = typeof current.className === "string" ? current.className : "";
-      if (/(^|\s)(?:is-)?disabled(?=\s|$)|\bMui-disabled\b/.test(className)) return false;
-      if (getComputedStyle(current).pointerEvents === "none") return false;
-    }
-    return true;
+    if (element.disabled || element.getAttribute("disabled") !== null || element.getAttribute("aria-disabled") === "true") return false;
+    try { return !element.matches?.(":disabled"); } catch (_) { return true; }
   }
 
   async function waitForClickableTarget(target, point = null, timeoutMs = 10000) {

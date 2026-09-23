@@ -89,7 +89,12 @@ test("click waits for a temporarily disabled target before continuing", async ()
   }
 
   let now = 0;
+  const wrapper = new Element();
+  wrapper.disabled = false;
+  wrapper.className = "is-disabled";
+  wrapper.style.pointerEvents = "none";
   const button = new Element();
+  button.parentElement = wrapper;
   const context = vm.createContext({
     Element,
     Number,
@@ -107,6 +112,7 @@ test("click waits for a temporarily disabled target before continuing", async ()
   assert.equal(ready, button);
   assert.equal(now, 140);
   assert.equal(context.isClickReady(button), true);
+  assert.equal(context.isClickReady(wrapper), true);
 });
 
 test("OCR waits for a delayed static banner instead of failing on the first check", async () => {
