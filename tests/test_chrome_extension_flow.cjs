@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
+const names = ["reportTone", "beginReportRow", "finalizeReportRow", "recordReportResult", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -13,10 +13,43 @@ const functions = names.map((name) => {
 }).join("\n");
 
 function runner(extra = {}) {
-  const context = vm.createContext({ Map, Number, String, Error, ...extra });
+  const context = vm.createContext({ Map, Number, String, Error, Boolean, Date, Math, ...extra });
   vm.runInContext(functions, context);
   return context;
 }
+
+test("a manually stopped row is reported as interrupted instead of failed", () => {
+  const context = runner();
+  const run = { cancelled: true, report: { sourceName: "CNPJ", rows: [], summary: {} } };
+
+  context.beginReportRow(run, { index: 2, value: "12.345.678/0001-90", sourceName: "CNPJ", total: 5 });
+  context.finalizeReportRow(run, false, "Execucao interrompida pelo usuario.");
+
+  assert.equal(run.report.rows[0].status, "Interrompida");
+  assert.equal(run.report.rows[0].tone, "warning");
+  assert.equal(run.report.rows[0].result, "Execucao interrompida pelo usuario.");
+});
+
+test("the report-result block records its configured status, message and evidence", () => {
+  const context = runner();
+  const run = { report: { sourceName: "CNPJ", rows: [], summary: {} } };
+
+  context.beginReportRow(run, { index: 1, value: "03.943.209/0001-87", sourceName: "CNPJ", total: 1 });
+  context.recordReportResult(run, {
+    status: "Sem debitos",
+    tone: "info",
+    result: "Nao ha debitos para a empresa.",
+    confirmation: "Alerta confirmado na tela.",
+  });
+  context.finalizeReportRow(run, true);
+
+  const row = JSON.parse(JSON.stringify(run.report.rows[0]));
+  assert.equal(row.success, true);
+  assert.equal(row.status, "Sem debitos");
+  assert.equal(row.tone, "info");
+  assert.equal(row.result, "Nao ha debitos para a empresa.");
+  assert.equal(row.confirmation, "Alerta confirmado na tela.");
+});
 
 test("Chrome runner keeps pages separate and resolves a block route on another page", () => {
   const context = runner();

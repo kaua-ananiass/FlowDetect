@@ -74,12 +74,13 @@ function finalizeReportRow(run, success, error = "") {
   entry.success = Boolean(success);
   entry.error = String(error || "").trim();
   entry.finishedAt = new Date().toISOString();
-  if (!entry.status) entry.status = entry.success ? "Concluida" : "Falhou";
-  if (!entry.tone) entry.tone = entry.success ? "success" : "danger";
+  const interrupted = Boolean(run.cancelled);
+  if (!entry.status) entry.status = entry.success ? "Concluida" : (interrupted ? "Interrompida" : "Falhou");
+  if (!entry.tone) entry.tone = entry.success ? "success" : (interrupted ? "warning" : "danger");
   if (!entry.result) {
     entry.result = entry.success
       ? "Todas as etapas da linha foram executadas."
-      : (entry.error || "A automacao foi interrompida nesta linha.");
+      : (interrupted ? "Execucao interrompida pelo usuario." : (entry.error || "Falha durante a execucao desta linha."));
   }
   delete run.reportCurrentRow;
 }

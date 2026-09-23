@@ -49,11 +49,12 @@
     const rows = Array.isArray(run?.report?.rows) ? run.report.rows : [];
     if (rows.length) return rows;
     const summary = run?.report?.summary || {};
+    const stopped = String(run?.status || "").toLowerCase() === "stopped";
     return [{
       index: 1,
       value: "Execucao geral",
       status: summary.status || statusLabel(run),
-      tone: summary.tone || (run?.status === "completed" ? "success" : "danger"),
+      tone: summary.tone || (run?.status === "completed" ? "success" : (stopped ? "warning" : "danger")),
       result: summary.result || run?.lastMessage || "Execucao finalizada.",
       confirmation: summary.confirmation || "",
       success: run?.status === "completed",

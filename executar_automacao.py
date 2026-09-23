@@ -5429,6 +5429,7 @@ class ExecutorAutomacao:
         sucesso,
         erro="",
         duracao_segundos=0.0,
+        interrompida=False,
     ):
         if not self._relatorio_loop:
             return
@@ -5438,12 +5439,14 @@ class ExecutorAutomacao:
             chave = ""
         marcacao = (self._relatorio_loop.get("marcacoes") or {}).get(chave, {}) or {}
         sucesso = bool(sucesso)
+        interrompida = bool(interrompida)
         erro = str(erro or "").strip()
-        status_padrao = "Concluida" if sucesso else "Falhou"
+        status_padrao = "Concluida" if sucesso else ("Interrompida" if interrompida else "Falhou")
+        tom_padrao = "success" if sucesso else ("warning" if interrompida else "danger")
         resultado_padrao = (
             "Todas as etapas do loop foram executadas com sucesso."
             if sucesso
-            else (erro or "Falha durante a execucao desta linha.")
+            else ("Execucao interrompida pelo usuario." if interrompida else (erro or "Falha durante a execucao desta linha."))
         )
         self._relatorio_loop["resultados"].append(
             {
@@ -5453,7 +5456,7 @@ class ExecutorAutomacao:
                 "sucesso": sucesso,
                 "erro": erro,
                 "status": str(marcacao.get("status") or status_padrao).strip(),
-                "tom": str(marcacao.get("tom") or ("success" if sucesso else "danger")).strip(),
+                "tom": str(marcacao.get("tom") or tom_padrao).strip(),
                 "resultado": str(marcacao.get("resultado") or resultado_padrao).strip(),
                 "confirmacao": str(marcacao.get("confirmacao") or "").strip(),
                 "duracao_segundos": round(max(0.0, float(duracao_segundos or 0.0)), 2),
@@ -10793,6 +10796,7 @@ class ExecutorAutomacao:
                         sucesso=False,
                         erro=mensagem_erro,
                         duracao_segundos=duracao_iteracao,
+                        interrompida=execucao_interrompida,
                     )
                     status_relatorio = "interrompido" if execucao_interrompida else "erro"
                     if not execucao_interrompida:
@@ -11019,6 +11023,7 @@ class ExecutorAutomacao:
                         sucesso=False,
                         erro=mensagem_erro,
                         duracao_segundos=duracao_iteracao,
+                        interrompida=execucao_interrompida,
                     )
                     status_relatorio = "interrompido" if execucao_interrompida else "erro"
                     if not execucao_interrompida:
@@ -11207,6 +11212,7 @@ class ExecutorAutomacao:
                         sucesso=False,
                         erro=mensagem_erro,
                         duracao_segundos=duracao_iteracao,
+                        interrompida=execucao_interrompida,
                     )
                     status_relatorio = "interrompido" if execucao_interrompida else "erro"
                     if not execucao_interrompida:
