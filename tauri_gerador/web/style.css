@@ -11481,37 +11481,22 @@ label span {
 }
 
 .report-document-mark {
-  position: relative;
+  display: grid;
+  place-items: center;
   width: 28px;
   height: 28px;
   flex: 0 0 28px;
+  border: 1px solid var(--report-accent);
   border-radius: 7px;
-  background: var(--report-accent);
-}
-
-.report-document-mark::before,
-.report-document-mark i {
-  position: absolute;
-  display: block;
-  background: var(--report-background);
-  content: "";
-}
-
-.report-document-mark i {
-  top: 9px;
-  width: 4px;
-  height: 4px;
-  border-radius: 1px;
-}
-
-.report-document-mark i:first-child { left: 7px; }
-.report-document-mark i:last-child { right: 7px; }
-.report-document-mark::before {
-  bottom: 6px;
-  left: 8px;
-  width: 12px;
-  height: 3px;
-  border-radius: 3px;
+  color: var(--report-accent-soft);
+  font-family: var(--font-display);
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: -0.08em;
+  background:
+    linear-gradient(var(--report-panel-strong), var(--report-panel-strong)) padding-box,
+    linear-gradient(135deg, rgba(18, 181, 203, 0.68), rgba(44, 116, 169, 0.44)) border-box;
+  box-shadow: -4px -3px 0 -3px #244d76, -7px -6px 0 -6px #2c74a9;
 }
 
 .report-document-brand div:last-child {
@@ -11519,7 +11504,7 @@ label span {
   gap: 1px;
 }
 
-.report-document-brand span,
+.report-document-brand strong,
 .report-document-generated strong,
 .report-document-summary span,
 .report-document-table-head,
@@ -11530,15 +11515,10 @@ label span {
   letter-spacing: 0.1em;
 }
 
-.report-document-brand span,
-.report-document-generated strong {
-  color: var(--report-accent-soft);
-}
-
 .report-document-brand strong {
   color: var(--report-text);
   font-family: var(--font-display);
-  font-size: 0.88rem;
+  font-size: 0.78rem;
   line-height: 1.15;
 }
 

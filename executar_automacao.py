@@ -5552,42 +5552,45 @@ class ExecutorAutomacao:
             pdf.rect(0, 0, largura, altura, fill=1, stroke=0)
 
         def desenhar_marca(x, y):
-            pdf.setFillColor(cores["accent"])
-            pdf.roundRect(x, y - 20, 24, 24, 7, fill=1, stroke=0)
-            pdf.setFillColor(cores["fundo"])
-            pdf.rect(x + 6, y - 9, 3.5, 3.5, fill=1, stroke=0)
-            pdf.rect(x + 14.5, y - 9, 3.5, 3.5, fill=1, stroke=0)
-            pdf.roundRect(x + 7, y - 16.5, 10, 2.5, 1.25, fill=1, stroke=0)
+            """Versao vetorial compacta do icone FlowDetect (cartoes FD sobrepostos)."""
+            pdf.setLineWidth(1.1)
+            pdf.setStrokeColor(HexColor("#244D76"))
+            pdf.roundRect(x, y - 17, 17, 17, 4, fill=0, stroke=1)
+            pdf.setStrokeColor(HexColor("#2C74A9"))
+            pdf.roundRect(x + 4, y - 20, 17, 17, 4, fill=0, stroke=1)
+            pdf.setStrokeColor(cores["accent"])
+            pdf.setFillColor(cores["superficie_forte"])
+            pdf.roundRect(x + 8, y - 23, 19, 19, 4.5, fill=1, stroke=1)
+            pdf.setFillColor(cores["accent_suave"])
+            pdf.setFont("Helvetica-Bold", 6.6)
+            pdf.drawCentredString(x + 17.5, y - 16.8, "FD")
 
         def desenhar_cabecalho(continuacao=False):
             nonlocal pagina
             pagina += 1
             desenhar_fundo()
-            desenhar_marca(margem_x, topo - 3)
-            pdf.setFillColor(cores["accent_suave"])
-            pdf.setFont("Helvetica-Bold", 7.4)
-            pdf.drawString(margem_x + 34, topo + 1, "FLOWDETECT")
+            desenhar_marca(margem_x, topo - 1)
             pdf.setFillColor(cores["texto"])
-            pdf.setFont("Helvetica-Bold", 14)
-            pdf.drawString(margem_x + 34, topo - 12, "Relatorio de execucao")
-            pdf.setFillColor(cores["accent"])
-            pdf.setFont("Helvetica-Bold", 7.2)
-            pdf.drawRightString(largura - margem_direita, topo + 1, "RELATORIO")
+            pdf.setFont("Helvetica-Bold", 9.4)
+            pdf.drawString(margem_x + 38, topo - 10, "FLOWDETECT")
+            pdf.setFillColor(cores["accent_suave"])
+            pdf.setFont("Helvetica-Bold", 7.1)
+            pdf.drawRightString(largura - margem_direita, topo - 7, "RELATORIO DE EXECUCAO")
             pdf.setFillColor(cores["muted"])
-            pdf.setFont("Helvetica", 7.2)
-            pdf.drawRightString(largura - margem_direita, topo - 12, f"Gerado em {datetime.now().strftime('%d/%m/%Y as %H:%M')}")
+            pdf.setFont("Helvetica", 7.1)
+            pdf.drawRightString(largura - margem_direita, topo - 19, f"Gerado em {datetime.now().strftime('%d/%m/%Y as %H:%M')}")
             pdf.setStrokeColor(cores["linha"])
             pdf.setLineWidth(0.8)
             pdf.line(margem_x, topo - 31, largura - margem_direita, topo - 31)
             if continuacao:
                 pdf.setFillColor(cores["texto"])
-                pdf.setFont("Helvetica-Bold", 13)
-                pdf.drawString(margem_x, topo - 53, "Resultados da execucao")
+                pdf.setFont("Helvetica-Bold", 12.5)
+                pdf.drawString(margem_x, topo - 52, "Resultados da execucao")
                 pdf.setFillColor(cores["muted"])
-                pdf.setFont("Helvetica", 8)
-                pdf.drawRightString(largura - margem_direita, topo - 51, f"Pagina {pagina}")
-                return topo - 75
-            return topo - 55
+                pdf.setFont("Helvetica", 7.5)
+                pdf.drawRightString(largura - margem_direita, topo - 50, f"Pagina {pagina}")
+                return topo - 73
+            return topo - 50
 
         def desenhar_rodape():
             pdf.setStrokeColor(cores["linha"])
@@ -5726,12 +5729,12 @@ class ExecutorAutomacao:
         pdf.setFillColor(cores["texto"])
         pdf.setFont("Helvetica-Bold", 21)
         pdf.drawString(margem_x, y, nome_fluxo)
-        y -= 17
+        y -= 16
         pdf.setFillColor(cores["texto_suave"])
-        pdf.setFont("Helvetica", 8.7)
-        descricao = f"Relatorio da execucao | Planilha: {texto_limpo(relatorio.get('aba')) or '-'}"
+        pdf.setFont("Helvetica", 8.5)
+        descricao = f"Planilha: {texto_limpo(relatorio.get('aba')) or '-'} | {total_linhas} linha(s) processada(s)"
         pdf.drawString(margem_x, y, descricao)
-        y -= 30
+        y -= 26
         y = desenhar_resumo(y)
         y = desenhar_cabecalho_tabela(y)
 

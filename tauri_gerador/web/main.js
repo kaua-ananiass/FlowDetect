@@ -17912,14 +17912,14 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
       <section class="report-pdf-preview report-pdf-preview-full" aria-label="Previa editavel do relatorio PDF" data-report-loop-column="${escapeHtml(reportColumns.sourceName)}" data-report-tone="${escapeHtml(safeTone)}">
         <header class="report-document-header">
           <div class="report-document-brand">
-            <div class="report-document-mark" aria-hidden="true"><i></i><i></i></div>
-            <div><span>FLOWDETECT</span><strong>Relatorio de execucao</strong></div>
+            <div class="report-document-mark" aria-hidden="true">FD</div>
+            <div><strong>FLOWDETECT</strong></div>
           </div>
-          <div class="report-document-generated"><strong>PREVIA EDITAVEL</strong><small>Modelo do PDF final</small></div>
+          <div class="report-document-generated"><strong>RELATORIO DE EXECUCAO</strong><small>Modelo editavel do PDF</small></div>
         </header>
         <div class="report-document-rule"></div>
         <section class="report-document-heading">
-          <h4>Relatorio compacto da automacao</h4>
+          <h4>Nome da automacao</h4>
           <p>${escapeHtml(loopHint)}</p>
         </section>
         <section class="report-document-summary" aria-label="Resumo ilustrativo do PDF">
