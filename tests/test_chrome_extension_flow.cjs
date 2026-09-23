@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "recordReportResult", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
+const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "recordReportResult", "replaceVariables", "setSpreadsheetRowVariables", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -49,6 +49,16 @@ test("the report-result block records its configured status, message and evidenc
   assert.equal(row.tone, "info");
   assert.equal(row.result, "Nao ha debitos para a empresa.");
   assert.equal(row.confirmation, "Alerta confirmado na tela.");
+});
+
+test("spreadsheet aliases replace the default report message with the current item", () => {
+  const context = runner();
+  const run = { variables: {} };
+
+  context.setSpreadsheetRowVariables(run, { name: "CNPJ", values: ["03943209000187"] }, 0);
+  const message = context.replaceVariables("Automacao concluida para {{empresa}} na linha {{linha_atual}}: {{CNPJ}}.", run.variables);
+
+  assert.equal(message, "Automacao concluida para 03943209000187 na linha 1: 03943209000187.");
 });
 
 test("Chrome runner keeps pages separate and resolves a block route on another page", () => {

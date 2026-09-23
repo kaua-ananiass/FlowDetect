@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/report-generator.js"), "utf8");
-const names = ["reportTone", "statusLabel", "reportRows", "reportCounters"];
+const names = ["reportTone", "statusLabel", "reportRows", "reportCounters", "latin1Bytes", "joinBytes", "buildPdf"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp(`^  function ${name}\\(.*?^  }`, "ms"));
   assert.ok(found, `Missing production function ${name}`);
@@ -13,7 +13,7 @@ const functions = names.map((name) => {
 }).join("\n");
 
 function runner() {
-  const context = vm.createContext({ Array, Object, String, Boolean });
+  const context = vm.createContext({ Array, Object, String, Boolean, Number, Uint8Array, PAGE_WIDTH: 595.28, PAGE_HEIGHT: 841.89 });
   vm.runInContext(functions, context);
   return context;
 }
@@ -32,4 +32,14 @@ test("a stopped execution receives a warning row in the generated PDF", () => {
     JSON.parse(JSON.stringify(context.reportCounters(rows))),
     { total: 1, success: 0, info: 0, review: 1, failed: 0 },
   );
+});
+
+test("the generated PDF declares WinAnsi so Portuguese accents render in Helvetica", () => {
+  const context = runner();
+  const noDebts = "N" + String.fromCharCode(195) + "O H" + String.fromCharCode(193) + " D" + String.fromCharCode(201) + "BITOS";
+  const bytes = context.buildPdf([{ commands: [`BT /F1 10 Tf (${noDebts}) Tj ET`] }]);
+  const raw = Buffer.from(bytes).toString("latin1");
+
+  assert.match(raw, /\/Encoding \/WinAnsiEncoding/);
+  assert.ok(raw.includes(noDebts));
 });

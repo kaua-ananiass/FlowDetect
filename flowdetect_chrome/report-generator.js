@@ -198,7 +198,8 @@
     const result = row.result || row.error || "Sem mensagem registrada.";
     const resultLines = wrap(result, 202, 8, false, 2);
     const confirmationLines = row.confirmation ? wrap(`Confirma: ${row.confirmation}`, 202, 7.2, false, 1) : [];
-    const lineCount = Math.max(valueLines.length, resultLines.length + confirmationLines.length);
+    const statusLines = wrap(row.status || (row.success === false ? "Falhou" : "Concluida"), 76, 7.1, true, 3);
+    const lineCount = Math.max(valueLines.length, resultLines.length + confirmationLines.length, statusLines.length);
     const height = Math.max(49, 26 + (lineCount * 10));
     page.rect(MARGIN, page.y, contentWidth, height, COLORS.panel);
     const tone = toneColor(row.tone || (row.success === false ? "danger" : "success"));
@@ -207,11 +208,12 @@
     valueLines.forEach((line, index) => page.text(MARGIN + 48, page.y + 10 + (index * 10), line, 8.4, COLORS.white, true));
     resultLines.forEach((line, index) => page.text(MARGIN + 226, page.y + 10 + (index * 10), line, 8, COLORS.muted, false));
     confirmationLines.forEach((line, index) => page.text(MARGIN + 226, page.y + 10 + ((resultLines.length + index) * 10), line, 7.2, COLORS.accent, false));
-    const badge = truncate(row.status || (row.success === false ? "Falhou" : "Concluida"), 77, 7.1, true).toUpperCase();
     const badgeWidth = 82;
     const badgeX = PAGE_WIDTH - MARGIN - badgeWidth - 5;
-    page.rect(badgeX, page.y + 11, badgeWidth, 18, COLORS.panelSoft);
-    page.text(badgeX + 6, page.y + 16, badge, 7.1, tone, true);
+    const badgeHeight = Math.max(18, 8 + (statusLines.length * 9));
+    const badgeTop = page.y + Math.max(8, Math.round((height - badgeHeight) / 2));
+    page.rect(badgeX, badgeTop, badgeWidth, badgeHeight, COLORS.panelSoft);
+    statusLines.forEach((line, index) => page.text(badgeX + 6, badgeTop + 5 + (index * 9), line.toUpperCase(), 7.1, tone, true));
     const detail = `${sourceName || "item"} ${row.index || "-"}  |  ${durationLabel(row.startedAt, row.finishedAt)}`;
     page.text(MARGIN + 48, page.y + height - 12, truncate(detail, 166, 6.7), 6.7, COLORS.muted, false);
     page.y += height + 8;
@@ -247,8 +249,8 @@
     const pageRefs = pages.map((_page, index) => `${5 + (index * 2)} 0 R`).join(" ");
     objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
     objects[2] = `<< /Type /Pages /Kids [${pageRefs}] /Count ${pages.length} >>`;
-    objects[3] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
-    objects[4] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>";
+    objects[3] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+    objects[4] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
     pages.forEach((page, index) => {
       const pageObject = 5 + (index * 2);
       const contentObject = pageObject + 1;

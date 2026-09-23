@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.22";
+const RUNTIME_VERSION = "0.2.23";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -180,6 +180,19 @@ function replaceVariables(value, variables) {
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, replaceVariables(item, variables)]));
   }
+  return value;
+}
+
+function setSpreadsheetRowVariables(run, source, row) {
+  if (!run.variables) run.variables = {};
+  const value = String(source?.values?.[row] ?? "");
+  const sourceName = String(source?.name || "valor").trim() || "valor";
+  const line = String(Math.max(1, Number(row) + 1));
+  run.variables[sourceName] = value;
+  run.variables.valor = value;
+  run.variables.empresa = value;
+  run.variables.linha_atual = line;
+  run.variables.linha = line;
   return value;
 }
 
@@ -562,17 +575,17 @@ async function executeSpreadsheetLoop(run, source, executeIteration) {
     if (firstRow > 0) await addLog(run, `Planilha ${source.name}: iniciando na linha ${firstRow + 1} de ${source.values.length}.`);
     for (let row = firstRow; row < source.values.length; row += 1) {
       if (run.cancelled) throw new Error("Execucao interrompida pelo usuario.");
-      run.variables[source.name] = source.values[row];
+      const value = setSpreadsheetRowVariables(run, source, row);
       run.spreadsheetLoop = {
         sourceIndex: source.index,
         iterationStart: source.iterationStart,
         row,
         total: source.values.length
       };
-      await addLog(run, "Planilha " + source.name + ": " + (row + 1) + "/" + source.values.length + " - " + source.values[row] + ".");
+      await addLog(run, "Planilha " + source.name + ": " + (row + 1) + "/" + source.values.length + " - " + value + ".");
       beginReportRow(run, {
         index: row + 1,
-        value: source.values[row],
+        value,
         sourceName: source.name,
         total: source.values.length
       });
@@ -625,12 +638,12 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
         if (firstRow > 0) await addLog(run, `Planilha ${source.name}: iniciando na linha ${firstRow + 1} de ${source.values.length}.`);
       }
       for (let row = firstRow; row < source.values.length; row += 1) {
-        run.variables[source.name] = source.values[row];
+        const value = setSpreadsheetRowVariables(run, source, row);
         run.spreadsheetLoop = { sourceIndex: source.index, row, total: source.values.length };
         await addLog(run, `Loop ${source.name}: ${row + 1}/${source.values.length} · ${source.values[row]}`);
         beginReportRow(run, {
           index: row + 1,
-          value: source.values[row],
+          value,
           sourceName: source.name,
           total: source.values.length
         });
