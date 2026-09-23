@@ -65,7 +65,6 @@ function beginReportRow(run, { index, value, sourceName, total }) {
     status: "",
     tone: "",
     result: "",
-    confirmation: "",
     error: ""
   };
   run.report.rows.push(entry);
@@ -116,10 +115,11 @@ function reportStepForRow(rawStep, variables = {}, rowData = {}) {
   const itemValue = reportColumnValue(rowData, reportColumn, variables);
   const reportVariables = itemValue ? { ...variables, empresa: itemValue } : variables;
   const step = replaceVariables(rawStep, reportVariables);
-  const resultColumn = String(rawStep?.result_column || "").trim();
-  const confirmationColumn = String(rawStep?.confirmation_column || "").trim();
-  if (resultColumn) step.result = reportColumnValue(rowData, resultColumn, reportVariables);
-  if (confirmationColumn) step.confirmation = reportColumnValue(rowData, confirmationColumn, reportVariables);
+  // Resultado e status pertencem ao bloco. Somente a empresa pode vir
+  // de outra coluna da mesma linha da planilha.
+  delete step.result_column;
+  delete step.confirmation_column;
+  delete step.confirmation;
   return step;
 }
 
@@ -128,8 +128,7 @@ function recordReportResult(run, step) {
   const result = {
     status: String(step.status || "Concluida").trim() || "Concluida",
     tone: reportTone(step.tone),
-    result: String(step.result || "").trim(),
-    confirmation: String(step.confirmation || "").trim()
+    result: String(step.result || "").trim()
   };
   if (run.reportCurrentRow) {
     const reportColumn = String(step.report_column || "").trim();
@@ -503,9 +502,7 @@ async function executeStep(run, rawStep) {
   if (step.type === "report_result") {
     const reportStep = reportStepForRow(rawStep, run.variables || {}, run.spreadsheetLoop?.rowData || {});
     const result = recordReportResult(run, reportStep);
-    return result.confirmation
-      ? `Resultado do relatorio: ${result.status}. Evidencia: ${result.confirmation}`
-      : `Resultado do relatorio: ${result.status}.`;
+    return `Resultado do relatorio: ${result.status}.`;
   }
   if (step.type === "loop_end" || step.type === "loop_start") return "Marcador de loop processado.";
   if (["element_action", "ocr_text", "focused_text", "viewport_click", "wait_text"].includes(step.type)) {
@@ -784,8 +781,7 @@ async function executeAutomation(automation, tabId, startRow = 1) {
         run.report.summary = {
           status: "Concluida",
           tone: "success",
-          result: "Automacao concluida com sucesso.",
-          confirmation: ""
+          result: "Automacao concluida com sucesso."
         };
       }
     }
@@ -799,8 +795,7 @@ async function executeAutomation(automation, tabId, startRow = 1) {
         run.report.summary = {
           status: run.status === "stopped" ? "Interrompida" : "Falhou",
           tone: run.status === "stopped" ? "warning" : "danger",
-          result: String(error?.message || error || "Falha durante a execucao."),
-          confirmation: ""
+          result: String(error?.message || error || "Falha durante a execucao.")
         };
       }
     }

@@ -30,7 +30,7 @@ test("a manually stopped row is reported as interrupted instead of failed", () =
   assert.equal(run.report.rows[0].result, "Execucao interrompida pelo usuario.");
 });
 
-test("the report-result block records its configured status, message and evidence", () => {
+test("the report-result block records only its configured status and message", () => {
   const context = runner();
   const run = { report: { sourceName: "CNPJ", rows: [], summary: {} } };
 
@@ -39,7 +39,7 @@ test("the report-result block records its configured status, message and evidenc
     status: "Sem debitos",
     tone: "info",
     result: "Nao ha debitos para a empresa.",
-    confirmation: "Alerta confirmado na tela.",
+    confirmation: "Dado antigo que nao deve aparecer.",
   });
   context.finalizeReportRow(run, true);
 
@@ -48,21 +48,22 @@ test("the report-result block records its configured status, message and evidenc
   assert.equal(row.status, "Sem debitos");
   assert.equal(row.tone, "info");
   assert.equal(row.result, "Nao ha debitos para a empresa.");
-  assert.equal(row.confirmation, "Alerta confirmado na tela.");
+  assert.equal(Object.hasOwn(row, "confirmation"), false);
 });
 
-test("report preview column choices resolve result and evidence from the active loop row", () => {
+test("report result keeps its custom message while the selected company comes from the active loop row", () => {
   const context = runner();
   const step = context.reportStepForRow({
     report_column: "Empresa",
     result_column: "Cidade",
     confirmation_column: "Empresa",
     result: "Mensagem guardada para {{empresa}}.",
-    confirmation: "Evidencia guardada.",
+    confirmation: "Evidencia antiga.",
   }, { CNPJ: "03943209000187" }, { Empresa: "Empresa Modelo", Cidade: "Sao Paulo" });
 
-  assert.equal(step.result, "Sao Paulo");
-  assert.equal(step.confirmation, "Empresa Modelo");
+  assert.equal(step.result, "Mensagem guardada para Empresa Modelo.");
+  assert.equal(Object.hasOwn(step, "confirmation"), false);
+  assert.equal(Object.hasOwn(step, "result_column"), false);
 });
 
 test("the selected report column identifies the row and replaces the report alias", () => {

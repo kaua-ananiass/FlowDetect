@@ -58,7 +58,6 @@
       status: summary.status || statusLabel(run),
       tone: summary.tone || (run?.status === "completed" ? "success" : (stopped ? "warning" : "danger")),
       result: summary.result || run?.lastMessage || "Execucao finalizada.",
-      confirmation: summary.confirmation || "",
       success: run?.status === "completed",
       startedAt: run?.startedAt,
       finishedAt: run?.finishedAt,
@@ -191,7 +190,7 @@
     page.rect(MARGIN, page.y, contentWidth, 23, COLORS.panelSoft);
     page.text(MARGIN + 11, page.y + 8, "LINHA", 6.4, COLORS.textSoft, true);
     page.text(MARGIN + 53, page.y + 8, String(sourceName || "ITEM").toUpperCase().slice(0, 20), 6.4, COLORS.textSoft, true);
-    page.text(MARGIN + 213, page.y + 8, "RESULTADO / CONFIRMACAO", 6.4, COLORS.textSoft, true);
+    page.text(MARGIN + 213, page.y + 8, "RESULTADO", 6.4, COLORS.textSoft, true);
     page.text(PAGE_WIDTH - MARGIN - 94, page.y + 8, "STATUS", 6.4, COLORS.textSoft, true);
     page.y += 32;
   }
@@ -201,9 +200,8 @@
     const valueLines = wrap(row.value || "(vazio)", 144, 8.2, true, 2);
     const result = row.result || row.error || "Sem mensagem registrada.";
     const resultLines = wrap(result, 210, 7.6, false, 2);
-    const confirmationLines = row.confirmation ? wrap(`Confirmacao: ${row.confirmation}`, 210, 6.8, false, 1) : [];
     const statusLines = wrap(row.status || (row.success === false ? "Falhou" : "Concluida"), 88, 6.7, true, 2);
-    const lineCount = Math.max(valueLines.length, resultLines.length + confirmationLines.length, statusLines.length);
+    const lineCount = Math.max(valueLines.length, resultLines.length, statusLines.length);
     const height = Math.max(54, 22 + (lineCount * 10));
     page.rect(MARGIN, page.y, contentWidth, height, rowIndex % 2 ? COLORS.panel : COLORS.panelStrong);
     const tone = toneColor(row.tone || (row.success === false ? "danger" : "success"));
@@ -213,7 +211,6 @@
     page.text(MARGIN + 11, page.y + 27, time, 6.3, COLORS.muted, false);
     valueLines.forEach((line, index) => page.text(MARGIN + 53, page.y + 12 + (index * 10), line, 8.2, COLORS.white, true));
     resultLines.forEach((line, index) => page.text(MARGIN + 213, page.y + 12 + (index * 10), line, 7.6, COLORS.textSoft, false));
-    confirmationLines.forEach((line, index) => page.text(MARGIN + 213, page.y + 12 + ((resultLines.length + index) * 10), line, 6.8, COLORS.accentSoft, false));
     statusLines.forEach((line, index) => page.text(PAGE_WIDTH - MARGIN - 94, page.y + 14 + (index * 9), line.toUpperCase(), 6.7, tone, true));
     const detail = `${sourceName || "item"} ${row.index || rowIndex} | ${durationLabel(row.startedAt, row.finishedAt)}`;
     page.text(MARGIN + 53, page.y + height - 12, truncate(detail, 144, 6.4), 6.4, COLORS.muted, false);

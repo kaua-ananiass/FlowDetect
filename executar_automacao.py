@@ -5419,7 +5419,6 @@ class ExecutorAutomacao:
             "status": str(status or "").strip(),
             "tom": tom_normalizado,
             "resultado": str(resultado or "").strip(),
-            "confirmacao": str(confirmacao or "").strip(),
             "coluna_relatorio": str(coluna_relatorio or "").strip(),
             "item_relatorio": str(item_relatorio or "").strip(),
         }
@@ -5463,7 +5462,6 @@ class ExecutorAutomacao:
                 "status": str(marcacao.get("status") or status_padrao).strip(),
                 "tom": str(marcacao.get("tom") or tom_padrao).strip(),
                 "resultado": str(marcacao.get("resultado") or resultado_padrao).strip(),
-                "confirmacao": str(marcacao.get("confirmacao") or "").strip(),
                 "duracao_segundos": round(max(0.0, float(duracao_segundos or 0.0)), 2),
                 "finalizado_em": datetime.now(),
             }
@@ -5622,7 +5620,7 @@ class ExecutorAutomacao:
         if not coluna_relatorio:
             coluna_relatorio = next(
                 (str(item.get("coluna_relatorio") or "").strip() for item in resultados if str(item.get("coluna_relatorio") or "").strip()),
-                "ITEM",
+                str(relatorio.get("coluna") or "ITEM").strip() or "ITEM",
             )
 
         def desenhar_resumo(y_atual):
@@ -5656,7 +5654,7 @@ class ExecutorAutomacao:
         colunas = [
             ("LINHA", 42),
             (coluna_relatorio.upper()[:20] or "ITEM", 160),
-            ("RESULTADO / CONFIRMACAO", 220),
+            ("RESULTADO", 220),
             ("STATUS", largura_util - 42 - 160 - 220),
         ]
 
@@ -5681,11 +5679,9 @@ class ExecutorAutomacao:
             valor_linhas = linhas(item.get("empresa") or "Valor da linha", "Helvetica-Bold", 8.2, colunas[1][1] - 21, 2)
             resultado_texto = item.get("resultado") or item.get("erro") or "Sem mensagem registrada."
             resultado_linhas = linhas(resultado_texto, "Helvetica", 7.6, colunas[2][1] - 18, 2)
-            confirmacao = texto_limpo(item.get("confirmacao"))
-            confirmacao_linhas = linhas(confirmacao, "Helvetica", 6.8, colunas[2][1] - 18, 1) if confirmacao else []
             status = texto_limpo(item.get("status") or ("Concluida" if item.get("sucesso") else "Falhou"))
             status_linhas = linhas(status.upper(), "Helvetica-Bold", 6.6, colunas[3][1] - 18, 2)
-            altura_linha = max(54, 22 + max(len(valor_linhas), len(resultado_linhas) + len(confirmacao_linhas), len(status_linhas)) * 10)
+            altura_linha = max(54, 22 + max(len(valor_linhas), len(resultado_linhas), len(status_linhas)) * 10)
             if y_atual - altura_linha < rodape + 30:
                 y_atual = proxima_pagina()
                 y_atual = desenhar_cabecalho_tabela(y_atual)
@@ -5714,11 +5710,6 @@ class ExecutorAutomacao:
             pdf.setFont("Helvetica", 7.6)
             for posicao, parte in enumerate(resultado_linhas):
                 pdf.drawString(x, y_atual - 15 - posicao * 10, parte)
-            if confirmacao_linhas:
-                pdf.setFillColor(cores["accent_suave"])
-                pdf.setFont("Helvetica", 6.8)
-                for posicao, parte in enumerate(confirmacao_linhas):
-                    pdf.drawString(x, y_atual - 15 - (len(resultado_linhas) + posicao) * 10, f"Confirmacao: {parte}")
             x += colunas[2][1]
             pdf.setFillColor(cor_tom)
             pdf.setFont("Helvetica-Bold", 6.7)
@@ -7237,8 +7228,8 @@ class ExecutorAutomacao:
             return self.resultado_sucesso_evento(evento)
 
         coluna_relatorio = str(detalhes.get("coluna_relatorio") or detalhes.get("report_column") or "").strip()
-        coluna_resultado = str(detalhes.get("coluna_resultado") or detalhes.get("result_column") or "").strip()
-        coluna_confirmacao = str(detalhes.get("coluna_confirmacao") or detalhes.get("confirmation_column") or "").strip()
+        # O resultado e uma mensagem definida pelo bloco. Apenas a coluna da
+        # empresa acompanha a planilha para identificar a linha no PDF.
         contexto_relatorio = dict(contexto_loop)
         linha_atual = self.obter_contexto_linha_loop(contexto_loop)
 
@@ -7253,15 +7244,13 @@ class ExecutorAutomacao:
             contexto_relatorio["empresa"] = item_relatorio
 
         status = self.substituir_variaveis_texto(str(detalhes.get("status") or "Concluida"), contexto_relatorio)
-        resultado = valor_da_coluna(coluna_resultado) if coluna_resultado else self.substituir_variaveis_texto(str(detalhes.get("resultado") or ""), contexto_relatorio)
-        confirmacao = valor_da_coluna(coluna_confirmacao) if coluna_confirmacao else self.substituir_variaveis_texto(str(detalhes.get("confirmacao") or ""), contexto_relatorio)
+        resultado = self.substituir_variaveis_texto(str(detalhes.get("resultado") or ""), contexto_relatorio)
         tom = str(detalhes.get("tom") or "success").strip().lower()
         self.registrar_marcacao_relatorio_loop(
             indice=indice,
             status=status,
             tom=tom,
             resultado=resultado,
-            confirmacao=confirmacao,
             coluna_relatorio=coluna_relatorio,
             item_relatorio=item_relatorio,
         )

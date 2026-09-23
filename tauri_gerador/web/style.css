@@ -11572,7 +11572,7 @@ label span {
 .report-document-table-head,
 .report-document-row {
   display: grid;
-  grid-template-columns: 42px minmax(112px, 1fr) minmax(192px, 1.5fr) 60px minmax(94px, 0.76fr);
+  grid-template-columns: 48px minmax(136px, 1fr) minmax(220px, 1.55fr) minmax(118px, 0.8fr);
   gap: 8px;
 }
 
@@ -11598,8 +11598,7 @@ label span {
 .report-document-row[data-tone="warning"] { border-left-color: var(--report-warning); }
 .report-document-row[data-tone="danger"] { border-left-color: var(--report-danger); }
 
-.report-document-line,
-.report-document-time {
+.report-document-line {
   display: grid;
   align-content: start;
   gap: 4px;
@@ -11607,15 +11606,13 @@ label span {
   padding-top: 6px;
 }
 
-.report-document-line strong,
-.report-document-time strong {
+.report-document-line strong {
   color: var(--report-text);
   font-family: var(--font-display);
   font-size: 0.78rem;
 }
 
 .report-document-line small,
-.report-document-time small,
 .report-document-field small,
 .report-document-status small {
   color: var(--report-muted);
@@ -11636,15 +11633,9 @@ label span {
   font-size: 0.42rem;
 }
 
-.report-document-result-stack {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.report-document-confirmation {
-  padding-top: 8px;
-  border-top: 1px solid rgba(230, 247, 255, 0.07);
+.report-document-company small,
+.report-document-result small {
+  color: var(--report-muted);
 }
 
 .report-document-field select,

@@ -47,7 +47,7 @@ function runner(values) {
   return context;
 }
 
-test("report-result draft immediately exposes its selected block route in the map", () => {
+test("report-result draft keeps only company, result and status while exposing its selected route", () => {
   const context = runner({
     reportStatus: "Sem debitos",
     reportTone: "info",
@@ -70,8 +70,8 @@ test("report-result draft immediately exposes its selected block route in the ma
   assert.equal(updated.details.status, "Sem debitos");
   assert.equal(updated.details.tom, "info");
   assert.equal(updated.details.coluna_relatorio, "Empresa");
-  assert.equal(updated.details.coluna_resultado, "Cidade");
-  assert.equal(updated.details.coluna_confirmacao, "Empresa");
+  assert.equal(updated.details.coluna_resultado, "");
+  assert.equal(updated.details.coluna_confirmacao, "");
   assert.equal(updated.details.ao_sucesso, "ir_para_bloco");
   assert.equal(updated.details.bloco_sucesso, 18);
   assert.deepEqual(

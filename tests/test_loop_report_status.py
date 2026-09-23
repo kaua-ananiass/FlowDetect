@@ -47,7 +47,6 @@ class LoopReportStatusTest(unittest.TestCase):
             status="Sem debitos",
             tom="info",
             resultado="Nenhum debito encontrado.",
-            confirmacao="Alerta validado.",
         )
         self.executor.registrar_resultado_relatorio_loop(
             indice=0,
@@ -60,9 +59,9 @@ class LoopReportStatusTest(unittest.TestCase):
         self.assertEqual(result["status"], "Sem debitos")
         self.assertEqual(result["tom"], "info")
         self.assertEqual(result["resultado"], "Nenhum debito encontrado.")
-        self.assertEqual(result["confirmacao"], "Alerta validado.")
+        self.assertNotIn("confirmacao", result)
 
-    def test_result_block_uses_selected_columns_from_the_current_loop_row(self):
+    def test_result_block_uses_selected_company_column_and_custom_message(self):
         self.executor.obter_contexto_linha_loop = lambda _contexto: {
             "CNPJ": "03943209000187",
             "Empresa": "Empresa Modelo",
@@ -77,7 +76,7 @@ class LoopReportStatusTest(unittest.TestCase):
                     "status": "Sem debitos",
                     "tom": "info",
                     "resultado": "Mensagem guardada",
-                    "confirmacao": "Evidencia guardada",
+                    "confirmacao": "Evidencia antiga",
                     "coluna_relatorio": "Empresa",
                     "coluna_resultado": "Cidade",
                     "coluna_confirmacao": "Empresa",
@@ -94,8 +93,9 @@ class LoopReportStatusTest(unittest.TestCase):
 
         result = self.executor._relatorio_loop["resultados"][0]
         self.assertEqual(result["empresa"], "Empresa Modelo")
-        self.assertEqual(result["resultado"], "Sao Paulo")
-        self.assertEqual(result["confirmacao"], "Empresa Modelo")
+        self.assertEqual(result["resultado"], "Mensagem guardada")
+        self.assertNotIn("confirmacao", result)
+
 
 
 if __name__ == "__main__":

@@ -4543,10 +4543,10 @@ function applyCommandMapDraftToEvent(event) {
     details.status = values.reportStatus ?? details.status ?? "Concluida";
     details.tom = values.reportTone ?? details.tom ?? details.tone ?? "success";
     details.resultado = values.reportResult ?? details.resultado ?? details.result ?? "";
-    details.confirmacao = values.reportConfirmation ?? details.confirmacao ?? details.confirmation ?? "";
+    details.confirmacao = "";
     details.coluna_relatorio = values.reportColumn ?? details.coluna_relatorio ?? details.report_column ?? "";
-    details.coluna_resultado = values.reportResultColumn ?? details.coluna_resultado ?? details.result_column ?? "";
-    details.coluna_confirmacao = values.reportConfirmationColumn ?? details.coluna_confirmacao ?? details.confirmation_column ?? "";
+    details.coluna_resultado = "";
+    details.coluna_confirmacao = "";
     applySuccessFlowDraft(details, values);
     return nextEvent;
   }
@@ -10043,18 +10043,15 @@ function renderCompactTreeEditorFields(event) {
   if (event.type === "resultado_relatorio") {
     return renderGenericCompactTreeEditor(event, [
       { label: "Status", value: details.status || "Concluida" },
-      { label: "Resultado", value: details.coluna_resultado || details.resultado || "Mensagem padrao" },
-      { label: "Evidencia", value: details.coluna_confirmacao || details.confirmacao || "Nao informada" },
+      { label: "Resultado", value: details.resultado || "Mensagem padrao" },
+      { label: "Empresa no PDF", value: details.coluna_relatorio || "Coluna atual do loop" },
       { label: "Item no PDF", value: details.coluna_relatorio || "Valor atual do loop" },
       { label: "Depois de registrar", value: formatFlowActionLabel(details.ao_sucesso || "continuar", details.bloco_sucesso, details.sequencia_sucesso) },
     ], `
       ${hiddenTreeField("reportStatus", details.status ?? "Concluida")}
       ${hiddenTreeField("reportTone", details.tom ?? details.tone ?? "success")}
       ${hiddenTreeField("reportResult", details.resultado ?? details.result ?? "")}
-      ${hiddenTreeField("reportConfirmation", details.confirmacao ?? details.confirmation ?? "")}
       ${hiddenTreeField("reportColumn", details.coluna_relatorio ?? details.report_column ?? "")}
-      ${hiddenTreeField("reportResultColumn", details.coluna_resultado ?? details.result_column ?? "")}
-      ${hiddenTreeField("reportConfirmationColumn", details.coluna_confirmacao ?? details.confirmation_column ?? "")}
       ${renderSuccessHiddenTreeFields(details)}
     `);
   }
@@ -13455,7 +13452,6 @@ function studioControlEventDetails(event = {}) {
   } else if (event.type === "resultado_relatorio") {
     rows.push(["Status", details.status || "Concluida"]);
     rows.push(["Resultado", details.resultado || "Mensagem padrao"]);
-    rows.push(["Evidencia", details.confirmacao || "-"]);
   } else if (event.type === "comparar_planilha_tela") {
     rows.push(["Arquivo", details.arquivo || "-"]);
     rows.push(["Aba", details.aba || "-"]);
@@ -17812,30 +17808,21 @@ function reportColumnChoices(details = {}, currentOrder = null) {
   const loopDetails = loop?.detalhes || {};
   const workbookId = resolveWorkbookId(loopDetails.arquivo || loopDetails.workbook || state.composerWorkbookId || "");
   const sheet = String(loopDetails.aba || loopDetails.sheet || workbookSheetsFor(workbookId)[0]?.name || "");
-  const columns = columnsForSheetInWorkbook(workbookId, sheet) || [];
-  const selected = [
-    details.coluna_relatorio ?? details.report_column ?? "",
-    details.coluna_resultado ?? details.result_column ?? "",
-    details.coluna_confirmacao ?? details.confirmation_column ?? "",
-  ].map((value) => String(value || "").trim());
-  const available = [...new Set(columns.map((column) => String(column || "").trim()).filter(Boolean))];
-  selected.filter(Boolean).forEach((column) => {
-    if (!available.includes(column)) available.push(column);
-  });
+  const selectedColumn = String(details.coluna_relatorio ?? details.report_column ?? "").trim();
+  const available = [...new Set((columnsForSheetInWorkbook(workbookId, sheet) || [])
+    .map((column) => String(column || "").trim())
+    .filter(Boolean))];
+  if (selectedColumn && !available.includes(selectedColumn)) available.push(selectedColumn);
   const sourceName = String(loopDetails.coluna || "valor").trim() || "valor";
-  const columnOptions = (value, messageLabel = "Mensagem personalizada") => [
-    `<option value="" ${value ? "" : "selected"}>${escapeHtml(messageLabel)}</option>`,
-    ...available.map((column) => `<option value="${escapeHtml(column)}" ${column === value ? "selected" : ""}>Coluna: ${escapeHtml(column)}</option>`),
-  ].join("");
+
   return {
     sourceName,
     loopLabel: loop ? `${sourceName} (${sheet || "planilha"})` : "Nenhum loop de planilha configurado",
     hasColumns: available.length > 0,
-    itemOptions: (value) => [
-      `<option value="" ${value ? "" : "selected"}>Valor do loop (${escapeHtml(sourceName)})</option>`,
+    companyOptions: (value) => [
+      `<option value="" ${value ? "" : "selected"}>Coluna do loop: ${escapeHtml(sourceName)}</option>`,
       ...available.map((column) => `<option value="${escapeHtml(column)}" ${column === value ? "selected" : ""}>Coluna: ${escapeHtml(column)}</option>`),
     ].join(""),
-    messageOptions: columnOptions,
   };
 }
 
@@ -17850,40 +17837,13 @@ function syncReportResultPreview(container) {
   const tone = String(field("reportTone")?.value || "success").trim();
   const safeTone = ["success", "info", "warning", "danger"].includes(tone) ? tone : "success";
   const status = String(field("reportStatus")?.value || "Concluida").trim() || "Concluida";
-
-  const syncSource = (name, columnField, messageField, fallback) => {
-    const slot = preview.querySelector(`[data-report-field-source="${name}"]`);
-    const column = String(field(columnField)?.value || "").trim();
-    const message = field(messageField);
-    if (!slot) return;
-    slot.classList.toggle("is-column-source", Boolean(column));
-    slot.dataset.source = column || "";
-    const sourceLabel = slot.querySelector("[data-report-source-caption]");
-    if (sourceLabel) {
-      sourceLabel.textContent = column
-        ? `Coluna ${column} da linha atual`
-        : fallback;
-    }
-    if (message) {
-      message.disabled = Boolean(column);
-      message.setAttribute("aria-disabled", String(Boolean(column)));
-    }
-  };
-
-  const itemSlot = preview.querySelector('[data-report-field-source="item"]');
-  const itemColumn = String(field("reportColumn")?.value || "").trim();
-  if (itemSlot) {
-    itemSlot.classList.toggle("is-column-source", Boolean(itemColumn));
-    const itemCaption = itemSlot.querySelector("[data-report-source-caption]");
-    if (itemCaption) {
-      itemCaption.textContent = itemColumn
-        ? `Coluna ${itemColumn} da linha atual`
-        : `Valor do loop ${sourceName}`;
-    }
+  const companyColumn = String(field("reportColumn")?.value || "").trim();
+  const companyCaption = preview.querySelector("[data-report-company-caption]");
+  if (companyCaption) {
+    companyCaption.textContent = companyColumn
+      ? `Coluna ${companyColumn} da linha atual`
+      : `Coluna do loop: ${sourceName}`;
   }
-
-  syncSource("result", "reportResultColumn", "reportResult", "Mensagem personalizada");
-  syncSource("confirmation", "reportConfirmationColumn", "reportConfirmation", "Confirmacao opcional");
 
   preview.dataset.reportTone = safeTone;
   const statusPreview = preview.querySelector("[data-report-preview-status]");
@@ -17898,15 +17858,12 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
   const tone = String(details.tom ?? details.tone ?? "success");
   const safeTone = ["success", "info", "warning", "danger"].includes(tone) ? tone : "success";
   const reportColumns = reportColumnChoices(details, currentOrder);
-  const itemColumn = String(details.coluna_relatorio ?? details.report_column ?? "");
-  const resultColumn = String(details.coluna_resultado ?? details.result_column ?? "");
-  const confirmationColumn = String(details.coluna_confirmacao ?? details.confirmation_column ?? "");
+  const companyColumn = String(details.coluna_relatorio ?? details.report_column ?? "");
   const status = String(details.status ?? "Concluida");
   const resultMessage = String(details.resultado ?? details.result ?? "");
-  const confirmationMessage = String(details.confirmacao ?? details.confirmation ?? "");
   const loopHint = reportColumns.hasColumns
-    ? `Use as colunas da planilha que alimenta o loop ${reportColumns.sourceName}.`
-    : "Adicione um loop de planilha para liberar as colunas deste relatorio.";
+    ? "A linha e definida pelo loop. Escolha a coluna da empresa, escreva o resultado e defina o status."
+    : "Adicione um loop de planilha para escolher a coluna da empresa.";
   return `
     <div class="field-stack spreadsheet-write-editor report-result-editor">
       <section class="report-pdf-preview report-pdf-preview-full" aria-label="Previa editavel do relatorio PDF" data-report-loop-column="${escapeHtml(reportColumns.sourceName)}" data-report-tone="${escapeHtml(safeTone)}">
@@ -17914,11 +17871,11 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
           <div class="report-document-brand">
             <img src="./assets/flowdetect-report-wordmark.png" alt="FlowDetect" />
           </div>
-          <div class="report-document-generated"><strong>RELATORIO DE EXECUCAO</strong><small>Modelo editavel do PDF</small></div>
+          <div class="report-document-generated"><strong>RELATORIO DE EXECUCAO</strong><small>Previa da linha no PDF</small></div>
         </header>
         <div class="report-document-rule"></div>
         <section class="report-document-heading">
-          <h4>Nome da automacao</h4>
+          <h4>Resultado da linha</h4>
           <p>${escapeHtml(loopHint)}</p>
         </section>
         <section class="report-document-summary" aria-label="Resumo ilustrativo do PDF">
@@ -17927,43 +17884,34 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
           <div><span>SEM DEBITOS</span><strong>0</strong></div>
           <div><span>REVISAO</span><strong>0</strong></div>
         </section>
-        <section class="report-document-table" aria-label="Linha editavel do relatorio">
-          <div class="report-document-table-head"><span>LINHA</span><span>ITEM PROCESSADO</span><span>RESULTADO / CONFIRMACAO</span><span>HORARIO</span><span>STATUS</span></div>
+        <section class="report-document-table" aria-label="Linha configuravel do relatorio">
+          <div class="report-document-table-head"><span>LINHA</span><span>EMPRESA</span><span>RESULTADO</span><span>STATUS</span></div>
           <article class="report-document-row" data-report-row data-tone="${escapeHtml(safeTone)}">
-            <div class="report-document-line"><strong>{{linha_atual}}</strong><small>Linha do loop</small></div>
-            <div class="report-document-field ${itemColumn ? "is-column-source" : ""}" data-report-field-source="item">
-              <span>Item processado</span>
-              <select ${fieldAttr}="reportColumn" aria-label="Item processado no PDF">${reportColumns.itemOptions(itemColumn)}</select>
-              <small data-report-source-caption>${escapeHtml(itemColumn ? `Coluna ${itemColumn} da linha atual` : `Valor do loop ${reportColumns.sourceName}`)}</small>
+            <div class="report-document-line"><strong>01</strong><small>Definida pelo loop</small></div>
+            <div class="report-document-field report-document-company">
+              <span>Empresa no PDF</span>
+              <select ${fieldAttr}="reportColumn" aria-label="Coluna da empresa no PDF">${reportColumns.companyOptions(companyColumn)}</select>
+              <small data-report-company-caption>${escapeHtml(companyColumn ? `Coluna ${companyColumn} da linha atual` : `Coluna do loop: ${reportColumns.sourceName}`)}</small>
             </div>
-            <div class="report-document-result-stack">
-              <div class="report-document-field ${resultColumn ? "is-column-source" : ""}" data-report-field-source="result">
-                <span>Resultado</span>
-                <select ${fieldAttr}="reportResultColumn" aria-label="Origem do resultado">${reportColumns.messageOptions(resultColumn, "Mensagem personalizada")}</select>
-                <textarea ${fieldAttr}="reportResult" rows="2" aria-label="Mensagem do resultado" placeholder="Ex.: Guia emitida com sucesso." ${resultColumn ? "disabled aria-disabled=\"true\"" : ""}>${escapeHtml(resultMessage)}</textarea>
-                <small data-report-source-caption>${escapeHtml(resultColumn ? `Coluna ${resultColumn} da linha atual` : "Mensagem personalizada")}</small>
-              </div>
-              <div class="report-document-field report-document-confirmation ${confirmationColumn ? "is-column-source" : ""}" data-report-field-source="confirmation">
-                <span>Confirmacao / evidencia</span>
-                <select ${fieldAttr}="reportConfirmationColumn" aria-label="Origem da confirmacao">${reportColumns.messageOptions(confirmationColumn, "Confirmacao personalizada")}</select>
-                <input ${fieldAttr}="reportConfirmation" type="text" aria-label="Mensagem da confirmacao" value="${escapeHtml(confirmationMessage)}" placeholder="Ex.: OCR confirmou o alerta" ${confirmationColumn ? "disabled aria-disabled=\"true\"" : ""} />
-                <small data-report-source-caption>${escapeHtml(confirmationColumn ? `Coluna ${confirmationColumn} da linha atual` : "Confirmacao opcional")}</small>
-              </div>
+            <div class="report-document-field report-document-result">
+              <span>Resultado no PDF</span>
+              <textarea ${fieldAttr}="reportResult" rows="3" aria-label="Mensagem do resultado" placeholder="Ex.: Guia emitida com sucesso.">${escapeHtml(resultMessage)}</textarea>
+              <small>Mensagem exibida para esta linha.</small>
             </div>
-            <div class="report-document-time"><strong>--:--:--</strong><small>Ao finalizar</small></div>
             <div class="report-document-status" data-report-status-cell data-tone="${escapeHtml(safeTone)}">
+              <span>Status no PDF</span>
               <input ${fieldAttr}="reportStatus" type="text" value="${escapeHtml(status)}" aria-label="Status no relatorio" placeholder="Concluida" />
               <select ${fieldAttr}="reportTone" aria-label="Cor do status">
-                <option value="success" ${safeTone === "success" ? "selected" : ""}>Concluido</option>
-                <option value="info" ${safeTone === "info" ? "selected" : ""}>Informativo</option>
-                <option value="warning" ${safeTone === "warning" ? "selected" : ""}>Revisar</option>
-                <option value="danger" ${safeTone === "danger" ? "selected" : ""}>Falhou</option>
+                <option value="success" ${safeTone === "success" ? "selected" : ""}>Concluido (verde)</option>
+                <option value="info" ${safeTone === "info" ? "selected" : ""}>Informativo (azul)</option>
+                <option value="warning" ${safeTone === "warning" ? "selected" : ""}>Revisar (amarelo)</option>
+                <option value="danger" ${safeTone === "danger" ? "selected" : ""}>Falhou (vermelho)</option>
               </select>
               <small data-report-preview-status>${escapeHtml(status)}</small>
             </div>
           </article>
         </section>
-        <footer class="report-document-footer"><span>Loop: ${escapeHtml(reportColumns.loopLabel)}</span><span>Edite os campos destacados para personalizar o PDF.</span></footer>
+        <footer class="report-document-footer"><span>Loop: ${escapeHtml(reportColumns.loopLabel)}</span><span>A linha e preenchida automaticamente a cada item.</span></footer>
       </section>
       <section class="report-pdf-next-step" aria-label="Proximo passo da automacao">
         <div><strong>Depois de registrar esta linha</strong><span>Defina para onde a automacao segue apos gravar o resultado.</span></div>
@@ -21710,10 +21658,10 @@ function formValuesFromCard(card) {
     reportStatus: get("reportStatus")?.value ?? "Concluida",
     reportTone: get("reportTone")?.value ?? "success",
     reportResult: get("reportResult")?.value ?? "",
-    reportConfirmation: get("reportConfirmation")?.value ?? "",
+    reportConfirmation: "",
     reportColumn: get("reportColumn")?.value ?? "",
-    reportResultColumn: get("reportResultColumn")?.value ?? "",
-    reportConfirmationColumn: get("reportConfirmationColumn")?.value ?? "",
+    reportResultColumn: "",
+    reportConfirmationColumn: "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
@@ -21862,10 +21810,10 @@ function treeValuesFromCard(card) {
     reportStatus: get("reportStatus")?.value ?? "Concluida",
     reportTone: get("reportTone")?.value ?? "success",
     reportResult: get("reportResult")?.value ?? "",
-    reportConfirmation: get("reportConfirmation")?.value ?? "",
+    reportConfirmation: "",
     reportColumn: get("reportColumn")?.value ?? "",
-    reportResultColumn: get("reportResultColumn")?.value ?? "",
-    reportConfirmationColumn: get("reportConfirmationColumn")?.value ?? "",
+    reportResultColumn: "",
+    reportConfirmationColumn: "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
@@ -22364,10 +22312,7 @@ function commandCardHasUnsavedChanges(snapshot) {
       normalizeStringValue(values.reportStatus) !== normalizeStringValue(details.status ?? "Concluida")
       || normalizeStringValue(values.reportTone) !== normalizeStringValue(details.tom ?? details.tone ?? "success")
       || normalizeStringValue(values.reportResult) !== normalizeStringValue(details.resultado ?? details.result ?? "")
-      || normalizeStringValue(values.reportConfirmation) !== normalizeStringValue(details.confirmacao ?? details.confirmation ?? "")
       || normalizeStringValue(values.reportColumn) !== normalizeStringValue(details.coluna_relatorio ?? details.report_column ?? "")
-      || normalizeStringValue(values.reportResultColumn) !== normalizeStringValue(details.coluna_resultado ?? details.result_column ?? "")
-      || normalizeStringValue(values.reportConfirmationColumn) !== normalizeStringValue(details.coluna_confirmacao ?? details.confirmation_column ?? "")
       || successFlowChanged(values, details)
     );
   }
@@ -23035,10 +22980,10 @@ function insertValuesFromPanel(panelElement) {
     reportStatus: get("reportStatus")?.value ?? state.insertPanel?.reportStatus ?? "Concluida",
     reportTone: get("reportTone")?.value ?? state.insertPanel?.reportTone ?? "success",
     reportResult: get("reportResult")?.value ?? state.insertPanel?.reportResult ?? "",
-    reportConfirmation: get("reportConfirmation")?.value ?? state.insertPanel?.reportConfirmation ?? "",
+    reportConfirmation: "",
     reportColumn: get("reportColumn")?.value ?? state.insertPanel?.reportColumn ?? "",
-    reportResultColumn: get("reportResultColumn")?.value ?? state.insertPanel?.reportResultColumn ?? "",
-    reportConfirmationColumn: get("reportConfirmationColumn")?.value ?? state.insertPanel?.reportConfirmationColumn ?? "",
+    reportResultColumn: "",
+    reportConfirmationColumn: "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? state.insertPanel?.compareExpectedColumn ?? state.insertPanel?.column ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? state.insertPanel?.compareOcrSource ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? state.insertPanel?.compareMode ?? "texto",
