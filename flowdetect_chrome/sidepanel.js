@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.28";
+const REQUIRED_RUNTIME_VERSION = "0.2.29";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
@@ -242,9 +242,8 @@ function renderAutomation(automation) {
       const selectedColumn = loopDisplayColumn(automation, loop);
       executionColumnChoice.value = selectedColumn;
       const value = currentLoopDisplayValue(currentRun, loop, selectedColumn);
-      executionSummary.textContent = value
-        ? `${selectedColumn}: ${value}`
-        : `${selectedColumn}: aguardando a proxima linha`;
+      executionSummary.textContent = value || "Aguardando a próxima linha";
+      executionSummary.title = `${selectedColumn}: ${value || "Aguardando a próxima linha"}`;
     };
     if (loop?.columns?.length) {
       executionColumnLabel.hidden = false;
@@ -273,7 +272,7 @@ function renderAutomation(automation) {
     const canGenerateReport = hasFinishedRun(status);
     reportButton.hidden = !canGenerateReport;
     if (canGenerateReport) {
-      reportButton.textContent = currentRun.reportGeneratedAt ? "Gerar novo relatorio PDF" : "Gerar relatorio PDF";
+      reportButton.textContent = currentRun.reportGeneratedAt ? "Gerar novo relatório PDF" : "Gerar relatório PDF";
       reportButton.addEventListener("click", () => downloadExecutionReport(currentRun).catch((error) => {
         window.alert(`Nao foi possivel gerar o relatorio: ${String(error.message || error)}`);
       }));
