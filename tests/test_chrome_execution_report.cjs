@@ -53,3 +53,21 @@ test("report rows wrap long values inside their column width", () => {
   assert.ok(companyLines.every((line) => context.approximateWidth(line, 8.2, true) <= 153));
   assert.ok(statusLines.every((line) => context.approximateWidth(line, 6.7, true) <= 92));
 });
+
+test("the Chrome PDF starts the results table directly after its title", () => {
+  const context = vm.createContext({ Uint8Array });
+  vm.runInContext(source, context);
+  const bytes = context.FlowDetectExecutionReport.buildExecutionReportPdf({
+    automationName: "FGTS_GUIAS",
+    status: "completed",
+    report: {
+      sourceName: "EMPRESAS",
+      rows: [{ index: 1, value: "EMPRESA TESTE", result: "Guia emitida.", status: "Concluida", tone: "success", success: true }],
+    },
+  });
+  const pdf = Buffer.from(bytes).toString("latin1");
+
+  assert.match(pdf, /RESULTADOS POR LINHA/);
+  assert.match(pdf, /EMPRESA TESTE/);
+  assert.doesNotMatch(pdf, /RESUMO DA EXECUCAO|CONFIRMADAS|INFORMATIVAS|REVISAR/);
+});

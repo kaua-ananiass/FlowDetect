@@ -183,27 +183,6 @@
     }
   }
 
-  function drawCounters(page, counters) {
-    const width = PAGE_WIDTH - (MARGIN * 2);
-    const items = [
-      ["LINHAS", counters.total, COLORS.white],
-      ["CONFIRMADAS", counters.success, COLORS.success],
-      ["INFORMATIVAS", counters.info, COLORS.info],
-      ["REVISAR", counters.review + counters.failed, counters.failed ? COLORS.danger : COLORS.warning]
-    ];
-    page.text(MARGIN, page.y, "RESUMO DA EXECUCAO", 7.2, COLORS.accentSoft, true);
-    page.y += 12;
-    page.rect(MARGIN, page.y, width, 50, COLORS.panel);
-    const itemWidth = width / items.length;
-    items.forEach(([label, value, color], index) => {
-      const x = MARGIN + (itemWidth * index);
-      if (index) page.line(x, page.y + 10, x, page.y + 40, COLORS.border, 0.55);
-      page.text(x + 13, page.y + 12, label, 6.4, COLORS.muted, true);
-      page.text(x + 13, page.y + 25, String(value), 18, color, true);
-    });
-    page.y += 73;
-  }
-
   function toneColor(tone) {
     return COLORS[reportTone(tone)] || COLORS.accent;
   }
@@ -305,7 +284,6 @@
 
   function buildExecutionReportPdf(run) {
     const rows = reportRows(run);
-    const counters = reportCounters(rows);
     const pages = [];
     let page = createPage();
     pages.push(page);
@@ -313,8 +291,7 @@
     page.text(MARGIN, page.y, truncate(run?.automationName || "Automacao", 440, 21, true), 21, COLORS.white, true);
     page.y += 28;
     page.text(MARGIN, page.y, `${rows.length} linha(s) processada(s) | Planilha: ${run?.report?.sourceName || "-"}`, 8.5, COLORS.textSoft, false);
-    page.y += 25;
-    drawCounters(page, counters);
+    page.y += 23;
     drawTableHeader(page, run?.report?.sourceName || "item");
     rows.forEach((row, rowIndex) => {
       const estimatedHeight = 77;

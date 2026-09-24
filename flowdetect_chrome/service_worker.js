@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.34";
+const RUNTIME_VERSION = "0.2.35";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
