@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.30";
+const RUNTIME_VERSION = "0.2.31";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -461,7 +461,7 @@ async function executeOcrTargets(run, step) {
       }
       if (flowContinues(flow)) {
         await addLog(run, `${detail} ${flowLabel(flow)}`, "warning");
-        return { message: detail, flow };
+        return { message: detail, flow, level: "warning" };
       }
       error.message = `${detail} Regra configurada: parar automacao.`;
       error.flowdetectOcrTargetFailure = true;
@@ -519,10 +519,6 @@ async function executeStep(run, rawStep) {
       if (step.type === "element_action" && step.visual_fallback?.data_url) {
         await addLog(run, "Seletor não respondeu; tentando referência visual.", "warning");
         return executeVisualMatch(run, { ...step, image: step.visual_fallback, click: true });
-      }
-      if (step.type === "ocr_text" && step.visual_fallback?.data_url) {
-        await addLog(run, "OCR nao respondeu; tentando a imagem deste bloco.", "warning");
-        return executeVisualMatch(run, { ...step, image: step.visual_fallback });
       }
       throw error;
     }
@@ -725,7 +721,7 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       const output = await executeStep(run, step);
       const message = typeof output === "object" ? output.message : output;
       const flow = typeof output === "object" ? output.flow : step.on_success;
-      await addLog(run, message, "success");
+      await addLog(run, message, typeof output === "object" ? output.level || "success" : "success");
       const nextIndex = actionToIndex(flow, indexes, indexes.nextByIndex.get(index));
       if (mustAdvanceSpreadsheetRow(run, index, nextIndex)) {
         await addLog(run, `Linha ${run.spreadsheetLoop.row + 1}/${run.spreadsheetLoop.total} concluida; avancando para o proximo valor.`);

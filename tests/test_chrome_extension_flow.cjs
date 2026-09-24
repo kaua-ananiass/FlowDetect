@@ -245,6 +245,48 @@ test("Chrome runner follows the failure route of each OCR target", async () => {
   assert.match(logs[0].message, /Procurando OCR 2/);
 });
 
+test("an OCR failure takes its configured route even when an image looks similar", async () => {
+  const queried = [];
+  const logs = [];
+  let visualMatches = 0;
+  const context = runner({
+    sleep: async () => {},
+    persistRun: async () => {},
+    addLog: async (_run, message, level) => logs.push({ message, level }),
+    executeVisualMatch: async () => { visualMatches += 1; return "Visual encontrado."; },
+    executePageStep: async (_run, step) => {
+      queried.push(step.text);
+      if (step.text === "Não há débitos") throw new Error("OCR nao encontrou o texto.");
+      return `OCR encontrou ${step.text}.`;
+    },
+  });
+  const executeStep = source.match(/^async function executeStep\(.*?^}/ms);
+  assert.ok(executeStep, "Production function executeStep");
+  vm.runInContext(executeStep[0], context);
+  const steps = [
+    { source_order: 8, sequence: "pagina_3", type: "ocr_text", text: "Não há débitos",
+      visual_fallback: { data_url: "data:image/png;base64,example" },
+      on_success: { action: "ir_para_bloco", block: "9" },
+      on_failure: { action: "ir_para_bloco", block: "10" } },
+    { source_order: 9, sequence: "pagina_3", type: "ocr_text", text: "Relatório incorreto",
+      on_success: { action: "ir_para_bloco", block: "16" } },
+    { source_order: 10, sequence: "pagina_3", type: "ocr_text", text: "Competência de Apuração\n08/2026",
+      visual_fallback: { data_url: "data:image/png;base64,example" },
+      ocr_targets: [
+        { text: "Competência de Apuração", action: "continuar", on_success: { action: "continuar" } },
+        { text: "08/2026", action: "confirmar_ir_para_bloco", on_success: { action: "ir_para_bloco", block: "16" } },
+      ] },
+    { source_order: 16, sequence: "pagina_3", type: "ocr_text", text: "Pesquisar" },
+  ];
+  const run = { variables: {}, currentStep: 0 };
+
+  await context.executeRange(run, steps, 0, steps.length, context.loopPairs(steps), context.buildFlowIndexes(steps));
+
+  assert.deepEqual(queried, ["Não há débitos", "Competência de Apuração", "08/2026", "Pesquisar"]);
+  assert.equal(visualMatches, 0);
+  assert.ok(logs.some((entry) => entry.level === "warning" && /OCR nao encontrou/.test(entry.message)));
+});
+
 test("Chrome runner stops when OCR found a target that stayed disabled", async () => {
   const context = runner({
     executePageStep: async () => { throw new Error("O alvo encontrado permaneceu desativado e nao recebeu o clique."); },
@@ -288,6 +330,7 @@ test("Chrome runner routes the final failed OCR instead of using the card failur
 
   assert.equal(result.flow.action, "ir_para_bloco");
   assert.equal(result.flow.block, "12");
+  assert.equal(result.level, "warning");
   assert.match(logs.at(-1).message, /bloco 12/i);
 });
 
