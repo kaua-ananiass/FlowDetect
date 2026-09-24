@@ -42,12 +42,15 @@
         </div>
         <button class="play-button run-automation" type="button"><span class="play-icon" aria-hidden="true">&#9654;</span><span>Executar automa&ccedil;&atilde;o</span></button>
         <section class="execution" hidden>
-          <div class="execution-heading"><p class="execution-kicker">Execu&ccedil;&atilde;o</p><div class="execution-top"><span class="execution-status"></span><strong class="execution-percent">0%</strong></div></div>
+          <div class="execution-heading"><p class="execution-kicker">Execu&ccedil;&atilde;o</p><span class="execution-status"></span></div>
+          <div class="execution-progress" role="progressbar" aria-label="Progresso da automa&ccedil;&atilde;o" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="execution-progress-value"><strong class="execution-percent">0%</strong><span>conclu&iacute;do</span></div>
+            <div class="progress-track"><i class="progress-bar"></i></div>
+          </div>
           <div class="execution-loop-summary">
             <label class="execution-column-label" hidden><span>Exibir</span><select class="execution-column-choice" aria-label="Coluna exibida durante a execucao"></select></label>
             <p class="execution-summary">Preparando execucao</p>
           </div>
-          <div class="progress-track" aria-label="Progresso da automacao"><i class="progress-bar"></i></div>
           <button class="stop-button" type="button" hidden>Parar execu&ccedil;&atilde;o</button>
           <button class="report-button" type="button" hidden>Gerar relat&oacute;rio PDF</button>
           <div class="run-log-heading"><span>Atividade da execu&ccedil;&atilde;o</span><span>ao vivo</span></div>

@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.29";
+const REQUIRED_RUNTIME_VERSION = "0.2.30";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
@@ -231,6 +231,7 @@ function renderAutomation(automation) {
     statusElement.textContent = labels[status] || status;
     statusElement.className = `execution-status ${status}`;
     fragment.querySelector(".execution-percent").textContent = `${progress.percent}%`;
+    fragment.querySelector(".execution-progress").setAttribute("aria-valuenow", String(progress.percent));
     const executionSummary = fragment.querySelector(".execution-summary");
     const executionColumnLabel = fragment.querySelector(".execution-column-label");
     const executionColumnChoice = fragment.querySelector(".execution-column-choice");
