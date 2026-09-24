@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.33";
+const REQUIRED_RUNTIME_VERSION = "0.2.34";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
@@ -39,7 +39,10 @@ async function ensureCurrentRuntime() {
 function runProgress(run) {
   const total = Math.max(0, Number(run?.totalSteps || 0));
   const completed = Math.max(0, Number(run?.currentStep || 0));
-  const estimatedPercent = total ? Math.round((completed / total) * 100) : 0;
+  const measured = run?.progressPercent;
+  const estimatedPercent = typeof measured === "number" && Number.isFinite(measured)
+    ? measured
+    : total ? Math.round((completed / total) * 100) : 0;
   return {
     total,
     completed,

@@ -20,6 +20,7 @@ test("a completed branched automation displays full progress", () => {
   assert.equal(context.runProgress({ ...run, status: "stopped" }).percent, 77);
   assert.equal(context.runProgress({ ...run, status: "completed" }).percent, 100);
   assert.equal(context.runProgress({ currentStep: 110, totalSteps: 100, status: "running" }).percent, 99);
+  assert.equal(context.runProgress({ currentStep: 73, totalSteps: 100, progressPercent: 99, status: "running" }).percent, 99);
 });
 
 test("Chrome popup keeps execution details inside the active automation card", () => {

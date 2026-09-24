@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "spreadsheetRowData", "spreadsheetColumnValue", "reportColumnValue", "reportStepForRow", "recordReportResult", "replaceVariables", "setSpreadsheetRowVariables", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
+const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "spreadsheetRowData", "spreadsheetColumnValue", "reportColumnValue", "reportStepForRow", "recordReportResult", "replaceVariables", "setSpreadsheetRowVariables", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "updateSpreadsheetProgress", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -176,6 +176,55 @@ test("Chrome runner starts the spreadsheet loop from the requested line", async 
   assert.match(logs[0], /linha 3 de 4/);
   assert.equal(context.spreadsheetStartRow(99, 4), 4);
   assert.equal(context.spreadsheetStartRow(0, 4), 1);
+});
+
+test("spreadsheet progress follows processed rows when branches skip blocks", () => {
+  const context = runner();
+  const run = {
+    spreadsheetStartRow: 1,
+    stepsPerIteration: 18,
+    currentStep: 36 * 13,
+    spreadsheetLoop: { row: 36, total: 37, startedStep: 36 * 13 },
+  };
+
+  context.updateSpreadsheetProgress(run);
+  assert.equal(run.progressPercent, 97);
+  run.currentStep += 12;
+  context.updateSpreadsheetProgress(run);
+  assert.equal(run.progressPercent, 99);
+  run.spreadsheetLoop.row = 35;
+  context.updateSpreadsheetProgress(run);
+  assert.equal(run.progressPercent, 99);
+
+  const resumed = {
+    spreadsheetStartRow: 20,
+    stepsPerIteration: 18,
+    currentStep: 12,
+    spreadsheetLoop: { row: 19, total: 37, startedStep: 0 },
+  };
+  context.updateSpreadsheetProgress(resumed);
+  assert.equal(resumed.progressPercent, 3);
+});
+
+test("the persisted Chrome run carries the spreadsheet progress to the popup", async () => {
+  const saved = [];
+  const context = runner({
+    chrome: { storage: { local: { set: async (value) => saved.push(value) } } },
+  });
+  const persistRun = source.match(/^async function persistRun\(.*?^}/ms);
+  assert.ok(persistRun);
+  vm.runInContext('const RUN_STORAGE_KEY = "test-run";', context);
+  vm.runInContext(persistRun[0], context);
+  const run = {
+    logs: [],
+    spreadsheetStartRow: 1,
+    stepsPerIteration: 18,
+    currentStep: 36 * 13,
+    spreadsheetLoop: { row: 36, total: 37, startedStep: 36 * 13 },
+  };
+
+  await context.persistRun(run);
+  assert.equal(saved.at(-1)["test-run"].progressPercent, 97);
 });
 
 test("Chrome runner applies the selected row to loops with start and end markers", async () => {

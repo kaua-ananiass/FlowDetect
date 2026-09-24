@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.33";
+const RUNTIME_VERSION = "0.2.34";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -30,7 +30,20 @@ function createRun(automation, tabId, startRow = 1) {
   };
 }
 
+function updateSpreadsheetProgress(run) {
+  const loop = run.spreadsheetLoop;
+  if (!loop || !Number(run.stepsPerIteration)) return;
+  const firstRow = Math.max(0, Number(run.spreadsheetStartRow || 1) - 1);
+  const totalRows = Math.max(1, Number(loop.total) - firstRow);
+  const finishedRows = Math.max(0, Number(loop.row) - firstRow);
+  const rowSteps = Math.max(0, Number(run.currentStep || 0) - Number(loop.startedStep || 0));
+  const rowFraction = Math.min(0.99, rowSteps / Math.max(1, Number(run.stepsPerIteration)));
+  const percent = Math.min(99, Math.floor(((finishedRows + rowFraction) / totalRows) * 100));
+  run.progressPercent = Math.max(Number(run.progressPercent || 0), percent);
+}
+
 async function persistRun(run) {
+  updateSpreadsheetProgress(run);
   const persisted = { ...run, logs: run.logs.slice(-100) };
   delete persisted.cancelled;
   await chrome.storage.local.set({ [RUN_STORAGE_KEY]: persisted });
@@ -627,6 +640,7 @@ async function executeSpreadsheetLoop(run, source, executeIteration) {
         sourceIndex: source.index,
         iterationStart: source.iterationStart,
         row,
+        startedStep: Number(run.currentStep || 0),
         rowData: spreadsheetRowData(source, row),
         total: source.values.length
       };
