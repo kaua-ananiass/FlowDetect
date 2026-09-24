@@ -1,12 +1,26 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 const { test } = require("node:test");
 
 const root = path.join(__dirname, "../flowdetect_chrome");
 const html = fs.readFileSync(path.join(root, "sidepanel.html"), "utf8");
 const source = fs.readFileSync(path.join(root, "sidepanel.js"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+
+test("a completed branched automation displays full progress", () => {
+  const declaration = source.match(/^function runProgress\(.*?^}/ms);
+  assert.ok(declaration);
+  const context = vm.createContext({ Math, Number });
+  vm.runInContext(declaration[0], context);
+
+  const run = { currentStep: 77, totalSteps: 100 };
+  assert.equal(context.runProgress({ ...run, status: "running" }).percent, 77);
+  assert.equal(context.runProgress({ ...run, status: "stopped" }).percent, 77);
+  assert.equal(context.runProgress({ ...run, status: "completed" }).percent, 100);
+  assert.equal(context.runProgress({ currentStep: 110, totalSteps: 100, status: "running" }).percent, 99);
+});
 
 test("Chrome popup keeps execution details inside the active automation card", () => {
   assert.equal(manifest.action.default_popup, "sidepanel.html");

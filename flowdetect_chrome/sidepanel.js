@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.31";
+const REQUIRED_RUNTIME_VERSION = "0.2.32";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
@@ -39,10 +39,11 @@ async function ensureCurrentRuntime() {
 function runProgress(run) {
   const total = Math.max(0, Number(run?.totalSteps || 0));
   const completed = Math.max(0, Number(run?.currentStep || 0));
+  const estimatedPercent = total ? Math.round((completed / total) * 100) : 0;
   return {
     total,
     completed,
-    percent: total ? Math.min(100, Math.round((completed / total) * 100)) : 0
+    percent: run?.status === "completed" ? 100 : Math.min(99, estimatedPercent)
   };
 }
 
@@ -242,6 +243,11 @@ function renderAutomation(automation) {
       }
       const selectedColumn = loopDisplayColumn(automation, loop);
       executionColumnChoice.value = selectedColumn;
+      if (status === "completed") {
+        executionSummary.textContent = "Todas as linhas processadas";
+        executionSummary.title = "Automação concluída";
+        return;
+      }
       const value = currentLoopDisplayValue(currentRun, loop, selectedColumn);
       executionSummary.textContent = value || "Aguardando a próxima linha";
       executionSummary.title = `${selectedColumn}: ${value || "Aguardando a próxima linha"}`;
