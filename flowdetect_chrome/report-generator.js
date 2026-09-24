@@ -169,18 +169,12 @@
     return { commands, rect, line, text, y: 0 };
   }
 
-  function drawHeader(page, run, pageNumber = 1) {
+  function drawHeader(page) {
     page.text(MARGIN, 30, "FlowDetect", 13, COLORS.white, true);
     page.text(PAGE_WIDTH - MARGIN - 145, 29, "RELATORIO DE EXECUCAO", 7.1, COLORS.accentSoft, true);
     page.text(PAGE_WIDTH - MARGIN - 130, 40, `Gerado em ${dateLabel(new Date())}`, 7.1, COLORS.muted, false);
     page.line(MARGIN, 59, PAGE_WIDTH - MARGIN, 59, COLORS.border, 0.8);
-    if (pageNumber > 1) {
-      page.text(MARGIN, 75, "Resultados da execucao", 12.5, COLORS.white, true);
-      page.text(PAGE_WIDTH - MARGIN - 38, 77, `Pagina ${pageNumber}`, 7.2, COLORS.muted, false);
-      page.y = 98;
-    } else {
-      page.y = 75;
-    }
+    page.y = 75;
   }
 
   function toneColor(tone) {
@@ -188,10 +182,7 @@
   }
 
   function drawTableHeader(page, sourceName) {
-    const y = page.y;
     const contentWidth = PAGE_WIDTH - (MARGIN * 2);
-    page.text(MARGIN, y, "RESULTADOS POR LINHA", 7.2, COLORS.accentSoft, true);
-    page.y += 12;
     page.rect(MARGIN, page.y, contentWidth, 23, COLORS.panelSoft);
     page.text(MARGIN + REPORT_TABLE.lineOffset, page.y + 8, "LINHA", 6.4, COLORS.textSoft, true);
     page.text(MARGIN + REPORT_TABLE.companyOffset, page.y + 8, truncate(String(sourceName || "ITEM").toUpperCase(), REPORT_TABLE.companyWidth, 6.4, true), 6.4, COLORS.textSoft, true);
@@ -287,7 +278,7 @@
     const pages = [];
     let page = createPage();
     pages.push(page);
-    drawHeader(page, run, 1);
+    drawHeader(page);
     page.text(MARGIN, page.y, truncate(run?.automationName || "Automacao", 440, 21, true), 21, COLORS.white, true);
     page.y += 28;
     page.text(MARGIN, page.y, `${rows.length} linha(s) processada(s) | Planilha: ${run?.report?.sourceName || "-"}`, 8.5, COLORS.textSoft, false);
@@ -298,7 +289,7 @@
       if (page.y + estimatedHeight > PAGE_HEIGHT - 47) {
         page = createPage();
         pages.push(page);
-        drawHeader(page, run, pages.length);
+        drawHeader(page);
         drawTableHeader(page, run?.report?.sourceName || "item");
       }
       drawRow(page, row, run?.report?.sourceName || "item", rowIndex + 1);
