@@ -49,7 +49,7 @@ use windows::Win32::{
 const BUNDLED_CAPTURAR_CLIQUES: &[u8] = include_bytes!("../../../capturar_cliques.py");
 const BUNDLED_CAPTURAR_IMAGEM_TELA: &[u8] = include_bytes!("../../../capturar_imagem_tela.py");
 const BUNDLED_CHROME_WEB_BRIDGE: &[u8] = include_bytes!("../../../chrome_web_bridge.py");
-const BUNDLED_COMANDOS_TECLADO: &[u8] = include_bytes!("../../../comandos_teclado.py");
+const BUNDLED_COMANDOS_TECLADO: &[u8] = include_bytes!("../installer_support/runtime_seed/comandos_teclado.py");
 const BUNDLED_EXECUTAR_AUTOMACAO: &[u8] = include_bytes!("../../../executar_automacao.py");
 const BUNDLED_GERENCIAR_DADOS_PLANILHA: &[u8] = include_bytes!("../../../gerenciar_dados_planilha.py");
 const BUNDLED_GERENCIAR_ROTEIRO: &[u8] = include_bytes!("../../../gerenciar_roteiro.py");

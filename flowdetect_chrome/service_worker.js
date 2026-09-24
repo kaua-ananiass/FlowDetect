@@ -1,7 +1,8 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.36";
+const RUNTIME_VERSION = "0.2.37";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
+let creatingCaptureDocument = null;
 
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
@@ -13,6 +14,7 @@ function createRun(automation, tabId, startRow = 1) {
     automationName: String(automation?.automation?.nome || "Automação Chrome"),
     tabId,
     status: "running",
+    captureMode: "visible",
     startedAt: new Date().toISOString(),
     finishedAt: "",
     currentStep: 0,
@@ -331,15 +333,127 @@ function findTemplateInImage(source, template) {
   };
 }
 
-async function captureImage(tabId) {
-  const tab = await chrome.tabs.get(tabId);
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
-  const bitmap = await bitmapFromCapture(dataUrl);
-  return imageDataFromBitmap(bitmap);
+async function ensureCaptureDocument() {
+  if (creatingCaptureDocument) return creatingCaptureDocument;
+  creatingCaptureDocument = (async () => {
+    const url = chrome.runtime.getURL("capture-offscreen.html");
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ["OFFSCREEN_DOCUMENT"],
+      documentUrls: [url]
+    });
+    if (!contexts.length) {
+      await chrome.offscreen.createDocument({
+        url: "capture-offscreen.html",
+        reasons: ["USER_MEDIA"],
+        justification: "Reconhecer imagens da aba escolhida durante a automacao."
+      });
+    }
+  })();
+  try {
+    await creatingCaptureDocument;
+  } finally {
+    creatingCaptureDocument = null;
+  }
 }
 
-async function findVisualMatch(tabId, asset) {
-  const [source, originalTemplate] = await Promise.all([captureImage(tabId), bitmapForDataUrl(asset?.data_url)]);
+async function startTabCapture(run) {
+  await ensureCaptureDocument();
+  const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: run.tabId });
+  const response = await chrome.runtime.sendMessage({
+    target: "flowdetect-offscreen",
+    type: "flowdetect-capture-start",
+    runId: run.id,
+    streamId
+  });
+  if (!response?.ok) throw new Error(response?.error || "A captura da aba nao iniciou.");
+  run.captureMode = "tab";
+}
+
+async function stopTabCapture(run) {
+  if (!run?.id) return;
+  await chrome.runtime.sendMessage({
+    target: "flowdetect-offscreen",
+    type: "flowdetect-capture-stop",
+    runId: run.id
+  }).catch(() => null);
+}
+
+async function activeTabForWindow(windowId) {
+  const [active] = await chrome.tabs.query({ windowId, active: true });
+  return active;
+}
+
+function captureUnavailable(message) {
+  const error = new Error(message);
+  error.flowdetectCaptureUnavailable = true;
+  return error;
+}
+
+async function waitForActiveTargetTab(run) {
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    if (run.cancelled) throw new Error("Execucao interrompida pelo usuario.");
+    const tab = await chrome.tabs.get(run.tabId).catch(() => null);
+    if (!tab) throw captureUnavailable("A aba da automacao foi fechada; nao foi possivel continuar a captura.");
+    const active = await activeTabForWindow(tab.windowId);
+    if (active?.id === run.tabId) {
+      if (run.captureWaiting) {
+        delete run.captureWaiting;
+        await addLog(run, "A aba da automacao voltou a ficar disponivel; retomando o reconhecimento.", "info");
+      }
+      return tab;
+    }
+    if (!run.captureWaiting) {
+      run.captureWaiting = true;
+      await addLog(run, "Aguardando a imagem da aba da automacao. O bloco nao sera avaliado com outra aba.", "warning");
+    }
+    await sleep(600);
+  }
+  throw captureUnavailable("A captura da aba da automacao ficou indisponivel por 2 minutos. Nenhum resultado visual foi confirmado.");
+}
+
+async function captureImage(run) {
+  if (run.captureMode === "tab") {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        target: "flowdetect-offscreen",
+        type: "flowdetect-capture-frame",
+        runId: run.id
+      });
+      if (!response?.ok || !response.dataUrl) throw new Error(response?.error || "A captura da aba parou.");
+      const bitmap = await bitmapFromCapture(response.dataUrl);
+      const source = imageDataFromBitmap(bitmap);
+      source.originalWidth = Number(response.width) || bitmap.width;
+      source.originalHeight = Number(response.height) || bitmap.height;
+      source.scale = source.width / source.originalWidth;
+      bitmap.close?.();
+      return source;
+    } catch (error) {
+      run.captureMode = "visible";
+      await stopTabCapture(run);
+      await addLog(run, `A captura vinculada a aba parou: ${String(error?.message || error)}. Aguardando a aba correta para continuar.`, "warning");
+    }
+  }
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const tab = await waitForActiveTargetTab(run);
+    let dataUrl;
+    try {
+      dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+    } catch (error) {
+      throw captureUnavailable(`Nao foi possivel capturar a aba da automacao: ${String(error?.message || error)}`);
+    }
+    if ((await activeTabForWindow(tab.windowId))?.id !== run.tabId) continue;
+    const bitmap = await bitmapFromCapture(dataUrl);
+    const source = imageDataFromBitmap(bitmap);
+    bitmap.close?.();
+    return source;
+  }
+  throw captureUnavailable("A aba ativa mudou durante a captura. Nenhum resultado visual foi confirmado.");
+}
+
+async function findVisualMatch(run, asset, capturedSource = null) {
+  const [source, originalTemplate] = await Promise.all([capturedSource || captureImage(run), bitmapForDataUrl(asset?.data_url)]);
   let best = { score: -1 };
   for (const requestedScale of [.74, .87, 1, 1.15, 1.32]) {
     const template = scaledImageData(originalTemplate, source.scale * requestedScale);
@@ -364,7 +478,7 @@ async function waitForVisualMatch(run, step, asset) {
   let best = { score: -1 };
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (run.cancelled) throw new Error("Execução interrompida pelo usuário.");
-    const candidate = await findVisualMatch(run.tabId, asset);
+    const candidate = await findVisualMatch(run, asset);
     if (candidate.score > best.score) best = candidate;
     if (candidate.score >= confidence) return candidate;
     if (attempt < attempts - 1) await sleep(interval);
@@ -405,7 +519,8 @@ async function executeVisualState(run, step) {
   const candidates = [];
   if (step.active_image) candidates.push({ state: "ativo", asset: step.active_image });
   if (step.inactive_image) candidates.push({ state: "desativado", asset: step.inactive_image });
-  const results = await Promise.all(candidates.map(async (candidate) => ({ ...candidate, match: await findVisualMatch(run.tabId, candidate.asset) })));
+  const source = await captureImage(run);
+  const results = await Promise.all(candidates.map(async (candidate) => ({ ...candidate, match: await findVisualMatch(run, candidate.asset, source) })));
   const best = results.sort((first, second) => second.match.score - first.match.score)[0];
   const confidence = Math.max(.35, Math.min(.99, Number(step.confidence || .85)));
   if (!best || best.match.score < confidence) throw new Error(`Não identifiquei o estado de ${step.name || "botão"}.`);
@@ -460,6 +575,7 @@ async function executeOcrTargets(run, step) {
       }
       return { message, flow: target.on_success || step.on_success };
     } catch (error) {
+      if (run.cancelled || error?.flowdetectCaptureUnavailable) throw error;
       const reason = String(error?.message || error || "");
       if (reason.includes("desativado") && reason.includes("clique")) {
         error.message = `OCR ${targetIndex + 1} encontrou o texto, mas o alvo ficou desativado. ${reason}`;
@@ -745,6 +861,7 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       if (nextIndex !== indexes.nextByIndex.get(index)) await addLog(run, flowLabel(flow), "info");
       index = nextIndex;
     } catch (error) {
+      if (run.cancelled || error?.flowdetectCaptureUnavailable) throw error;
       if (error?.flowdetectOcrTargetFailure) throw error;
       if (!flowContinues(step.on_failure)) throw error;
       const nextIndex = actionToIndex(step.on_failure, indexes, indexes.nextByIndex.get(index));
@@ -770,6 +887,14 @@ async function executeAutomation(automation, tabId, startRow = 1) {
   activeRuns.set(run.id, run);
   await addLog(run, `Iniciando ${run.automationName}.`);
   try {
+    try {
+      await startTabCapture(run);
+      await addLog(run, "Captura vinculada a aba da automacao iniciada; voce pode usar outras abas.", "info");
+    } catch (error) {
+      run.captureMode = "visible";
+      await stopTabCapture(run);
+      await addLog(run, `A captura em segundo plano nao iniciou: ${String(error?.message || error)}. O reconhecimento visual aguardara a aba da automacao ficar ativa.`, "warning");
+    }
     const steps = automation.steps;
     const indexes = buildFlowIndexes(steps);
     const initialSequence = normalizedSequence(automation.initial_sequence);
@@ -818,6 +943,7 @@ async function executeAutomation(automation, tabId, startRow = 1) {
     }
     await addLog(run, String(error?.message || error), "error");
   } finally {
+    await stopTabCapture(run);
     run.finishedAt = new Date().toISOString();
     if (run.report) run.report.finishedAt = run.finishedAt;
     activeRuns.delete(run.id);
@@ -850,13 +976,20 @@ async function handleMessage(message, sender) {
   }
   if (message?.type === "flowdetect-capture-preview") {
     const tab = await chrome.tabs.get(Number(message.tabId));
+    if ((await activeTabForWindow(tab.windowId))?.id !== tab.id) {
+      throw new Error("Abra a aba escolhida antes de capturar a imagem de referencia.");
+    }
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+    if ((await activeTabForWindow(tab.windowId))?.id !== tab.id) {
+      throw new Error("A aba ativa mudou durante a captura. Tente novamente na aba escolhida.");
+    }
     return { ok: true, dataUrl };
   }
   return { ok: false, error: "Mensagem FlowDetect desconhecida." };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.target === "flowdetect-offscreen") return false;
   handleMessage(message, sender).then(sendResponse).catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
   return true;
 });
