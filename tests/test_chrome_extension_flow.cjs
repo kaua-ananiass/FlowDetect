@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
+const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "spreadsheetRowData", "spreadsheetColumnValue", "reportColumnValue", "reportStepForRow", "recordReportResult", "replaceVariables", "setSpreadsheetRowVariables", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "updateSpreadsheetProgress", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -13,10 +13,93 @@ const functions = names.map((name) => {
 }).join("\n");
 
 function runner(extra = {}) {
-  const context = vm.createContext({ Map, Number, String, Error, ...extra });
+  const context = vm.createContext({ Map, Number, String, Error, Boolean, Date, Math, ...extra });
   vm.runInContext(functions, context);
   return context;
 }
+
+test("a manually stopped row is reported as interrupted instead of failed", () => {
+  const context = runner();
+  const run = { cancelled: false, report: { sourceName: "CNPJ", rows: [], summary: {} } };
+
+  context.beginReportRow(run, { index: 2, value: "12.345.678/0001-90", sourceName: "CNPJ", total: 5 });
+  context.finalizeReportRow(run, false, "Execucao interrompida pelo usuario.");
+
+  assert.equal(run.report.rows[0].status, "Interrompida");
+  assert.equal(run.report.rows[0].tone, "warning");
+  assert.equal(run.report.rows[0].result, "Execucao interrompida pelo usuario.");
+});
+
+test("the report-result block records only its configured status and message", () => {
+  const context = runner();
+  const run = { report: { sourceName: "CNPJ", rows: [], summary: {} } };
+
+  context.beginReportRow(run, { index: 1, value: "03.943.209/0001-87", sourceName: "CNPJ", total: 1 });
+  context.recordReportResult(run, {
+    status: "Sem debitos",
+    tone: "info",
+    result: "Nao ha debitos para a empresa.",
+    confirmation: "Dado antigo que nao deve aparecer.",
+  });
+  context.finalizeReportRow(run, true);
+
+  const row = JSON.parse(JSON.stringify(run.report.rows[0]));
+  assert.equal(row.success, true);
+  assert.equal(row.status, "Sem debitos");
+  assert.equal(row.tone, "info");
+  assert.equal(row.result, "Nao ha debitos para a empresa.");
+  assert.equal(Object.hasOwn(row, "confirmation"), false);
+});
+
+test("report result keeps its custom message while the selected company comes from the active loop row", () => {
+  const context = runner();
+  const step = context.reportStepForRow({
+    report_column: "Empresa",
+    result_column: "Cidade",
+    confirmation_column: "Empresa",
+    result: "Mensagem guardada para {{empresa}}.",
+    confirmation: "Evidencia antiga.",
+  }, { CNPJ: "03943209000187" }, { Empresa: "Empresa Modelo", Cidade: "Sao Paulo" });
+
+  assert.equal(step.result, "Mensagem guardada para Empresa Modelo.");
+  assert.equal(Object.hasOwn(step, "confirmation"), false);
+  assert.equal(Object.hasOwn(step, "result_column"), false);
+});
+
+test("the selected report column identifies the row and replaces the report alias", () => {
+  const context = runner();
+  const run = { variables: {}, report: { sourceName: "CNPJ", rows: [], summary: {} } };
+  const source = {
+    name: "CNPJ",
+    values: ["03943209000187"],
+    rows: [{ Empresa: "Empresa Modelo", CNPJ: "03943209000187" }],
+  };
+
+  context.setSpreadsheetRowVariables(run, source, 0);
+  run.spreadsheetLoop = { rowData: source.rows[0] };
+  context.beginReportRow(run, { index: 1, value: run.variables.CNPJ, sourceName: "CNPJ", total: 1 });
+  context.recordReportResult(run, {
+    status: "Concluida",
+    tone: "success",
+    result: context.replaceVariables("Automacao concluida para {{empresa}}.", { ...run.variables, empresa: source.rows[0].Empresa }),
+    report_column: "Empresa",
+  });
+
+  const row = JSON.parse(JSON.stringify(run.report.rows[0]));
+  assert.equal(run.report.sourceName, "Empresa");
+  assert.equal(row.value, "Empresa Modelo");
+  assert.equal(row.result, "Automacao concluida para Empresa Modelo.");
+});
+
+test("spreadsheet aliases replace the default report message with the current item", () => {
+  const context = runner();
+  const run = { variables: {} };
+
+  context.setSpreadsheetRowVariables(run, { name: "CNPJ", values: ["03943209000187"] }, 0);
+  const message = context.replaceVariables("Automacao concluida para {{empresa}} na linha {{linha_atual}}: {{CNPJ}}.", run.variables);
+
+  assert.equal(message, "Automacao concluida para 03943209000187 na linha 1: 03943209000187.");
+});
 
 test("Chrome runner keeps pages separate and resolves a block route on another page", () => {
   const context = runner();
@@ -95,6 +178,55 @@ test("Chrome runner starts the spreadsheet loop from the requested line", async 
   assert.equal(context.spreadsheetStartRow(0, 4), 1);
 });
 
+test("spreadsheet progress follows processed rows when branches skip blocks", () => {
+  const context = runner();
+  const run = {
+    spreadsheetStartRow: 1,
+    stepsPerIteration: 18,
+    currentStep: 36 * 13,
+    spreadsheetLoop: { row: 36, total: 37, startedStep: 36 * 13 },
+  };
+
+  context.updateSpreadsheetProgress(run);
+  assert.equal(run.progressPercent, 97);
+  run.currentStep += 12;
+  context.updateSpreadsheetProgress(run);
+  assert.equal(run.progressPercent, 99);
+  run.spreadsheetLoop.row = 35;
+  context.updateSpreadsheetProgress(run);
+  assert.equal(run.progressPercent, 99);
+
+  const resumed = {
+    spreadsheetStartRow: 20,
+    stepsPerIteration: 18,
+    currentStep: 12,
+    spreadsheetLoop: { row: 19, total: 37, startedStep: 0 },
+  };
+  context.updateSpreadsheetProgress(resumed);
+  assert.equal(resumed.progressPercent, 3);
+});
+
+test("the persisted Chrome run carries the spreadsheet progress to the popup", async () => {
+  const saved = [];
+  const context = runner({
+    chrome: { storage: { local: { set: async (value) => saved.push(value) } } },
+  });
+  const persistRun = source.match(/^async function persistRun\(.*?^}/ms);
+  assert.ok(persistRun);
+  vm.runInContext('const RUN_STORAGE_KEY = "test-run";', context);
+  vm.runInContext(persistRun[0], context);
+  const run = {
+    logs: [],
+    spreadsheetStartRow: 1,
+    stepsPerIteration: 18,
+    currentStep: 36 * 13,
+    spreadsheetLoop: { row: 36, total: 37, startedStep: 36 * 13 },
+  };
+
+  await context.persistRun(run);
+  assert.equal(saved.at(-1)["test-run"].progressPercent, 97);
+});
+
 test("Chrome runner applies the selected row to loops with start and end markers", async () => {
   const executed = [];
   const context = runner({
@@ -162,6 +294,60 @@ test("Chrome runner follows the failure route of each OCR target", async () => {
   assert.match(logs[0].message, /Procurando OCR 2/);
 });
 
+test("an OCR failure takes its configured route even when an image looks similar", async () => {
+  const queried = [];
+  const logs = [];
+  let visualMatches = 0;
+  const context = runner({
+    sleep: async () => {},
+    persistRun: async () => {},
+    addLog: async (_run, message, level) => logs.push({ message, level }),
+    executeVisualMatch: async () => { visualMatches += 1; return "Visual encontrado."; },
+    executePageStep: async (_run, step) => {
+      queried.push(step.text);
+      if (step.text === "Não há débitos") throw new Error("OCR nao encontrou o texto.");
+      return `OCR encontrou ${step.text}.`;
+    },
+  });
+  const executeStep = source.match(/^async function executeStep\(.*?^}/ms);
+  assert.ok(executeStep, "Production function executeStep");
+  vm.runInContext(executeStep[0], context);
+  const steps = [
+    { source_order: 8, sequence: "pagina_3", type: "ocr_text", text: "Não há débitos",
+      visual_fallback: { data_url: "data:image/png;base64,example" },
+      on_success: { action: "ir_para_bloco", block: "9" },
+      on_failure: { action: "ir_para_bloco", block: "10" } },
+    { source_order: 9, sequence: "pagina_3", type: "ocr_text", text: "Relatório incorreto",
+      on_success: { action: "ir_para_bloco", block: "16" } },
+    { source_order: 10, sequence: "pagina_3", type: "ocr_text", text: "Competência de Apuração\n08/2026",
+      visual_fallback: { data_url: "data:image/png;base64,example" },
+      ocr_targets: [
+        { text: "Competência de Apuração", action: "continuar", on_success: { action: "continuar" } },
+        { text: "08/2026", action: "confirmar_ir_para_bloco", on_success: { action: "ir_para_bloco", block: "16" } },
+      ] },
+    { source_order: 16, sequence: "pagina_3", type: "ocr_text", text: "Pesquisar" },
+  ];
+  const run = { variables: {}, currentStep: 0 };
+
+  await context.executeRange(run, steps, 0, steps.length, context.loopPairs(steps), context.buildFlowIndexes(steps));
+
+  assert.deepEqual(queried, ["Não há débitos", "Competência de Apuração", "08/2026", "Pesquisar"]);
+  assert.equal(visualMatches, 0);
+  assert.ok(logs.some((entry) => entry.level === "warning" && /OCR nao encontrou/.test(entry.message)));
+});
+
+test("Chrome runner stops when OCR found a target that stayed disabled", async () => {
+  const context = runner({
+    executePageStep: async () => { throw new Error("O alvo encontrado permaneceu desativado e nao recebeu o clique."); },
+    addLog: async () => {},
+  });
+
+  await assert.rejects(() => context.executeOcrTargets({}, {
+    on_failure: { action: "ir_para_bloco", block: "9" },
+    ocr_targets: [{ text: "Baixar guias", click: true }],
+  }), /encontrou o texto, mas o alvo ficou desativado/);
+});
+
 test("Chrome runner routes the final failed OCR instead of using the card failure", async () => {
   const logs = [];
   const context = runner({
@@ -193,6 +379,7 @@ test("Chrome runner routes the final failed OCR instead of using the card failur
 
   assert.equal(result.flow.action, "ir_para_bloco");
   assert.equal(result.flow.block, "12");
+  assert.equal(result.level, "warning");
   assert.match(logs.at(-1).message, /bloco 12/i);
 });
 

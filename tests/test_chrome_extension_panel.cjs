@@ -1,12 +1,27 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 const { test } = require("node:test");
 
 const root = path.join(__dirname, "../flowdetect_chrome");
 const html = fs.readFileSync(path.join(root, "sidepanel.html"), "utf8");
 const source = fs.readFileSync(path.join(root, "sidepanel.js"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
+
+test("a completed branched automation displays full progress", () => {
+  const declaration = source.match(/^function runProgress\(.*?^}/ms);
+  assert.ok(declaration);
+  const context = vm.createContext({ Math, Number });
+  vm.runInContext(declaration[0], context);
+
+  const run = { currentStep: 77, totalSteps: 100 };
+  assert.equal(context.runProgress({ ...run, status: "running" }).percent, 77);
+  assert.equal(context.runProgress({ ...run, status: "stopped" }).percent, 77);
+  assert.equal(context.runProgress({ ...run, status: "completed" }).percent, 100);
+  assert.equal(context.runProgress({ currentStep: 110, totalSteps: 100, status: "running" }).percent, 99);
+  assert.equal(context.runProgress({ currentStep: 73, totalSteps: 100, progressPercent: 99, status: "running" }).percent, 99);
+});
 
 test("Chrome popup keeps execution details inside the active automation card", () => {
   assert.equal(manifest.action.default_popup, "sidepanel.html");
@@ -24,14 +39,18 @@ test("Chrome popup keeps execution details inside the active automation card", (
   assert.match(html, /class="delete-automation"/);
   assert.match(html, /class="loop-start" hidden/);
   assert.match(html, /class="loop-start-choice"/);
+  assert.doesNotMatch(html, /class="loop-start-copy"/);
+  assert.match(html, /class="execution-column-choice"/);
   assert.match(source, /const ordered = \[\.\.\.automationsCache\]\.sort/);
   assert.match(source, /execution-percent/);
   assert.match(source, /async function deleteAutomation/);
   assert.match(source, /window\.confirm/);
   assert.match(source, /filter\(\(item\) => String\(item\.id\) !== String\(automation\.id\)\)/);
   assert.match(source, /chrome\.storage\.local\.remove\(RUN_STORAGE_KEY\)/);
-  assert.match(source, /function spreadsheetLoopInfo/);
+  assert.match(source, /function spreadsheetLoopColumns/);
+  assert.match(source, /function loopDisplayColumn/);
+  assert.match(source, /async function saveLoopDisplayColumn/);
   assert.match(source, /loopStartChoice\.replaceChildren/);
-  assert.match(source, /\$\{index \+ 1\} · \$\{value/);
+  assert.match(source, /#\$\{index \+ 1\} - \$\{value/);
   assert.match(source, /startRow: selectedStartRow/);
 });

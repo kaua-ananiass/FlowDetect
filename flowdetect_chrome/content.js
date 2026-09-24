@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_RUNTIME_VERSION = "0.2.17";
+const CONTENT_RUNTIME_VERSION = "0.2.19";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
@@ -199,6 +199,30 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     return element?.closest?.("button,a,input,textarea,select,label,[role='button'],[role='link'],[role='option'],[role='menuitem'],[role='tab'],[role='treeitem'],[role='gridcell'],[contenteditable='true']") || element;
   }
 
+  function isClickReady(element) {
+    if (!element || !(element instanceof Element)) return false;
+    if (element.disabled || element.getAttribute("disabled") !== null || element.getAttribute("aria-disabled") === "true") return false;
+    try { return !element.matches?.(":disabled"); } catch (_) { return true; }
+  }
+
+  async function waitForClickableTarget(target, point = null, timeoutMs = 10000) {
+    const timeout = Math.max(500, Number(timeoutMs || 10000));
+    const deadline = Date.now() + timeout;
+    const x = Number(point?.x);
+    const y = Number(point?.y);
+    const retryDelay = 140;
+    while (Date.now() <= deadline) {
+      const atRecognizedPoint = Number.isFinite(x) && Number.isFinite(y)
+        ? document.elementFromPoint(x, y)
+        : null;
+      const clickable = focusableTarget(atRecognizedPoint || target);
+      if (clickable && isVisible(clickable) && isClickReady(clickable)) return clickable;
+      if (Date.now() + retryDelay > deadline) break;
+      await sleep(retryDelay);
+    }
+    throw new Error("O alvo encontrado permaneceu desativado e nao recebeu o clique.");
+  }
+
   function clickTarget(target, clicks = 1, point = null) {
     const x = Number(point?.x);
     const y = Number(point?.y);
@@ -207,6 +231,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       : null;
     const clickable = focusableTarget(atRecognizedPoint || target);
     if (!clickable || !isVisible(clickable)) throw new Error("O alvo reconhecido nao esta visivel para receber o clique.");
+    if (!isClickReady(clickable)) throw new Error("O alvo reconhecido esta desativado e nao recebeu o clique.");
     clickable?.focus?.({ preventScroll: true });
     for (let index = 0; index < Math.max(1, Number(clicks || 1)); index += 1) {
       const rect = clickable.getBoundingClientRect();
@@ -351,10 +376,12 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       return "Opção selecionada.";
     }
     if (type === "marcar_checkbox") {
-      if (element instanceof HTMLInputElement && !element.checked) element.click(); else if (!(element instanceof HTMLInputElement)) element.click();
+      const clickable = await waitForClickableTarget(element, null, step.timeout_ms);
+      if (element instanceof HTMLInputElement && !element.checked) clickTarget(clickable); else if (!(element instanceof HTMLInputElement)) clickTarget(clickable);
       return "Opção marcada.";
     }
-    clickTarget(element);
+    const clickable = await waitForClickableTarget(element, null, step.timeout_ms);
+    clickTarget(clickable);
     return "Clique executado.";
   }
 
@@ -372,28 +399,34 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       y: Math.max(1, Math.min(innerHeight - 1, rect.top + rect.height / 2 + Number(step.offset_y || 0)))
     };
     highlightRect(rect, { color: "#44b9ff", label: "OCR" });
-    if (shouldClick) clickTarget(refreshedTarget.element, step.clicks, clickPoint);
+    if (shouldClick) {
+      const clickable = await waitForClickableTarget(refreshedTarget.element, clickPoint, step.timeout_ms);
+      clickTarget(clickable, step.clicks, clickPoint);
+    }
     return `OCR encontrou “${String(step.text).slice(0, 80)}”${shouldClick ? " e clicou" : ""}.`;
   }
 
-  function clickAt(step) {
+  async function clickAt(step) {
     const x = Number(step.x || 0); const y = Number(step.y || 0);
     if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) throw new Error(`Clique ${Math.round(x)}, ${Math.round(y)} está fora da aba visível.`);
     const target = document.elementFromPoint(x, y);
     if (!target) throw new Error("Não encontrei um elemento na coordenada do clique.");
     const rect = target.getBoundingClientRect();
     highlightRect(rect.width && rect.height ? rect : { left: x - 5, top: y - 5, width: 10, height: 10 }, { color: "#54ecd2", label: "CLIQUE" });
-    clickTarget(target, step.clicks, { x, y });
+    const clickable = await waitForClickableTarget(target, { x, y }, step.timeout_ms);
+    clickTarget(clickable, step.clicks, { x, y });
     return `Clique executado em ${Math.round(x)}, ${Math.round(y)}.`;
   }
 
-  function visualCoordinate(request) {
+  async function visualCoordinate(request) {
     const x = Number(request.x || 0); const y = Number(request.y || 0);
     const rect = { left: x - (Number(request.width || 12) / 2), top: y - (Number(request.height || 12) / 2), width: Number(request.width || 12), height: Number(request.height || 12) };
     highlightRect(rect, { color: request.color || "#cf8cff", label: request.label || "VISUAL" });
     if (Number(request.clicks || 0) > 0) {
       const target = document.elementFromPoint(x, y);
-      if (target) clickTarget(target, request.clicks, { x, y });
+      if (!target) throw new Error("Não encontrei o alvo visual para receber o clique.");
+      const clickable = await waitForClickableTarget(target, { x, y }, request.timeout_ms);
+      clickTarget(clickable, request.clicks, { x, y });
     }
     return { x, y };
   }
@@ -404,8 +437,10 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       return;
     }
     if (request?.type === "flowdetect-click-coordinate-v2") {
-      try { const point = visualCoordinate(request); sendResponse({ ok: true, point }); } catch (error) { sendResponse({ ok: false, error: String(error?.message || error) }); }
-      return;
+      visualCoordinate(request)
+        .then((point) => sendResponse({ ok: true, point }))
+        .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+      return true;
     }
     if (request?.type !== "flowdetect-execute-step-v2") return;
     const step = request.step || {};

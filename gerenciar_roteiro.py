@@ -822,7 +822,7 @@ def passo_chrome_base(evento, tipo, detalhes):
     }
 
 
-def converter_evento_para_chrome(evento):
+def converter_evento_para_chrome(evento, colunas_relatorio=None):
     """Converte os blocos que fazem sentido dentro de uma pagina Chrome."""
     tipo = str((evento or {}).get("tipo") or "").strip()
     detalhes = (evento or {}).get("detalhes") or {}
@@ -980,11 +980,41 @@ def converter_evento_para_chrome(evento):
 
     if tipo == "sequencia_planilha":
         valores = [str(valor) for valor in list(detalhes.get("valores") or [])]
+        linhas = []
+        colunas_escolhidas = [str(coluna).strip() for coluna in (colunas_relatorio or []) if str(coluna).strip()]
+        if colunas_escolhidas:
+            try:
+                valores_da_origem, linhas = valores_e_campos_planilha_para_chrome(
+                    detalhes.get("aba"),
+                    detalhes.get("coluna"),
+                    colunas_escolhidas,
+                    detalhes.get("arquivo"),
+                    detalhes.get("linhas_selecionadas"),
+                )
+                if valores_da_origem:
+                    valores = valores_da_origem
+            except Exception:
+                linhas = []
         passo = passo_chrome_base(evento, "data_source", detalhes)
         passo.update({
             "name": str(detalhes.get("coluna") or "valor"),
             "values": valores,
             "interval_ms": max(0, round(float(detalhes.get("intervalo_entre_itens") or 0) * 1000)),
+        })
+        if linhas and len(linhas) == len(valores):
+            passo["rows"] = linhas
+        return passo, None
+
+    if tipo == "resultado_relatorio":
+        passo = passo_chrome_base(evento, "report_result", detalhes)
+        passo.update({
+            "status": str(detalhes.get("status") or "Concluida").strip() or "Concluida",
+            "tone": str(detalhes.get("tom") or detalhes.get("tone") or "success").strip().lower(),
+            "result": str(detalhes.get("resultado") or detalhes.get("result") or "").strip(),
+            "confirmation": str(detalhes.get("confirmacao") or detalhes.get("confirmation") or "").strip(),
+            "report_column": str(detalhes.get("coluna_relatorio") or detalhes.get("report_column") or "").strip(),
+            "result_column": str(detalhes.get("coluna_resultado") or detalhes.get("result_column") or "").strip(),
+            "confirmation_column": str(detalhes.get("coluna_confirmacao") or detalhes.get("confirmation_column") or "").strip(),
         })
         return passo, None
 
@@ -1011,10 +1041,21 @@ def exportar_automacao_para_chrome(automacao_id, item, destino_json=None):
             f"{nome_base}_Chrome.json",
         )
 
+    eventos_ordenados = sorted(payload.get("eventos") or [], key=lambda item_evento: int(item_evento.get("ordem") or 0))
+    colunas_relatorio = []
+    for evento in eventos_ordenados:
+        if str(evento.get("tipo") or "") != "resultado_relatorio":
+            continue
+        detalhes_resultado = evento.get("detalhes") or {}
+        for chave in ("coluna_relatorio", "coluna_resultado", "coluna_confirmacao", "report_column", "result_column", "confirmation_column"):
+            coluna = str(detalhes_resultado.get(chave) or "").strip()
+            if coluna and coluna not in colunas_relatorio:
+                colunas_relatorio.append(coluna)
+
     passos = []
     avisos = []
-    for evento in sorted(payload.get("eventos") or [], key=lambda item_evento: int(item_evento.get("ordem") or 0)):
-        passo, aviso = converter_evento_para_chrome(evento)
+    for evento in eventos_ordenados:
+        passo, aviso = converter_evento_para_chrome(evento, colunas_relatorio)
         if passo:
             passos.append(passo)
         if aviso:
@@ -2305,6 +2346,53 @@ def valores_da_planilha(sheet_name, column_name, workbook_file=None):
         workbook.close()
 
 
+def valores_e_campos_planilha_para_chrome(sheet_name, column_name, colunas_relatorio=None, workbook_file=None, linhas_selecionadas=None):
+    """Retorna os valores do loop e somente as colunas escolhidas para o PDF Chrome."""
+    caminho_planilha = resolver_planilha(workbook_file)
+    if not caminho_planilha.exists():
+        raise ValueError(f"Arquivo de planilha nao encontrado: {caminho_planilha}")
+
+    desejadas = []
+    for coluna in (colunas_relatorio or []):
+        nome = str(coluna or "").strip()
+        if nome and nome not in desejadas:
+            desejadas.append(nome)
+    if not desejadas:
+        return [], []
+
+    workbook = load_workbook(caminho_planilha, read_only=True, data_only=True)
+    try:
+        if sheet_name not in workbook.sheetnames:
+            raise ValueError(f"Aba nao encontrada: {sheet_name}")
+        sheet = workbook[sheet_name]
+        cabecalhos = [str(valor).strip() if valor is not None else "" for valor in next(sheet.iter_rows(min_row=1, max_row=1, values_only=True), [])]
+        if str(column_name or "") not in cabecalhos:
+            raise ValueError(f"Coluna nao encontrada: {column_name}")
+        indice_origem = cabecalhos.index(str(column_name))
+        indices_escolhidos = [(coluna, cabecalhos.index(coluna)) for coluna in desejadas if coluna in cabecalhos]
+        if not indices_escolhidos:
+            return [], []
+
+        linhas_permitidas = {int(linha) for linha in (linhas_selecionadas or []) if str(linha).strip()}
+        valores = []
+        linhas = []
+        for numero_linha, linha in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+            if linhas_permitidas and numero_linha not in linhas_permitidas:
+                continue
+            valor_origem = linha[indice_origem] if indice_origem < len(linha) else None
+            texto_origem = str(valor_origem).strip() if valor_origem is not None else ""
+            if not texto_origem:
+                continue
+            valores.append(texto_origem)
+            linhas.append({
+                coluna: str(linha[indice]).strip() if indice < len(linha) and linha[indice] is not None else ""
+                for coluna, indice in indices_escolhidos
+            })
+        return valores, linhas
+    finally:
+        workbook.close()
+
+
 def sincronizar_evento_planilha(evento):
     detalhes = evento.get("detalhes") or {}
     workbook_id = normalizar_id_planilha(detalhes.get("arquivo"))
@@ -2979,6 +3067,9 @@ def criar_bloco_resultado_relatorio(
     bloco_sucesso="",
     sequencia_sucesso="",
     atraso_sequencia_sucesso=0,
+    coluna_relatorio="",
+    coluna_resultado="",
+    coluna_confirmacao="",
 ):
     tom_normalizado = str(tom or "success").strip().lower()
     if tom_normalizado not in {"success", "info", "warning", "danger"}:
@@ -2989,6 +3080,9 @@ def criar_bloco_resultado_relatorio(
             "tom": tom_normalizado,
             "resultado": str(resultado or "").strip(),
             "confirmacao": str(confirmacao or "").strip(),
+            "coluna_relatorio": str(coluna_relatorio or "").strip(),
+            "coluna_resultado": str(coluna_resultado or "").strip(),
+            "coluna_confirmacao": str(coluna_confirmacao or "").strip(),
         },
         ao_sucesso,
         bloco_sucesso,
@@ -3863,6 +3957,9 @@ def comando_adicionar_resultado_relatorio(args):
             args.bloco_sucesso,
             args.sequencia_sucesso,
             args.atraso_sequencia_sucesso,
+            coluna_relatorio=args.report_column,
+            coluna_resultado=args.result_column,
+            coluna_confirmacao=args.confirmation_column,
         )
     )
     return salvar_e_retornar(payload)
@@ -4175,6 +4272,9 @@ def comando_inserir_resultado_relatorio(args):
             args.bloco_sucesso,
             args.sequencia_sucesso,
             args.atraso_sequencia_sucesso,
+            coluna_relatorio=args.report_column,
+            coluna_resultado=args.result_column,
+            coluna_confirmacao=args.confirmation_column,
         ),
         args.target_order,
         args.position,
@@ -4509,6 +4609,9 @@ def comando_atualizar_resultado_relatorio(args):
         args.bloco_sucesso,
         args.sequencia_sucesso,
         args.atraso_sequencia_sucesso,
+        coluna_relatorio=args.report_column,
+        coluna_resultado=args.result_column,
+        coluna_confirmacao=args.confirmation_column,
     )
     evento.update(bloco)
     return salvar_e_retornar(payload)
@@ -4901,6 +5004,9 @@ def build_parser():
     add_report_result.add_argument("--tom", choices=["success", "info", "warning", "danger"], default="success")
     add_report_result.add_argument("--resultado", default="")
     add_report_result.add_argument("--confirmacao", default="")
+    add_report_result.add_argument("--report-column", default="")
+    add_report_result.add_argument("--result-column", default="")
+    add_report_result.add_argument("--confirmation-column", default="")
     add_report_result.add_argument("--delay", type=float, default=0)
     add_report_result.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(add_report_result)
@@ -5071,6 +5177,9 @@ def build_parser():
     insert_report_result.add_argument("--tom", choices=["success", "info", "warning", "danger"], default="success")
     insert_report_result.add_argument("--resultado", default="")
     insert_report_result.add_argument("--confirmacao", default="")
+    insert_report_result.add_argument("--report-column", default="")
+    insert_report_result.add_argument("--result-column", default="")
+    insert_report_result.add_argument("--confirmation-column", default="")
     insert_report_result.add_argument("--delay", type=float, default=0)
     insert_report_result.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(insert_report_result)
@@ -5233,6 +5342,9 @@ def build_parser():
     update_report_result.add_argument("--tom", choices=["success", "info", "warning", "danger"], default="success")
     update_report_result.add_argument("--resultado", default="")
     update_report_result.add_argument("--confirmacao", default="")
+    update_report_result.add_argument("--report-column", default="")
+    update_report_result.add_argument("--result-column", default="")
+    update_report_result.add_argument("--confirmation-column", default="")
     update_report_result.add_argument("--delay", type=float)
     update_report_result.add_argument("--sequencia")
     adicionar_argumentos_fluxo_sucesso(update_report_result)

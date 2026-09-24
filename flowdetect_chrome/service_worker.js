@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.17";
+const RUNTIME_VERSION = "0.2.36";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 
@@ -20,11 +20,30 @@ function createRun(automation, tabId, startRow = 1) {
     lastMessage: "",
     logs: [],
     variables: {},
+    report: {
+      sourceName: "",
+      rows: [],
+      summary: {},
+      requestedStartRow: Math.max(1, Math.trunc(Number(startRow) || 1))
+    },
     requestedStartRow: Math.max(1, Math.trunc(Number(startRow) || 1))
   };
 }
 
+function updateSpreadsheetProgress(run) {
+  const loop = run.spreadsheetLoop;
+  if (!loop || !Number(run.stepsPerIteration)) return;
+  const firstRow = Math.max(0, Number(run.spreadsheetStartRow || 1) - 1);
+  const totalRows = Math.max(1, Number(loop.total) - firstRow);
+  const finishedRows = Math.max(0, Number(loop.row) - firstRow);
+  const rowSteps = Math.max(0, Number(run.currentStep || 0) - Number(loop.startedStep || 0));
+  const rowFraction = Math.min(0.99, rowSteps / Math.max(1, Number(run.stepsPerIteration)));
+  const percent = Math.min(99, Math.floor(((finishedRows + rowFraction) / totalRows) * 100));
+  run.progressPercent = Math.max(Number(run.progressPercent || 0), percent);
+}
+
 async function persistRun(run) {
+  updateSpreadsheetProgress(run);
   const persisted = { ...run, logs: run.logs.slice(-100) };
   delete persisted.cancelled;
   await chrome.storage.local.set({ [RUN_STORAGE_KEY]: persisted });
@@ -34,6 +53,121 @@ async function addLog(run, message, level = "info") {
   run.lastMessage = String(message || "");
   run.logs.push({ at: new Date().toISOString(), message: run.lastMessage, level });
   await persistRun(run);
+}
+
+function reportTone(value, fallback = "success") {
+  const tone = String(value || fallback).trim().toLowerCase();
+  return ["success", "info", "warning", "danger"].includes(tone) ? tone : fallback;
+}
+
+function runWasInterrupted(run, error = "") {
+  const message = String(error?.message || error || "").toLowerCase();
+  return Boolean(run?.cancelled) || message.includes("interrompid") || message.includes("parada solicitada");
+}
+
+function beginReportRow(run, { index, value, sourceName, total }) {
+  if (!run.report) run.report = { sourceName: "", rows: [], summary: {} };
+  run.report.sourceName = String(sourceName || run.report.sourceName || "valor");
+  const entry = {
+    index: Math.max(1, Number(index) || 1),
+    value: String(value ?? ""),
+    total: Math.max(0, Number(total) || 0),
+    startedAt: new Date().toISOString(),
+    finishedAt: "",
+    success: null,
+    status: "",
+    tone: "",
+    result: "",
+    error: ""
+  };
+  run.report.rows.push(entry);
+  run.reportCurrentRow = entry;
+  return entry;
+}
+
+function finalizeReportRow(run, success, error = "") {
+  const entry = run.reportCurrentRow;
+  if (!entry) return;
+  entry.success = Boolean(success);
+  entry.error = String(error || "").trim();
+  entry.finishedAt = new Date().toISOString();
+  const interrupted = !entry.success && runWasInterrupted(run, error);
+  if (!entry.status) entry.status = entry.success ? "Concluida" : (interrupted ? "Interrompida" : "Falhou");
+  if (!entry.tone) entry.tone = entry.success ? "success" : (interrupted ? "warning" : "danger");
+  if (!entry.result) {
+    entry.result = entry.success
+      ? "Todas as etapas da linha foram executadas."
+      : (interrupted ? "Execucao interrompida pelo usuario." : (entry.error || "Falha durante a execucao desta linha."));
+  }
+  delete run.reportCurrentRow;
+}
+
+function spreadsheetRowData(source, row) {
+  const value = source?.rows?.[row];
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function spreadsheetColumnValue(rowData, column) {
+  const requested = String(column || "").trim();
+  if (!requested || !rowData || typeof rowData !== "object") return "";
+  if (Object.prototype.hasOwnProperty.call(rowData, requested)) return String(rowData[requested] ?? "").trim();
+  const normalized = requested.toLocaleLowerCase();
+  const key = Object.keys(rowData).find((name) => String(name).trim().toLocaleLowerCase() === normalized);
+  return key ? String(rowData[key] ?? "").trim() : "";
+}
+
+function reportColumnValue(rowData, column, variables = {}) {
+  const selected = spreadsheetColumnValue(rowData, column);
+  if (selected) return selected;
+  const requested = String(column || "").trim();
+  return requested ? String(variables?.[requested] ?? "").trim() : "";
+}
+
+function reportStepForRow(rawStep, variables = {}, rowData = {}) {
+  const reportColumn = String(rawStep?.report_column || "").trim();
+  const itemValue = reportColumnValue(rowData, reportColumn, variables);
+  const reportVariables = itemValue ? { ...variables, empresa: itemValue } : variables;
+  const step = replaceVariables(rawStep, reportVariables);
+  // Resultado e status pertencem ao bloco. Somente a empresa pode vir
+  // de outra coluna da mesma linha da planilha.
+  delete step.result_column;
+  delete step.confirmation_column;
+  delete step.confirmation;
+  return step;
+}
+
+function recordReportResult(run, step) {
+  if (!run.report) run.report = { sourceName: "", rows: [], summary: {} };
+  const result = {
+    status: String(step.status || "Concluida").trim() || "Concluida",
+    tone: reportTone(step.tone),
+    result: String(step.result || "").trim()
+  };
+  if (run.reportCurrentRow) {
+    const reportColumn = String(step.report_column || "").trim();
+    const selectedValue = spreadsheetColumnValue(run.spreadsheetLoop?.rowData, reportColumn);
+    if (reportColumn) {
+      run.report.sourceName = reportColumn;
+      if (selectedValue) run.reportCurrentRow.value = selectedValue;
+    }
+    Object.assign(run.reportCurrentRow, result);
+  } else {
+    run.report.summary = result;
+  }
+  return result;
+}
+
+function registerRunFailureInReport(run, error) {
+  const message = String(error?.message || error || "Falha durante a execucao.").trim();
+  if (run.reportCurrentRow) {
+    finalizeReportRow(run, false, message);
+    return;
+  }
+  if (!run.report) run.report = { sourceName: "", rows: [], summary: {} };
+  if (!run.report.rows.length) {
+    beginReportRow(run, { index: 1, value: "Execucao", sourceName: "Execucao", total: 1 });
+    finalizeReportRow(run, false, message);
+  }
 }
 
 function timeoutDaPagina(message, fallback = 12000) {
@@ -97,6 +231,24 @@ function replaceVariables(value, variables) {
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, replaceVariables(item, variables)]));
   }
+  return value;
+}
+
+function setSpreadsheetRowVariables(run, source, row) {
+  if (!run.variables) run.variables = {};
+  const value = String(source?.values?.[row] ?? "");
+  const sourceName = String(source?.name || "valor").trim() || "valor";
+  const rowData = spreadsheetRowData(source, row);
+  const line = String(Math.max(1, Number(row) + 1));
+  Object.entries(rowData).forEach(([name, item]) => {
+    const key = String(name || "").trim();
+    if (key) run.variables[key] = String(item ?? "");
+  });
+  run.variables[sourceName] = value;
+  run.variables.valor = value;
+  run.variables.empresa = spreadsheetColumnValue(rowData, "empresa") || value;
+  run.variables.linha_atual = line;
+  run.variables.linha = line;
   return value;
 }
 
@@ -232,6 +384,7 @@ async function clickVisualResult(run, step, match, label = "VISUAL") {
     x,
     y,
     clicks: step.click ? Math.max(1, Number(step.clicks || 1)) : 0,
+    timeout_ms: Math.max(500, Number(step.timeout_ms || 10000)),
     label,
     color: label === "OCR" ? "#44b9ff" : "#cf8cff",
     width: (match.width / Math.max(.001, match.screenshotScale || 1)) / screenshotScaleX,
@@ -307,6 +460,12 @@ async function executeOcrTargets(run, step) {
       }
       return { message, flow: target.on_success || step.on_success };
     } catch (error) {
+      const reason = String(error?.message || error || "");
+      if (reason.includes("desativado") && reason.includes("clique")) {
+        error.message = `OCR ${targetIndex + 1} encontrou o texto, mas o alvo ficou desativado. ${reason}`;
+        error.flowdetectOcrTargetFailure = true;
+        throw error;
+      }
       const flow = target.on_failure || step.on_failure;
       const detail = `OCR ${targetIndex + 1} nao encontrou o texto: ${targetStep.text}.`;
       if (String(flow?.action || "continuar").toLowerCase() === "continuar" && !isLastTarget) {
@@ -315,7 +474,7 @@ async function executeOcrTargets(run, step) {
       }
       if (flowContinues(flow)) {
         await addLog(run, `${detail} ${flowLabel(flow)}`, "warning");
-        return { message: detail, flow };
+        return { message: detail, flow, level: "warning" };
       }
       error.message = `${detail} Regra configurada: parar automacao.`;
       error.flowdetectOcrTargetFailure = true;
@@ -344,6 +503,7 @@ async function executeStep(run, rawStep) {
     const source = {
       name: step.name || "valor",
       values: Array.isArray(step.values) ? step.values.map((value) => String(value ?? "")) : [],
+      rows: Array.isArray(step.rows) ? step.rows : [],
       interval: Math.max(0, Number(step.interval_ms || 0)),
       index: run.currentIndex
     };
@@ -359,6 +519,11 @@ async function executeStep(run, rawStep) {
     run.dataSource = source;
     return `${source.values.length} valor(es) preparados para o loop ${source.name}.`;
   }
+  if (step.type === "report_result") {
+    const reportStep = reportStepForRow(rawStep, run.variables || {}, run.spreadsheetLoop?.rowData || {});
+    const result = recordReportResult(run, reportStep);
+    return `Resultado do relatorio: ${result.status}.`;
+  }
   if (step.type === "loop_end" || step.type === "loop_start") return "Marcador de loop processado.";
   if (["element_action", "ocr_text", "focused_text", "viewport_click", "wait_text"].includes(step.type)) {
     try {
@@ -367,10 +532,6 @@ async function executeStep(run, rawStep) {
       if (step.type === "element_action" && step.visual_fallback?.data_url) {
         await addLog(run, "Seletor não respondeu; tentando referência visual.", "warning");
         return executeVisualMatch(run, { ...step, image: step.visual_fallback, click: true });
-      }
-      if (step.type === "ocr_text" && step.visual_fallback?.data_url) {
-        await addLog(run, "OCR nao respondeu; tentando a imagem deste bloco.", "warning");
-        return executeVisualMatch(run, { ...step, image: step.visual_fallback });
       }
       throw error;
     }
@@ -455,6 +616,7 @@ function findSpreadsheetLoopSource(steps) {
     index,
     name: String(step.name || "valor"),
     values: step.values.map((value) => String(value ?? "")),
+    rows: Array.isArray(step.rows) ? step.rows : [],
     interval: Math.max(0, Number(step.interval_ms || 0))
   };
 }
@@ -468,19 +630,34 @@ async function executeSpreadsheetLoop(run, source, executeIteration) {
   const firstRow = spreadsheetStartRow(run.requestedStartRow, source.values.length) - 1;
   run.totalSteps = Math.max(1, Number(run.stepsPerIteration || 1) * (source.values.length - firstRow));
   run.spreadsheetStartRow = firstRow + 1;
+  if (run.report) run.report.sourceName = source.name;
   try {
     if (firstRow > 0) await addLog(run, `Planilha ${source.name}: iniciando na linha ${firstRow + 1} de ${source.values.length}.`);
     for (let row = firstRow; row < source.values.length; row += 1) {
       if (run.cancelled) throw new Error("Execucao interrompida pelo usuario.");
-      run.variables[source.name] = source.values[row];
+      const value = setSpreadsheetRowVariables(run, source, row);
       run.spreadsheetLoop = {
         sourceIndex: source.index,
         iterationStart: source.iterationStart,
         row,
+        startedStep: Number(run.currentStep || 0),
+        rowData: spreadsheetRowData(source, row),
         total: source.values.length
       };
-      await addLog(run, "Planilha " + source.name + ": " + (row + 1) + "/" + source.values.length + " - " + source.values[row] + ".");
-      await executeIteration();
+      await addLog(run, "Planilha " + source.name + ": " + (row + 1) + "/" + source.values.length + " - " + value + ".");
+      beginReportRow(run, {
+        index: row + 1,
+        value,
+        sourceName: source.name,
+        total: source.values.length
+      });
+      try {
+        await executeIteration();
+        finalizeReportRow(run, true);
+      } catch (error) {
+        finalizeReportRow(run, false, String(error?.message || error));
+        throw error;
+      }
       if (row < source.values.length - 1 && source.interval) await sleep(source.interval);
     }
   } finally {
@@ -513,6 +690,7 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       if (!Number.isInteger(loopEnd)) throw new Error("O bloco Início do loop não possui um Fim do loop.");
       const source = run.dataSource || { name: "valor", values: [] };
       if (!source.values.length) throw new Error("O loop não possui valores da planilha para executar.");
+      if (run.report) run.report.sourceName = source.name;
       const firstRow = run.manualSpreadsheetLoopStarted
         ? 0
         : spreadsheetStartRow(run.requestedStartRow, source.values.length) - 1;
@@ -522,10 +700,27 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
         if (firstRow > 0) await addLog(run, `Planilha ${source.name}: iniciando na linha ${firstRow + 1} de ${source.values.length}.`);
       }
       for (let row = firstRow; row < source.values.length; row += 1) {
-        run.variables[source.name] = source.values[row];
-        run.spreadsheetLoop = { sourceIndex: source.index, row, total: source.values.length };
+        const value = setSpreadsheetRowVariables(run, source, row);
+        run.spreadsheetLoop = {
+          sourceIndex: source.index,
+          row,
+          rowData: spreadsheetRowData(source, row),
+          total: source.values.length
+        };
         await addLog(run, `Loop ${source.name}: ${row + 1}/${source.values.length} · ${source.values[row]}`);
-        await executeRange(run, steps, index + 1, loopEnd, pairs, indexes, depth + 1);
+        beginReportRow(run, {
+          index: row + 1,
+          value,
+          sourceName: source.name,
+          total: source.values.length
+        });
+        try {
+          await executeRange(run, steps, index + 1, loopEnd, pairs, indexes, depth + 1);
+          finalizeReportRow(run, true);
+        } catch (error) {
+          finalizeReportRow(run, false, String(error?.message || error));
+          throw error;
+        }
         if (row < source.values.length - 1 && source.interval) await sleep(source.interval);
       }
       const nextAfterLoop = indexes.nextByIndex.get(loopEnd);
@@ -540,7 +735,7 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       const output = await executeStep(run, step);
       const message = typeof output === "object" ? output.message : output;
       const flow = typeof output === "object" ? output.flow : step.on_success;
-      await addLog(run, message, "success");
+      await addLog(run, message, typeof output === "object" ? output.level || "success" : "success");
       const nextIndex = actionToIndex(flow, indexes, indexes.nextByIndex.get(index));
       if (mustAdvanceSpreadsheetRow(run, index, nextIndex)) {
         await addLog(run, `Linha ${run.spreadsheetLoop.row + 1}/${run.spreadsheetLoop.total} concluida; avancando para o proximo valor.`);
@@ -597,12 +792,34 @@ async function executeAutomation(automation, tabId, startRow = 1) {
       await executeRange(run, steps, firstStep, steps.length, pairs, indexes);
     }
     run.status = "completed";
+    if (run.report) {
+      run.report.status = "completed";
+      if (!run.report.rows.length && !run.report.summary?.status) {
+        run.report.summary = {
+          status: "Concluida",
+          tone: "success",
+          result: "Automacao concluida com sucesso."
+        };
+      }
+    }
     await addLog(run, "Automação concluída com sucesso.", "success");
   } catch (error) {
-    run.status = run.cancelled ? "stopped" : "failed";
+    run.status = runWasInterrupted(run, error) ? "stopped" : "failed";
+    registerRunFailureInReport(run, error);
+    if (run.report) {
+      run.report.status = run.status;
+      if (!run.report.summary?.status && !run.report.rows.length) {
+        run.report.summary = {
+          status: run.status === "stopped" ? "Interrompida" : "Falhou",
+          tone: run.status === "stopped" ? "warning" : "danger",
+          result: String(error?.message || error || "Falha durante a execucao.")
+        };
+      }
+    }
     await addLog(run, String(error?.message || error), "error");
   } finally {
     run.finishedAt = new Date().toISOString();
+    if (run.report) run.report.finishedAt = run.finishedAt;
     activeRuns.delete(run.id);
     await persistRun(run);
   }

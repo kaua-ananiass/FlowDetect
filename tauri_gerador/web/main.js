@@ -230,6 +230,7 @@ const state = {
   commandMapOrderCache: [],
   commandMapAutoFitFrame: 0,
   commandConnectorLayoutFrame: 0,
+  commandMapRoutePreviewFrame: 0,
   commandMapTreePan: null,
   commandMapTreePanOffset: { x: 0, y: 0 },
   commandMapTreePanUserMoved: false,
@@ -462,6 +463,7 @@ const testLoopHint = document.getElementById("testLoopHint");
 const bulkDelayInput = document.getElementById("bulkDelayInput");
 const applyBulkDelayButton = document.getElementById("applyBulkDelayButton");
 const mapSaveButton = document.getElementById("mapSaveButton");
+const mapReorganizeButton = document.getElementById("mapReorganizeButton");
 const mapSavePercent = document.getElementById("mapSavePercent");
 const mapSaveFill = document.getElementById("mapSaveFill");
 const mapSaveStatus = document.getElementById("mapSaveStatus");
@@ -1599,6 +1601,12 @@ function clearCommandMapTreeReferenceLayer(tree) {
   tree?.querySelectorAll(".command-map-tree-link-layer").forEach((layer) => layer.remove());
 }
 
+function commandMapTreeEnergyAnimationDelay(duration = 1.55) {
+  const durationMs = Math.max(100, Math.round(Number(duration || 1.55) * 1000));
+  const phaseMs = Date.now() % durationMs;
+  return `-${(phaseMs / 1000).toFixed(3)}s`;
+}
+
 function createCommandMapTreeLinkEnergy(pathData, kind = "success", duration = 1.55) {
   const normalizedKind = String(kind || "success").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "success";
   const normalizedPath = String(pathData || "").trim();
@@ -1609,6 +1617,9 @@ function createCommandMapTreeLinkEnergy(pathData, kind = "success", duration = 1
   energy.className = `command-map-tree-link-energy is-${normalizedKind}`;
   energy.setAttribute("aria-hidden", "true");
   energy.style.setProperty("--tree-energy-duration", `${duration}s`);
+  // As conexoes sao recalculadas quando o mapa muda. Atrasar a animacao pela
+  // fase atual impede que o ponto volte ao inicio a cada nova camada.
+  energy.style.setProperty("--tree-energy-delay", commandMapTreeEnergyAnimationDelay(duration));
   energy.style.offsetPath = `path("${normalizedPath.replace(/"/g, "'")}")`;
   energy.style.offsetRotate = "0deg";
   return energy;
@@ -2002,35 +2013,64 @@ function renderCommandMapTreeReferenceLinks() {
   tree.prepend(layer);
 }
 
+function scheduleCommandMapRoutePreviewRefresh() {
+  if (!commandMapList || state.activeTab !== "commands") {
+    return;
+  }
+  if (state.commandMapRoutePreviewFrame) {
+    return;
+  }
+  // Aguarda o fim do evento de select/input para nao remover o controle
+  // enquanto o navegador ainda conclui a mudanca de valor.
+  state.commandMapRoutePreviewFrame = requestAnimationFrame(() => {
+    state.commandMapRoutePreviewFrame = 0;
+    if (state.activeTab !== "commands") {
+      return;
+    }
+    renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
+  });
+}
+
 function scheduleCommandConnectorLayout(options = {}) {
+  const refreshTreeLinks = Boolean(options.refreshTreeLinks || state.commandConnectorNeedsTreeRefresh);
+  state.commandConnectorNeedsTreeRefresh = refreshTreeLinks;
   if (state.commandConnectorLayoutFrame) {
     cancelAnimationFrame(state.commandConnectorLayoutFrame);
   }
   state.commandConnectorLayoutFrame = requestAnimationFrame(() => {
     state.commandConnectorLayoutFrame = 0;
+    const shouldRefreshTreeLinks = Boolean(state.commandConnectorNeedsTreeRefresh);
+    state.commandConnectorNeedsTreeRefresh = false;
     updateCommandConnectorPositions();
     renderCommandJumpPaths();
-    renderCommandMapTreeReferenceLinks();
+    if (shouldRefreshTreeLinks) {
+      renderCommandMapTreeReferenceLinks();
+    }
   });
 
   const duration = Math.max(0, Number(options.burstMs || 0));
   if (duration > 0) {
-    scheduleCommandConnectorLayoutBurst(duration);
+    scheduleCommandConnectorLayoutBurst(duration, { refreshTreeLinks });
   }
 }
 
-function scheduleCommandConnectorLayoutBurst(duration = 420) {
+function scheduleCommandConnectorLayoutBurst(duration = 420, options = {}) {
   if (!commandMapList || state.activeTab !== "commands") {
     return;
   }
 
+  const refreshTreeLinks = Boolean(options.refreshTreeLinks);
   updateCommandConnectorPositions();
   renderCommandJumpPaths();
-  renderCommandMapTreeReferenceLinks();
+  if (refreshTreeLinks) {
+    renderCommandMapTreeReferenceLinks();
+  }
   window.setTimeout(() => {
     updateCommandConnectorPositions();
     renderCommandJumpPaths();
-    renderCommandMapTreeReferenceLinks();
+    if (refreshTreeLinks) {
+      renderCommandMapTreeReferenceLinks();
+    }
   }, duration);
 }
 
@@ -2041,7 +2081,7 @@ function scheduleCommandMapAutoFit() {
   state.commandMapAutoFitFrame = requestAnimationFrame(() => {
     state.commandMapAutoFitFrame = 0;
     autoFitCommandMapZoom();
-    scheduleCommandConnectorLayout();
+    scheduleCommandConnectorLayout({ refreshTreeLinks: true });
   });
 }
 
@@ -2066,7 +2106,8 @@ function setCommandMapZoom(nextZoom, options = {}) {
     commandMapList.scrollLeft = Math.max(0, anchor.x * state.commandMapZoom - point.x);
     commandMapList.scrollTop = Math.max(0, anchor.y * state.commandMapZoom - point.y);
   }
-  scheduleCommandConnectorLayout({ burstMs: 180 });
+  // O zoom escala o proprio plano da arvore. Recriar as conexoes aqui removia
+  // e recriava os pontos animados em cada entalhe do mouse, causando travadas.
   if (!options.suppressFocusCenter && state.activeTab === "commands" && state.commandMapFocusOrder) {
     requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
   }
@@ -4141,6 +4182,9 @@ function updateCommandMapSaveUI() {
   mapSaveFill.style.width = `${percent}%`;
   mapSaveStatus.textContent = state.commandMapSave.status || "Mapa ainda nao salvo.";
   mapSaveButton.disabled = Boolean(state.commandMapSave.running);
+  if (mapReorganizeButton) {
+    mapReorganizeButton.disabled = Boolean(state.commandMapSave.running);
+  }
   mapSaveButton.textContent = state.commandMapSave.running ? "Salvando..." : "Salvar mapa";
 
   shell?.classList.toggle("is-running", Boolean(state.commandMapSave.running));
@@ -4495,6 +4539,18 @@ function applyCommandMapDraftToEvent(event) {
     details.coluna = values.column ?? details.coluna ?? "";
     details.acao_apos_item_texto = values.afterAction ?? details.acao_apos_item_texto ?? "nenhuma";
     details.intervalo_entre_itens = parseNumber(values.intervalBetween, details.intervalo_entre_itens ?? 0.5);
+    applySuccessFlowDraft(details, values);
+    return nextEvent;
+  }
+
+  if (nextEvent.type === "resultado_relatorio") {
+    details.status = values.reportStatus ?? details.status ?? "Concluida";
+    details.tom = values.reportTone ?? details.tom ?? details.tone ?? "success";
+    details.resultado = values.reportResult ?? details.resultado ?? details.result ?? "";
+    details.confirmacao = "";
+    details.coluna_relatorio = values.reportColumn ?? details.coluna_relatorio ?? details.report_column ?? "";
+    details.coluna_resultado = "";
+    details.coluna_confirmacao = "";
     applySuccessFlowDraft(details, values);
     return nextEvent;
   }
@@ -4998,7 +5054,7 @@ function updateRecognitionStatusUIForOrder(order, overrideImagePath = null) {
         resultEl.hidden = !content;
       });
     });
-  scheduleCommandConnectorLayout();
+  scheduleCommandConnectorLayout({ refreshTreeLinks: true });
 }
 
 function showCaptureOverlay(text) {
@@ -5166,7 +5222,7 @@ function animateCommandMapLayoutShift(previousPositions, options = {}) {
   }
 
   const animationDuration = mode === "slide" ? 360 : 320;
-  scheduleCommandConnectorLayoutBurst(animationDuration + 60);
+  scheduleCommandConnectorLayoutBurst(animationDuration + 60, { refreshTreeLinks: true });
 
   animatedItems.forEach(({ element, initialTransform, kind }) => {
     if (element.__commandMapShiftAnimation) {
@@ -6247,6 +6303,9 @@ function createInsertPanelState(targetOrder, position) {
     reportTone: "success",
     reportResult: "Automacao concluida para {{empresa}}.",
     reportConfirmation: "",
+    reportColumn: "",
+    reportResultColumn: "",
+    reportConfirmationColumn: "",
     compareExpectedColumn: columnsForSheetInWorkbook(workbookId, workbookSheetsFor(workbookId)[0]?.name ?? "")?.[0] ?? "",
     compareMode: "texto",
     compareStatusColumn: "",
@@ -8849,7 +8908,7 @@ function setRecognitionTreeTab(order, tabName) {
       updateRelativeOcrPreviewOverlay(card);
     });
   });
-  scheduleCommandConnectorLayout();
+  scheduleCommandConnectorLayout({ refreshTreeLinks: true });
 }
 
 function setSpreadsheetTreeTab(order, tabName) {
@@ -8862,7 +8921,7 @@ function setSpreadsheetTreeTab(order, tabName) {
   commandMapList.querySelectorAll(`.command-tree-card[data-order="${order}"]`).forEach((card) => {
     applySpreadsheetTreeTabState(card, activeTab);
   });
-  scheduleCommandConnectorLayout();
+  scheduleCommandConnectorLayout({ refreshTreeLinks: true });
 }
 
 function setDownloadTreeTab(order, tabName) {
@@ -8875,7 +8934,7 @@ function setDownloadTreeTab(order, tabName) {
   commandMapList.querySelectorAll(`.command-tree-card[data-order="${order}"]`).forEach((card) => {
     applyDownloadTreeTabState(card, activeTab);
   });
-  scheduleCommandConnectorLayout();
+  scheduleCommandConnectorLayout({ refreshTreeLinks: true });
 }
 
 function openExpandedTreeCard(order, sourceElement = null) {
@@ -9687,11 +9746,10 @@ function syncOcrTargetActionControlToSource(target) {
     applyOcrTargetActionVisibility(actionRow);
   }
   if (container.classList.contains("command-tree-card")) {
-    // As escolhas sao campos internos do card. Atualiza o rascunho, mas nao
-    // reconstrói o mapa inteiro e nem desloca o usuario enquanto ele decide.
-    // As linhas da arvore sao atualizadas na proxima renderizacao normal
-    // (salvar, trocar pagina, mover card etc.).
-    if (changed) syncCommandMapDraftFromCard(container);
+    if (changed) {
+      syncCommandMapDraftFromCard(container);
+      scheduleCommandMapRoutePreviewRefresh();
+    }
   } else if (container.classList.contains("insert-card-panel") && state.insertPanel) {
     if (changed) state.insertPanel = { ...state.insertPanel, ...insertValuesFromPanel(container) };
   }
@@ -9990,12 +10048,14 @@ function renderCompactTreeEditorFields(event) {
     return renderGenericCompactTreeEditor(event, [
       { label: "Status", value: details.status || "Concluida" },
       { label: "Resultado", value: details.resultado || "Mensagem padrao" },
-      { label: "Evidencia", value: details.confirmacao || "Nao informada" },
+      { label: "Empresa no PDF", value: details.coluna_relatorio || "Coluna atual do loop" },
+      { label: "Item no PDF", value: details.coluna_relatorio || "Valor atual do loop" },
+      { label: "Depois de registrar", value: formatFlowActionLabel(details.ao_sucesso || "continuar", details.bloco_sucesso, details.sequencia_sucesso) },
     ], `
       ${hiddenTreeField("reportStatus", details.status ?? "Concluida")}
       ${hiddenTreeField("reportTone", details.tom ?? details.tone ?? "success")}
       ${hiddenTreeField("reportResult", details.resultado ?? details.result ?? "")}
-      ${hiddenTreeField("reportConfirmation", details.confirmacao ?? details.confirmation ?? "")}
+      ${hiddenTreeField("reportColumn", details.coluna_relatorio ?? details.report_column ?? "")}
       ${renderSuccessHiddenTreeFields(details)}
     `);
   }
@@ -11192,7 +11252,7 @@ function updateCommandMapHeaderSummary() {
     if (settings.executionMode === "loop_planilha") {
       const afterLoopLabel = settings.afterLoopSequence ? getCommandMapPageLabel(settings.afterLoopSequence) : "encerrar o loop aqui";
       commandMapMeta.textContent = total
-        ? `${total} bloco${total === 1 ? "" : "s"} nesta ${pageDefinition.label.toLowerCase()}. Essa pagina roda em loop da planilha e depois segue para ${afterLoopLabel}.`
+        ? `${pageDefinition.label} tem ${total} bloco${total === 1 ? "" : "s"}. Ela roda no loop da planilha e, ao terminar, segue para ${afterLoopLabel}.`
         : `${pageDefinition.label} esta reservada para loop da planilha. Adicione os blocos desta etapa aqui.`;
     } else {
       commandMapMeta.textContent = total
@@ -13396,7 +13456,6 @@ function studioControlEventDetails(event = {}) {
   } else if (event.type === "resultado_relatorio") {
     rows.push(["Status", details.status || "Concluida"]);
     rows.push(["Resultado", details.resultado || "Mensagem padrao"]);
-    rows.push(["Evidencia", details.confirmacao || "-"]);
   } else if (event.type === "comparar_planilha_tela") {
     rows.push(["Arquivo", details.arquivo || "-"]);
     rows.push(["Aba", details.aba || "-"]);
@@ -17742,38 +17801,130 @@ function renderWriteSpreadsheetFields(fieldAttr, details = {}, currentOrder = nu
   `;
 }
 
+function reportColumnChoices(details = {}, currentOrder = null) {
+  const events = Array.isArray(state.roadmap?.events) ? state.roadmap.events : [];
+  const current = Number(currentOrder || 0);
+  const isSpreadsheetLoop = (event) => String(event?.type ?? event?.tipo ?? "") === "sequencia_planilha";
+  const eventOrder = (event) => Number(event?.order ?? event?.ordem ?? 0);
+  const candidates = events
+    .filter(isSpreadsheetLoop)
+    .filter((event) => !current || eventOrder(event) <= current)
+    .sort((left, right) => eventOrder(left) - eventOrder(right));
+  const loop = candidates.at(-1) || events.find(isSpreadsheetLoop);
+  const loopDetails = loop?.details || loop?.detalhes || {};
+  const workbookId = resolveWorkbookId(loopDetails.arquivo || loopDetails.workbook || state.composerWorkbookId || "");
+  const sheet = String(loopDetails.aba || loopDetails.sheet || workbookSheetsFor(workbookId)[0]?.name || "");
+  const selectedColumn = String(details.coluna_relatorio ?? details.report_column ?? "").trim();
+  const available = [...new Set((columnsForSheetInWorkbook(workbookId, sheet) || [])
+    .map((column) => String(column || "").trim())
+    .filter(Boolean))];
+  if (selectedColumn && !available.includes(selectedColumn)) available.push(selectedColumn);
+  const sourceName = String(loopDetails.coluna || "valor").trim() || "valor";
+
+  return {
+    sourceName,
+    loopLabel: loop ? `Loop da planilha: ${sourceName} (${sheet || "planilha"})` : "Nenhum loop de planilha configurado",
+    hasColumns: available.length > 0,
+    companyOptions: (value) => [
+      `<option value="" ${value ? "" : "selected"}>Coluna do loop da planilha: ${escapeHtml(sourceName)}</option>`,
+      ...available.map((column) => `<option value="${escapeHtml(column)}" ${column === value ? "selected" : ""}>Coluna da planilha: ${escapeHtml(column)}</option>`),
+    ].join(""),
+  };
+}
+
+function syncReportResultPreview(container) {
+  const preview = container?.querySelector?.(".report-pdf-preview-full");
+  if (!preview) return;
+
+  const field = (name) => container.querySelector(
+    `[data-tree-field="${name}"], [data-field="${name}"], [data-insert-field="${name}"]`,
+  );
+  const sourceName = String(preview.dataset.reportLoopColumn || "valor").trim() || "valor";
+  const tone = String(field("reportTone")?.value || "success").trim();
+  const safeTone = ["success", "info", "warning", "danger"].includes(tone) ? tone : "success";
+  const status = String(field("reportStatus")?.value || "Concluida").trim() || "Concluida";
+  const companyColumn = String(field("reportColumn")?.value || "").trim();
+  const companyCaption = preview.querySelector("[data-report-company-caption]");
+  if (companyCaption) {
+    companyCaption.textContent = companyColumn
+      ? `Coluna ${companyColumn} da linha atual`
+      : `Coluna do loop da planilha: ${sourceName}`;
+  }
+
+  preview.dataset.reportTone = safeTone;
+  const statusPreview = preview.querySelector("[data-report-preview-status]");
+  if (statusPreview) statusPreview.textContent = status;
+  const statusCell = preview.querySelector("[data-report-status-cell]");
+  if (statusCell) statusCell.dataset.tone = safeTone;
+  const reportRow = preview.querySelector("[data-report-row]");
+  if (reportRow) reportRow.dataset.tone = safeTone;
+}
+
 function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) {
   const tone = String(details.tom ?? details.tone ?? "success");
+  const safeTone = ["success", "info", "warning", "danger"].includes(tone) ? tone : "success";
+  const reportColumns = reportColumnChoices(details, currentOrder);
+  const companyColumn = String(details.coluna_relatorio ?? details.report_column ?? "");
+  const status = String(details.status ?? "Concluida");
+  const resultMessage = String(details.resultado ?? details.result ?? "");
+  const loopHint = reportColumns.hasColumns
+    ? "A linha e definida pelo loop. Escolha a coluna da empresa, escreva o resultado e defina o status."
+    : "Adicione um loop de planilha para escolher a coluna da empresa.";
   return `
-    <div class="field-stack spreadsheet-write-editor">
-      <p class="spreadsheet-write-hint">Registra o resultado da linha atual no PDF. Coloque este bloco no caminho de sucesso ou no caminho de falha que voce quiser documentar.</p>
-      <div class="tree-inline-fields">
-        <label>
-          <span>Status no relatorio</span>
-          <input ${fieldAttr}="reportStatus" type="text" value="${escapeHtml(details.status ?? "Concluida")}" placeholder="Concluida, Sem debitos, Revisar..." />
-        </label>
-        <label>
-          <span>Cor do status</span>
-          <select ${fieldAttr}="reportTone">
-            <option value="success" ${tone === "success" ? "selected" : ""}>Concluido (verde)</option>
-            <option value="info" ${tone === "info" ? "selected" : ""}>Informativo (azul)</option>
-            <option value="warning" ${tone === "warning" ? "selected" : ""}>Revisar (amarelo)</option>
-            <option value="danger" ${tone === "danger" ? "selected" : ""}>Falhou (vermelho)</option>
-          </select>
-        </label>
-      </div>
-      <label>
-        <span>Resultado exibido</span>
-        <textarea ${fieldAttr}="reportResult" rows="2" placeholder="Ex.: Guia emitida com sucesso.">${escapeHtml(details.resultado ?? details.result ?? "")}</textarea>
-      </label>
-      <label>
-        <span>Confirmacao ou evidencia (opcional)</span>
-        <input ${fieldAttr}="reportConfirmation" type="text" value="${escapeHtml(details.confirmacao ?? details.confirmation ?? "")}" placeholder="Ex.: OCR confirmou: Sem debitos" />
-      </label>
-      <p class="spreadsheet-write-hint">Use {{empresa}}, {{linha_atual}} e os nomes das colunas da planilha para montar a mensagem.</p>
-      <div class="tree-inline-fields">
-        ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
-      </div>
+    <div class="field-stack spreadsheet-write-editor report-result-editor">
+      <section class="report-pdf-preview report-pdf-preview-full" aria-label="Previa editavel do relatorio PDF" data-report-loop-column="${escapeHtml(reportColumns.sourceName)}" data-report-tone="${escapeHtml(safeTone)}">
+        <header class="report-document-header">
+          <div class="report-document-brand">
+            <img src="./assets/flowdetect-report-wordmark.png" alt="FlowDetect" />
+          </div>
+          <div class="report-document-generated"><strong>RELATORIO DE EXECUCAO</strong><small>Previa da linha no PDF</small></div>
+        </header>
+        <div class="report-document-rule"></div>
+        <section class="report-document-heading">
+          <h4>Resultado da linha</h4>
+          <p>${escapeHtml(loopHint)}</p>
+        </section>
+        <section class="report-document-summary" aria-label="Resumo ilustrativo do PDF">
+          <div><span>EXECUTADAS</span><strong>1</strong></div>
+          <div><span>EMITIDAS</span><strong>1</strong></div>
+          <div><span>SEM DEBITOS</span><strong>0</strong></div>
+          <div><span>REVISAO</span><strong>0</strong></div>
+        </section>
+        <section class="report-document-table" aria-label="Linha configuravel do relatorio">
+          <div class="report-document-table-head"><span>LINHA</span><span>EMPRESA</span><span>RESULTADO</span><span>STATUS</span></div>
+          <article class="report-document-row" data-report-row data-tone="${escapeHtml(safeTone)}">
+            <div class="report-document-line"><strong>01</strong><small>Definida pelo loop</small></div>
+            <div class="report-document-field report-document-company">
+              <span>Empresa no PDF</span>
+              <select ${fieldAttr}="reportColumn" aria-label="Coluna da empresa no PDF">${reportColumns.companyOptions(companyColumn)}</select>
+              <small data-report-company-caption>${escapeHtml(companyColumn ? `Coluna ${companyColumn} da linha atual` : `Coluna do loop da planilha: ${reportColumns.sourceName}`)}</small>
+            </div>
+            <div class="report-document-field report-document-result">
+              <span>Resultado no PDF</span>
+              <textarea ${fieldAttr}="reportResult" rows="3" spellcheck="false" aria-label="Mensagem do resultado" placeholder="Ex.: Guia emitida com sucesso.">${escapeHtml(resultMessage)}</textarea>
+              <small>Mensagem exibida para esta linha.</small>
+            </div>
+            <div class="report-document-status" data-report-status-cell data-tone="${escapeHtml(safeTone)}">
+              <span>Status no PDF</span>
+              <input ${fieldAttr}="reportStatus" type="text" value="${escapeHtml(status)}" aria-label="Status no relatorio" placeholder="Concluida" />
+              <select ${fieldAttr}="reportTone" aria-label="Cor do status">
+                <option value="success" ${safeTone === "success" ? "selected" : ""}>Concluido (verde)</option>
+                <option value="info" ${safeTone === "info" ? "selected" : ""}>Informativo (azul)</option>
+                <option value="warning" ${safeTone === "warning" ? "selected" : ""}>Revisar (amarelo)</option>
+                <option value="danger" ${safeTone === "danger" ? "selected" : ""}>Falhou (vermelho)</option>
+              </select>
+              <small data-report-preview-status>${escapeHtml(status)}</small>
+            </div>
+          </article>
+        </section>
+        <footer class="report-document-footer"><span>Loop: ${escapeHtml(reportColumns.loopLabel)}</span><span>A linha e preenchida automaticamente a cada item.</span></footer>
+      </section>
+      <section class="report-pdf-next-step" aria-label="Proximo passo da automacao">
+        <div><strong>Depois de registrar esta linha</strong><span>Defina para onde a automacao segue apos gravar o resultado.</span></div>
+        <div class="tree-inline-fields">
+          ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
+        </div>
+      </section>
     </div>
   `;
 }
@@ -19352,6 +19503,9 @@ function renderInsertPanel(order) {
       tom: panel.reportTone,
       resultado: panel.reportResult,
       confirmacao: panel.reportConfirmation,
+      coluna_relatorio: panel.reportColumn,
+      coluna_resultado: panel.reportResultColumn,
+      coluna_confirmacao: panel.reportConfirmationColumn,
       ao_sucesso: panel.successAction,
       bloco_sucesso: panel.successBlock,
       sequencia_sucesso: panel.successSequence,
@@ -19767,6 +19921,42 @@ function getCommandMapTreeManualPosition(itemKey, pageSequence = state.commandMa
     : null;
 }
 
+function clearCommandMapTreeManualPositions(pageSequence = state.commandMapPageSequence) {
+  const key = commandMapTreeLayoutPageKey(pageSequence);
+  const layouts = state.commandMapTreeLayouts && typeof state.commandMapTreeLayouts === "object"
+    ? state.commandMapTreeLayouts
+    : {};
+  if (!Object.prototype.hasOwnProperty.call(layouts, key)) {
+    return false;
+  }
+  const nextLayouts = { ...layouts };
+  delete nextLayouts[key];
+  state.commandMapTreeLayouts = nextLayouts;
+  persistCommandMapTreeLayouts();
+  return true;
+}
+
+function reorganizeCommandMapTree(pageSequence = state.commandMapPageSequence) {
+  const page = commandMapTreeLayoutPageKey(pageSequence);
+  const removedManualPositions = clearCommandMapTreeManualPositions(page);
+  state.commandMapTreePanOffset = { x: 0, y: 0 };
+  state.commandMapTreePanUserMoved = false;
+  state.commandMapFocusOrder = null;
+  applyCommandMapTreePanOffset();
+  renderCommandMap({
+    preserveScroll: false,
+    suppressFocusScroll: true,
+    quietUpdate: true,
+  });
+  const label = getCommandMapPageDefinition(page).label;
+  setMessage(
+    removedManualPositions
+      ? `${label} reorganizada automaticamente.`
+      : `${label} ja estava no layout automatico.`,
+    "success",
+  );
+}
+
 function rememberCommandMapTreeItemPosition(itemKey, x, y, pageSequence = state.commandMapPageSequence) {
   const normalizedKey = normalizeCommandMapTreeLayoutItemKey(itemKey);
   if (!normalizedKey) {
@@ -20117,18 +20307,21 @@ function resolveCommandMapTreeTarget(route, event, index, events, context) {
 }
 
 function getCommandMapTreeBranchTargetKey(branch) {
+  const kind = String(branch?.kind || "success").trim().toLowerCase() || "success";
   const targetOrder = Number(branch?.targetEvent?.order || branch?.targetOrder || 0);
   if (Number.isFinite(targetOrder) && targetOrder > 0) {
-    if (String(branch?.kind || "").trim().toLowerCase() === "ocr_action") {
+    if (kind === "ocr_action") {
       return `ocr:${String(branch?.ocrColor || "").trim().toLowerCase()}:${targetOrder}`;
     }
-    return `block:${targetOrder}`;
+    // Caminhos diferentes podem terminar no mesmo bloco. Mante-los separados
+    // preserva o tracejado vermelho do "Se nao achar" ao lado do caminho normal.
+    return `${kind}:block:${targetOrder}`;
   }
   const targetLabel = String(branch?.targetLabel || "").trim().toLowerCase();
   if (targetLabel) {
-    return `terminal:${targetLabel}`;
+    return `${kind}:terminal:${targetLabel}`;
   }
-  return `branch:${String(branch?.kind || "success")}:${String(branch?.label || "")}`;
+  return `branch:${kind}:${String(branch?.label || "")}`;
 }
 
 function mergeCommandMapTreeBranchLabels(firstLabel = "", secondLabel = "") {
@@ -20172,27 +20365,60 @@ function getCommandMapOcrActionBranches(event, index, events, context) {
   if (String(details.modo_reconhecimento || "").trim().toLowerCase() !== "texto_ocr") return [];
   const layouts = Array.isArray(details.ocr_target_layouts) ? details.ocr_target_layouts : [];
   return layouts.flatMap((layout, indexOcr) => {
-    const action = normalizeOcrTargetAction(layout?.action);
-    if (!layout || !["clicar_ir_para_bloco", "confirmar_ir_para_bloco"].includes(action)) return [];
+    if (!layout || typeof layout !== "object") return [];
+    const branches = [];
+    const action = normalizeOcrTargetAction(layout.action);
     const targetBlock = Number(layout.block);
-    if (!Number.isFinite(targetBlock) || targetBlock <= 0) return [];
-    const target = resolveCommandMapTreeTarget(
-      { action: "ir_para_bloco", block: targetBlock, delay: 0 },
-      event,
-      index,
-      events,
-      context,
+
+    if (["clicar_ir_para_bloco", "confirmar_ir_para_bloco"].includes(action)
+      && Number.isFinite(targetBlock) && targetBlock > 0) {
+      const target = resolveCommandMapTreeTarget(
+        { action: "ir_para_bloco", block: targetBlock, delay: 0 },
+        event,
+        index,
+        events,
+        context,
+      );
+      if (target.targetEvent || target.terminal) {
+        branches.push({
+          kind: "ocr_action",
+          ocrColor: OCR_TARGET_COLORS[indexOcr % OCR_TARGET_COLORS.length],
+          ocrIndex: indexOcr,
+          label: `OCR ${indexOcr + 1}`,
+          ...target,
+          editableDelay: "",
+          hideDelay: true,
+        });
+      }
+    }
+
+    const failureAction = normalizeOcrTargetFailureAction(
+      layout.failureAction ?? layout.failure_action,
     );
-    if (!target.targetEvent && !target.terminal) return [];
-    return [{
-      kind: "ocr_action",
-      ocrColor: OCR_TARGET_COLORS[indexOcr % OCR_TARGET_COLORS.length],
-      ocrIndex: indexOcr,
-      label: `OCR ${indexOcr + 1}`,
-      ...target,
-      editableDelay: "",
-      hideDelay: true,
-    }];
+    const failureBlock = Number(
+      layout.failureBlock ?? layout.failure_block ?? layout.bloco_falha,
+    );
+    if (failureAction === "ir_para_bloco" && Number.isFinite(failureBlock) && failureBlock > 0) {
+      const failureTarget = resolveCommandMapTreeTarget(
+        { action: "ir_para_bloco", block: failureBlock, delay: 0 },
+        event,
+        index,
+        events,
+        context,
+      );
+      if (failureTarget.targetEvent || failureTarget.terminal) {
+        branches.push({
+          kind: "failure",
+          ocrIndex: indexOcr,
+          label: `OCR ${indexOcr + 1} nao achou`,
+          ...failureTarget,
+          editableDelay: "",
+          hideDelay: true,
+        });
+      }
+    }
+
+    return branches;
   });
 }
 
@@ -20829,7 +21055,7 @@ function updateCommandMapTreeNodeDrag(event) {
     drag.nodeSlot.style.top = `${Math.round(drag.latestY)}px`;
     expandCommandMapTreeStageForNode(drag.stage, drag.nodeSlot, drag.latestX, drag.latestY);
     rememberCommandMapTreeItemPosition(drag.itemKey, drag.latestX, drag.latestY);
-    scheduleCommandConnectorLayout();
+    scheduleCommandConnectorLayout({ refreshTreeLinks: true });
   });
 }
 
@@ -20853,7 +21079,7 @@ function stopCommandMapTreeNodeDrag(event, commit = true) {
   drag.nodeSlot.classList.remove("is-tree-position-dragging");
   builderShell?.classList.remove("is-map-dragging");
   state.commandMapTreeNodeDrag = null;
-  scheduleCommandConnectorLayout({ burstMs: 220 });
+  scheduleCommandConnectorLayout({ burstMs: 220, refreshTreeLinks: true });
 }
 
 function isCommandMapTreeModeActive() {
@@ -20936,7 +21162,6 @@ function stopCommandMapTreePan(event) {
   commandMapList?.classList.remove("is-tree-panning");
   builderShell?.classList.remove("is-map-dragging");
   state.commandMapTreePan = null;
-  scheduleCommandConnectorLayout({ burstMs: 120 });
 }
 
 function commandMapWheelZoomFactor(delta, deltaMode = 0) {
@@ -21120,14 +21345,14 @@ function renderCommandMap(options = {}) {
   syncCommandMapCardSelectionVisuals();
   applyCommandMapZoom();
   if (skipAutoFit) {
-    scheduleCommandConnectorLayout({ burstMs: layoutSnapshot ? 440 : 0 });
+    scheduleCommandConnectorLayout({ burstMs: layoutSnapshot ? 440 : 0, refreshTreeLinks: true });
   } else {
     scheduleCommandMapAutoFit();
   }
   applyCommandMapFocus("auto", { suppressScroll: suppressFocusScroll, suppressVisualFocus });
   if (state.createdBlockAnimationOrder) {
     const createdOrder = Number(state.createdBlockAnimationOrder);
-    scheduleCommandConnectorLayout({ burstMs: 460 });
+    scheduleCommandConnectorLayout({ burstMs: 460, refreshTreeLinks: true });
     window.setTimeout(() => {
       if (Number(state.createdBlockAnimationOrder) === createdOrder) {
         state.createdBlockAnimationOrder = null;
@@ -21135,7 +21360,7 @@ function renderCommandMap(options = {}) {
       commandMapList
         ?.querySelector(`.command-tree-card.is-newly-created[data-order="${createdOrder}"]`)
         ?.classList.remove("is-newly-created");
-      scheduleCommandConnectorLayout({ burstMs: 140 });
+      scheduleCommandConnectorLayout({ burstMs: 140, refreshTreeLinks: true });
     }, 460);
   }
   if (layoutSnapshot && !quietUpdate) {
@@ -21143,9 +21368,9 @@ function renderCommandMap(options = {}) {
       animateCommandMapLayoutShift(layoutSnapshot, { mode: layoutAnimationMode });
     });
   } else if (state.insertPanel && !quietUpdate) {
-    scheduleCommandConnectorLayout({ burstMs: 460 });
+    scheduleCommandConnectorLayout({ burstMs: 460, refreshTreeLinks: true });
   } else if (!quietUpdate) {
-    scheduleCommandConnectorLayout();
+    scheduleCommandConnectorLayout({ refreshTreeLinks: true });
   }
 }
 
@@ -21475,7 +21700,10 @@ function formValuesFromCard(card) {
     reportStatus: get("reportStatus")?.value ?? "Concluida",
     reportTone: get("reportTone")?.value ?? "success",
     reportResult: get("reportResult")?.value ?? "",
-    reportConfirmation: get("reportConfirmation")?.value ?? "",
+    reportConfirmation: "",
+    reportColumn: get("reportColumn")?.value ?? "",
+    reportResultColumn: "",
+    reportConfirmationColumn: "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
@@ -21624,7 +21852,10 @@ function treeValuesFromCard(card) {
     reportStatus: get("reportStatus")?.value ?? "Concluida",
     reportTone: get("reportTone")?.value ?? "success",
     reportResult: get("reportResult")?.value ?? "",
-    reportConfirmation: get("reportConfirmation")?.value ?? "",
+    reportConfirmation: "",
+    reportColumn: get("reportColumn")?.value ?? "",
+    reportResultColumn: "",
+    reportConfirmationColumn: "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? "texto",
@@ -22123,7 +22354,7 @@ function commandCardHasUnsavedChanges(snapshot) {
       normalizeStringValue(values.reportStatus) !== normalizeStringValue(details.status ?? "Concluida")
       || normalizeStringValue(values.reportTone) !== normalizeStringValue(details.tom ?? details.tone ?? "success")
       || normalizeStringValue(values.reportResult) !== normalizeStringValue(details.resultado ?? details.result ?? "")
-      || normalizeStringValue(values.reportConfirmation) !== normalizeStringValue(details.confirmacao ?? details.confirmation ?? "")
+      || normalizeStringValue(values.reportColumn) !== normalizeStringValue(details.coluna_relatorio ?? details.report_column ?? "")
       || successFlowChanged(values, details)
     );
   }
@@ -22480,6 +22711,9 @@ async function invokeCommandCardUpdate(snapshot) {
       tom: values.reportTone || "success",
       resultado: values.reportResult || "",
       confirmacao: values.reportConfirmation || "",
+      reportColumn: values.reportColumn || "",
+      resultColumn: values.reportResultColumn || "",
+      confirmationColumn: values.reportConfirmationColumn || "",
       delay: values.delay,
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
@@ -22788,7 +23022,10 @@ function insertValuesFromPanel(panelElement) {
     reportStatus: get("reportStatus")?.value ?? state.insertPanel?.reportStatus ?? "Concluida",
     reportTone: get("reportTone")?.value ?? state.insertPanel?.reportTone ?? "success",
     reportResult: get("reportResult")?.value ?? state.insertPanel?.reportResult ?? "",
-    reportConfirmation: get("reportConfirmation")?.value ?? state.insertPanel?.reportConfirmation ?? "",
+    reportConfirmation: "",
+    reportColumn: get("reportColumn")?.value ?? state.insertPanel?.reportColumn ?? "",
+    reportResultColumn: "",
+    reportConfirmationColumn: "",
     compareExpectedColumn: get("compareExpectedColumn")?.value ?? state.insertPanel?.compareExpectedColumn ?? state.insertPanel?.column ?? "",
     compareOcrSource: normalizeCompareOcrSource(get("compareOcrSource")?.value ?? state.insertPanel?.compareOcrSource ?? "ultimo_ocr"),
     compareMode: get("compareMode")?.value ?? state.insertPanel?.compareMode ?? "texto",
@@ -24910,6 +25147,13 @@ commandMapList?.addEventListener("input", (event) => {
   if (syncOcrTargetActionControlToSource(target)) {
     return;
   }
+  if (target?.matches?.('[data-tree-field^="report"], [data-insert-field^="report"]')) {
+    const container = target.closest(".command-tree-card, .insert-card-panel");
+    syncReportResultPreview(container);
+    if (container?.classList.contains("insert-card-panel") && state.insertPanel) {
+      state.insertPanel = { ...state.insertPanel, ...insertValuesFromPanel(container) };
+    }
+  }
   if (
     target?.matches?.('[data-tree-field="imagePath"], [data-insert-field="imagePath"]')
   ) {
@@ -24932,6 +25176,10 @@ mapSaveButton?.addEventListener("click", async () => {
     setBusy("Erro");
     setMessage(String(error), "error");
   }
+});
+
+mapReorganizeButton?.addEventListener("click", () => {
+  reorganizeCommandMapTree();
 });
 
 testDelayInput.addEventListener("input", () => syncTestInputsFrom("top"));
@@ -25390,6 +25638,10 @@ document.getElementById("clearButton").addEventListener("click", () => {
 
 timelineList.addEventListener("change", (event) => {
   const target = event.target;
+  if (target.matches('[data-field^="report"]')) {
+    syncReportResultPreview(target.closest(".flow-card"));
+    return;
+  }
   if (target.matches('[data-field="imagePath"]')) {
     const card = target.closest(".flow-card");
     setRecognitionTestStatusForOrder(Number(card?.dataset.order), target.value, false);
@@ -25418,6 +25670,13 @@ timelineList.addEventListener("change", (event) => {
     const columns = columnsForSheetInWorkbook(workbookField?.value, target.value);
     setColumnSuggestionsForField(columnField, columns);
     return;
+  }
+});
+
+timelineList.addEventListener("input", (event) => {
+  const target = event.target;
+  if (target.matches('[data-field^="report"]')) {
+    syncReportResultPreview(target.closest(".flow-card"));
   }
 });
 
@@ -25606,6 +25865,16 @@ commandMapList.addEventListener("change", (event) => {
   if (syncOcrTargetActionControlToSource(target)) {
     return;
   }
+  if (target.matches('[data-tree-field^="report"], [data-insert-field^="report"]')) {
+    const container = target.closest(".command-tree-card, .insert-card-panel");
+    syncReportResultPreview(container);
+    if (container?.classList.contains("command-tree-card")) {
+      syncCommandMapDraftFromCard(container);
+    } else if (container?.classList.contains("insert-card-panel") && state.insertPanel) {
+      state.insertPanel = { ...state.insertPanel, ...insertValuesFromPanel(container) };
+    }
+    return;
+  }
   if (
     target.matches('[data-tree-field="editableAtRun"], [data-field="editableAtRun"], [data-insert-field="editableAtRun"]')
   ) {
@@ -25686,17 +25955,17 @@ commandMapList.addEventListener("change", (event) => {
     }
     if (container?.classList.contains("command-tree-card")) {
       syncCommandMapDraftFromCard(container);
-      scheduleCommandConnectorLayout();
+      scheduleCommandMapRoutePreviewRefresh();
     }
     return;
   }
 
   if (
-    target.matches('[data-tree-field="successBlock"], [data-tree-field="successSequenceDelay"], [data-tree-field="chromeSuccessBlock"], [data-tree-field="chromeSuccessSequenceDelay"], [data-tree-field="failureBlock"], [data-tree-field="failureSequenceDelay"], [data-tree-field="chromeFailureBlock"], [data-tree-field="chromeFailureSequenceDelay"]')
+    target.matches('[data-tree-field="successBlock"], [data-tree-field="successSequence"], [data-tree-field="successSequenceDelay"], [data-tree-field="chromeSuccessBlock"], [data-tree-field="chromeSuccessSequenceDelay"], [data-tree-field="failureBlock"], [data-tree-field="failureSequenceDelay"], [data-tree-field="ocrFailureBlock"], [data-tree-field="ocrFailureSequenceDelay"], [data-tree-field="chromeFailureBlock"], [data-tree-field="chromeFailureSequenceDelay"]')
   ) {
     const card = target.closest(".command-tree-card");
     syncCommandMapDraftFromCard(card);
-    scheduleCommandConnectorLayout();
+    scheduleCommandMapRoutePreviewRefresh();
     return;
   }
 
@@ -27289,6 +27558,9 @@ commandMapList.addEventListener("click", async (event) => {
               tom: values.reportTone || "success",
               resultado: values.reportResult || "",
               confirmacao: values.reportConfirmation || "",
+              reportColumn: values.reportColumn || "",
+              resultColumn: values.reportResultColumn || "",
+              confirmationColumn: values.reportConfirmationColumn || "",
               delay: common.delay,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,
@@ -27303,6 +27575,9 @@ commandMapList.addEventListener("click", async (event) => {
               tom: values.reportTone || "success",
               resultado: values.reportResult || "",
               confirmacao: values.reportConfirmation || "",
+              reportColumn: values.reportColumn || "",
+              resultColumn: values.reportResultColumn || "",
+              confirmationColumn: values.reportConfirmationColumn || "",
               delay: common.delay,
               sequencia: currentSequenceName(),
               aoSucesso: common.aoSucesso,

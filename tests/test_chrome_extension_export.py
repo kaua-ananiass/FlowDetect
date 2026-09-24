@@ -168,6 +168,98 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertEqual(step["interval_ms"], 500)
         self.assertNotIn("after_keys", step)
 
+    def test_exports_the_selected_report_column_with_each_spreadsheet_row(self):
+        from openpyxl import Workbook
+
+        workbook_path = Path("clientes.xlsx")
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Dados"
+        sheet.append(["CNPJ", "Empresa", "Cidade"])
+        sheet.append(["03943209000187", "Empresa Modelo", "Sao Paulo"])
+        sheet.append(["51708970000187", "Outra Empresa", "Campinas"])
+        workbook.save(workbook_path)
+        workbook.close()
+
+        automation_id = "auto_report_column"
+        payload = self.roadmap.criar_payload_vazio()
+        payload["eventos"] = [
+            {
+                "ordem": 1,
+                "sequencia": "principal",
+                "tipo": "sequencia_planilha",
+                "detalhes": {
+                    "arquivo": str(workbook_path),
+                    "aba": "Dados",
+                    "coluna": "CNPJ",
+                    "valores": ["03943209000187", "51708970000187"],
+                },
+            },
+            {
+                "ordem": 2,
+                "sequencia": "principal",
+                "tipo": "resultado_relatorio",
+                "detalhes": {
+                    "status": "Concluida",
+                    "tom": "success",
+                    "resultado": "Automacao concluida para {{empresa}}.",
+                    "coluna_relatorio": "Empresa",
+                    "coluna_resultado": "Cidade",
+                    "coluna_confirmacao": "Empresa",
+                },
+            },
+        ]
+        self.roadmap.salvar_payload_em_automacao(automation_id, payload, incluir_recursos=False)
+
+        result = self.roadmap.exportar_automacao_para_chrome(automation_id, {"nome": "Relatorio por empresa"})
+        exported = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+
+        source, report = exported["steps"]
+        self.assertEqual(source["values"], ["03943209000187", "51708970000187"])
+        self.assertEqual(
+            source["rows"],
+            [
+                {"Empresa": "Empresa Modelo", "Cidade": "Sao Paulo"},
+                {"Empresa": "Outra Empresa", "Cidade": "Campinas"},
+            ],
+        )
+        self.assertEqual(report["report_column"], "Empresa")
+        self.assertEqual(report["result_column"], "Cidade")
+        self.assertEqual(report["confirmation_column"], "Empresa")
+
+    def test_exports_report_result_for_the_chrome_execution_report(self):
+        automation_id = "auto_report"
+        payload = self.roadmap.criar_payload_vazio()
+        payload["eventos"] = [{
+            "ordem": 1,
+            "sequencia": "principal",
+            "tipo": "resultado_relatorio",
+            "intervalo_antes": 0,
+            "detalhes": {
+                "status": "Sem debitos",
+                "tom": "info",
+                "resultado": "Nenhum debito encontrado para {{CNPJ}}.",
+                "confirmacao": "Alerta confirmado na tela.",
+                "ao_sucesso": "ir_para_sequencia",
+                "sequencia_sucesso": "pagina_2",
+                "atraso_antes_sequencia_sucesso": 0.8,
+            },
+        }]
+        self.roadmap.salvar_payload_em_automacao(automation_id, payload, incluir_recursos=False)
+
+        result = self.roadmap.exportar_automacao_para_chrome(automation_id, {"nome": "Relatorio"})
+        exported = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(exported["steps"][0]["type"], "report_result")
+        self.assertEqual(exported["steps"][0]["status"], "Sem debitos")
+        self.assertEqual(exported["steps"][0]["tone"], "info")
+        self.assertEqual(exported["steps"][0]["confirmation"], "Alerta confirmado na tela.")
+        self.assertEqual(exported["steps"][0]["on_success"], {
+            "action": "ir_para_sequencia",
+            "block": "",
+            "sequence": "pagina_2",
+        })
+
     def test_exports_ocr_routes_and_secondary_page_targets(self):
         automation_id = "auto_ocr_route"
         payload = self.roadmap.criar_payload_vazio()
