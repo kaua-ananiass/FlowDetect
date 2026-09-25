@@ -1757,14 +1757,21 @@ fn try_bootstrap_local_python(root: &Path) -> Result<(), String> {
     if PYTHON_BOOTSTRAP_ATTEMPTED.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
-    let installer_script = root.join("instalar_dependencias_silencioso.bat");
-    if !installer_script.exists() {
-        // Em builds instalados o .bat fica em resources. Em dev, caia no instalador direto abaixo.
-    } else {
+    let installer_script = [
+        root.join("instalar_dependencias_silencioso.bat"),
+        root.join("scripts/runtime/instalar_dependencias_silencioso.bat"),
+    ]
+    .into_iter()
+    .find(|path| path.exists());
+    if let Some(installer_script) = installer_script {
         let mut command = Command::new("cmd");
         command.current_dir(root).arg("/C").arg(&installer_script);
         configure_no_window(&mut command);
-        if command.status().map(|status| status.success()).unwrap_or(false) {
+        if command
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+        {
             return Ok(());
         }
     }
@@ -6417,6 +6424,7 @@ fn add_image_click_block(
     bloco_sucesso: Option<i32>,
     sequencia_sucesso: Option<String>,
     atraso_sequencia_sucesso: Option<f64>,
+    fonte_ocr: Option<String>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -6453,6 +6461,7 @@ fn add_image_click_block(
         varredura_scroll_pixels,
         varredura_scroll_direcao,
     );
+    args.extend(["--fonte-ocr".into(), fonte_ocr.unwrap_or_else(|| "legado".to_string())]);
     args.extend([
         "--leitura-relativa-ativa".into(),
         leitura_relativa_ativa.unwrap_or(false).to_string(),
@@ -6533,6 +6542,8 @@ fn append_ocr_text_args(
     varredura_scroll_tentativas: i32,
     varredura_scroll_pixels: i32,
     varredura_scroll_direcao: Option<String>,
+    fonte_ocr: Option<String>,
+    imagem_ocr: Option<String>,
 ) {
     args.extend([
         "--texto".into(),
@@ -6587,6 +6598,10 @@ fn append_ocr_text_args(
         varredura_scroll_pixels.max(120).to_string(),
         "--varredura-scroll-direcao".into(),
         varredura_scroll_direcao.unwrap_or_else(|| "baixo".to_string()),
+        "--fonte-ocr".into(),
+        fonte_ocr.unwrap_or_else(|| "legado".to_string()),
+        "--imagem-ocr".into(),
+        imagem_ocr.unwrap_or_default(),
     ]);
 }
 
@@ -6619,6 +6634,8 @@ fn add_ocr_text_block(
     bloco_sucesso: Option<i32>,
     sequencia_sucesso: Option<String>,
     atraso_sequencia_sucesso: Option<f64>,
+    fonte_ocr: Option<String>,
+    imagem_ocr: Option<String>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec!["add-ocr-text".into()];
@@ -6644,6 +6661,8 @@ fn add_ocr_text_block(
         varredura_scroll_tentativas,
         varredura_scroll_pixels,
         varredura_scroll_direcao,
+        fonte_ocr,
+        imagem_ocr,
     );
     args.extend(["--delay".into(), delay.to_string()]);
     if let Some(sequence_name) = sequencia {
@@ -7482,6 +7501,7 @@ fn insert_image_click_block(
     bloco_sucesso: Option<i32>,
     sequencia_sucesso: Option<String>,
     atraso_sequencia_sucesso: Option<f64>,
+    fonte_ocr: Option<String>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -7522,6 +7542,7 @@ fn insert_image_click_block(
         varredura_scroll_pixels,
         varredura_scroll_direcao,
     );
+    args.extend(["--fonte-ocr".into(), fonte_ocr.unwrap_or_else(|| "legado".to_string())]);
     args.extend([
         "--leitura-relativa-ativa".into(),
         leitura_relativa_ativa.unwrap_or(false).to_string(),
@@ -7613,6 +7634,8 @@ fn insert_ocr_text_block(
     bloco_sucesso: Option<i32>,
     sequencia_sucesso: Option<String>,
     atraso_sequencia_sucesso: Option<f64>,
+    fonte_ocr: Option<String>,
+    imagem_ocr: Option<String>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -7644,6 +7667,8 @@ fn insert_ocr_text_block(
         varredura_scroll_tentativas,
         varredura_scroll_pixels,
         varredura_scroll_direcao,
+        fonte_ocr,
+        imagem_ocr,
     );
     args.extend(["--delay".into(), delay.to_string()]);
     if let Some(sequence_name) = sequencia {
@@ -8328,6 +8353,7 @@ fn update_mouse_block(
     y: i32,
     button: String,
     clicks: i32,
+    coordinate_space: Option<String>,
     delay: f64,
     ao_sucesso: Option<String>,
     bloco_sucesso: Option<i32>,
@@ -8347,6 +8373,8 @@ fn update_mouse_block(
         button,
         "--clicks".into(),
         clicks.max(1).to_string(),
+        "--coordinate-space".into(),
+        coordinate_space.unwrap_or_else(|| "viewport".to_string()),
         "--delay".into(),
         delay.to_string(),
     ];
@@ -8401,6 +8429,7 @@ fn update_image_click_block(
     bloco_sucesso: Option<i32>,
     sequencia_sucesso: Option<String>,
     atraso_sequencia_sucesso: Option<f64>,
+    fonte_ocr: Option<String>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -8439,6 +8468,7 @@ fn update_image_click_block(
         varredura_scroll_pixels,
         varredura_scroll_direcao,
     );
+    args.extend(["--fonte-ocr".into(), fonte_ocr.unwrap_or_else(|| "legado".to_string())]);
     args.extend([
         "--leitura-relativa-ativa".into(),
         leitura_relativa_ativa.unwrap_or(false).to_string(),
@@ -8523,6 +8553,8 @@ fn update_ocr_text_block(
     bloco_sucesso: Option<i32>,
     sequencia_sucesso: Option<String>,
     atraso_sequencia_sucesso: Option<f64>,
+    fonte_ocr: Option<String>,
+    imagem_ocr: Option<String>,
 ) -> Result<Value, String> {
     let root = workspace_root(&app);
     let mut args = vec![
@@ -8552,6 +8584,8 @@ fn update_ocr_text_block(
         varredura_scroll_tentativas,
         varredura_scroll_pixels,
         varredura_scroll_direcao,
+        fonte_ocr,
+        imagem_ocr,
     );
     args.extend(["--delay".into(), delay.to_string()]);
     if let Some(sequence_name) = sequencia {
@@ -10237,7 +10271,11 @@ fn export_automation_bundle(
     let mut missing = Vec::new();
 
     for file in files {
-        let source = root.join(file);
+        let source = if file == "executar_automacao.bat" && !root.join(file).exists() {
+            root.join("scripts/runtime").join(file)
+        } else {
+            root.join(file)
+        };
         let build_target = build_dir.join(file);
         let export_target = export_dir.join(file);
         copy_if_exists(&source, &build_target, &mut copied, &mut missing);

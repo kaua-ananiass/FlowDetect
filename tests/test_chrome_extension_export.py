@@ -111,6 +111,30 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertTrue(exported["steps"][1]["image"]["data_url"].startswith("data:image/png;base64,"))
         self.assertTrue(exported["steps"][0]["click"])
 
+    def test_ocr_source_chooses_dom_text_or_image_matching(self):
+        image_path = Path("imagens") / "icone.png"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(bytes.fromhex(
+            "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+            "0000000d49444154789c6360f8cfc0000003010100c9fe92ef0000000049454e44ae426082"
+        ))
+        chrome_block = self.roadmap.criar_bloco_procurar_texto_ocr(
+            "Emitir guia", 0, fonte_ocr="chrome"
+        )
+        visual_block = self.roadmap.criar_bloco_procurar_texto_ocr(
+            "", 0, fonte_ocr="visual", imagem_ocr="icone.png"
+        )
+        chrome_block["ordem"] = 1
+        visual_block["ordem"] = 2
+        chrome_step, chrome_warning = self.roadmap.converter_evento_para_chrome(chrome_block)
+        visual_step, visual_warning = self.roadmap.converter_evento_para_chrome(visual_block)
+        self.assertIsNone(chrome_warning)
+        self.assertIsNone(visual_warning)
+        self.assertEqual(chrome_step["type"], "ocr_text")
+        self.assertEqual(chrome_step["text"], "Emitir guia")
+        self.assertEqual(visual_step["type"], "visual_match")
+        self.assertTrue(visual_step["image"]["data_url"].startswith("data:image/png;base64,"))
+
     def test_exports_ocr_plus_visual_with_an_image_fallback(self):
         automation_id = "auto_hybrid"
         payload = self.roadmap.criar_payload_vazio()
@@ -139,6 +163,139 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertEqual(step["type"], "ocr_text")
         self.assertTrue(step["click"])
         self.assertTrue(step["visual_fallback"]["data_url"].startswith("data:image/png;base64,"))
+
+    def test_hybrid_ocr_source_can_use_chrome_text_without_visual_fallback(self):
+        block = {
+            "ordem": 3,
+            "sequencia": "principal",
+            "tipo": "clicar_imagem",
+            "detalhes": {
+                "modo_reconhecimento": "texto_ocr",
+                "fonte_ocr": "chrome",
+                "texto_ocr_busca": "Emitir guia",
+                "imagem": "imagem_antiga.png",
+                "acao_ocr": "clicar",
+                "ocr_target_layouts": [
+                    {"texto": "Emitir guia", "action": "clicar", "clicks": 1},
+                    {"texto": "Confirmar", "action": "confirmar_ir_para_bloco", "block": "16"},
+                ],
+            },
+        }
+        step, warning = self.roadmap.converter_evento_para_chrome(block)
+        self.assertIsNone(warning)
+        self.assertEqual(step["type"], "ocr_text")
+        self.assertNotIn("visual_fallback", step)
+        self.assertEqual(len(step["ocr_targets"]), 2)
+        self.assertEqual(str(step["ocr_targets"][1]["on_success"]["block"]), "16")
+
+    def test_hybrid_ocr_click_uses_distance_from_text_to_click_marker(self):
+        block = {
+            "ordem": 3, "sequencia": "principal", "tipo": "clicar_imagem",
+            "detalhes": {
+                "modo_reconhecimento": "texto_ocr", "fonte_ocr": "chrome",
+                "texto_ocr_busca": "50.317.977/0001-05", "acao_ocr": "clicar",
+                "offset_x": 130, "offset_y": 0,
+                "ocr_target_layouts": [{"texto": "50.317.977/0001-05", "offsetX": -70, "offsetY": 0}],
+            },
+        }
+        step, warning = self.roadmap.converter_evento_para_chrome(block)
+        self.assertIsNone(warning)
+        self.assertEqual(step["offset_x"], 200)
+        self.assertEqual(step["offset_y"], 0)
+
+    def test_ocr_marker_is_exported_from_the_drawn_text_box_edge(self):
+        block = {
+            "ordem": 1, "sequencia": "principal", "tipo": "clicar_imagem",
+            "detalhes": {
+                "modo_reconhecimento": "texto_ocr", "fonte_ocr": "chrome",
+                "texto_ocr_busca": "50.317.977/0001-05 - SCRITA SOLU",
+                "acao_ocr": "clicar", "offset_x": 136, "offset_y": -16,
+                "leitura_relativa": {
+                    "ativo": True, "offset_x": -34, "offset_y": -19,
+                    "largura": 197, "altura": 30,
+                },
+            },
+        }
+        step, warning = self.roadmap.converter_evento_para_chrome(block)
+        self.assertIsNone(warning)
+        self.assertEqual(step["click_anchor"], {"from_text_left": 268.5, "from_text_top": 18.0})
+
+    def test_each_ocr_target_uses_its_own_origin_for_the_click(self):
+        block = {
+            "ordem": 4, "sequencia": "principal", "tipo": "clicar_imagem",
+            "detalhes": {
+                "modo_reconhecimento": "texto_ocr", "fonte_ocr": "chrome",
+                "texto_ocr_busca": "Empresa\nCNPJ", "acao_ocr": "clicar",
+                "offset_x": 100, "offset_y": 10,
+                "ocr_target_layouts": [
+                    {"texto": "Empresa", "action": "clicar", "offsetX": -60, "offsetY": 0},
+                    {"texto": "CNPJ", "action": "clicar", "offsetX": -20, "offsetY": 5},
+                ],
+            },
+        }
+        step, warning = self.roadmap.converter_evento_para_chrome(block)
+        self.assertIsNone(warning)
+        self.assertEqual([target["offset_x"] for target in step["ocr_targets"]], [160, 120])
+        self.assertEqual([target["offset_y"] for target in step["ocr_targets"]], [10, 5])
+
+    def test_mouse_block_can_click_the_previous_ocr_marker(self):
+        block = {
+            "ordem": 5, "sequencia": "principal", "tipo": "mouse_click",
+            "detalhes": {"x": 0, "y": 0, "botao": "left", "cliques": 1,
+                         "coordinate_space": "last_ocr_click"},
+        }
+        step, warning = self.roadmap.converter_evento_para_chrome(block)
+        self.assertIsNone(warning)
+        self.assertEqual(step["type"], "viewport_click")
+        self.assertEqual(step["coordinate_space"], "last_ocr_click")
+
+    def test_hybrid_ocr_source_can_use_only_the_reference_image(self):
+        image_path = Path("imagens") / "botao.png"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(bytes.fromhex(
+            "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+            "0000000d49444154789c6360f8cfc0000003010100c9fe92ef0000000049454e44ae426082"
+        ))
+        block = {
+            "ordem": 4,
+            "sequencia": "principal",
+            "tipo": "clicar_imagem",
+            "detalhes": {
+                "modo_reconhecimento": "texto_ocr",
+                "fonte_ocr": "visual",
+                "texto_ocr_busca": "Texto antigo",
+                "imagem": "botao.png",
+                "clicar": False,
+            },
+        }
+        step, warning = self.roadmap.converter_evento_para_chrome(block)
+        self.assertIsNone(warning)
+        self.assertEqual(step["type"], "visual_match")
+        self.assertFalse(step["click"])
+        self.assertNotIn("ocr_targets", step)
+
+    def test_element_source_exports_a_unique_css_target(self):
+        block = self.roadmap.criar_bloco_procurar_texto_ocr(
+            "tr[data-cnpj='123'] button.expandir", 0, fonte_ocr="elemento", clicks=2
+        )
+        block["ordem"] = 5
+        step, warning = self.roadmap.converter_evento_para_chrome(block)
+        self.assertIsNone(warning)
+        self.assertEqual(step["type"], "element_action")
+        self.assertEqual(step["selector"], {"method": "css", "value": "tr[data-cnpj='123'] button.expandir"})
+        self.assertTrue(step["require_unique"])
+        self.assertEqual(step["clicks"], 2)
+
+    def test_hybrid_element_source_exports_without_an_image(self):
+        block = {
+            "ordem": 6, "sequencia": "principal", "tipo": "clicar_imagem",
+            "detalhes": {"modo_reconhecimento": "texto_ocr", "fonte_ocr": "elemento",
+                         "texto_ocr_busca": "button[aria-label='Expandir']", "imagem": ""},
+        }
+        step, warning = self.roadmap.converter_evento_para_chrome(block)
+        self.assertIsNone(warning)
+        self.assertEqual(step["type"], "element_action")
+        self.assertEqual(step["selector"]["value"], "button[aria-label='Expandir']")
 
     def test_exports_spreadsheet_values_as_a_loop_source(self):
         automation_id = "auto_spreadsheet"

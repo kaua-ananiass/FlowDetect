@@ -1,21 +1,23 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+set "FLOW_BASE=%~dp0"
+if exist "%~dp0..\..\executar_automacao.py" for %%I in ("%~dp0..\..") do set "FLOW_BASE=%%~fI\"
+cd /d "%FLOW_BASE%"
 
 if exist "Automacao.exe" (
-    start "" "%~dp0Automacao.exe"
+    start "" "%FLOW_BASE%Automacao.exe"
     endlocal
     exit /b 0
 )
 
 if exist "tauri_ui\src-tauri\target\release\automacao_tauri_ui.exe" (
-    start "" "%~dp0tauri_ui\src-tauri\target\release\automacao_tauri_ui.exe"
+    start "" "%FLOW_BASE%tauri_ui\src-tauri\target\release\automacao_tauri_ui.exe"
     endlocal
     exit /b 0
 )
 
 if exist "tauri_ui\src-tauri\target\release\Automacao.exe" (
-    start "" "%~dp0tauri_ui\src-tauri\target\release\Automacao.exe"
+    start "" "%FLOW_BASE%tauri_ui\src-tauri\target\release\Automacao.exe"
     endlocal
     exit /b 0
 )

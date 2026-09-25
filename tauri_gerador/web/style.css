@@ -12161,6 +12161,60 @@ label span {
   gap: 8px;
 }
 
+.ocr-source-visual-fields {
+  display: none;
+}
+
+.ocr-source-element-fields {
+  display: none;
+}
+
+.ocr-text-editor:has(select option[value="elemento"]:checked) .ocr-source-element-fields {
+  display: grid;
+}
+
+.ocr-text-editor:has(select option[value="elemento"]:checked) .ocr-source-chrome-fields,
+.ocr-text-editor:has(select option[value="elemento"]:checked) .ocr-source-default-test {
+  display: none;
+}
+
+.ocr-source-element-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.55fr);
+  gap: 6px;
+}
+
+.ocr-source-element-actions .tree-open-button {
+  min-width: 0;
+}
+
+.recognition-expanded-editor:has(select option[value="elemento"]:checked) .recognition-preview-compact-wrap,
+.recognition-expanded-editor:has(select option[value="elemento"]:checked) .recognition-marker-switch,
+.recognition-expanded-editor:has(select option[value="elemento"]:checked) .recognition-simple-actions,
+.insert-recognition-editor:has(select option[value="elemento"]:checked) .recognition-reference-field,
+.insert-recognition-editor:has(select option[value="elemento"]:checked) .insert-recognition-actions,
+.insert-recognition-editor:has(select option[value="elemento"]:checked) [data-insert-recognition-tab-target="preview"] {
+  display: none;
+}
+
+.ocr-text-editor:has(select option[value="visual"]:checked) .ocr-source-visual-fields {
+  display: grid;
+}
+
+.ocr-text-editor:has(select option[value="visual"]:checked) .ocr-source-chrome-fields {
+  display: none;
+}
+
+.ocr-source-image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ocr-source-image-actions .tree-open-button {
+  width: auto;
+}
+
 .recognition-ocr-embedded-panel {
   display: grid;
   gap: 8px;

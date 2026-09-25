@@ -87,6 +87,7 @@ ARQUIVOS_RUNTIME_ATUALIZACAO = [
     "instalar_dependencias_silencioso.bat",
     "requirements.txt",
 ]
+ARQUIVOS_BAT_RUNTIME = {"executar_automacao.bat", "instalar_dependencias_silencioso.bat"}
 TECLAS_MODIFICADORAS = {
     "shift",
     "shift_r",
@@ -254,11 +255,19 @@ def caminho_arquivo_unico(diretorio, nome_arquivo):
     return caminho
 
 
+def caminho_fonte_runtime(raiz, relativo):
+    raiz = Path(raiz)
+    caminho = raiz / relativo
+    if caminho.is_file() or relativo not in ARQUIVOS_BAT_RUNTIME:
+        return caminho
+    return raiz / "scripts" / "runtime" / relativo
+
+
 def listar_arquivos_runtime_existentes(base_dir=None):
     raiz = Path(base_dir or Path.cwd())
     encontrados = []
     for relativo in ARQUIVOS_RUNTIME_ATUALIZACAO:
-        caminho = raiz / relativo
+        caminho = caminho_fonte_runtime(raiz, relativo)
         if caminho.exists() and caminho.is_file():
             encontrados.append(relativo.replace("\\", "/"))
     return encontrados
@@ -269,7 +278,7 @@ def calcular_hash_runtime(base_dir=None, arquivos=None):
     lista_arquivos = sorted(arquivos or listar_arquivos_runtime_existentes(raiz))
     digest = hashlib.sha256()
     for relativo in lista_arquivos:
-        caminho = raiz / relativo
+        caminho = caminho_fonte_runtime(raiz, relativo)
         if not caminho.exists() or not caminho.is_file():
             continue
         digest.update(relativo.replace("\\", "/").encode("utf-8"))
@@ -335,7 +344,7 @@ def exportar_runtime_para_pasta(destino_base):
     pasta_runtime.mkdir(parents=True, exist_ok=True)
     arquivos_copiados = []
     for relativo in listar_arquivos_runtime_existentes():
-        origem = Path(relativo)
+        origem = caminho_fonte_runtime(Path.cwd(), relativo)
         destino = pasta_runtime / relativo
         destino.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(origem, destino)
@@ -765,6 +774,45 @@ def acao_alvo_ocr_para_chrome(alvo):
     return aliases.get(acao, acao or "continuar")
 
 
+def deslocamento_clique_ocr_para_chrome(detalhes, alvo=None):
+    """Converte os marcadores da imagem em deslocamento relativo ao texto achado."""
+    click_x = int(detalhes.get("offset_x") or 0)
+    click_y = int(detalhes.get("offset_y") or 0)
+    if alvo is None:
+        layouts = detalhes.get("ocr_target_layouts") or []
+        alvo = layouts[0] if layouts and isinstance(layouts[0], dict) else {}
+    relative = detalhes.get("leitura_relativa") or {}
+
+    def origin(axis):
+        value = alvo.get(axis) if isinstance(alvo, dict) else None
+        if value is None and relative.get("ativo"):
+            value = relative.get("offset_x" if axis == "offsetX" else "offset_y")
+        return int(value or 0)
+
+    return click_x - origin("offsetX"), click_y - origin("offsetY")
+
+
+def ancora_clique_ocr_para_chrome(detalhes, alvo=None):
+    """Mede o marcador de clique a partir da borda da area OCR desenhada."""
+    layouts = detalhes.get("ocr_target_layouts") or []
+    if alvo is None:
+        alvo = layouts[0] if layouts and isinstance(layouts[0], dict) else {}
+    relative = detalhes.get("leitura_relativa") or {}
+    own_position = isinstance(alvo, dict) and alvo.get("offsetX") is not None and alvo.get("offsetY") is not None
+    if not own_position and not relative.get("ativo"):
+        return None
+    origin_x = alvo.get("offsetX") if own_position else relative.get("offset_x", 0)
+    origin_y = alvo.get("offsetY") if own_position else relative.get("offset_y", 0)
+    width = alvo.get("width") if isinstance(alvo, dict) else None
+    height = alvo.get("height") if isinstance(alvo, dict) else None
+    width = float(width if width is not None else relative.get("largura") or 140)
+    height = float(height if height is not None else relative.get("altura") or 40)
+    return {
+        "from_text_left": float(detalhes.get("offset_x") or 0) - float(origin_x or 0) + width / 2,
+        "from_text_top": float(detalhes.get("offset_y") or 0) - float(origin_y or 0) + height / 2,
+    }
+
+
 def alvos_ocr_para_chrome(detalhes, passo):
     """Exporta cada OCR do card para que o Chrome respeite suas rotas proprias."""
     layouts = detalhes.get("ocr_target_layouts") if isinstance(detalhes, dict) else []
@@ -778,12 +826,16 @@ def alvos_ocr_para_chrome(detalhes, passo):
         if not texto:
             continue
         acao = acao_alvo_ocr_para_chrome(layout)
+        offset_x, offset_y = deslocamento_clique_ocr_para_chrome(detalhes, layout)
         alvos.append({
             "index": indice,
             "text": texto,
             "action": acao,
             "click": acao in {"clicar", "clicar_ir_para_bloco"},
             "clicks": max(1, int(layout.get("clicks", layout.get("cliques", passo.get("clicks", 1))) or 1)),
+            "offset_x": offset_x,
+            "offset_y": offset_y,
+            "click_anchor": ancora_clique_ocr_para_chrome(detalhes, layout),
             "on_success": fluxo_alvo_ocr_para_chrome(layout, passo.get("on_success", {}), "sucesso"),
             "on_failure": fluxo_alvo_ocr_para_chrome(layout, passo.get("on_failure", {}), "falha"),
         })
@@ -864,6 +916,35 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
         return passo, aviso
 
     if tipo == "procurar_texto_ocr":
+        if str(detalhes.get("fonte_ocr") or "").lower() == "elemento":
+            seletor = str(detalhes.get("texto") or "").strip()
+            if not seletor:
+                return None, f"Bloco {ordem}: elemento Chrome sem seletor nao foi exportado."
+            passo = passo_chrome_base(evento, "element_action", detalhes)
+            deve_clicar = bool(detalhes.get("clicar", True)) and str(detalhes.get("acao") or "clicar").lower() == "clicar"
+            passo.update({
+                "selector": {"method": "css", "value": seletor},
+                "action": {"type": "clicar" if deve_clicar else "verificar_existe"},
+                "clicks": max(1, int(detalhes.get("cliques") or 1)),
+                "require_unique": True,
+                "timeout_ms": max(500, round(float(detalhes.get("timeout") or 8) * 1000)),
+            })
+            return passo, None
+        if str(detalhes.get("fonte_ocr") or "legado").lower() == "visual":
+            imagem, erro = recurso_imagem_para_chrome(detalhes.get("imagem_ocr"))
+            if not imagem:
+                return None, f"Bloco {ordem}: OCR visual sem imagem valida ({erro})."
+            passo = passo_chrome_base(evento, "visual_match", detalhes)
+            passo.update({
+                "image": imagem,
+                "timeout_ms": max(500, round(float(detalhes.get("timeout") or 8) * 1000)),
+                "confidence": max(0.35, min(0.99, float(detalhes.get("confianca") or 0.72))),
+                "click": bool(detalhes.get("clicar", True)),
+                "clicks": max(1, int(detalhes.get("cliques") or 1)),
+                "offset_x": int(detalhes.get("offset_x") or 0),
+                "offset_y": int(detalhes.get("offset_y") or 0),
+            })
+            return passo, None
         textos = [
             item.get("texto") if isinstance(item, dict) else item
             for item in list(detalhes.get("textos_ocr") or [])
@@ -909,17 +990,24 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
             "y": int(detalhes.get("y") or 0),
             "button": str(detalhes.get("botao") or "left").lower(),
             "clicks": max(1, int(detalhes.get("cliques") or 1)),
-            "coordinate_space": "viewport",
+            "coordinate_space": "last_ocr_click" if detalhes.get("coordinate_space") == "last_ocr_click" else "viewport",
         })
         return passo, None
 
     if tipo == "clicar_imagem":
         modo = str(detalhes.get("modo_reconhecimento") or "imagem").strip().lower()
-        if modo in {"texto_ocr", "ocr", "texto"}:
+        if modo in {"texto_ocr", "ocr", "texto"} and str(detalhes.get("fonte_ocr") or "").lower() == "elemento":
+            evento_elemento = {**evento, "tipo": "procurar_texto_ocr", "detalhes": {
+                **detalhes, "texto": detalhes.get("texto_ocr_busca"),
+                "acao": detalhes.get("acao_ocr") or "clicar",
+            }}
+            return converter_evento_para_chrome(evento_elemento, colunas_relatorio)
+        if modo in {"texto_ocr", "ocr", "texto"} and str(detalhes.get("fonte_ocr") or "legado").lower() != "visual":
             texto = str(detalhes.get("texto_ocr_busca") or detalhes.get("texto_ocr_esperado") or "").strip()
             if not texto:
                 return None, f"Bloco {ordem}: reconhecimento OCR sem texto nao foi exportado."
             passo = passo_chrome_base(evento, "ocr_text", detalhes)
+            offset_x, offset_y = deslocamento_clique_ocr_para_chrome(detalhes)
             passo.update({
                 "text": texto,
                 "timeout_ms": max(500, round(float(detalhes.get("timeout") or 8) * 1000)),
@@ -927,14 +1015,16 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
                 "action": str(detalhes.get("acao_ocr") or "clicar").strip().lower(),
                 "click": str(detalhes.get("acao_ocr") or "clicar").strip().lower() == "clicar",
                 "clicks": max(1, int(detalhes.get("cliques") or 1)),
-                "offset_x": int(detalhes.get("offset_x") or 0),
-                "offset_y": int(detalhes.get("offset_y") or 0),
+                "offset_x": offset_x,
+                "offset_y": offset_y,
+                "click_anchor": ancora_clique_ocr_para_chrome(detalhes),
                 "attempts": max(1, int(detalhes.get("quantidade_tentativas") or 1)),
                 "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
             })
-            imagem_visual, _ = recurso_imagem_para_chrome(detalhes.get("imagem"))
-            if imagem_visual:
-                passo["visual_fallback"] = imagem_visual
+            if str(detalhes.get("fonte_ocr") or "legado").lower() != "chrome":
+                imagem_visual, _ = recurso_imagem_para_chrome(detalhes.get("imagem"))
+                if imagem_visual:
+                    passo["visual_fallback"] = imagem_visual
             alvos = alvos_ocr_para_chrome(detalhes, passo)
             if alvos:
                 passo["ocr_targets"] = alvos
@@ -1708,6 +1798,9 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
 
     if tipo_evento in TIPOS_OCR:
         detalhes = metadados or {}
+        if detalhes.get("fonte_ocr") == "visual":
+            imagem = Path(str(detalhes.get("imagem_ocr") or "")).name or "imagem"
+            return f"[VISUAL:{imagem} | acao:{detalhes.get('acao', 'clicar')} | timeout={float(detalhes.get('timeout', 8) or 8):g}s]"
         texto = str(detalhes.get("texto", "") or "").strip() or "texto"
         acao = str(detalhes.get("acao", "clicar") or "clicar").strip().lower()
         timeout = float(detalhes.get("timeout", 8) or 8)
@@ -2163,12 +2256,16 @@ def normalizar_eventos(payload):
         elif tipo in TIPOS_IMAGEM:
             detalhes["imagem"] = normalizar_id_imagem(detalhes.get("imagem"))
             detalhes["modo_reconhecimento"] = str(detalhes.get("modo_reconhecimento", "imagem") or "imagem").strip().lower() or "imagem"
+            detalhes["fonte_ocr"] = str(detalhes.get("fonte_ocr") or "legado").strip().lower()
             detalhes["texto_ocr_busca"] = str(detalhes.get("texto_ocr_busca", "") or "").strip()
             detalhes["acao_ocr"] = str(detalhes.get("acao_ocr", "clicar") or "clicar").strip().lower() or "clicar"
             detalhes["salvar_ocr_em"] = str(detalhes.get("salvar_ocr_em", "") or "").strip()
             evento["detalhes"] = detalhes
         elif tipo in TIPOS_OCR:
             detalhes["texto"] = str(detalhes.get("texto", "") or "").strip()
+            fonte_ocr = str(detalhes.get("fonte_ocr") or "legado").strip().lower()
+            detalhes["fonte_ocr"] = fonte_ocr if fonte_ocr in {"legado", "chrome", "visual", "elemento"} else "legado"
+            detalhes["imagem_ocr"] = normalizar_id_imagem(detalhes.get("imagem_ocr"))
             detalhes["acao"] = str(detalhes.get("acao", "clicar") or "clicar").strip().lower() or "clicar"
             detalhes["timeout"] = max(0.1, float(detalhes.get("timeout", 8) or 8))
             detalhes["confianca"] = max(0.35, min(1.0, float(detalhes.get("confianca", 0.72) or 0.72)))
@@ -2581,7 +2678,14 @@ def criar_bloco_clicar_imagem(
     sequencia_sucesso="",
     atraso_sequencia_sucesso=0,
     sequencia="principal",
+    fonte_ocr="legado",
 ):
+    fonte_ocr = str(fonte_ocr or "legado").strip().lower()
+    if str(modo_reconhecimento or "imagem").lower() == "texto_ocr":
+        if fonte_ocr in {"chrome", "elemento"} and not str(texto_ocr_busca or "").strip():
+            raise ValueError("Informe o texto ou seletor para o reconhecimento pelo Chrome.")
+        if fonte_ocr == "visual" and not str(imagem or "").strip():
+            raise ValueError("Selecione uma imagem para o reconhecimento Visual.")
     detalhes = aplicar_fluxo_sucesso({
         "imagem": normalizar_id_imagem(imagem),
         "timeout": max(0.1, float(timeout)),
@@ -2599,6 +2703,7 @@ def criar_bloco_clicar_imagem(
         "janela_alvo": str(janela_alvo or "").strip(),
         "texto_ocr_esperado": str(texto_ocr_esperado or "").strip(),
         "modo_reconhecimento": str(modo_reconhecimento or "imagem").strip().lower() or "imagem",
+        "fonte_ocr": fonte_ocr,
         "texto_ocr_busca": str(texto_ocr_busca or "").strip(),
         "acao_ocr": str(acao_ocr or "clicar").strip().lower() or "clicar",
         "salvar_ocr_em": str(salvar_ocr_em or "").strip(),
@@ -2662,11 +2767,24 @@ def criar_bloco_procurar_texto_ocr(
     sequencia_sucesso="",
     atraso_sequencia_sucesso=0,
     sequencia="principal",
+    fonte_ocr="legado",
+    imagem_ocr="",
 ):
+    fonte_ocr = str(fonte_ocr or "legado").strip().lower()
+    if fonte_ocr not in {"legado", "chrome", "visual", "elemento"}:
+        raise ValueError("A origem do reconhecimento deve ser Chrome ou Visual.")
+    if fonte_ocr == "visual" and not str(imagem_ocr or "").strip():
+        raise ValueError("Selecione uma imagem de referencia para o OCR visual.")
+    if fonte_ocr == "elemento" and str(texto or "").lstrip().startswith("<"):
+        raise ValueError("Cole um seletor CSS valido para o elemento Chrome, nao o HTML bruto.")
+    if fonte_ocr != "visual" and not str(texto or "").strip():
+        raise ValueError("Informe o texto que o OCR deve procurar.")
     acao_normalizada = str(acao or "clicar").strip().lower() or "clicar"
     deve_clicar = bool(clicar) and acao_normalizada in {"clicar", "click"}
     detalhes = aplicar_fluxo_sucesso({
         "texto": str(texto or "").strip(),
+        "fonte_ocr": fonte_ocr,
+        "imagem_ocr": normalizar_id_imagem(imagem_ocr) if imagem_ocr else "",
         "acao": acao_normalizada,
         "timeout": max(0.1, float(timeout or 8)),
         "confianca": max(0.35, min(1.0, float(confianca or 0.72))),
@@ -3777,6 +3895,7 @@ def comando_adicionar_imagem(args):
             args.sequencia_sucesso,
             args.atraso_sequencia_sucesso,
             args.sequencia,
+            fonte_ocr=getattr(args, "fonte_ocr", "legado"),
         )
     )
     return salvar_e_retornar(payload)
@@ -3812,6 +3931,8 @@ def comando_adicionar_texto_ocr(args):
             args.sequencia_sucesso,
             args.atraso_sequencia_sucesso,
             args.sequencia,
+            fonte_ocr=getattr(args, "fonte_ocr", "legado"),
+            imagem_ocr=getattr(args, "imagem_ocr", ""),
         )
     )
     return salvar_e_retornar(payload)
@@ -4068,6 +4189,7 @@ def comando_inserir_imagem(args):
             args.sequencia_sucesso,
             args.atraso_sequencia_sucesso,
             args.sequencia,
+            fonte_ocr=getattr(args, "fonte_ocr", "legado"),
         ),
         args.target_order,
         args.position,
@@ -4106,6 +4228,8 @@ def comando_inserir_texto_ocr(args):
             args.sequencia_sucesso,
             args.atraso_sequencia_sucesso,
             args.sequencia,
+            fonte_ocr=getattr(args, "fonte_ocr", "legado"),
+            imagem_ocr=getattr(args, "imagem_ocr", ""),
         ),
         args.target_order,
         args.position,
@@ -4352,6 +4476,7 @@ def comando_atualizar_mouse(args):
     detalhes["y"] = int(args.y)
     detalhes["botao"] = str(args.button).lower()
     detalhes["cliques"] = max(1, int(args.clicks or 1))
+    detalhes["coordinate_space"] = "last_ocr_click" if args.coordinate_space == "last_ocr_click" else "viewport"
     detalhes = aplicar_fluxo_sucesso(detalhes, args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso)
     evento["detalhes"] = detalhes
     if args.sequencia is not None:
@@ -4367,6 +4492,12 @@ def comando_atualizar_imagem(args):
     if evento.get("tipo") != "clicar_imagem":
         raise ValueError("O bloco selecionado nao eh do tipo clicar por imagem.")
     detalhes = evento.get("detalhes") or {}
+    if str(args.modo_reconhecimento or "imagem").lower() == "texto_ocr":
+        fonte_ocr = str(getattr(args, "fonte_ocr", "legado") or "legado").lower()
+        if fonte_ocr == "chrome" and not str(args.texto_ocr_busca or "").strip():
+            raise ValueError("Informe o texto para o reconhecimento pelo Chrome.")
+        if fonte_ocr == "visual" and not str(args.imagem or "").strip():
+            raise ValueError("Selecione uma imagem para o reconhecimento Visual.")
     detalhes["imagem"] = normalizar_id_imagem(args.imagem)
     detalhes["timeout"] = max(0.1, float(args.timeout))
     detalhes["confianca"] = float(args.confianca)
@@ -4383,6 +4514,7 @@ def comando_atualizar_imagem(args):
     detalhes["janela_alvo"] = str(args.janela_alvo or "").strip()
     detalhes["texto_ocr_esperado"] = str(args.texto_ocr_esperado or "").strip()
     detalhes["modo_reconhecimento"] = str(args.modo_reconhecimento or "imagem").strip().lower() or "imagem"
+    detalhes["fonte_ocr"] = str(getattr(args, "fonte_ocr", "legado") or "legado").strip().lower()
     detalhes["texto_ocr_busca"] = str(args.texto_ocr_busca or "").strip()
     detalhes["acao_ocr"] = str(args.acao_ocr or "clicar").strip().lower() or "clicar"
     detalhes["salvar_ocr_em"] = str(args.salvar_ocr_em or "").strip()
@@ -4447,6 +4579,8 @@ def comando_atualizar_texto_ocr(args):
         args.sequencia_sucesso,
         args.atraso_sequencia_sucesso,
         args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
+        fonte_ocr=getattr(args, "fonte_ocr", "legado"),
+        imagem_ocr=getattr(args, "imagem_ocr", ""),
     )
     evento.update(bloco)
     return salvar_e_retornar(payload)
@@ -4786,7 +4920,9 @@ def build_parser():
         parser_destino.add_argument("--aguardar-segundos", type=float, default=2)
 
     def adicionar_argumentos_texto_ocr(parser_destino):
-        parser_destino.add_argument("--texto", required=True)
+        parser_destino.add_argument("--texto", default="")
+        parser_destino.add_argument("--fonte-ocr", choices=["legado", "chrome", "visual", "elemento"], default="legado")
+        parser_destino.add_argument("--imagem-ocr", default="")
         parser_destino.add_argument("--acao", choices=["clicar", "localizar", "verificar"], default="clicar")
         parser_destino.add_argument("--timeout", type=float, default=8)
         parser_destino.add_argument("--confianca", type=float, default=0.72)
@@ -4809,6 +4945,7 @@ def build_parser():
 
     def adicionar_argumentos_ocr_embutido(parser_destino):
         parser_destino.add_argument("--modo-reconhecimento", choices=["imagem", "texto_ocr"], default="imagem")
+        parser_destino.add_argument("--fonte-ocr", choices=["legado", "chrome", "visual", "elemento"], default="legado")
         parser_destino.add_argument("--texto-ocr-busca", default="")
         parser_destino.add_argument("--acao-ocr", choices=["clicar", "localizar", "verificar"], default="clicar")
         parser_destino.add_argument("--salvar-ocr-em", default="")
@@ -5219,6 +5356,7 @@ def build_parser():
     update_mouse.add_argument("--y", type=int, required=True)
     update_mouse.add_argument("--button", default="left")
     update_mouse.add_argument("--clicks", type=int, default=1)
+    update_mouse.add_argument("--coordinate-space", choices=["viewport", "last_ocr_click"], default="viewport")
     update_mouse.add_argument("--delay", type=float)
     update_mouse.add_argument("--sequencia")
     adicionar_argumentos_fluxo_sucesso(update_mouse)

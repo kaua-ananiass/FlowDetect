@@ -22,21 +22,9 @@ O produto atual possui:
 - visualizacao da tela do Agent;
 - instaladores separados para Studio e Agent.
 
-## 2. Raiz correta do projeto
+## 2. Raiz do projeto
 
-A raiz atual de trabalho e:
-
-```powershell
-F:\FlowDetect\Capturar_atalhos_hotkeys
-```
-
-Evite trabalhar na copia antiga em:
-
-```powershell
-C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
-```
-
-Essa pasta antiga ainda pode aparecer em documentos antigos, mas o desenvolvimento atual foi movido para o disco `F:`.
+Use a pasta do checkout que contem `tauri_gerador/`, `flowdetect_agent/` e `gerenciar_roteiro.py`. Os comandos abaixo sao relativos a essa pasta.
 
 ## 3. Stack principal
 
@@ -106,7 +94,7 @@ Arquivos centrais na raiz:
 ### Studio
 
 ```powershell
-cd F:\FlowDetect\Capturar_atalhos_hotkeys\tauri_gerador
+cd tauri_gerador
 & "C:\Program Files\nodejs\npm.cmd" install
 & "C:\Program Files\nodejs\npm.cmd" run tauri:dev
 ```
@@ -114,7 +102,7 @@ cd F:\FlowDetect\Capturar_atalhos_hotkeys\tauri_gerador
 ### Agent
 
 ```powershell
-cd F:\FlowDetect\Capturar_atalhos_hotkeys\flowdetect_agent
+cd flowdetect_agent
 & "C:\Program Files\nodejs\npm.cmd" install
 & "C:\Program Files\nodejs\npm.cmd" run tauri:dev
 ```
@@ -126,14 +114,13 @@ Se o PowerShell bloquear `npm`, use sempre o caminho completo.
 ### Studio
 
 ```powershell
-cd F:\FlowDetect\Capturar_atalhos_hotkeys
-powershell -ExecutionPolicy Bypass -File .\compilar_gerador_exe.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\compilar_gerador_exe.ps1
 ```
 
 ### Agent
 
 ```powershell
-cd F:\FlowDetect\Capturar_atalhos_hotkeys\flowdetect_agent
+cd flowdetect_agent
 & "C:\Program Files\nodejs\npm.cmd" run tauri:build
 ```
 
@@ -164,7 +151,7 @@ O Agent deve usar assets com `agent`.
 Para regenerar:
 
 ```powershell
-cd F:\FlowDetect\Capturar_atalhos_hotkeys
+# Execute na raiz do repositorio
 python tauri_gerador/src-tauri/installer_assets/gerar_assets_instalador.py
 ```
 
@@ -507,7 +494,7 @@ Nao subir dados reais:
 Antes de commit:
 
 ```powershell
-cd F:\FlowDetect\Capturar_atalhos_hotkeys
+# Execute na raiz do repositorio
 git status
 git diff --stat
 ```
@@ -517,28 +504,28 @@ git diff --stat
 JavaScript:
 
 ```powershell
-cd F:\FlowDetect\Capturar_atalhos_hotkeys
+# Execute na raiz do repositorio
 node --check tauri_gerador/web/main.js
 ```
 
 Python:
 
 ```powershell
-cd F:\FlowDetect\Capturar_atalhos_hotkeys
+# Execute na raiz do repositorio
 python -m py_compile executar_automacao.py gerenciar_roteiro.py mapear_elementos_janela.py chrome_web_bridge.py gerenciar_dados_planilha.py gravador_inteligente.py
 ```
 
 Rust/Tauri Studio:
 
 ```powershell
-cd F:\FlowDetect\Capturar_atalhos_hotkeys\tauri_gerador\src-tauri
+cd tauri_gerador/src-tauri
 cargo check
 ```
 
 Agent:
 
 ```powershell
-cd F:\FlowDetect\Capturar_atalhos_hotkeys\flowdetect_agent
+cd flowdetect_agent
 & "C:\Program Files\nodejs\npm.cmd" run tauri:build
 ```
 
@@ -547,7 +534,7 @@ cd F:\FlowDetect\Capturar_atalhos_hotkeys\flowdetect_agent
 Criar rama nova:
 
 ```powershell
-cd F:\FlowDetect\Capturar_atalhos_hotkeys
+# Execute na raiz do repositorio
 git checkout main
 git pull origin main
 git checkout -b nome-da-rama
