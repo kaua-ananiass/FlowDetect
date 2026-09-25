@@ -3415,6 +3415,27 @@ function getEditableTextEvents(roadmap = state.roadmap) {
 }
 
 async function runOcrRecognitionTest(values, options = {}) {
+  if (values?.ocrSource === "elemento") {
+    try {
+      return await validateOcrElement(values.ocrText, true);
+    } catch (error) {
+      setBusy("Erro");
+      setMessage(String(error), "error");
+      return false;
+    }
+  }
+  if (values?.ocrSource === "visual") {
+    return runImageRecognitionTest({
+      ...values,
+      recognitionMode: "imagem",
+      timeout: values.ocrTimeout,
+      confidence: values.ocrConfidence,
+    }, options);
+  }
+  if (values?.ocrSource === "chrome") {
+    setMessage("O modo Chrome consulta o texto da pagina durante a execucao. Execute o bloco para testar esse modo.", "info");
+    return false;
+  }
   return runImageRecognitionTest(
     {
       ...values,
@@ -3422,6 +3443,146 @@ async function runOcrRecognitionTest(values, options = {}) {
     },
     options
   );
+}
+
+function normalizeOcrElementSelector(input) {
+  const raw = String(input || "").trim().replace(/^\\(?=<)/, "");
+  if (!raw) throw new Error("Clique em Capturar na pagina ou cole um seletor CSS ou HTML do elemento.");
+  let selector = raw;
+  if (raw.startsWith("<")) {
+    const parsed = new DOMParser().parseFromString(raw, "text/html");
+    const element = parsed.body.firstElementChild;
+    if (!element || parsed.body.children.length !== 1) {
+      throw new Error("O HTML copiado precisa conter um unico elemento. Use Copiar seletor no Chrome.");
+    }
+    const tag = element.tagName.toLowerCase();
+    const attribute = ["data-test-id", "data-testid", "data-test", "id", "aria-label", "name", "title"]
+      .find((name) => element.getAttribute(name)?.trim());
+    if (!attribute) {
+      throw new Error("Esse HTML nao tem identificador confiavel. No Chrome, use Copiar → Copiar seletor.");
+    }
+    const value = element.getAttribute(attribute);
+    selector = `${tag}[${attribute}="${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"]`;
+  }
+  if (selector.length > 1500 || /[\r\n]/.test(selector)) {
+    throw new Error("Seletor muito longo ou em varias linhas. Copie apenas o seletor do elemento.");
+  }
+  try {
+    document.createDocumentFragment().querySelector(selector);
+  } catch (_) {
+    throw new Error("O elemento copiado nao e um seletor CSS valido. Use Inspecionar → Copiar → Copiar seletor.");
+  }
+  if (/^[a-z][a-z\d-]*$/i.test(selector)) {
+    throw new Error("O seletor e generico demais. Copie o seletor completo do elemento.");
+  }
+  return selector;
+}
+
+async function validateOcrElement(input, live = true) {
+  const selector = normalizeOcrElementSelector(input);
+  if (!live) return selector;
+  setBusy("Validando elemento");
+  let result;
+  try {
+    result = await invoke("chrome_web_test_element", {
+      details: { alvo: { metodo: "css", valor: selector }, require_unique: true },
+      timeout: 3000,
+    });
+  } catch (error) {
+    setBusy("Erro");
+    throw error;
+  }
+  setBusy(result?.ok ? "Pronto" : "Erro");
+  setMessage(result?.message || "Nao foi possivel validar o elemento no Chrome.", result?.ok ? "success" : "error");
+  return Boolean(result?.ok);
+}
+
+async function validateOcrElementInContainer(container, fieldAttr) {
+  const input = container?.querySelector(`[${fieldAttr}="ocrElement"]`);
+  if (!input) throw new Error("Abra o modo Chrome · elemento da pagina antes de validar.");
+  const selector = normalizeOcrElementSelector(input.value);
+  input.value = selector;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  if (container.classList.contains("insert-card-panel") && state.insertPanel) {
+    state.insertPanel = { ...state.insertPanel, ...insertValuesFromPanel(container) };
+  } else if (container.classList.contains("command-tree-card")) {
+    syncCommandMapDraftFromCard(container);
+  }
+  return validateOcrElement(selector);
+}
+
+async function captureOcrElementIntoContainer(container, fieldAttr, button) {
+  const input = container?.querySelector(`[${fieldAttr}="ocrElement"]`);
+  if (!input) throw new Error("Abra o modo Chrome · elemento da pagina antes de capturar.");
+  const oldLabel = button?.textContent || "Capturar na pagina";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Clique no site...";
+  }
+  setBusy("Capturando elemento");
+  try {
+    let captured;
+    try {
+      captured = await invoke("chrome_web_capture_element", { url: null, timeout: 60000 });
+    } catch (error) {
+      captured = { ok: false, message: String(error) };
+    }
+    if (!captured?.ok) {
+      const captureError = chromeWebFriendlyError(captured);
+      if (!/conectar|conectado|9222|porta Web|porta de depuracao/i.test(captureError)) {
+        throw new Error(captureError);
+      }
+      const url = nearestOpenUrlForChromeContainer(container);
+      if (!url) throw new Error(`${captureError} Configure um bloco Abrir URL antes deste reconhecimento para abrir a pagina de captura.`);
+      setMessage("Abrindo a pagina da automacao para capturar o elemento. Clique nele quando aparecer o contorno.", "info");
+      const opened = await invoke("chrome_web_open_site", { url });
+      if (!opened?.ok) throw new Error(chromeWebFriendlyError(opened));
+      captured = await invoke("chrome_web_capture_element", { url: null, timeout: 60000 });
+    }
+    if (!captured?.ok) throw new Error(chromeWebFriendlyError(captured));
+    const analysis = chromeAnalysisFromCapturedElement(captured);
+    const candidates = [analysis.html_original, analysis.elemento?.css_selector].filter(Boolean);
+    let selector = "";
+    for (const candidate of candidates) {
+      try {
+        const possible = normalizeOcrElementSelector(candidate);
+        const result = await invoke("chrome_web_test_element", {
+          details: { alvo: { metodo: "css", valor: possible }, require_unique: true },
+          timeout: 3000,
+        });
+        if (result?.ok) {
+          selector = possible;
+          break;
+        }
+      } catch (_) {
+        // Tenta o seletor completo capturado se o HTML nao possuir atributo unico.
+      }
+    }
+    if (!selector) throw new Error("O elemento foi capturado, mas nao possui um seletor unico nesta pagina. Tente clicar no botao ou no elemento pai.");
+    input.value = selector;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    if (container.classList.contains("insert-card-panel") && state.insertPanel) {
+      state.insertPanel = { ...state.insertPanel, ...insertValuesFromPanel(container) };
+    } else if (container.classList.contains("command-tree-card")) {
+      syncCommandMapDraftFromCard(container);
+    }
+    setBusy("Pronto");
+    setMessage(`Elemento capturado e validado: ${selector}`, "success");
+    return selector;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldLabel;
+    }
+  }
+}
+
+function ocrElementValue(values = {}) {
+  return String(values.ocrElement || values.ocrText || "").trim();
+}
+
+function readOcrElementField(get, fallback = "") {
+  return get("ocrElement")?.value ?? get("ocrText")?.value ?? fallback;
 }
 
 function getEditableTextLabel(event) {
@@ -4391,6 +4552,7 @@ function applyCommandMapDraftToEvent(event) {
   if (nextEvent.type === "mouse_click") {
     details.x = parseNumber(values.x, details.x ?? 0);
     details.y = parseNumber(values.y, details.y ?? 0);
+    details.coordinate_space = values.mouseTargetMode === "last_ocr_click" ? "last_ocr_click" : "viewport";
     details.botao = values.button || details.botao || "left";
     details.cliques = Math.max(1, Math.trunc(parseNumber(values.clicks, details.cliques ?? details.clicks ?? 1)));
     details.clicks = details.cliques;
@@ -4400,6 +4562,7 @@ function applyCommandMapDraftToEvent(event) {
 
   if (nextEvent.type === "clicar_imagem") {
     details.modo_reconhecimento = values.recognitionMode || details.modo_reconhecimento || "imagem";
+    details.fonte_ocr = values.ocrSource || details.fonte_ocr || "legado";
     details.imagem = values.imagePath ?? details.imagem ?? "";
     details.timeout = parseNumber(values.timeout, details.timeout ?? 10);
     details.confianca = parseNumber(values.confidence, details.confianca ?? 0.8);
@@ -4411,7 +4574,7 @@ function applyCommandMapDraftToEvent(event) {
     details.area_busca_altura = 0;
     details.janela_alvo = normalizeRecognitionWindowTitle(values.ocrWindowTitle || values.windowTitle || details.janela_alvo || "");
     details.texto_ocr_esperado = values.expectedOcrText ?? details.texto_ocr_esperado ?? "";
-    details.texto_ocr_busca = values.ocrText ?? details.texto_ocr_busca ?? "";
+    details.texto_ocr_busca = values.ocrSource === "elemento" ? ocrElementValue(values) : values.ocrText ?? details.texto_ocr_busca ?? "";
     details.ocr_target_layouts = values.ocrTargetLayouts ?? details.ocr_target_layouts ?? [];
     details.acao_ocr = values.ocrAction || details.acao_ocr || "clicar";
     details.salvar_ocr_em = values.ocrSaveAs ?? details.salvar_ocr_em ?? "";
@@ -4450,7 +4613,9 @@ function applyCommandMapDraftToEvent(event) {
 
   if (nextEvent.type === "procurar_texto_ocr") {
     const clickArgs = ocrClickArgsFromMode(values.ocrClickMode, values.ocrAction);
-    details.texto = values.ocrText ?? details.texto ?? "";
+    details.texto = values.ocrSource === "elemento" ? ocrElementValue(values) : values.ocrText ?? details.texto ?? "";
+    details.fonte_ocr = values.ocrSource || "legado";
+    details.imagem_ocr = values.imagePath || "";
     details.acao = values.ocrAction || details.acao || "clicar";
     details.timeout = Math.max(0.5, parseNumber(values.ocrTimeout, details.timeout ?? 8));
     details.confianca = Math.max(0.3, Math.min(1, parseNumber(values.ocrConfidence, details.confianca ?? 0.72)));
@@ -6231,6 +6396,7 @@ function createInsertPanelState(targetOrder, position) {
     retryCount: 3,
     retryInterval: 1,
     ocrText: "",
+    ocrSource: "chrome",
     ocrAction: "clicar",
     ocrConfidence: 0.72,
     ocrTimeout: 8,
@@ -9075,6 +9241,7 @@ function renderRecognitionTreeHiddenFields(details = {}, currentOrder = null) {
     <input data-tree-field="searchProfile" type="hidden" value="${escapeHtml(normalizeRecognitionProfile(details.perfil_busca, "balanced"))}" />
     <input data-tree-field="expectedOcrText" type="hidden" value="${escapeHtml(details.texto_ocr_esperado ?? "")}" />
     <input data-tree-field="ocrText" type="hidden" value="${escapeHtml(details.texto_ocr_busca ?? "")}" />
+    <input data-tree-field="ocrSource" type="hidden" value="${escapeHtml(details.fonte_ocr ?? "legado")}" />
     ${hiddenOcrTargets}
     <input data-ocr-target-layouts type="hidden" value="${escapeHtml(JSON.stringify(details.ocr_target_layouts ?? []))}" />
     <input data-tree-field="ocrAction" type="hidden" value="${escapeHtml(details.acao_ocr ?? "clicar")}" />
@@ -9159,7 +9326,7 @@ function renderRecognitionCompactTreeEditor(event) {
   const failureAction = String(details.ao_nao_encontrar ?? "parar");
   const visibleSuccessAction = successAction === "ir_para_sequencia" ? "continuar" : successAction;
   const visibleFailureAction = failureAction === "ir_para_sequencia" ? "parar" : failureAction;
-  const ocrTargetRules = recognitionOcrTargetRuleSummary(details);
+  const ocrTargetRules = ["visual", "elemento"].includes(details.fonte_ocr) ? null : recognitionOcrTargetRuleSummary(details);
   const ocrTestStatus = recognitionTestStatusForEvent(event);
   const nextLabel = visibleSuccessAction === "ir_para_bloco" && details.bloco_sucesso
     ? `Vai para bloco ${details.bloco_sucesso}`
@@ -9178,7 +9345,9 @@ function renderRecognitionCompactTreeEditor(event) {
     <div class="recognition-card-compact-editor">
       ${renderRecognitionTreeHiddenFields(details, event.order)}
       <div class="recognition-card-compact-preview">
-        ${renderRecognitionPreviewPanel(details.imagem ?? "", {
+        ${recognitionMode === "texto_ocr" && details.fonte_ocr === "elemento"
+          ? `<div class="recognition-card-helper">Chrome procura o elemento pelo seletor salvo.</div>`
+          : renderRecognitionPreviewPanel(details.imagem ?? "", {
           overlay: renderRelativeOcrPreviewOverlay(
             relativeOcr,
             recognitionClickTargetDetails(details),
@@ -9188,10 +9357,15 @@ function renderRecognitionCompactTreeEditor(event) {
         })}
       </div>
       <div class="recognition-card-compact-row">
-        <span>${recognitionMode === "texto_ocr" ? "Hibrido OCR + imagem" : "O que ele procura"}</span>
-        <strong>${escapeHtml(recognitionMode === "texto_ocr" ? `${details.texto_ocr_busca || "Configure o texto"} + ${imageName}` : imageName)}</strong>
+        <span>${recognitionMode === "texto_ocr" ? "Modo de reconhecimento" : "O que ele procura"}</span>
+        <strong>${escapeHtml(recognitionMode === "texto_ocr"
+          ? details.fonte_ocr === "elemento" ? `Elemento: ${details.texto_ocr_busca || "Cole o seletor"}`
+            : details.fonte_ocr === "chrome" ? `Chrome: ${details.texto_ocr_busca || "Configure o texto"}`
+            : details.fonte_ocr === "visual" ? `Visual: ${imageName}`
+              : `${details.texto_ocr_busca || "Configure o texto"} + ${imageName}`
+          : imageName)}</strong>
       </div>
-      ${expectedText ? `
+      ${expectedText && !["visual", "elemento"].includes(details.fonte_ocr) ? `
         <div class="recognition-card-compact-row">
           <span>Tambem confirma o texto</span>
           <strong>${escapeHtml(expectedText)}</strong>
@@ -9801,6 +9975,7 @@ function refreshOcrTargetActionRows(container) {
 
 function renderOcrTextFields(fieldAttr, details = {}, currentOrder = null, options = {}) {
   const embeddedHybrid = Boolean(options.embeddedHybrid);
+  const ocrSource = details.fonte_ocr ?? "legado";
   const clickMode = ocrClickModeFromDetails(details);
   const failureAction = String(details.ao_nao_encontrar ?? "parar");
   const scrollEnabled = details.varredura_scroll !== false;
@@ -9839,11 +10014,45 @@ function renderOcrTextFields(fieldAttr, details = {}, currentOrder = null, optio
   return `
     <div class="field-stack ocr-text-editor ocr-text-editor-simple">
       <input ${fieldAttr}="ocrText" type="hidden" value="${escapeHtml(details.texto ?? "")}" />
-      <div class="ocr-target-header">
-        <span>${embeddedHybrid ? "Textos alvo" : "Textos para procurar"}</span>
-        <button class="tree-open-button ocr-target-add" ${actionAttr}="add-ocr-target" type="button">+ alvo</button>
+      <label class="recognition-cell recognition-cell-full">
+        <span>Reconhecimento</span>
+        <select ${fieldAttr}="ocrSource">
+          ${ocrSource === "legado" ? `<option value="legado" selected>${embeddedHybrid ? "Atual (OCR + imagem)" : "Atual (bloco antigo)"}</option>` : ""}
+          <option value="chrome" ${ocrSource === "chrome" ? "selected" : ""}>Chrome · texto da página</option>
+          <option value="elemento" ${ocrSource === "elemento" ? "selected" : ""}>Chrome · elemento da página</option>
+          <option value="visual" ${ocrSource === "visual" ? "selected" : ""}>Visual · imagem da tela</option>
+        </select>
+      </label>
+      ${embeddedHybrid ? "" : `
+        <div class="ocr-source-visual-fields field-stack">
+          <label class="recognition-cell recognition-cell-full">
+            <span>Imagem de referência</span>
+            <input ${fieldAttr}="imagePath" type="text" value="${escapeHtml(details.imagem_ocr ?? "")}" placeholder="Selecione ou capture a imagem" />
+          </label>
+          <div class="ocr-source-image-actions">
+            <button class="tree-open-button" ${actionAttr}="select-image" type="button">Selecionar imagem</button>
+            <button class="tree-open-button" ${actionAttr}="capture-image" type="button">Capturar imagem</button>
+          </div>
+        </div>
+      `}
+      <div class="ocr-source-chrome-fields">
+        <div class="ocr-target-header">
+          <span>${embeddedHybrid ? "Textos alvo" : "Textos para procurar"}</span>
+          <button class="tree-open-button ocr-target-add" ${actionAttr}="add-ocr-target" type="button">+ alvo</button>
+        </div>
+        ${renderOcrTargetRows(fieldAttr, actionAttr, details.texto ?? "", details.ocr_target_layouts)}
       </div>
-      ${renderOcrTargetRows(fieldAttr, actionAttr, details.texto ?? "", details.ocr_target_layouts)}
+      <div class="ocr-source-element-fields field-stack">
+        <label class="recognition-cell recognition-cell-full">
+          <span>Elemento do Chrome</span>
+          <textarea ${fieldAttr}="ocrElement" rows="2" spellcheck="false" placeholder="Clique em Capturar na pagina ou cole o elemento aqui">${escapeHtml(ocrSource === "elemento" ? details.texto ?? "" : "")}</textarea>
+        </label>
+        <div class="ocr-source-element-actions">
+          <button class="tree-open-button" ${actionAttr}="capture-ocr-element" type="button">Capturar na pagina</button>
+          <button class="tree-open-button" ${actionAttr}="validate-ocr-element" type="button">Validar</button>
+        </div>
+        <p class="recognition-card-helper">Clique em Capturar na pagina e depois no elemento do site. Voce tambem pode colar um seletor CSS ou HTML.</p>
+      </div>
       ${embeddedHybrid ? "" : `
         <label class="recognition-cell recognition-cell-full">
           <span>Depois de encontrar</span>
@@ -9856,10 +10065,18 @@ function renderOcrTextFields(fieldAttr, details = {}, currentOrder = null, optio
       `}
       ${hiddenDefaults}
       ${hiddenStandaloneFlow}
-      ${embeddedHybrid ? "" : `<button class="tree-open-button recognition-test-inline" ${actionAttr}="test-ocr-recognition" type="button">Testar OCR agora</button>`}
+      ${embeddedHybrid ? "" : `<button class="tree-open-button recognition-test-inline ocr-source-default-test" ${actionAttr}="test-ocr-recognition" type="button">Testar reconhecimento</button>`}
       <p class="recognition-card-helper">${embeddedHybrid
-        ? "Cada alvo precisa aparecer na tela. Se o segundo alvo for numero, ele precisa estar abaixo/alinhado ao primeiro."
-        : "Cada alvo precisa aparecer na tela. Se o segundo alvo for numero, ele precisa estar abaixo/alinhado ao primeiro."}</p>
+        ? ocrSource === "elemento"
+          ? "Elemento procura um seletor unico na pagina. Valide-o na aba do Chrome antes de executar."
+          : ocrSource === "visual"
+          ? "Visual procura a imagem de referencia. As acoes individuais de OCR ficam disponíveis nos modos Chrome e Atual."
+          : ocrSource === "chrome"
+            ? "Chrome procura os textos da pagina e executa a acao configurada para cada alvo, sem depender da imagem."
+            : "O modo Atual confirma os textos por OCR e depois confere a imagem de referencia."
+        : ocrSource === "elemento"
+          ? "O seletor deve localizar exatamente um elemento na aba do Chrome."
+          : "Chrome busca texto na pagina; Visual compara a imagem capturada com a tela. Apenas o modo selecionado sera executado."}</p>
     </div>
   `;
 }
@@ -9912,12 +10129,15 @@ function renderCompactTreeEditorFields(event) {
   if (event.type === "procurar_texto_ocr") {
     const failureAction = details.ao_nao_encontrar ?? "parar";
     return renderGenericCompactTreeEditor(event, [
-      { label: "Texto", value: details.texto || "Configure o texto" },
+      { label: "Modo", value: details.fonte_ocr === "visual" ? "Visual" : details.fonte_ocr === "elemento" ? "Elemento Chrome" : details.fonte_ocr === "chrome" ? "Chrome" : "Atual" },
+      { label: details.fonte_ocr === "visual" ? "Imagem" : details.fonte_ocr === "elemento" ? "Seletor" : "Texto", value: details.fonte_ocr === "visual" ? (details.imagem_ocr || "Selecione a imagem") : (details.texto || "Configure o texto") },
       { label: "Acao", value: details.acao || "clicar" },
       { label: "Busca", value: `${details.quantidade_tentativas ?? 3} tentativa(s) | ${(details.confianca ?? 0.72)}` },
       { label: "Se nao achar", value: formatFlowActionLabel(failureAction, details.bloco_nao_encontrar, details.sequencia_nao_encontrar) },
     ], `
       ${hiddenTreeField("ocrText", details.texto ?? "")}
+      ${hiddenTreeField("ocrSource", details.fonte_ocr ?? "legado")}
+      ${hiddenTreeField("imagePath", details.imagem_ocr ?? "")}
       ${hiddenTreeField("ocrAction", details.acao ?? "clicar")}
       ${hiddenTreeField("ocrConfidence", details.confianca ?? 0.72)}
       ${hiddenTreeField("ocrTimeout", details.timeout ?? 8)}
@@ -9977,10 +10197,11 @@ function renderCompactTreeEditorFields(event) {
     const clicks = Number(details.clicks ?? details.cliques ?? 1);
     return renderGenericCompactTreeEditor(event, [
       { label: "Clique", value: `${clicks} clique(s) ${details.botao || "left"}` },
-      { label: "Posicao", value: `x=${details.x ?? 0} y=${details.y ?? 0}` },
+      { label: "Posicao", value: details.coordinate_space === "last_ocr_click" ? `Marcador do OCR + x=${details.x ?? 0} y=${details.y ?? 0}` : `x=${details.x ?? 0} y=${details.y ?? 0}` },
     ], `
       ${hiddenTreeField("x", details.x ?? 0)}
       ${hiddenTreeField("y", details.y ?? 0)}
+      ${hiddenTreeField("mouseTargetMode", details.coordinate_space ?? "viewport")}
       ${hiddenTreeField("button", details.botao ?? "left")}
       ${hiddenTreeField("clicks", clicks)}
       ${renderSuccessHiddenTreeFields(details)}
@@ -10199,7 +10420,10 @@ function renderRecognitionExpandedTreeEditor(event) {
   const clickTarget = recognitionClickTargetDetails(details);
   const clickMode = recognitionClickModeFromDetails(details);
   const recognitionMode = String(details.modo_reconhecimento ?? "imagem");
-  if (recognitionMode === "texto_ocr" && activeRecognitionTab === "behavior") {
+  if (recognitionMode === "texto_ocr" && !["visual", "elemento"].includes(details.fonte_ocr) && activeRecognitionTab === "behavior") {
+    activeRecognitionTab = "visual";
+  }
+  if (["visual", "elemento"].includes(details.fonte_ocr) && activeRecognitionTab === "ocr_actions") {
     activeRecognitionTab = "visual";
   }
   if (recognitionMode !== "texto_ocr" && activeRecognitionTab === "ocr_actions") {
@@ -10222,8 +10446,8 @@ function renderRecognitionExpandedTreeEditor(event) {
     <div class="field-stack field-stack-recognition recognition-expanded-editor">
       <div class="recognition-card-tabs has-preview ${recognitionMode === "texto_ocr" ? "is-ocr-hybrid" : ""}" role="tablist" aria-label="Configuracoes do reconhecimento visual">
         <button class="recognition-card-tab ${activeRecognitionTab === "visual" ? "is-active" : ""}" data-recognition-tab-target="visual" type="button" aria-pressed="${activeRecognitionTab === "visual" ? "true" : "false"}">Busca</button>
-        ${recognitionMode === "texto_ocr" ? `<button class="recognition-card-tab ${activeRecognitionTab === "ocr_actions" ? "is-active" : ""}" data-recognition-tab-target="ocr_actions" type="button" aria-pressed="${activeRecognitionTab === "ocr_actions" ? "true" : "false"}">Acoes por OCR</button>` : ""}
-        ${recognitionMode === "texto_ocr" ? "" : `<button class="recognition-card-tab ${activeRecognitionTab === "behavior" ? "is-active" : ""}" data-recognition-tab-target="behavior" type="button" aria-pressed="${activeRecognitionTab === "behavior" ? "true" : "false"}">Clique e ajustes</button>`}
+        ${recognitionMode === "texto_ocr" && !["visual", "elemento"].includes(details.fonte_ocr) ? `<button class="recognition-card-tab ${activeRecognitionTab === "ocr_actions" ? "is-active" : ""}" data-recognition-tab-target="ocr_actions" type="button" aria-pressed="${activeRecognitionTab === "ocr_actions" ? "true" : "false"}">Acoes por OCR</button>` : ""}
+        ${recognitionMode !== "texto_ocr" || ["visual", "elemento"].includes(details.fonte_ocr) ? `<button class="recognition-card-tab ${activeRecognitionTab === "behavior" ? "is-active" : ""}" data-recognition-tab-target="behavior" type="button" aria-pressed="${activeRecognitionTab === "behavior" ? "true" : "false"}">Clique e ajustes</button>` : ""}
       </div>
       <input data-tree-field="recognitionMode" type="hidden" value="${escapeHtml(recognitionMode)}" />
 
@@ -10287,7 +10511,7 @@ function renderRecognitionExpandedTreeEditor(event) {
         </div>
       </div>
 
-      <div class="recognition-card-panel recognition-ocr-actions-panel ${activeRecognitionTab === "ocr_actions" ? "is-active" : ""}" data-recognition-tab-panel="ocr_actions" ${activeRecognitionTab === "ocr_actions" ? "" : "hidden"}>
+      <div class="recognition-card-panel recognition-ocr-actions-panel ${activeRecognitionTab === "ocr_actions" ? "is-active" : ""}" data-recognition-tab-panel="ocr_actions" ${activeRecognitionTab === "ocr_actions" && details.fonte_ocr !== "visual" ? "" : "hidden"}>
         ${recognitionMode === "texto_ocr" ? `
           <section class="ocr-target-actions-card">
             <div class="insert-outcome-header"><strong>Acoes por OCR</strong></div>
@@ -10311,7 +10535,7 @@ function renderRecognitionExpandedTreeEditor(event) {
         <div class="insert-outcome-groups">
           <section class="insert-outcome-group is-success">
             <div class="insert-outcome-header">
-              <strong>${recognitionMode === "texto_ocr" ? "Texto encontrado" : "Imagem encontrada"}</strong>
+              <strong>${recognitionMode === "texto_ocr" && details.fonte_ocr !== "visual" ? "Texto encontrado" : "Imagem encontrada"}</strong>
             </div>
             <div class="tree-inline-fields recognition-panel-grid recognition-panel-grid-actions">
               <input data-tree-field="clickOnFind" type="hidden" value="${escapeHtml(clickMode)}" />
@@ -18166,6 +18390,13 @@ function renderEditorFields(event) {
     const clicks = Number(details.clicks ?? details.cliques ?? 1);
     return `
       <div class="field-stack">
+        <label>
+          <span>Posicao do clique</span>
+          <select data-field="mouseTargetMode">
+            <option value="viewport" ${details.coordinate_space !== "last_ocr_click" ? "selected" : ""}>Coordenada fixa da aba</option>
+            <option value="last_ocr_click" ${details.coordinate_space === "last_ocr_click" ? "selected" : ""}>Marcador Clique do OCR anterior</option>
+          </select>
+        </label>
         <div class="triple-grid">
           <label>
             <span>X</span>
@@ -18506,6 +18737,14 @@ function renderTreeEditorFields(event) {
     const clicks = Number(details.clicks ?? details.cliques ?? 1);
     return `
       <div class="field-stack">
+        <label>
+          <span>Posicao do clique</span>
+          <select data-tree-field="mouseTargetMode">
+            <option value="viewport" ${details.coordinate_space !== "last_ocr_click" ? "selected" : ""}>Coordenada fixa da aba</option>
+            <option value="last_ocr_click" ${details.coordinate_space === "last_ocr_click" ? "selected" : ""}>Marcador Clique do OCR anterior</option>
+          </select>
+        </label>
+        <p class="recognition-card-helper">Na extensao Chrome, use So confirmar no OCR anterior. Este bloco clica no marcador Clique dele; X e Y abaixo sao ajustes adicionais.</p>
         <div class="tree-inline-fields-wide">
           <label>
             <span>X</span>
@@ -18786,7 +19025,8 @@ function renderInsertRecognitionPanel(panel, order) {
         ${recognitionMode === "texto_ocr" ? `
           <div class="recognition-ocr-embedded-panel">
             ${renderOcrTextFields("data-insert-field", {
-              texto: panel.ocrText,
+              texto: panel.ocrSource === "elemento" ? (panel.ocrElement || panel.ocrText) : panel.ocrText,
+              fonte_ocr: panel.ocrSource,
       ocr_target_layouts: panel.ocrTargetLayouts ?? [],
               acao: panel.ocrAction,
               confianca: panel.ocrConfidence,
@@ -19262,7 +19502,9 @@ function renderInsertPanel(order) {
     body = renderInsertRecognitionPanel(panel, order);
   } else if (panel.type === "ocr_text") {
     body = renderOcrTextFields("data-insert-field", {
-      texto: panel.ocrText,
+      texto: panel.ocrSource === "elemento" ? (panel.ocrElement || panel.ocrText) : panel.ocrText,
+      fonte_ocr: panel.ocrSource,
+      imagem_ocr: panel.imagePath,
       ocr_target_layouts: panel.ocrTargetLayouts ?? [],
       acao: panel.ocrAction,
       confianca: panel.ocrConfidence,
@@ -20363,6 +20605,7 @@ function getCommandMapOcrActionBranches(event, index, events, context) {
   if (String(event?.type || "") !== "clicar_imagem") return [];
   const details = event?.details ?? {};
   if (String(details.modo_reconhecimento || "").trim().toLowerCase() !== "texto_ocr") return [];
+  if (String(details.fonte_ocr || "legado").toLowerCase() === "visual") return [];
   const layouts = Array.isArray(details.ocr_target_layouts) ? details.ocr_target_layouts : [];
   return layouts.flatMap((layout, indexOcr) => {
     if (!layout || typeof layout !== "object") return [];
@@ -21582,6 +21825,7 @@ function formValuesFromCard(card) {
     repeat: Math.max(1, Math.trunc(parseNumber(get("repeat")?.value, 1))),
     x: parseNumber(get("x")?.value, 0),
     y: parseNumber(get("y")?.value, 0),
+    mouseTargetMode: get("mouseTargetMode")?.value ?? "viewport",
     button: get("button")?.value ?? "left",
     clicks: Math.max(1, Math.trunc(parseNumber(get("clicks")?.value, 1))),
     recognitionMode: get("recognitionMode")?.value ?? "imagem",
@@ -21613,7 +21857,9 @@ function formValuesFromCard(card) {
     retryCount: Math.max(1, Math.trunc(parseNumber(get("retryCount")?.value, 1))),
     retryInterval: parseNumber(get("retryInterval")?.value, 1),
     ocrTargetLayouts: ocrTargetLayoutsFromContainer(card),
-    ocrText: readOcrTargetText(card, "data-field"),
+    ocrElement: get("ocrElement")?.value ?? "",
+    ocrText: get("ocrSource")?.value === "elemento" ? readOcrElementField(get) : readOcrTargetText(card, "data-field"),
+    ocrSource: get("ocrSource")?.value ?? "legado",
     ocrAction: get("ocrAction")?.value ?? "clicar",
     ocrConfidence: Math.max(0.3, Math.min(1, parseNumber(get("ocrConfidence")?.value, 0.72))),
     ocrTimeout: Math.max(0.5, parseNumber(get("ocrTimeout")?.value, 8)),
@@ -21734,6 +21980,7 @@ function treeValuesFromCard(card) {
     repeat: Math.max(1, Math.trunc(parseNumber(get("repeat")?.value, 1))),
     x: parseNumber(get("x")?.value, 0),
     y: parseNumber(get("y")?.value, 0),
+    mouseTargetMode: get("mouseTargetMode")?.value ?? "viewport",
     button: get("button")?.value ?? "left",
     clicks: Math.max(1, Math.trunc(parseNumber(get("clicks")?.value, 1))),
     recognitionMode: get("recognitionMode")?.value ?? "imagem",
@@ -21765,7 +22012,9 @@ function treeValuesFromCard(card) {
     retryCount: Math.max(1, Math.trunc(parseNumber(get("retryCount")?.value, 1))),
     retryInterval: parseNumber(get("retryInterval")?.value, 1),
     ocrTargetLayouts: ocrTargetLayoutsFromContainer(card),
-    ocrText: readOcrTargetText(card, "data-tree-field"),
+    ocrElement: get("ocrElement")?.value ?? "",
+    ocrText: get("ocrSource")?.value === "elemento" ? readOcrElementField(get) : readOcrTargetText(card, "data-tree-field"),
+    ocrSource: get("ocrSource")?.value ?? "legado",
     ocrAction: get("ocrAction")?.value ?? "clicar",
     ocrConfidence: Math.max(0.3, Math.min(1, parseNumber(get("ocrConfidence")?.value, 0.72))),
     ocrTimeout: Math.max(0.5, parseNumber(get("ocrTimeout")?.value, 8)),
@@ -22148,6 +22397,7 @@ function commandCardHasUnsavedChanges(snapshot) {
     return (
       Number(values.x || 0) !== Number(details.x ?? 0)
       || Number(values.y || 0) !== Number(details.y ?? 0)
+      || normalizeStringValue(values.mouseTargetMode || "viewport") !== normalizeStringValue(details.coordinate_space || "viewport")
       || normalizeStringValue(values.button) !== normalizeStringValue(details.botao ?? "left")
       || Number(values.clicks || 1) !== Number(details.cliques ?? details.clicks ?? 1)
       || successFlowChanged(values, details)
@@ -22157,10 +22407,11 @@ function commandCardHasUnsavedChanges(snapshot) {
   if (snapshot.type === "clicar_imagem") {
     return (
       normalizeStringValue(values.recognitionMode || "imagem") !== normalizeStringValue(details.modo_reconhecimento ?? "imagem")
+      || normalizeStringValue(values.ocrSource) !== normalizeStringValue(details.fonte_ocr ?? "legado")
       || normalizeStringValue(values.imagePath) !== normalizeStringValue(details.imagem)
       || !approxEqual(values.timeout, details.timeout ?? 10)
       || !approxEqual(values.confidence, details.confianca ?? 0.8)
-      || normalizeStringValue(values.ocrText) !== normalizeStringValue(details.texto_ocr_busca ?? "")
+      || normalizeStringValue(values.ocrSource === "elemento" ? ocrElementValue(values) : values.ocrText) !== normalizeStringValue(details.texto_ocr_busca ?? "")
       || normalizeStringValue(values.ocrAction) !== normalizeStringValue(details.acao_ocr ?? "clicar")
       || normalizeStringValue(values.ocrSaveAs) !== normalizeStringValue(details.salvar_ocr_em ?? "")
       || Boolean(values.ocrScrollEnabled) !== Boolean(details.varredura_scroll !== false)
@@ -22189,7 +22440,9 @@ function commandCardHasUnsavedChanges(snapshot) {
   if (snapshot.type === "procurar_texto_ocr") {
     const currentClickMode = ocrClickModeFromDetails(details);
     return (
-      normalizeStringValue(values.ocrText) !== normalizeStringValue(details.texto)
+      normalizeStringValue(values.ocrSource === "elemento" ? ocrElementValue(values) : values.ocrText) !== normalizeStringValue(details.texto)
+      || normalizeStringValue(values.ocrSource) !== normalizeStringValue(details.fonte_ocr ?? "legado")
+      || normalizeStringValue(values.imagePath) !== normalizeStringValue(details.imagem_ocr ?? "")
       || normalizeStringValue(values.ocrAction) !== normalizeStringValue(details.acao ?? "clicar")
       || !approxEqual(values.ocrTimeout, details.timeout ?? 8)
       || !approxEqual(values.ocrConfidence, details.confianca ?? 0.72)
@@ -22425,6 +22678,7 @@ async function invokeCommandCardUpdate(snapshot) {
       y: values.y,
       button: values.button,
       clicks: values.clicks,
+      coordinateSpace: values.mouseTargetMode || "viewport",
       delay: values.delay,
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
@@ -22437,10 +22691,13 @@ async function invokeCommandCardUpdate(snapshot) {
 
   if (type === "clicar_imagem") {
     const recognitionMode = String(values.recognitionMode || "imagem");
-    if (recognitionMode === "texto_ocr" && !normalizeStringValue(values.ocrText)) {
+    if (recognitionMode === "texto_ocr" && values.ocrSource === "elemento") {
+      values.ocrText = normalizeOcrElementSelector(ocrElementValue(values));
+    }
+    if (recognitionMode === "texto_ocr" && values.ocrSource !== "visual" && !normalizeStringValue(values.ocrText)) {
       throw new Error(`O bloco ${order} de reconhecimento OCR esta sem texto para procurar.`);
     }
-    if (!normalizeStringValue(values.imagePath)) {
+    if (!normalizeStringValue(values.imagePath) && !(recognitionMode === "texto_ocr" && ["chrome", "elemento"].includes(values.ocrSource))) {
       throw new Error(`O bloco ${order} de reconhecimento esta sem referencia visual.`);
     }
     return invoke("update_image_click_block", {
@@ -22457,6 +22714,7 @@ async function invokeCommandCardUpdate(snapshot) {
       janelaAlvo: values.windowTitle?.trim() || null,
       textoOcrEsperado: values.expectedOcrText?.trim() || null,
       modoReconhecimento: recognitionMode,
+      fonteOcr: values.ocrSource || "legado",
       textoOcrBusca: values.ocrText?.trim() || null,
       acaoOcr: values.ocrAction || "clicar",
       salvarOcrEm: values.ocrSaveAs?.trim() || null,
@@ -22488,13 +22746,19 @@ async function invokeCommandCardUpdate(snapshot) {
   }
 
   if (type === "procurar_texto_ocr") {
-    if (!normalizeStringValue(values.ocrText)) {
+    if (values.ocrSource === "elemento") values.ocrText = normalizeOcrElementSelector(ocrElementValue(values));
+    if (values.ocrSource === "visual" && !normalizeStringValue(values.imagePath)) {
+      throw new Error(`O bloco ${order} visual precisa de uma imagem de referencia.`);
+    }
+    if (values.ocrSource !== "visual" && !normalizeStringValue(values.ocrText)) {
       throw new Error(`O bloco ${order} de OCR esta sem texto para procurar.`);
     }
     const clickArgs = ocrClickArgsFromMode(values.ocrClickMode, values.ocrAction);
     return invoke("update_ocr_text_block", {
       order,
       texto: values.ocrText,
+      fonteOcr: values.ocrSource,
+      imagemOcr: values.imagePath?.trim() || null,
       acao: values.ocrAction,
       timeout: values.ocrTimeout,
       confianca: values.ocrConfidence,
@@ -22817,7 +23081,12 @@ async function persistCommandMapDraftsForExecution(options = {}) {
   const total = pending.length;
   for (let index = 0; index < pending.length; index += 1) {
     const snapshot = pending[index];
-    latestRoadmap = await invokeCommandCardUpdate(snapshot);
+    try {
+      latestRoadmap = await invokeCommandCardUpdate(snapshot);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Bloco ${snapshot.order}: ${reason}`);
+    }
     if (typeof onProgress === "function") {
       onProgress({
         current: index + 1,
@@ -22941,7 +23210,11 @@ function insertValuesFromPanel(panelElement) {
     retryCount: Math.max(1, Math.trunc(parseNumber(get("retryCount")?.value, state.insertPanel?.retryCount ?? 1))),
     retryInterval: parseNumber(get("retryInterval")?.value, state.insertPanel?.retryInterval ?? 1),
     ocrTargetLayouts: ocrTargetLayoutsFromContainer(panelElement),
-    ocrText: readOcrTargetText(panelElement, "data-insert-field") || state.insertPanel?.ocrText || "",
+    ocrElement: get("ocrElement")?.value ?? state.insertPanel?.ocrElement ?? "",
+    ocrText: get("ocrSource")?.value === "elemento"
+      ? readOcrElementField(get, state.insertPanel?.ocrText ?? "")
+      : readOcrTargetText(panelElement, "data-insert-field") || state.insertPanel?.ocrText || "",
+    ocrSource: get("ocrSource")?.value ?? state.insertPanel?.ocrSource ?? "chrome",
     ocrAction: get("ocrAction")?.value ?? state.insertPanel?.ocrAction ?? "clicar",
     ocrConfidence: Math.max(0.3, Math.min(1, parseNumber(get("ocrConfidence")?.value, state.insertPanel?.ocrConfidence ?? 0.72))),
     ocrTimeout: Math.max(0.5, parseNumber(get("ocrTimeout")?.value, state.insertPanel?.ocrTimeout ?? 8)),
@@ -23201,8 +23474,12 @@ async function persistVisibleRecognitionDrafts() {
     }
 
     const values = treeValuesFromCard(card);
-    if (!String(values.imagePath || "").trim()) {
+    if (!String(values.imagePath || "").trim() && values.ocrSource !== "elemento") {
       continue;
+    }
+
+    if (values.recognitionMode === "texto_ocr" && values.ocrSource === "elemento") {
+      values.ocrText = normalizeOcrElementSelector(ocrElementValue(values));
     }
 
     const roadmap = await invoke("update_image_click_block", {
@@ -23219,6 +23496,7 @@ async function persistVisibleRecognitionDrafts() {
       janelaAlvo: values.windowTitle?.trim() || null,
       textoOcrEsperado: values.expectedOcrText?.trim() || null,
       modoReconhecimento: values.recognitionMode || "imagem",
+      fonteOcr: values.ocrSource || "legado",
       textoOcrBusca: values.ocrText?.trim() || null,
       acaoOcr: values.ocrAction || "clicar",
       salvarOcrEm: values.ocrSaveAs?.trim() || null,
@@ -25814,6 +26092,19 @@ timelineList.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "validate-ocr-element") {
+    validateOcrElementInContainer(card, "data-field").catch((error) => setMessage(String(error), "error"));
+    return;
+  }
+
+  if (action === "capture-ocr-element") {
+    captureOcrElementIntoContainer(card, "data-field", button).catch((error) => {
+      setBusy("Erro");
+      setMessage(chromeWebFriendlyError(error), "error");
+    });
+    return;
+  }
+
   if (action === "select-verify-active-image") {
     state.commandMapFocusOrder = order;
     openImagePicker({ scope: "update-editor-verify-active", order });
@@ -25865,6 +26156,16 @@ commandMapList.addEventListener("change", (event) => {
   if (syncOcrTargetActionControlToSource(target)) {
     return;
   }
+  if (target.matches('[data-tree-field="mouseTargetMode"], [data-field="mouseTargetMode"]')) {
+    const card = target.closest(".command-tree-card, .flow-card");
+    const fieldAttr = target.hasAttribute("data-tree-field") ? "data-tree-field" : "data-field";
+    for (const name of ["x", "y"]) {
+      const input = card?.querySelector(`[${fieldAttr}="${name}"]`);
+      if (input) input.value = "0";
+    }
+    if (card?.classList.contains("command-tree-card")) syncCommandMapDraftFromCard(card);
+    return;
+  }
   if (target.matches('[data-tree-field^="report"], [data-insert-field^="report"]')) {
     const container = target.closest(".command-tree-card, .insert-card-panel");
     syncReportResultPreview(container);
@@ -25896,7 +26197,7 @@ commandMapList.addEventListener("change", (event) => {
   }
 
   if (
-    target.matches('[data-tree-field="uiaActionType"], [data-tree-field="uiaValueSource"], [data-tree-field="uiaWorkbook"], [data-tree-field="uiaSheet"], [data-tree-field="recognitionMode"], [data-insert-field="uiaActionType"], [data-insert-field="uiaValueSource"], [data-insert-field="uiaWorkbook"], [data-insert-field="uiaSheet"], [data-insert-field="recognitionMode"]')
+    target.matches('[data-tree-field="uiaActionType"], [data-tree-field="uiaValueSource"], [data-tree-field="uiaWorkbook"], [data-tree-field="uiaSheet"], [data-tree-field="recognitionMode"], [data-tree-field="ocrSource"], [data-insert-field="uiaActionType"], [data-insert-field="uiaValueSource"], [data-insert-field="uiaWorkbook"], [data-insert-field="uiaSheet"], [data-insert-field="recognitionMode"], [data-insert-field="ocrSource"]')
   ) {
     const container = target.closest(".command-tree-card, .insert-card-panel");
     if (container?.classList.contains("insert-card-panel") && state.insertPanel) {
@@ -25904,6 +26205,9 @@ commandMapList.addEventListener("change", (event) => {
         ...state.insertPanel,
         ...insertValuesFromPanel(container),
       };
+      if (target.matches('[data-insert-field="ocrSource"]') && ["visual", "elemento"].includes(target.value)) {
+        state.insertPanel.recognitionTab = "base";
+      }
       renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
       return;
     }
@@ -25911,6 +26215,9 @@ commandMapList.addEventListener("change", (event) => {
       const order = Number(container.dataset.order);
       state.expandedTreeCardOrder = order;
       syncCommandMapDraftFromCard(container);
+      if (target.matches('[data-tree-field="ocrSource"]') && target.value === "visual") {
+        state.recognitionTreeTabs = { ...state.recognitionTreeTabs, [order]: "visual" };
+      }
       renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
       return;
     }
@@ -26640,6 +26947,19 @@ commandMapList.addEventListener("click", async (event) => {
     return;
   }
 
+  if (action === "validate-ocr-element") {
+    validateOcrElementInContainer(card, "data-tree-field").catch((error) => setMessage(String(error), "error"));
+    return;
+  }
+
+  if (action === "capture-ocr-element") {
+    captureOcrElementIntoContainer(card, "data-tree-field", button).catch((error) => {
+      setBusy("Erro");
+      setMessage(chromeWebFriendlyError(error), "error");
+    });
+    return;
+  }
+
   if (action === "select-verify-active-image") {
     setCommandMapFocus(order);
     openImagePicker({ scope: "update-tree-verify-active", order });
@@ -26872,6 +27192,9 @@ commandMapList.addEventListener("click", async (event) => {
     state.insertPanel.type = button.dataset.insertType;
     if (button.dataset.insertRecognitionMode) {
       state.insertPanel.recognitionMode = button.dataset.insertRecognitionMode;
+      if (state.insertPanel.recognitionMode === "texto_ocr" && state.insertPanel.ocrSource === "chrome") {
+        state.insertPanel.ocrSource = "legado";
+      }
     } else if (state.insertPanel.type === "image") {
       state.insertPanel.recognitionMode = "imagem";
     }
@@ -27086,6 +27409,19 @@ commandMapList.addEventListener("click", async (event) => {
     return;
   }
 
+  if (action === "validate-ocr-element") {
+    validateOcrElementInContainer(panel, "data-insert-field").catch((error) => setMessage(String(error), "error"));
+    return;
+  }
+
+  if (action === "capture-ocr-element") {
+    captureOcrElementIntoContainer(panel, "data-insert-field", button).catch((error) => {
+      setBusy("Erro");
+      setMessage(chromeWebFriendlyError(error), "error");
+    });
+    return;
+  }
+
   if (action === "select-chrome-fallback-image") {
     setCommandMapFocus(Number(panel.dataset.targetOrder));
     openImagePicker({ scope: "insert-panel-chrome-fallback", order: Number(panel.dataset.targetOrder) });
@@ -27111,6 +27447,14 @@ commandMapList.addEventListener("click", async (event) => {
 
   if (action === "save") {
     const values = normalizeInsertValuesForDraft(insertValuesFromPanel(panel));
+    if (values.ocrSource === "elemento" && (values.type === "ocr_text" || (values.type === "image" && values.recognitionMode === "texto_ocr"))) {
+      try {
+        values.ocrText = normalizeOcrElementSelector(ocrElementValue(values));
+      } catch (error) {
+        setMessage(String(error), "error");
+        return;
+      }
+    }
     const common = {
       targetOrder: values.targetOrder,
       position: values.position,
@@ -27256,6 +27600,7 @@ commandMapList.addEventListener("click", async (event) => {
               janelaAlvo: (values.ocrWindowTitle || values.windowTitle)?.trim() || null,
               textoOcrEsperado: values.expectedOcrText?.trim() || null,
               modoReconhecimento: values.recognitionMode || "imagem",
+              fonteOcr: values.ocrSource || "legado",
               textoOcrBusca: values.ocrText?.trim() || null,
               acaoOcr: values.ocrAction || "clicar",
               salvarOcrEm: values.ocrSaveAs?.trim() || null,
@@ -27298,6 +27643,7 @@ commandMapList.addEventListener("click", async (event) => {
               janelaAlvo: (values.ocrWindowTitle || values.windowTitle)?.trim() || null,
               textoOcrEsperado: values.expectedOcrText?.trim() || null,
               modoReconhecimento: values.recognitionMode || "imagem",
+              fonteOcr: values.ocrSource || "legado",
               textoOcrBusca: values.ocrText?.trim() || null,
               acaoOcr: values.ocrAction || "clicar",
               salvarOcrEm: values.ocrSaveAs?.trim() || null,
@@ -27326,9 +27672,14 @@ commandMapList.addEventListener("click", async (event) => {
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
     } else if (values.type === "ocr_text") {
+      if (values.ocrSource === "visual" && !normalizeStringValue(values.imagePath)) {
+        throw new Error("Selecione ou capture uma imagem para o reconhecimento Visual.");
+      }
       const clickArgs = ocrClickArgsFromMode(values.ocrClickMode, values.ocrAction);
       const ocrPayload = {
-        texto: values.ocrText || "Texto para localizar",
+        texto: values.ocrSource === "visual" ? values.ocrText : (values.ocrSource === "elemento" ? values.ocrText : (values.ocrText || "Texto para localizar")),
+        fonteOcr: values.ocrSource || "chrome",
+        imagemOcr: values.imagePath?.trim() || null,
         acao: values.ocrAction || "clicar",
         timeout: values.ocrTimeout,
         confianca: values.ocrConfidence,

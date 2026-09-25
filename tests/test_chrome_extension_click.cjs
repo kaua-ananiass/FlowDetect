@@ -138,6 +138,84 @@ test("OCR waits for a delayed static banner instead of failing on the first chec
   assert.equal(checks, 2);
 });
 
+test("OCR anchors the click to the matched text instead of the whole row", () => {
+  const node = { nodeValue: "50.317.977/0001-05 - SCRITA SOLUCOES LTDA" };
+  const spans = [];
+  const context = vm.createContext({
+    String, RegExp, NodeFilter: { SHOW_TEXT: 4 },
+    document: {
+      createTreeWalker: () => ({ nextNode: (() => { let seen = false; return () => seen ? null : (seen = true, node); })() }),
+      createRange: () => ({
+        setStart(_node, index) { spans[0] = index; },
+        setEnd(_node, index) { spans[1] = index; },
+        getClientRects: () => [{ left: 120, top: 40, width: 190, height: 20 }],
+      }),
+    },
+  });
+  vm.runInContext(productionFunction("textRectWithinElement"), context);
+  const rect = context.textRectWithinElement({}, "50.317.977/0001-05 - SCRITA  SOLU");
+  assert.equal(rect.left, 120);
+  assert.equal(spans[0], 0);
+  assert.equal(node.nodeValue.slice(...spans), "50.317.977/0001-05 - SCRITA SOLU");
+});
+
+test("a marker near a small icon clicks the icon instead of the wide field", () => {
+  const icon = { getBoundingClientRect: () => ({ left: 310, top: 37, width: 24, height: 24 }) };
+  const field = { getBoundingClientRect: () => ({ left: 305, top: 30, width: 245, height: 38 }) };
+  const context = vm.createContext({
+    document: { querySelectorAll: () => [field, icon] },
+    isVisible: () => true,
+    Math,
+  });
+  vm.runInContext(productionFunction("preciseClickTarget"), context);
+  const chosen = context.preciseClickTarget({ x: 337, y: 54 });
+  assert.equal(chosen.element, icon);
+  assert.equal(chosen.point.x, 322);
+  assert.equal(chosen.point.y, 49);
+});
+
+test("a snapped icon remains the click target even when the field overlaps its point", () => {
+  const icon = { clicks: 0, focus() {}, dispatchEvent() {}, click() { this.clicks += 1; }, getBoundingClientRect: () => ({ left: 310, top: 37, width: 24, height: 24 }) };
+  const field = { clicks: 0, focus() {}, dispatchEvent() {}, click() { this.clicks += 1; }, getBoundingClientRect: () => ({ left: 305, top: 30, width: 245, height: 38 }) };
+  const context = vm.createContext({
+    document: { elementFromPoint: () => field },
+    focusableTarget: (element) => element,
+    isVisible: () => true,
+    isClickReady: () => true,
+    MouseEvent: class { constructor(type) { this.type = type; } },
+    window: {}, globalThis: {}, Number, Math, Error,
+  });
+  vm.runInContext(productionFunction("clickTarget"), context);
+  context.clickTarget(icon, 1, { x: 322, y: 49 }, true);
+  assert.equal(icon.clicks, 1);
+  assert.equal(field.clicks, 0);
+});
+
+test("a separate mouse block clicks the marker saved by the preceding OCR", async () => {
+  const target = { scrollIntoView() {}, getBoundingClientRect: () => ({ left: 40, top: 50, width: 100, height: 20 }) };
+  const clicks = [];
+  const context = vm.createContext({
+    innerWidth: 500, innerHeight: 400,
+    Number, Math, Boolean, String, Error,
+    waitForTextTarget: async () => ({ element: target }),
+    findTextTarget: () => ({ element: target }),
+    sleep: async () => {},
+    highlightRect() {},
+    preciseClickTarget: () => null,
+    document: { elementFromPoint: (x, y) => ({ x, y, getBoundingClientRect: () => ({ left: x, top: y, width: 1, height: 1 }) }) },
+    waitForClickableTarget: async (element) => element,
+    clickTarget: (_element, count, point) => clicks.push({ count, point }),
+  });
+  vm.runInContext(`let lastOcrClickPoint = null;\n${productionFunction("executeOcrText")}\n${productionFunction("clickAt")}`, context);
+  await assert.rejects(context.clickAt({ coordinate_space: "last_ocr_click", x: 0, y: 0 }), /OCR anterior/);
+  await context.executeOcrText({
+    text: "50.317.977/0001-05", click: false, offset_x: 200, offset_y: 0,
+    click_anchor: { from_text_left: 268.5, from_text_top: 18 },
+  });
+  await context.clickAt({ coordinate_space: "last_ocr_click", x: 0, y: 0, clicks: 1 });
+  assert.deepEqual(JSON.parse(JSON.stringify(clicks)), [{ count: 1, point: { x: 308.5, y: 68 } }]);
+});
+
 
 test("content runner uses a versioned message channel after an extension update", () => {
   assert.match(source, /CONTENT_RUNTIME_VERSION = "0\.2\.\d+"/);

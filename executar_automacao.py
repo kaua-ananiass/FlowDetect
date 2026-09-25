@@ -8450,8 +8450,104 @@ class ExecutorAutomacao:
         detalhes = evento.get("detalhes") or {}
         ordem = int(evento.get("ordem", 0) or 0)
         texto = str(detalhes.get("texto", "") or "").strip()
+        fonte_ocr = str(detalhes.get("fonte_ocr") or "legado").strip().lower()
+        if fonte_ocr == "elemento":
+            if not texto:
+                raise RuntimeError("Bloco de elemento Chrome sem seletor CSS.")
+            tentativas = max(1, int(detalhes.get("quantidade_tentativas") or 3))
+            intervalo = max(0.0, float(detalhes.get("intervalo_tentativas") or 0.7))
+            timeout_ms = max(500, round(float(detalhes.get("timeout") or 8) * 1000 / tentativas))
+            for tentativa in range(tentativas):
+                if self.cancelamento_solicitado():
+                    return self.resultado_fluxo("parar")
+                try:
+                    pagina = self.obter_pagina_chrome()
+                    alvo = pagina.locator(texto)
+                    alvo.first.wait_for(state="visible", timeout=timeout_ms)
+                    quantidade = alvo.count()
+                    if quantidade != 1:
+                        raise RuntimeError(f"Seletor encontrou {quantidade} elementos; precisa encontrar exatamente 1.")
+                    elemento = alvo.first
+                    if bool(detalhes.get("clicar", True)) and str(detalhes.get("acao") or "clicar") == "clicar":
+                        elemento.click(click_count=max(1, int(detalhes.get("cliques") or 1)), timeout=timeout_ms)
+                    safe_print(f"Bloco {ordem}: elemento Chrome confirmado: {texto}", flush=True)
+                    return self.resultado_sucesso_evento(evento)
+                except Exception as erro:
+                    safe_print(f"Bloco {ordem}: elemento Chrome nao validado ({tentativa + 1}/{tentativas}): {erro}", flush=True)
+                    if tentativa < tentativas - 1 and intervalo > 0 and not self.esperar(intervalo):
+                        return self.resultado_fluxo("parar")
+            return self.resultado_falha_bloco_ocr(evento, texto)
+        if fonte_ocr == "visual":
+            imagem = str(detalhes.get("imagem_ocr") or "").strip()
+            if not imagem:
+                raise RuntimeError("Bloco OCR visual sem imagem de referencia.")
+            tentativas = max(1, int(detalhes.get("quantidade_tentativas") or 3))
+            intervalo = max(0.0, float(detalhes.get("intervalo_tentativas") or 0.7))
+            timeout = max(0.1, float(detalhes.get("timeout") or 8) / tentativas)
+            for tentativa in range(tentativas):
+                if self.cancelamento_solicitado():
+                    return self.resultado_fluxo("parar")
+                local = self.clicar_imagem(
+                    imagem=imagem,
+                    timeout=timeout,
+                    confianca=max(0.35, min(0.99, float(detalhes.get("confianca") or 0.72))),
+                    clicar=bool(detalhes.get("clicar", True)),
+                    clicks=max(1, int(detalhes.get("cliques") or 1)),
+                    offset_x=int(detalhes.get("offset_x") or 0),
+                    offset_y=int(detalhes.get("offset_y") or 0),
+                    janela_alvo=str(detalhes.get("janela_alvo") or "").strip() or None,
+                    bloco_id=f"bloco:{ordem}",
+                )
+                if local:
+                    return self.resultado_sucesso_evento(evento)
+                if tentativa < tentativas - 1 and intervalo > 0 and not self.esperar(intervalo):
+                    return self.resultado_fluxo("parar")
+            return self.resultado_falha_bloco_ocr(evento, imagem)
         if not texto:
             raise RuntimeError("Bloco OCR inteligente sem texto configurado.")
+        if fonte_ocr == "chrome":
+            layouts = [item for item in (detalhes.get("ocr_target_layouts") or []) if isinstance(item, dict)]
+            if layouts:
+                return self.executar_bloco_ocr_chrome_alvos(evento, layouts)
+            tentativas = max(1, int(detalhes.get("quantidade_tentativas") or 3))
+            intervalo = max(0.0, float(detalhes.get("intervalo_tentativas") or 0.7))
+            timeout_ms = max(500, round(float(detalhes.get("timeout") or 8) * 1000 / tentativas))
+            for tentativa in range(tentativas):
+                if self.cancelamento_solicitado():
+                    return self.resultado_fluxo("parar")
+                try:
+                    pagina = self.obter_pagina_chrome()
+                    alvo = pagina.get_by_text(texto, exact=False).first
+                    alvo.wait_for(state="visible", timeout=timeout_ms)
+                    capturado = str(alvo.inner_text(timeout=timeout_ms) or texto).strip()
+                    self.salvar_variavel_contexto("ultimo_ocr", capturado)
+                    self.salvar_variavel_contexto("ocr_tela", capturado)
+                    self.salvar_variavel_contexto(f"ocr_bloco_{ordem}", capturado)
+                    salvar_em = str(detalhes.get("salvar_em") or "").strip()
+                    if salvar_em:
+                        self.salvar_variavel_contexto(salvar_em, capturado)
+                    if bool(detalhes.get("clicar", True)) and str(detalhes.get("acao") or "clicar") == "clicar":
+                        offset_x = int(detalhes.get("offset_x") or 0)
+                        offset_y = int(detalhes.get("offset_y") or 0)
+                        cliques = max(1, int(detalhes.get("cliques") or 1))
+                        if offset_x or offset_y:
+                            caixa = alvo.bounding_box(timeout=timeout_ms)
+                            if not caixa:
+                                raise RuntimeError("Texto encontrado no Chrome, mas fora da area visivel.")
+                            pagina.mouse.click(
+                                caixa["x"] + caixa["width"] / 2 + offset_x,
+                                caixa["y"] + caixa["height"] / 2 + offset_y,
+                                click_count=cliques,
+                            )
+                        else:
+                            alvo.click(click_count=cliques, timeout=timeout_ms)
+                    safe_print(f"Bloco {ordem}: texto encontrado pelo Chrome: {capturado}", flush=True)
+                    return self.resultado_sucesso_evento(evento)
+                except Exception as erro:
+                    safe_print(f"Bloco {ordem}: Chrome nao encontrou '{texto}' ({tentativa + 1}/{tentativas}): {erro}", flush=True)
+                    if tentativa < tentativas - 1 and intervalo > 0 and not self.esperar(intervalo):
+                        return self.resultado_fluxo("parar")
+            return self.resultado_falha_bloco_ocr(evento, texto)
         teste_ocr_direto = bool(detalhes.get("teste_reconhecimento_ocr")) or bool(getattr(self, "modo_teste_reconhecimento", False))
         acao = str(detalhes.get("acao", "clicar") or "clicar").strip().lower()
         deve_clicar = bool(detalhes.get("clicar", True)) and acao in {"clicar", "click"}
@@ -8551,6 +8647,61 @@ class ExecutorAutomacao:
                 if not self.esperar(intervalo):
                     return self.resultado_fluxo("parar")
 
+        return self.resultado_falha_bloco_ocr(evento, texto, ultimo_resultado)
+
+    def executar_bloco_ocr_chrome_alvos(self, evento, layouts):
+        detalhes = evento.get("detalhes") or {}
+        ordem = int(evento.get("ordem", 0) or 0)
+        textos = [item.strip() for item in str(detalhes.get("texto") or "").splitlines() if item.strip()]
+        for indice, layout in enumerate(layouts):
+            texto = str(layout.get("texto") or layout.get("text") or (textos[indice] if indice < len(textos) else "")).strip()
+            if not texto:
+                continue
+            tentativas = max(1, int(detalhes.get("quantidade_tentativas") or 3))
+            intervalo = max(0.0, float(detalhes.get("intervalo_tentativas") or 0.7))
+            timeout_ms = max(500, round(float(detalhes.get("timeout") or 8) * 1000 / tentativas))
+            ultimo_erro = None
+            for tentativa in range(tentativas):
+                if self.cancelamento_solicitado():
+                    return self.resultado_fluxo("parar")
+                try:
+                    pagina = self.obter_pagina_chrome()
+                    alvo = pagina.get_by_text(texto, exact=False).first
+                    alvo.wait_for(state="visible", timeout=timeout_ms)
+                    capturado = str(alvo.inner_text(timeout=timeout_ms) or texto).strip()
+                    self.salvar_variavel_contexto("ultimo_ocr", capturado)
+                    self.salvar_variavel_contexto("ocr_tela", capturado)
+                    self.salvar_variavel_contexto(f"ocr_bloco_{ordem}", capturado)
+                    salvar_em = str(detalhes.get("salvar_em") or detalhes.get("salvar_ocr_em") or "").strip()
+                    if salvar_em:
+                        self.salvar_variavel_contexto(salvar_em, capturado)
+                    acao = str(layout.get("action") or "continuar").strip().lower()
+                    if acao in {"clicar", "clicar_ir_para_bloco", "clicar_e_ir_para_bloco"}:
+                        alvo.click(click_count=max(1, int(layout.get("clicks") or 1)), timeout=timeout_ms)
+                    if acao in {"clicar_ir_para_bloco", "clicar_e_ir_para_bloco", "confirmar_ir_para_bloco", "ir_para_bloco"}:
+                        bloco = str(layout.get("block") or "").strip()
+                        if bloco:
+                            return self.resultado_fluxo("ir_para_bloco", bloco=bloco)
+                    safe_print(f"Bloco {ordem}: OCR {indice + 1} encontrado pelo Chrome: {capturado}", flush=True)
+                    break
+                except Exception as erro:
+                    ultimo_erro = erro
+                    if tentativa < tentativas - 1 and intervalo > 0 and not self.esperar(intervalo):
+                        return self.resultado_fluxo("parar")
+            else:
+                acao_falha = str(layout.get("failureAction") or "continuar").strip().lower()
+                if acao_falha == "parar":
+                    return self.resultado_fluxo("parar")
+                if acao_falha == "ir_para_bloco":
+                    bloco = str(layout.get("failureBlock") or "").strip()
+                    if bloco:
+                        return self.resultado_fluxo("ir_para_bloco", bloco=bloco)
+                safe_print(f"Bloco {ordem}: OCR {indice + 1} nao encontrado pelo Chrome: {ultimo_erro}", flush=True)
+        return self.resultado_sucesso_evento(evento)
+
+    def resultado_falha_bloco_ocr(self, evento, texto, ultimo_resultado=None):
+        detalhes = evento.get("detalhes") or {}
+        ordem = int(evento.get("ordem", 0) or 0)
         acao_falha = str(detalhes.get("ao_nao_encontrar", "parar") or "parar")
         if acao_falha in {"continuar", "pular"}:
             safe_print(f"Bloco {ordem}: texto '{texto}' nao encontrado. Continuando.", flush=True)
@@ -10113,7 +10264,18 @@ class ExecutorAutomacao:
         if tipo in TIPOS_IMAGEM:
             detalhes = evento.get("detalhes", {})
             modo_reconhecimento = str(detalhes.get("modo_reconhecimento", "imagem") or "imagem").strip().lower()
-            texto_ocr_hibrido = str(detalhes.get("texto_ocr_busca", "") or "").strip() if modo_reconhecimento == "texto_ocr" else ""
+            fonte_ocr = str(detalhes.get("fonte_ocr") or "legado").strip().lower()
+            if modo_reconhecimento == "texto_ocr" and fonte_ocr in {"chrome", "elemento"}:
+                evento_chrome = dict(evento)
+                evento_chrome["detalhes"] = {
+                    **detalhes,
+                    "texto": str(detalhes.get("texto_ocr_busca") or "").strip(),
+                    "fonte_ocr": fonte_ocr,
+                    "acao": detalhes.get("acao_ocr") or "clicar",
+                    "salvar_em": detalhes.get("salvar_ocr_em") or "",
+                }
+                return self.executar_bloco_procurar_texto_ocr(evento_chrome)
+            texto_ocr_hibrido = str(detalhes.get("texto_ocr_busca", "") or "").strip() if modo_reconhecimento == "texto_ocr" and fonte_ocr != "visual" else ""
             ordem_evento = int(evento.get("ordem", 0) or 0)
             nome_imagem = str(detalhes.get("imagem") or "")
             janela_evento = self.resolver_janela_evento(
@@ -10186,8 +10348,8 @@ class ExecutorAutomacao:
                             bloco_id=f"bloco:{ordem_evento}",
                             modo_area_busca=detalhes.get("modo_area_busca", "target_window"),
                             area_personalizada=area_personalizada,
-                            texto_ocr_esperado=texto_ocr_hibrido or detalhes.get("texto_ocr_esperado", ""),
-                            leitura_relativa={**(detalhes.get("leitura_relativa") or {}), "ocr_target_layouts": detalhes.get("ocr_target_layouts") or []},
+                            texto_ocr_esperado="" if fonte_ocr == "visual" else (texto_ocr_hibrido or detalhes.get("texto_ocr_esperado", "")),
+                            leitura_relativa={} if fonte_ocr == "visual" else {**(detalhes.get("leitura_relativa") or {}), "ocr_target_layouts": detalhes.get("ocr_target_layouts") or []},
                         )
                         if resultado or etapa_scroll >= quantidade_scrolls:
                             break

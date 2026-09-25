@@ -77,17 +77,30 @@ Exemplos de uso:
 - OpenPyXL
 - Playwright
 
+## Organizacao do projeto
+
+| Pasta | Conteudo |
+| --- | --- |
+| `tauri_gerador/` | Interface e backend do Studio. |
+| `flowdetect_agent/` | Aplicativo do Agent. |
+| `flowdetect_chrome/` | Codigo-fonte da extensao Chrome. |
+| `flowdetect_runner/` | Runner desktop. |
+| `scripts/` | Compilacao, limpeza e launchers usados no empacotamento. |
+| `docs/` | Guias de compilacao, Agent e Hyper-V. |
+| `tests/` | Testes automatizados. |
+
+Os arquivos Python da raiz sao o runtime compartilhado pelos aplicativos. Os dados de automacoes, planilhas e imagens ficam nas pastas proprias. Consulte os guias de [compilacao](docs/COMPILACAO.md), [Agent](docs/README_AGENTE.md) e [Hyper-V](docs/HYPERV_AGENTES.md).
+
 ## Rodar em Desenvolvimento
 
 ```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys\tauri_gerador
-& "C:\Program Files\nodejs\npm.cmd" run tauri:dev
+cd tauri_gerador
+npm.cmd run tauri:dev
 ```
 
 ## Instalar Dependencias Python
 
 ```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
 python -m pip install -r requirements.txt
 python -m playwright install
 ```
@@ -95,8 +108,7 @@ python -m playwright install
 ## Compilar
 
 ```powershell
-cd C:\Users\kaua\Desktop\Capturar_atalhos_hotkeys
-powershell -ExecutionPolicy Bypass -File .\compilar_gerador_exe.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\compilar_gerador_exe.ps1
 ```
 
 ## Extensão para Chrome

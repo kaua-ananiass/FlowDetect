@@ -1,8 +1,8 @@
 @echo off
 setlocal
-cd /d "%~dp0"
-
 set "FLOW_ROOT=%~dp0"
+if exist "%~dp0..\..\executar_automacao.py" for %%I in ("%~dp0..\..") do set "FLOW_ROOT=%%~fI\"
+cd /d "%FLOW_ROOT%"
 if "%FLOW_ROOT:~-1%"=="\" set "FLOW_ROOT=%FLOW_ROOT:~0,-1%"
 for %%I in ("%FLOW_ROOT%") do set "FLOW_ROOT_NAME=%%~nxI"
 if /I "%FLOW_ROOT_NAME%"=="resources" for %%I in ("%FLOW_ROOT%\..") do set "FLOW_ROOT=%%~fI"

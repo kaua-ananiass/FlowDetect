@@ -23,6 +23,8 @@ assist_test_stderr.log
 tauri_gerador_dev_stdout.log
 tauri_gerador_dev_stderr.log
 ultimo_log_launcher.txt
+diagnostico_instalacao.json
+validacao_dependencias.json
 .parar_automacao.flag
 .flowdetect_temp/
 .flowdetect_recorder/

@@ -532,7 +532,11 @@ async function executeVisualState(run, step) {
 }
 
 async function executePageStep(run, step) {
-  const response = await sendToPage(run.tabId, { type: "flowdetect-execute-step", step });
+  const response = await sendToPage(run.tabId, {
+    type: "flowdetect-execute-step",
+    step,
+    run_id: `${run.id}:${run.spreadsheetLoop?.row ?? ""}`,
+  });
   if (!response?.ok) throw new Error(response?.error || "A etapa não foi concluída.");
   await aguardarTransicaoDaPagina(run.tabId, step.timeout_ms || 12000);
   return response.message || "Etapa concluída.";

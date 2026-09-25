@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_RUNTIME_VERSION = "0.2.19";
+const CONTENT_RUNTIME_VERSION = "0.2.21";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
@@ -13,6 +13,8 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     .trim()
     .toLocaleLowerCase("pt-BR");
   const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
+  let currentRunId = "";
+  let lastOcrClickPoint = null;
 
   function escapeCss(value) {
     return globalThis.CSS?.escape ? CSS.escape(String(value)) : String(value).replace(/(["\\#.:,[\]>+~*^$|= !])/g, "\\$1");
@@ -42,6 +44,25 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     return meaningfulTerms.length > 0 && meaningfulTerms.every((term) => text.includes(term));
   }
 
+  function textRectWithinElement(element, query) {
+    if (!element || !query || !document.createRange || !document.createTreeWalker) return null;
+    const terms = String(query).trim().split(/\s+/).filter(Boolean);
+    if (!terms.length) return null;
+    const pattern = new RegExp(terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "i");
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const match = pattern.exec(String(node.nodeValue || ""));
+      if (!match) continue;
+      const range = document.createRange();
+      range.setStart(node, match.index);
+      range.setEnd(node, match.index + match[0].length);
+      const rect = [...range.getClientRects()].find((item) => item.width > 0 && item.height > 0);
+      if (rect) return rect;
+    }
+    return null;
+  }
+
   function findStaticTextTarget(expected) {
     const selectors = [
       "[role='alert']", "[role='status']", "[role='banner']", "output",
@@ -55,7 +76,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       .sort((first, second) => first.text.length - second.text.length);
     if (!matches.length) return null;
     const match = matches[0];
-    return { element: match.element, rect: match.element.getBoundingClientRect(), text: match.text };
+    return { element: match.element, rect: textRectWithinElement(match.element, match.text) || match.element.getBoundingClientRect(), text: match.text };
   }
 
   function findRenderedTextTarget(text) {
@@ -90,7 +111,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     const candidates = [...document.querySelectorAll(selectors)].filter(isVisible);
     const direct = candidates.find((element) => normalize(elementText(element)) === expected)
       || candidates.find((element) => textMatches(elementText(element), expected));
-    if (direct) return { element: direct, rect: direct.getBoundingClientRect(), text: elementText(direct) };
+    if (direct) return { element: direct, rect: textRectWithinElement(direct, text) || direct.getBoundingClientRect(), text: elementText(direct) };
 
     const staticTarget = findStaticTextTarget(expected);
     if (staticTarget) return staticTarget;
@@ -119,7 +140,9 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       if (!isVisible(element)) continue;
       const range = document.createRange();
       range.selectNodeContents(node);
-      const rect = [...range.getClientRects()].find((item) => item.width > 0 && item.height > 0) || element.getBoundingClientRect();
+      const rect = textRectWithinElement(element, text)
+        || [...range.getClientRects()].find((item) => item.width > 0 && item.height > 0)
+        || element.getBoundingClientRect();
       if (rect.width > 0 || rect.height > 0) return { element, rect, text: node.nodeValue.trim() };
     }
     return null;
@@ -205,7 +228,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     try { return !element.matches?.(":disabled"); } catch (_) { return true; }
   }
 
-  async function waitForClickableTarget(target, point = null, timeoutMs = 10000) {
+  async function waitForClickableTarget(target, point = null, timeoutMs = 10000, preferTarget = false) {
     const timeout = Math.max(500, Number(timeoutMs || 10000));
     const deadline = Date.now() + timeout;
     const x = Number(point?.x);
@@ -215,7 +238,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       const atRecognizedPoint = Number.isFinite(x) && Number.isFinite(y)
         ? document.elementFromPoint(x, y)
         : null;
-      const clickable = focusableTarget(atRecognizedPoint || target);
+      const clickable = focusableTarget(preferTarget ? target : (atRecognizedPoint || target));
       if (clickable && isVisible(clickable) && isClickReady(clickable)) return clickable;
       if (Date.now() + retryDelay > deadline) break;
       await sleep(retryDelay);
@@ -223,13 +246,13 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     throw new Error("O alvo encontrado permaneceu desativado e nao recebeu o clique.");
   }
 
-  function clickTarget(target, clicks = 1, point = null) {
+  function clickTarget(target, clicks = 1, point = null, preferTarget = false) {
     const x = Number(point?.x);
     const y = Number(point?.y);
     const atRecognizedPoint = Number.isFinite(x) && Number.isFinite(y)
       ? document.elementFromPoint(x, y)
       : null;
-    const clickable = focusableTarget(atRecognizedPoint || target);
+    const clickable = focusableTarget(preferTarget ? target : (atRecognizedPoint || target));
     if (!clickable || !isVisible(clickable)) throw new Error("O alvo reconhecido nao esta visivel para receber o clique.");
     if (!isClickReady(clickable)) throw new Error("O alvo reconhecido esta desativado e nao recebeu o clique.");
     clickable?.focus?.({ preventScroll: true });
@@ -246,6 +269,24 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       clickable.click();
     }
     return clickable;
+  }
+
+  function preciseClickTarget(point) {
+    const selector = "button, a, input[type='button'], input[type='checkbox'], input[type='radio'], [role='button'], [role='checkbox'], [role='menuitem']";
+    const candidates = document.querySelectorAll?.(selector) || [];
+    let best = null;
+    for (const element of candidates) {
+      const rect = element.getBoundingClientRect?.();
+      if (!rect || rect.width <= 0 || rect.height <= 0 || rect.width > 96 || rect.height > 96) continue;
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const distance = Math.hypot(centerX - point.x, centerY - point.y);
+      if (distance > 24 || !isVisible(element)) continue;
+      if (!best || distance < best.distance || (distance === best.distance && rect.width * rect.height < best.area)) {
+        best = { element, point: { x: centerX, y: centerY }, distance, area: rect.width * rect.height };
+      }
+    }
+    return best;
   }
 
   function setContentEditableValue(element, value, append) {
@@ -348,6 +389,10 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
 
   async function executeElementAction(step) {
     const element = await waitForElement(step.selector, step.timeout_ms);
+    if (step.require_unique && step.selector?.method === "css") {
+      const count = document.querySelectorAll(step.selector.value).length;
+      if (count !== 1) throw new Error(`O seletor encontrou ${count} elementos; precisa encontrar exatamente 1.`);
+    }
     element.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
     await sleep(120);
     highlight(element);
@@ -381,11 +426,12 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       return "Opção marcada.";
     }
     const clickable = await waitForClickableTarget(element, null, step.timeout_ms);
-    clickTarget(clickable);
+    clickTarget(clickable, Math.max(1, Number(step.clicks || 1)));
     return "Clique executado.";
   }
 
   async function executeOcrText(step) {
+    lastOcrClickPoint = null;
     const shouldClick = Boolean(step.click) && !["confirmar", "esperar", "verificar"].includes(String(step.action || "").toLowerCase());
     const target = await waitForTextTarget(step.text, step.timeout_ms, step.attempts, step.interval_ms, {
       allowDocumentText: !shouldClick
@@ -394,28 +440,55 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     await sleep(180);
     const refreshedTarget = findTextTarget(step.text, { allowDocumentText: !shouldClick }) || target;
     const rect = refreshedTarget.rect || refreshedTarget.element.getBoundingClientRect();
+    const anchor = step.click_anchor;
+    const useMarkedArea = anchor
+      && Number.isFinite(Number(anchor.from_text_left))
+      && Number.isFinite(Number(anchor.from_text_top));
+    const rawX = useMarkedArea
+      ? rect.left + Number(anchor.from_text_left)
+      : rect.left + rect.width / 2 + Number(step.offset_x || 0);
+    const rawY = useMarkedArea
+      ? rect.top + Number(anchor.from_text_top)
+      : rect.top + rect.height / 2 + Number(step.offset_y || 0);
+    if (rawX < 0 || rawY < 0 || rawX >= innerWidth || rawY >= innerHeight) {
+      throw new Error("O marcador Clique ficou fora da area visivel da pagina. Ajuste sua posicao no bloco OCR.");
+    }
     const clickPoint = {
-      x: Math.max(1, Math.min(innerWidth - 1, rect.left + rect.width / 2 + Number(step.offset_x || 0))),
-      y: Math.max(1, Math.min(innerHeight - 1, rect.top + rect.height / 2 + Number(step.offset_y || 0)))
+      x: rawX,
+      y: rawY
     };
+    // Texto encontrado somente no corpo inteiro da pagina confirma a etapa,
+    // mas nao fornece um ponto preciso para o bloco de mouse seguinte.
+    lastOcrClickPoint = refreshedTarget.documentText ? null : clickPoint;
     highlightRect(rect, { color: "#44b9ff", label: "OCR" });
     if (shouldClick) {
-      const clickable = await waitForClickableTarget(refreshedTarget.element, clickPoint, step.timeout_ms);
-      clickTarget(clickable, step.clicks, clickPoint);
+      const precise = preciseClickTarget(clickPoint);
+      const finalPoint = precise?.point || clickPoint;
+      const clickable = await waitForClickableTarget(precise?.element || refreshedTarget.element, finalPoint, step.timeout_ms, Boolean(precise));
+      clickTarget(clickable, step.clicks, finalPoint, Boolean(precise));
+      lastOcrClickPoint = finalPoint;
+      return `OCR encontrou "${String(step.text).slice(0, 80)}" e clicou em ${Math.round(finalPoint.x)}, ${Math.round(finalPoint.y)} (${String(clickable.tagName || "elemento").toLowerCase()}).`;
     }
     return `OCR encontrou “${String(step.text).slice(0, 80)}”${shouldClick ? " e clicou" : ""}.`;
   }
 
   async function clickAt(step) {
-    const x = Number(step.x || 0); const y = Number(step.y || 0);
+    const relativeToOcr = step.coordinate_space === "last_ocr_click";
+    if (relativeToOcr && !lastOcrClickPoint) {
+      throw new Error("O clique depende do OCR anterior, mas nenhum texto foi confirmado nesta execucao.");
+    }
+    const x = Number(step.x || 0) + (relativeToOcr ? lastOcrClickPoint.x : 0);
+    const y = Number(step.y || 0) + (relativeToOcr ? lastOcrClickPoint.y : 0);
     if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) throw new Error(`Clique ${Math.round(x)}, ${Math.round(y)} está fora da aba visível.`);
-    const target = document.elementFromPoint(x, y);
+    const precise = relativeToOcr ? preciseClickTarget({ x, y }) : null;
+    const finalPoint = precise?.point || { x, y };
+    const target = precise?.element || document.elementFromPoint(finalPoint.x, finalPoint.y);
     if (!target) throw new Error("Não encontrei um elemento na coordenada do clique.");
     const rect = target.getBoundingClientRect();
-    highlightRect(rect.width && rect.height ? rect : { left: x - 5, top: y - 5, width: 10, height: 10 }, { color: "#54ecd2", label: "CLIQUE" });
-    const clickable = await waitForClickableTarget(target, { x, y }, step.timeout_ms);
-    clickTarget(clickable, step.clicks, { x, y });
-    return `Clique executado em ${Math.round(x)}, ${Math.round(y)}.`;
+    highlightRect(rect.width && rect.height ? rect : { left: finalPoint.x - 5, top: finalPoint.y - 5, width: 10, height: 10 }, { color: "#54ecd2", label: "CLIQUE" });
+    const clickable = await waitForClickableTarget(target, finalPoint, step.timeout_ms, Boolean(precise));
+    clickTarget(clickable, step.clicks, finalPoint, Boolean(precise));
+    return `Clique executado em ${Math.round(finalPoint.x)}, ${Math.round(finalPoint.y)} (${String(clickable.tagName || "elemento").toLowerCase()}).`;
   }
 
   async function visualCoordinate(request) {
@@ -443,6 +516,10 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       return true;
     }
     if (request?.type !== "flowdetect-execute-step-v2") return;
+    if (request.run_id && request.run_id !== currentRunId) {
+      currentRunId = request.run_id;
+      lastOcrClickPoint = null;
+    }
     const step = request.step || {};
     let execute;
     if (step.type === "ocr_text") execute = executeOcrText(step);

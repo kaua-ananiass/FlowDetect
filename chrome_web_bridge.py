@@ -399,11 +399,26 @@ def main():
                 page.bring_to_front()
             except Exception:
                 pass
-            found = test_details(page, details, args.timeout)
+            if details.get("require_unique"):
+                target = details.get("alvo") or {}
+                locator = locator_from_target(page, target)
+                try:
+                    locator.first.wait_for(state="visible", timeout=args.timeout)
+                except Exception:
+                    pass
+                count = locator.count()
+                found = count == 1 and locator.first.is_visible()
+                message = (
+                    "Elemento unico e visivel encontrado no Chrome." if found else
+                    f"O seletor encontrou {count} elemento(s) na aba. Ajuste-o para encontrar exatamente um elemento visivel."
+                )
+            else:
+                found = test_details(page, details, args.timeout)
+                message = "Elemento encontrado com sucesso." if found else "Nao encontrei esse elemento. Deseja capturar novamente?"
             json_print({
                 "ok": found,
                 "source": source,
-                "message": "Elemento encontrado com sucesso." if found else "Nao encontrei esse elemento. Deseja capturar novamente?",
+                "message": message,
             })
             return
     except Exception as error:

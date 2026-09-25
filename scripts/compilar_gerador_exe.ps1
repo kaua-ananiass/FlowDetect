@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = Split-Path -Parent $PSScriptRoot
 $tauriDir = Join-Path $root "tauri_gerador"
 $outputRoot = Join-Path $root "saida_exe"
 $packageDir = Join-Path $outputRoot "FlowDetect_Portatil"
@@ -300,15 +300,12 @@ $itemsToCopy = @(
     "capturar_mouse_global.py",
     "diagnostico_ambiente.py",
     "executar_automacao.py",
-    "executar_automacao.bat",
     "gerenciar_roteiro.py",
     "gerenciar_dados_planilha.py",
     "listar_janelas_abertas.py",
     "comandos_teclado.py",
     "validar_dependencias_instaladas.py",
     "requirements.txt",
-    "instalar_dependencias_silencioso.bat",
-    "README_AGENTE.md",
     "mapeamento_teclado.json"
 )
 
@@ -316,6 +313,11 @@ foreach ($item in $itemsToCopy) {
     $source = Join-Path $root $item
     Copy-PathIfExists -Source $source -Destination $packageDir
 }
+
+foreach ($item in @('executar_automacao.bat', 'instalar_dependencias_silencioso.bat')) {
+    Copy-PathIfExists -Source (Join-Path $root "scripts\runtime\$item") -Destination $packageDir
+}
+Copy-PathIfExists -Source (Join-Path $root 'docs\README_AGENTE.md') -Destination $packageDir
 
 Copy-PathIfExists -Source (Join-Path $root "hyperv_setup") -Destination $packageDir
 
