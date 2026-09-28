@@ -6,6 +6,7 @@ const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
 const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "spreadsheetRowData", "spreadsheetColumnValue", "reportColumnValue", "reportStepForRow", "recordReportResult", "replaceVariables", "setSpreadsheetRowVariables", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "updateSpreadsheetProgress", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
+names.push("waitForRouteDelay");
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -444,4 +445,20 @@ test("visual recognition locates an image even when it has no text", () => {
   assert.equal(match.x, 4);
   assert.equal(match.y, 4);
   assert.ok(match.score > .99);
+});
+
+
+test("OCR cross-page jump waits only after recognition and before destination", async () => {
+  const timeline=[];
+  const context=runner({persistRun:async()=>{},addLog:async()=>{},sleep:async ms=>timeline.push(ms)});
+  context.executeStep=async (_run,step)=>{timeline.push(step.source_order);return {message:'found',flow:step.on_success}};
+  const steps=[{type:'ocr_text',source_order:1,sequence:'principal',on_success:{action:'ir_para_bloco',block:7,delay_ms:250}},
+    {type:'ocr_text',source_order:7,sequence:'pagina_2',on_success:{action:'continuar'}}];
+  await context.executeRange({variables:{},currentStep:0},steps,0,steps.length,new Map(),context.buildFlowIndexes(steps));
+  assert.deepEqual(timeline,[1,100,100,50,7]);
+});
+test("route wait is cancellable before the destination runs", async () => {
+  const run={cancelled:false};
+  const context=runner({addLog:async()=>{},sleep:async()=>{run.cancelled=true}});
+  await assert.rejects(context.waitForRouteDelay(run,{delay_ms:2000}),/interrompida/);
 });

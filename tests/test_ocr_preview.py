@@ -32,7 +32,8 @@ def preview_functions():
     # Top-level function closing braces in main.js are at column zero.
     source = (WEB / "main.js").read_text(encoding="utf-8-sig")
     names = (
-        "parseNumber", "normalizeStringValue", "normalizeRecognitionImagePath", "recognitionPreviewFileName",
+        "parseNumber", "normalizeTransitionDelay", "formatTransitionDelayValue",
+        "normalizeStringValue", "normalizeRecognitionImagePath", "recognitionPreviewFileName",
         "renderRecognitionPreviewCardState", "renderRecognitionPreviewPanel",
         "setRecognitionPreviewCardState", "recognitionPreviewImageMetrics",
         "offsetToPreviewPercent", "relativeOcrOverlayStyle", "clickTargetOverlayStyle",

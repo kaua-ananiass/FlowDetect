@@ -36,9 +36,34 @@ Ao atualizar de uma versão anterior, aceite as novas permissões de captura de 
 Para remover uma automacao armazenada na extensao, clique no botao **×** ao lado da quantidade de blocos e confirme a exclusao.
 Quando a automacao possuir uma planilha, escolha no card o elemento que deve iniciar o loop. A extensao mostra os valores da coluna e pula os itens anteriores.
 
-O Studio exporta os blocos web de URL, Chrome/Web, texto, tecla, clique, OCR, reconhecimento visual, verificação de estado e marcadores de loop. As imagens de referência seguem dentro do próprio `.json`, portanto a extensão não depende da pasta `imagens` do computador que gerou a automação.
+O Studio exporta os blocos web de URL, texto, tecla, OCR, reconhecimento visual, verificação de estado, planilha e marcadores de loop. As imagens de referência seguem dentro do próprio `.json`, portanto a extensão não depende da pasta `imagens` do computador que gerou a automação.
 
 O OCR da extensão lê o texto que a página disponibiliza para o navegador, inclusive rótulos e conteúdos dinâmicos. O reconhecimento visual compara a imagem de referência com a aba escolhida ao iniciar a automação. A captura permanece vinculada a essa aba enquanto a execução estiver ativa, mesmo que outra aba receba o foco. Se o Chrome encerrar essa captura, a extensão aguarda a aba da automação ficar ativa antes de usar uma captura visível. Depois de dois minutos sem imagem da aba correta, ela encerra com um erro específico, sem tratar a captura de outra aba como resultado do bloco. Blocos que controlam programas Windows continuam no Studio, pois uma extensão não tem permissão para controlar outros aplicativos.
+
+## Aguardar a tela correta antes de iniciar
+
+No card da automacao, abra **Tela da automacao** e ative **Liberar somente na tela correta**.
+Informe a URL da pagina e um texto visivel que identifique a tela inicial. O botao
+**Usar aba atual** preenche a URL; clique em **Salvar** para guardar a configuracao.
+
+A extensao identifica a aba atual e deixa **Executar automacao** desativado ate
+confirmar a URL e o texto esperado. Trocar para uma aba incorreta bloqueia o
+botao; voltar para a tela correta libera a execucao automaticamente. Nenhuma
+execucao ou captura e iniciada enquanto o botao esta bloqueado. As condicoes
+sao conferidas novamente ao clicar. Depois de iniciar, o fluxo pode mudar de tela.
+
+A URL deve ter o mesmo dominio, caminho e rota apos `#`. Parametros apos `?`
+sao ignorados. O texto e procurado no conteudo visivel da pagina. A configuracao
+e individual por automacao e fica desativada por padrao nos fluxos existentes.
+
+## Tempo entre destinos do OCR
+
+No mapa do Studio, a indicacao de destino de cada OCR tem um campo em segundos,
+inclusive para outro bloco em outra pagina. O caminho de encontrado e o de nao
+encontrado podem ter tempos diferentes. Zero segue imediatamente. O intervalo
+ocorre depois do reconhecimento/clique e antes do bloco de destino; pode ser
+cancelado em **Parar execucao**. Salve o mapa e exporte novamente para o Chrome
+para enviar esses tempos para a extensao.
 
 ## Formato do arquivo
 

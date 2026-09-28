@@ -19,6 +19,17 @@ def load_roadmap_module():
 
 
 class ChromeExtensionExportTest(unittest.TestCase):
+    def test_individual_ocr_exports_separate_transition_delays(self):
+        module = load_roadmap_module()
+        layout = {"action": "confirmar_ir_para_bloco", "block": "7", "successDelay": 1.5,
+                  "failureAction": "ir_para_bloco", "failureBlock": "9", "failureDelay": 2.4}
+        success = module.fluxo_alvo_ocr_para_chrome(layout, {}, "sucesso")
+        failure = module.fluxo_alvo_ocr_para_chrome(layout, {}, "falha")
+        self.assertEqual(success["delay_ms"], 1500)
+        self.assertEqual(failure["delay_ms"], 2400)
+        self.assertEqual(success["block"], "7")
+        self.assertEqual(failure["block"], "9")
+
     @classmethod
     def setUpClass(cls):
         cls.roadmap = load_roadmap_module()
@@ -46,12 +57,14 @@ class ChromeExtensionExportTest(unittest.TestCase):
             {
                 "ordem": 2,
                 "sequencia": "principal",
-                "tipo": "chrome_elemento_html",
+                "tipo": "procurar_texto_ocr",
                 "intervalo_antes": 0.3,
                 "detalhes": {
-                    "alvo": {"metodo": "css", "valor": "#email"},
-                    "acao": {"tipo": "preencher", "valor": "teste@flowdetect.com", "limpar_antes": True},
-                    "timeout": 8000,
+                    "fonte_ocr": "elemento",
+                    "texto": "#email",
+                    "acao": "clicar",
+                    "clicks": 1,
+                    "timeout": 8,
                 },
             },
             {
@@ -76,7 +89,7 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertEqual(exported["initial_sequence"], "principal")
         self.assertEqual([step["type"] for step in exported["steps"]], ["navigate", "element_action", "key_sequence"])
         self.assertEqual(exported["steps"][1]["selector"]["value"], "#email")
-        self.assertEqual(exported["steps"][1]["action"]["value"], "teste@flowdetect.com")
+        self.assertEqual(exported["steps"][1]["clicks"], 1)
         self.assertEqual(exported["steps"][2]["keys"], ["enter"])
         self.assertEqual(result["exported_steps"], 3)
 
@@ -237,17 +250,6 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertIsNone(warning)
         self.assertEqual([target["offset_x"] for target in step["ocr_targets"]], [160, 120])
         self.assertEqual([target["offset_y"] for target in step["ocr_targets"]], [10, 5])
-
-    def test_mouse_block_can_click_the_previous_ocr_marker(self):
-        block = {
-            "ordem": 5, "sequencia": "principal", "tipo": "mouse_click",
-            "detalhes": {"x": 0, "y": 0, "botao": "left", "cliques": 1,
-                         "coordinate_space": "last_ocr_click"},
-        }
-        step, warning = self.roadmap.converter_evento_para_chrome(block)
-        self.assertIsNone(warning)
-        self.assertEqual(step["type"], "viewport_click")
-        self.assertEqual(step["coordinate_space"], "last_ocr_click")
 
     def test_hybrid_ocr_source_can_use_only_the_reference_image(self):
         image_path = Path("imagens") / "botao.png"

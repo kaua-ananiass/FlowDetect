@@ -40,6 +40,19 @@
         <div class="loop-start" hidden>
           <label class="loop-start-label"><span>Come&ccedil;ar em</span><select class="loop-start-choice" aria-label="Elemento inicial do loop"></select></label>
         </div>
+        <details class="screen-guard-settings">
+          <summary>Tela da automa&ccedil;&atilde;o <span class="screen-guard-state"></span></summary>
+          <form class="screen-guard-form">
+            <fieldset class="screen-guard-fields">
+              <label class="screen-guard-toggle"><input class="screen-guard-enabled" type="checkbox">Liberar somente na tela correta</label>
+              <label>URL da p&aacute;gina<input class="screen-guard-url" type="url" placeholder="https://site.com/pagina" autocomplete="off"></label>
+              <label>Texto esperado<input class="screen-guard-text" type="text" placeholder="Texto vis&iacute;vel na tela inicial" autocomplete="off"></label>
+              <p>Libera Executar apenas quando a aba atual tem a URL e o texto esperados. Par&acirc;metros depois de ? s&atilde;o ignorados.</p>
+              <div class="screen-guard-actions"><button class="screen-guard-current" type="button">Usar aba atual</button><button type="submit">Salvar</button></div>
+            </fieldset>
+          </form>
+        </details>
+        <p class="screen-guard-hint" aria-live="polite" hidden></p>
         <button class="play-button run-automation" type="button"><span class="play-icon" aria-hidden="true">&#9654;</span><span>Executar automa&ccedil;&atilde;o</span></button>
         <section class="execution" hidden>
           <div class="execution-heading"><p class="execution-kicker">Execu&ccedil;&atilde;o</p><span class="execution-status"></span></div>

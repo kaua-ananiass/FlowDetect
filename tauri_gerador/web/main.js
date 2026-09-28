@@ -5626,74 +5626,6 @@ function writeCapturedShortcut(captured) {
   }
 }
 
-function writeCapturedMouse(payload) {
-  const x = Number(payload?.x ?? 0);
-  const y = Number(payload?.y ?? 0);
-  const button = String(payload?.button ?? "left").toLowerCase();
-
-  if (state.captureTarget.scope === "composer-mouse") {
-    mouseXInput.value = String(x);
-    mouseYInput.value = String(y);
-    mouseButtonInput.value = button;
-    return;
-  }
-
-  if (state.captureTarget.scope === "update-tree") {
-    const card = commandMapList.querySelector(`.command-tree-card[data-order="${state.captureTarget.order}"]`);
-    const xInput = card?.querySelector('[data-tree-field="x"]');
-    const yInput = card?.querySelector('[data-tree-field="y"]');
-    const buttonInput = card?.querySelector('[data-tree-field="button"]');
-    if (xInput) {
-      xInput.value = String(x);
-    }
-    if (yInput) {
-      yInput.value = String(y);
-    }
-    if (buttonInput) {
-      buttonInput.value = button;
-    }
-    return;
-  }
-
-  if (state.captureTarget.scope === "update-editor") {
-    const card = timelineList.querySelector(`.flow-card[data-order="${state.captureTarget.order}"]`);
-    const xInput = card?.querySelector('[data-field="x"]');
-    const yInput = card?.querySelector('[data-field="y"]');
-    const buttonInput = card?.querySelector('[data-field="button"]');
-    if (xInput) {
-      xInput.value = String(x);
-    }
-    if (yInput) {
-      yInput.value = String(y);
-    }
-    if (buttonInput) {
-      buttonInput.value = button;
-    }
-    return;
-  }
-
-  if (state.captureTarget.scope === "insert-panel") {
-    const panel = commandMapList.querySelector(`.insert-card-panel[data-target-order="${state.captureTarget.order}"]`);
-    const xInput = panel?.querySelector('[data-insert-field="x"]');
-    const yInput = panel?.querySelector('[data-insert-field="y"]');
-    const buttonInput = panel?.querySelector('[data-insert-field="button"]');
-    if (xInput) {
-      xInput.value = String(x);
-    }
-    if (yInput) {
-      yInput.value = String(y);
-    }
-    if (buttonInput) {
-      buttonInput.value = button;
-    }
-    if (state.insertPanel) {
-      state.insertPanel.x = x;
-      state.insertPanel.y = y;
-      state.insertPanel.button = button;
-    }
-  }
-}
-
 function formatMouseButtonLabel(button) {
   const labels = {
     left: "esquerdo",
@@ -9600,6 +9532,8 @@ function ocrTargetLayoutsFromContainer(container) {
       clicks: Math.max(1, Math.trunc(parseNumber(clicksField?.value, 1))),
       failureAction: normalizeOcrTargetFailureAction(row.querySelector("[data-ocr-target-failure-action]")?.value),
       failureBlock: String(row.querySelector("[data-ocr-target-failure-block]")?.value || "").trim(),
+      successDelay: normalizeTransitionDelay(row.querySelector("[data-ocr-target-success-delay]")?.value),
+      failureDelay: normalizeTransitionDelay(row.querySelector("[data-ocr-target-failure-delay]")?.value),
     };
   });
 }
@@ -9629,6 +9563,8 @@ function renderOcrTargetRows(fieldAttr, actionAttr, text = "", layouts = []) {
               <input ${fieldAttr}="ocrTargetClicks" data-ocr-target-clicks type="hidden" value="${escapeHtml(Math.max(1, Math.trunc(parseNumber(layouts?.[index]?.clicks, 1))))}" />
               <input ${fieldAttr}="ocrTargetFailureAction" data-ocr-target-failure-action type="hidden" value="${escapeHtml(normalizeOcrTargetFailureAction(layouts?.[index]?.failureAction ?? layouts?.[index]?.failure_action))}" />
               <input ${fieldAttr}="ocrTargetFailureBlock" data-ocr-target-failure-block type="hidden" value="${escapeHtml(layouts?.[index]?.failureBlock ?? layouts?.[index]?.failure_block ?? layouts?.[index]?.bloco_falha ?? "")}" />
+              <input ${fieldAttr}="ocrTargetSuccessDelay" data-ocr-target-success-delay type="hidden" value="${formatTransitionDelayValue(layouts?.[index]?.successDelay ?? layouts?.[index]?.success_delay ?? 0)}" />
+              <input ${fieldAttr}="ocrTargetFailureDelay" data-ocr-target-failure-delay type="hidden" value="${formatTransitionDelayValue(layouts?.[index]?.failureDelay ?? layouts?.[index]?.failure_delay ?? 0)}" />
             </label>
             <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo" ${targets.length <= 1 ? "disabled" : ""}>&times;</button>
           </div>
@@ -9673,6 +9609,8 @@ function addOcrTargetRow(container, fieldAttr, actionAttr, value = "") {
       <input ${fieldAttr}="ocrTargetClicks" data-ocr-target-clicks type="hidden" value="1" />
       <input ${fieldAttr}="ocrTargetFailureAction" data-ocr-target-failure-action type="hidden" value="continuar" />
       <input ${fieldAttr}="ocrTargetFailureBlock" data-ocr-target-failure-block type="hidden" value="" />
+      <input ${fieldAttr}="ocrTargetSuccessDelay" data-ocr-target-success-delay type="hidden" value="0" />
+      <input ${fieldAttr}="ocrTargetFailureDelay" data-ocr-target-failure-delay type="hidden" value="0" />
     </label>
     <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo">&times;</button>
   `;
@@ -9705,6 +9643,8 @@ function ocrTargetActionLayout(layouts = [], index = 0) {
     clicks: Math.max(1, Math.trunc(parseNumber(layout.clicks, 1))),
     failureAction: normalizeOcrTargetFailureAction(layout.failureAction ?? layout.failure_action),
     failureBlock: String(layout.failureBlock ?? layout.failure_block ?? layout.bloco_falha ?? "").trim(),
+    successDelay: normalizeTransitionDelay(layout.successDelay ?? layout.success_delay),
+    failureDelay: normalizeTransitionDelay(layout.failureDelay ?? layout.failure_delay),
   };
 }
 
@@ -9782,6 +9722,10 @@ function renderOcrTargetActionRows(details = {}, currentOrder = null) {
                   ${blockTargetOptions(targetAction.block, currentOrder, "Escolha o bloco")}
                 </select>
               </label>
+              <label class="action-target-field ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "is-ocr-target-action-hidden"}" data-ocr-target-action-fields="block" ${ocrTargetMatchNeedsBlock(targetAction.action) ? "" : "hidden"}>
+                <span>Espera antes de abrir o bloco (s)</span>
+                <input data-ocr-target-action-control="successDelay" type="number" min="0" step="0.1" value="${formatTransitionDelayValue(targetAction.successDelay)}" />
+              </label>
             </section>
             <section class="insert-outcome-group is-failure ocr-target-outcome" aria-label="Quando nao encontrar este OCR">
               <div class="insert-outcome-header"><strong>OCR nao encontrado</strong></div>
@@ -9798,6 +9742,10 @@ function renderOcrTargetActionRows(details = {}, currentOrder = null) {
                 <select data-ocr-target-action-control="failureBlock">
                   ${blockTargetOptions(targetAction.failureBlock, currentOrder, "Escolha o bloco")}
                 </select>
+              </label>
+              <label class="action-target-field ${ocrTargetFailureNeedsBlock(targetAction.failureAction) ? "" : "is-ocr-target-action-hidden"}" data-ocr-target-failure-action-fields="block" ${ocrTargetFailureNeedsBlock(targetAction.failureAction) ? "" : "hidden"}>
+                <span>Espera antes de abrir o bloco (s)</span>
+                <input data-ocr-target-action-control="failureDelay" type="number" min="0" step="0.1" value="${formatTransitionDelayValue(targetAction.failureDelay)}" />
               </label>
             </section>
           </section>
@@ -9871,6 +9819,10 @@ function syncOcrTargetActionRows(container) {
     if (failureControl) failureControl.value = normalizeOcrTargetFailureAction(failureAction);
     const failureBlockControl = actionRow.querySelector('[data-ocr-target-action-control="failureBlock"]');
     if (failureBlockControl) failureBlockControl.value = failureBlock;
+    for (const [control, selector] of [["successDelay", "[data-ocr-target-success-delay]"], ["failureDelay", "[data-ocr-target-failure-delay]"]]) {
+      const delayControl = actionRow.querySelector(`[data-ocr-target-action-control="${control}"]`);
+      if (delayControl) delayControl.value = formatTransitionDelayValue(source?.querySelector(selector)?.value ?? 0);
+    }
     applyOcrTargetActionVisibility(actionRow);
   });
 }
@@ -9906,6 +9858,8 @@ function syncOcrTargetActionControlToSource(target) {
     clicks: "[data-ocr-target-clicks]",
     failureAction: "[data-ocr-target-failure-action]",
     failureBlock: "[data-ocr-target-failure-block]",
+    successDelay: "[data-ocr-target-success-delay]",
+    failureDelay: "[data-ocr-target-failure-delay]",
   };
   const destination = source?.querySelector(fieldMap[target.dataset.ocrTargetActionControl]);
   if (!destination) return false;
@@ -9913,7 +9867,9 @@ function syncOcrTargetActionControlToSource(target) {
     ? normalizeOcrTargetAction(target.value)
     : control === "failureAction"
       ? normalizeOcrTargetFailureAction(target.value)
-      : target.value;
+      : ["successDelay", "failureDelay"].includes(control)
+        ? formatTransitionDelayValue(normalizeTransitionDelay(target.value))
+        : target.value;
   const changed = String(destination.value ?? "") !== String(nextValue ?? "");
   if (changed) destination.value = nextValue;
   if (["action", "failureAction"].includes(control)) {
@@ -18386,48 +18342,6 @@ function renderEditorFields(event) {
     `;
   }
 
-  if (event.type === "mouse_click") {
-    const clicks = Number(details.clicks ?? details.cliques ?? 1);
-    return `
-      <div class="field-stack">
-        <label>
-          <span>Posicao do clique</span>
-          <select data-field="mouseTargetMode">
-            <option value="viewport" ${details.coordinate_space !== "last_ocr_click" ? "selected" : ""}>Coordenada fixa da aba</option>
-            <option value="last_ocr_click" ${details.coordinate_space === "last_ocr_click" ? "selected" : ""}>Marcador Clique do OCR anterior</option>
-          </select>
-        </label>
-        <div class="triple-grid">
-          <label>
-            <span>X</span>
-            <input data-field="x" type="number" step="1" value="${escapeHtml(details.x ?? 0)}" />
-          </label>
-          <label>
-            <span>Y</span>
-            <input data-field="y" type="number" step="1" value="${escapeHtml(details.y ?? 0)}" />
-          </label>
-          <label>
-            <span>Botao</span>
-            <select data-field="button">
-              <option value="left" ${details.botao === "left" ? "selected" : ""}>Esquerdo</option>
-              <option value="right" ${details.botao === "right" ? "selected" : ""}>Direito</option>
-              <option value="middle" ${details.botao === "middle" ? "selected" : ""}>Meio</option>
-            </select>
-          </label>
-          <label>
-            <span>Cliques</span>
-            <select data-field="clicks">
-              <option value="1" ${clicks === 1 ? "selected" : ""}>1 clique</option>
-              <option value="2" ${clicks === 2 ? "selected" : ""}>2 cliques</option>
-            </select>
-          </label>
-        </div>
-        <button class="tree-open-button capture-mouse-inline-button" data-action="record-mouse" type="button">Capturar mouse</button>
-        ${delayField}
-      </div>
-    `;
-  }
-
   if (event.type === "clicar_imagem") {
     const relativeOcr = recognitionRelativeOcrDetails(details);
     const clickTarget = recognitionClickTargetDetails(details);
@@ -18521,10 +18435,6 @@ function renderEditorFields(event) {
         ${delayField}
       </div>
     `;
-  }
-
-  if (event.type === "chrome_elemento_html") {
-    return renderChromeBlockFields(event, "card", event.order);
   }
 
   if (event.type === "abrir_url") {
@@ -18733,61 +18643,12 @@ function renderTreeEditorFields(event) {
     `;
   }
 
-  if (event.type === "mouse_click") {
-    const clicks = Number(details.clicks ?? details.cliques ?? 1);
-    return `
-      <div class="field-stack">
-        <label>
-          <span>Posicao do clique</span>
-          <select data-tree-field="mouseTargetMode">
-            <option value="viewport" ${details.coordinate_space !== "last_ocr_click" ? "selected" : ""}>Coordenada fixa da aba</option>
-            <option value="last_ocr_click" ${details.coordinate_space === "last_ocr_click" ? "selected" : ""}>Marcador Clique do OCR anterior</option>
-          </select>
-        </label>
-        <p class="recognition-card-helper">Na extensao Chrome, use So confirmar no OCR anterior. Este bloco clica no marcador Clique dele; X e Y abaixo sao ajustes adicionais.</p>
-        <div class="tree-inline-fields-wide">
-          <label>
-            <span>X</span>
-            <input data-tree-field="x" type="number" step="1" value="${escapeHtml(details.x ?? 0)}" />
-          </label>
-          <label>
-            <span>Y</span>
-            <input data-tree-field="y" type="number" step="1" value="${escapeHtml(details.y ?? 0)}" />
-          </label>
-          <label>
-            <span>Botao</span>
-            <select data-tree-field="button">
-              <option value="left" ${details.botao === "left" ? "selected" : ""}>Esquerdo</option>
-              <option value="right" ${details.botao === "right" ? "selected" : ""}>Direito</option>
-              <option value="middle" ${details.botao === "middle" ? "selected" : ""}>Meio</option>
-            </select>
-          </label>
-          <label>
-            <span>Cliques</span>
-            <select data-tree-field="clicks">
-              <option value="1" ${clicks === 1 ? "selected" : ""}>1 clique</option>
-              <option value="2" ${clicks === 2 ? "selected" : ""}>2 cliques</option>
-            </select>
-          </label>
-        </div>
-        <button class="tree-open-button capture-mouse-inline-button" data-tree-action="record-mouse" type="button">Capturar mouse</button>
-        <div class="tree-inline-fields">
-          ${renderSuccessFlowFields("data-tree-field", details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, event.order)}
-        </div>
-      </div>
-    `;
-  }
-
   if (event.type === "clicar_imagem") {
     return renderRecognitionExpandedTreeEditor(event);
   }
 
   if (event.type === "procurar_texto_ocr") {
     return renderOcrTextFields("data-tree-field", details, event.order);
-  }
-
-  if (event.type === "chrome_elemento_html") {
-    return renderChromeBlockFields(event, "tree", event.order);
   }
 
   if (event.type === "uia_elemento") {
@@ -19250,12 +19111,6 @@ function renderInsertPanel(order) {
     .join("");
 
   const typeMeta = {
-    chrome: {
-      title: "Chrome/Web",
-      label: "Site",
-      description: "Para clicar, preencher ou ler elementos de paginas no Chrome.",
-      hint: "Depois de criar, abra os detalhes e capture o elemento.",
-    },
     uia_element: {
       title: "Mapear elemento",
       label: "Janela",
@@ -19273,12 +19128,6 @@ function renderInsertPanel(order) {
       label: "Escrita",
       description: "Para digitar um texto fixo ou um valor editavel antes da execucao.",
       hint: "Depois de criar, abra os detalhes e escreva o texto.",
-    },
-    mouse: {
-      title: "Mouse",
-      label: "Clique",
-      description: "Para clicar em uma posicao especifica da tela.",
-      hint: "Depois de criar, abra os detalhes e capture o mouse.",
     },
     image: {
       title: "Reconhecimento visual",
@@ -19374,11 +19223,9 @@ function renderInsertPanel(order) {
         <button class="micro-button" data-insert-action="cancel" type="button" ${panel.isSaving ? "disabled" : ""}>Fechar</button>
       </div>
       <div class="insert-type-row is-compact">
-        <button class="insert-type-button ${panel.type === "chrome" ? "is-active" : ""}" data-insert-type="chrome" type="button" ${panel.isSaving ? "disabled" : ""}>Chrome/Web</button>
         <button class="insert-type-button ${panel.type === "uia_element" ? "is-active" : ""}" data-insert-type="uia_element" type="button" ${panel.isSaving ? "disabled" : ""}>Mapear janela</button>
         <button class="insert-type-button ${panel.type === "key" ? "is-active" : ""}" data-insert-type="key" type="button" ${panel.isSaving ? "disabled" : ""}>Tecla</button>
         <button class="insert-type-button ${panel.type === "text" ? "is-active" : ""}" data-insert-type="text" type="button" ${panel.isSaving ? "disabled" : ""}>Texto</button>
-        <button class="insert-type-button ${panel.type === "mouse" ? "is-active" : ""}" data-insert-type="mouse" type="button" ${panel.isSaving ? "disabled" : ""}>Mouse</button>
         <button class="insert-type-button ${panel.type === "image" && String(panel.recognitionMode || "imagem") !== "texto_ocr" ? "is-active" : ""}" data-insert-type="image" data-insert-recognition-mode="imagem" type="button" ${panel.isSaving ? "disabled" : ""}>Reconhecimento</button>
         <button class="insert-type-button ${panel.type === "image" && String(panel.recognitionMode || "imagem") === "texto_ocr" ? "is-active" : ""}" data-insert-type="image" data-insert-recognition-mode="texto_ocr" type="button" ${panel.isSaving ? "disabled" : ""}>OCR + Visual</button>
         <button class="insert-type-button ${panel.type === "open_url" ? "is-active" : ""}" data-insert-type="open_url" type="button" ${panel.isSaving ? "disabled" : ""}>Abrir URL</button>
@@ -19449,40 +19296,6 @@ function renderInsertPanel(order) {
         </div>
       </div>
     `;
-  } else if (panel.type === "mouse") {
-    body = `
-      <div class="field-stack">
-        <div class="tree-inline-fields-wide">
-          <label>
-            <span>X</span>
-            <input data-insert-field="x" type="number" step="1" value="${escapeHtml(panel.x)}" />
-          </label>
-          <label>
-            <span>Y</span>
-            <input data-insert-field="y" type="number" step="1" value="${escapeHtml(panel.y)}" />
-          </label>
-          <label>
-            <span>Botao</span>
-            <select data-insert-field="button">
-              <option value="left" ${panel.button === "left" ? "selected" : ""}>Esquerdo</option>
-              <option value="right" ${panel.button === "right" ? "selected" : ""}>Direito</option>
-              <option value="middle" ${panel.button === "middle" ? "selected" : ""}>Meio</option>
-            </select>
-          </label>
-          <label>
-            <span>Cliques</span>
-            <select data-insert-field="clicks">
-              <option value="1" ${Number(panel.clicks ?? 1) === 1 ? "selected" : ""}>1 clique</option>
-              <option value="2" ${Number(panel.clicks ?? 1) === 2 ? "selected" : ""}>2 cliques</option>
-            </select>
-          </label>
-        </div>
-        <button class="tree-open-button capture-mouse-inline-button" data-insert-action="record-mouse" type="button">Capturar mouse</button>
-        <div class="tree-inline-fields">
-          ${renderSuccessFlowFields("data-insert-field", panel.successAction ?? "continuar", panel.successBlock ?? "", panel.successSequence ?? "", panel.successSequenceDelay ?? 0, order)}
-        </div>
-      </div>
-    `;
   } else if (panel.type === "loop_start" || panel.type === "loop_end") {
     body = `
       <div class="field-stack loop-marker-note">
@@ -19529,151 +19342,6 @@ function renderInsertPanel(order) {
       sequencia_sucesso: panel.successSequence,
       atraso_antes_sequencia_sucesso: panel.successSequenceDelay,
     }, order);
-  } else if (panel.type === "chrome") {
-    const analysis = panel.chromeAnalysis || {};
-    body = `
-      <div class="field-stack">
-        <label>
-          <span>Nome do bloco</span>
-          <input data-insert-field="chromeName" type="text" value="${escapeHtml(panel.chromeName ?? "Chrome / Elemento HTML")}" />
-        </label>
-        <label>
-          <span>HTML do elemento</span>
-          <textarea data-insert-field="chromeHtml" rows="5" placeholder="<input ...> ou <button ...>">${escapeHtml(panel.chromeHtml ?? "")}</textarea>
-        </label>
-        <div class="chrome-web-panel-status">Chrome/Web pronto</div>
-        <input data-insert-field="chromeAnalysis" type="hidden" value="${escapeHtml(JSON.stringify(analysis))}" />
-        <div class="recognition-action-row">
-          <button class="tree-open-button chrome-open-direct-button" data-insert-action="open-chrome-capture" type="button">Abrir Chrome para captura</button>
-          <button class="tree-open-button chrome-capture-direct-button" data-insert-action="capture-chrome-element" type="button">Capturar elemento</button>
-          <button class="tree-open-button" data-insert-action="analyze-chrome-html" type="button">Analisar ficha</button>
-          <button class="tree-open-button" data-insert-action="test-chrome-element" type="button">Testar</button>
-        </div>
-        <div class="chrome-preview-card" data-chrome-preview>
-          ${renderChromePreviewHtml(analysis)}
-        </div>
-        <div class="tree-inline-fields">
-          <label>
-            <span>Metodo de busca</span>
-            <select data-insert-field="chromeTargetMethod">
-              ${renderChromeMethodOptions(analysis, panel.chromeTargetMethod ?? analysis?.alvo_recomendado?.metodo ?? "css")}
-            </select>
-          </label>
-          <label>
-            <span>Alvo</span>
-            <input data-insert-field="chromeTargetValue" type="text" value="${escapeHtml(panel.chromeTargetValue ?? analysis?.alvo_recomendado?.valor ?? "")}" />
-          </label>
-          <label>
-            <span>AÃ§Ã£o</span>
-            <select data-insert-field="chromeActionType">
-              ${renderChromeActionOptions(chromeKindFromAnalysis(analysis), panel.chromeActionType ?? analysis?.acao_sugerida?.tipo ?? "clicar")}
-            </select>
-          </label>
-          <label>
-            <span>Origem do valor</span>
-            <select data-insert-field="chromeValueSource">
-              <option value="texto_fixo" ${String(panel.chromeValueSource ?? analysis?.acao_sugerida?.origem_valor ?? "texto_fixo") === "texto_fixo" ? "selected" : ""}>Texto fixo</option>
-              <option value="variavel" ${String(panel.chromeValueSource ?? "") === "variavel" ? "selected" : ""}>Variavel</option>
-              <option value="planilha" ${String(panel.chromeValueSource ?? "") === "planilha" ? "selected" : ""}>Planilha</option>
-            </select>
-          </label>
-          <label>
-            <span>Valor</span>
-            <input data-insert-field="chromeActionValue" type="text" value="${escapeHtml(panel.chromeActionValue ?? analysis?.acao_sugerida?.valor ?? "")}" />
-          </label>
-          <label>
-            <span>Salvar texto em</span>
-            <input data-insert-field="chromeSaveAs" type="text" value="${escapeHtml(panel.chromeSaveAs ?? "")}" />
-          </label>
-          <label>
-            <span>Timeout (ms)</span>
-            <input data-insert-field="chromeTimeout" type="number" min="500" step="500" value="${escapeHtml(panel.chromeTimeout ?? 10000)}" />
-          </label>
-          <label>
-            <span>Pressionar depois</span>
-            <select data-insert-field="chromePressAfter">
-              <option value="" ${!(panel.chromePressAfter) ? "selected" : ""}>Nada</option>
-              <option value="Enter" ${String(panel.chromePressAfter ?? "") === "Enter" ? "selected" : ""}>Enter</option>
-              <option value="Tab" ${String(panel.chromePressAfter ?? "") === "Tab" ? "selected" : ""}>Tab</option>
-            </select>
-          </label>
-          <label>
-            <span>Ao concluir</span>
-            <select data-insert-field="chromeSuccessAction">
-              <option value="continuar" ${String(panel.chromeSuccessAction ?? "continuar") === "continuar" ? "selected" : ""}>Continuar</option>
-              <option value="ir_para_sequencia" ${String(panel.chromeSuccessAction ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para pagina</option>
-              <option value="ir_para_bloco" ${String(panel.chromeSuccessAction ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
-            </select>
-          </label>
-          ${renderActionTargetFields(
-            "data-insert-field",
-            "chromeSuccessAction",
-            panel.chromeSuccessAction ?? "continuar",
-            "chromeSuccessSequence",
-            panel.chromeSuccessSequence ?? "pagina_2",
-            "chromeSuccessBlock",
-            panel.chromeSuccessBlock ?? "",
-            order,
-            {
-              sequenceLabel: "Pagina apos sucesso",
-              blockLabel: "Bloco apos sucesso",
-              delayFieldName: "chromeSuccessSequenceDelay",
-              delayValue: panel.chromeSuccessSequenceDelay ?? 0,
-              delayLabel: "Esperar antes da troca (s)",
-            }
-          )}
-          <label>
-            <span>Falha</span>
-            <select data-insert-field="chromeFailureAction">
-              <option value="parar" ${String(panel.chromeFailureAction ?? "parar") === "parar" ? "selected" : ""}>Parar</option>
-              <option value="continuar" ${String(panel.chromeFailureAction ?? "") === "continuar" ? "selected" : ""}>Continuar</option>
-              <option value="tentar_novamente" ${String(panel.chromeFailureAction ?? "") === "tentar_novamente" ? "selected" : ""}>Tentar novamente</option>
-              <option value="ir_para_sequencia" ${String(panel.chromeFailureAction ?? "") === "ir_para_sequencia" ? "selected" : ""}>Ir para pagina</option>
-              <option value="ir_para_bloco" ${String(panel.chromeFailureAction ?? "") === "ir_para_bloco" ? "selected" : ""}>Ir para bloco</option>
-            </select>
-          </label>
-          ${renderActionTargetFields(
-            "data-insert-field",
-            "chromeFailureAction",
-            panel.chromeFailureAction ?? "parar",
-            "chromeFailureSequence",
-            panel.chromeFailureSequence ?? "pagina_2",
-            "chromeFailureBlock",
-            panel.chromeFailureBlock ?? "",
-            order,
-            {
-              sequenceLabel: "Pagina em caso de falha",
-              blockLabel: "Ir para bloco",
-              delayFieldName: "chromeFailureSequenceDelay",
-              delayValue: panel.chromeFailureSequenceDelay ?? 0,
-              delayLabel: "Esperar antes da troca (s)",
-            }
-          )}
-          <label>
-            <span>Tentativas</span>
-            <input data-insert-field="chromeRetryCount" type="number" min="1" step="1" value="${escapeHtml(panel.chromeRetryCount ?? 1)}" />
-          </label>
-          <label>
-            <span>Intervalo tentativas</span>
-            <input data-insert-field="chromeRetryInterval" type="number" min="0" step="0.5" value="${escapeHtml(panel.chromeRetryInterval ?? 0.5)}" />
-          </label>
-        </div>
-        <div class="inline-field">
-          <label class="inline-checkbox">
-            <input data-insert-field="chromeClearBefore" type="checkbox" ${panel.chromeClearBefore !== false ? "checked" : ""} />
-            <span>Limpar antes</span>
-          </label>
-          <label class="inline-checkbox">
-            <input data-insert-field="chromeFallbackVisual" type="checkbox" ${panel.chromeFallbackVisual ? "checked" : ""} />
-            <span>Fallback visual</span>
-          </label>
-          <div class="capture-inline">
-            <input data-insert-field="chromeFallbackImage" type="text" value="${escapeHtml(panel.chromeFallbackImage ?? "")}" placeholder="imagens/campo.png" />
-            <button class="tree-open-button" data-insert-action="select-chrome-fallback-image" type="button">Selecionar fallback</button>
-          </div>
-        </div>
-      </div>
-    `;
   } else if (panel.type === "uia_element") {
     const selectedElement = panel.uiaElement || selectedUiaElement();
     body = `
@@ -19794,10 +19462,8 @@ function renderInsertPanel(order) {
         <button class="micro-button" data-insert-action="cancel">Fechar</button>
       </div>
       <div class="insert-type-row">
-        <button class="insert-type-button ${panel.type === "chrome" ? "is-active" : ""}" data-insert-type="chrome">Chrome/Web</button>
         <button class="insert-type-button ${panel.type === "key" ? "is-active" : ""}" data-insert-type="key">Tecla</button>
         <button class="insert-type-button ${panel.type === "text" ? "is-active" : ""}" data-insert-type="text">Texto</button>
-        <button class="insert-type-button ${panel.type === "mouse" ? "is-active" : ""}" data-insert-type="mouse">Mouse</button>
         <button class="insert-type-button ${panel.type === "image" ? "is-active" : ""}" data-insert-type="image">Reconhecimento</button>
         <button class="insert-type-button ${panel.type === "open_url" ? "is-active" : ""}" data-insert-type="open_url">Abrir URL</button>
         <button class="insert-type-button ${panel.type === "open_program" ? "is-active" : ""}" data-insert-type="open_program">Abrir Programa</button>
@@ -19883,42 +19549,6 @@ function beginKeyCapture(target) {
   state.captureTarget = { ...target, mode: "key", requestId: ++state.captureSequence };
   showCaptureOverlay("Aperte a tecla ou o atalho desejado. Quando capturar, esta janela some automaticamente.");
   setMessage("Pressione a tecla ou combinacao agora. Use ESC para cancelar.", "success");
-}
-
-async function beginMouseCapture(target) {
-  if (state.captureTarget) {
-    setMessage("Ja existe uma captura em andamento.", "error");
-    return;
-  }
-
-  clearCaptureBlurTimer();
-  const requestId = ++state.captureSequence;
-  state.captureTarget = { ...target, mode: "mouse", requestId };
-  showCaptureOverlay("Clique no ponto exato da tela. Vamos capturar a posicao do mouse e o botao usado nesse clique.");
-  setMessage("Captura de mouse iniciada. Clique na tela desejada para preencher o bloco.", "success");
-
-  try {
-    const payload = await invoke("capture_mouse_click");
-    if (!state.captureTarget || state.captureTarget.mode !== "mouse" || state.captureTarget.requestId !== requestId) {
-      return;
-    }
-
-    writeCapturedMouse(payload);
-    state.captureTarget = null;
-    hideCaptureOverlay();
-    setMessage(
-      `Clique gravado: ${formatMouseButtonLabel(payload.button)} em X ${payload.x} | Y ${payload.y}.`,
-      "success"
-    );
-  } catch (error) {
-    if (!state.captureTarget || state.captureTarget.mode !== "mouse" || state.captureTarget.requestId !== requestId) {
-      return;
-    }
-
-    state.captureTarget = null;
-    hideCaptureOverlay();
-    setMessage(String(error), "error");
-  }
 }
 
 window.addEventListener("keydown", (event) => {
@@ -20551,6 +20181,10 @@ function resolveCommandMapTreeTarget(route, event, index, events, context) {
 function getCommandMapTreeBranchTargetKey(branch) {
   const kind = String(branch?.kind || "success").trim().toLowerCase() || "success";
   const targetOrder = Number(branch?.targetEvent?.order || branch?.targetOrder || 0);
+  if (Number.isInteger(branch?.ocrIndex) && branch.ocrIndex >= 0) {
+    // Cada alvo OCR conserva sua propria espera, mesmo com o mesmo destino.
+    return `${kind}:ocr:${branch.ocrIndex}:${targetOrder || String(branch?.targetLabel || "")}`;
+  }
   if (Number.isFinite(targetOrder) && targetOrder > 0) {
     if (kind === "ocr_action") {
       return `ocr:${String(branch?.ocrColor || "").trim().toLowerCase()}:${targetOrder}`;
@@ -20616,7 +20250,7 @@ function getCommandMapOcrActionBranches(event, index, events, context) {
     if (["clicar_ir_para_bloco", "confirmar_ir_para_bloco"].includes(action)
       && Number.isFinite(targetBlock) && targetBlock > 0) {
       const target = resolveCommandMapTreeTarget(
-        { action: "ir_para_bloco", block: targetBlock, delay: 0 },
+        { action: "ir_para_bloco", block: targetBlock, delay: normalizeTransitionDelay(layout.successDelay ?? layout.success_delay) },
         event,
         index,
         events,
@@ -20629,8 +20263,8 @@ function getCommandMapOcrActionBranches(event, index, events, context) {
           ocrIndex: indexOcr,
           label: `OCR ${indexOcr + 1}`,
           ...target,
-          editableDelay: "",
-          hideDelay: true,
+          editableDelay: "ocr",
+          hideDelay: false,
         });
       }
     }
@@ -20643,7 +20277,7 @@ function getCommandMapOcrActionBranches(event, index, events, context) {
     );
     if (failureAction === "ir_para_bloco" && Number.isFinite(failureBlock) && failureBlock > 0) {
       const failureTarget = resolveCommandMapTreeTarget(
-        { action: "ir_para_bloco", block: failureBlock, delay: 0 },
+        { action: "ir_para_bloco", block: failureBlock, delay: normalizeTransitionDelay(layout.failureDelay ?? layout.failure_delay) },
         event,
         index,
         events,
@@ -20655,8 +20289,8 @@ function getCommandMapOcrActionBranches(event, index, events, context) {
           ocrIndex: indexOcr,
           label: `OCR ${indexOcr + 1} nao achou`,
           ...failureTarget,
-          editableDelay: "",
-          hideDelay: true,
+          editableDelay: "ocr",
+          hideDelay: false,
         });
       }
     }
@@ -20739,34 +20373,7 @@ function renderCommandMapTreeCardReference(branch, targetEvent, targetIndex, eve
 }
 
 function renderCommandMapTreeBranch(branch, childHtml = "") {
-  const delayValue = formatTransitionDelayValue(branch.delay ?? 0);
-  const delayControl = branch.hideDelay ? "" : branch.editableDelay === "next" && branch.targetOrder
-    ? `
-      <input
-        data-connector-delay="true"
-        data-order="${escapeHtml(String(branch.targetOrder))}"
-        type="number"
-        min="0"
-        step="0.1"
-        value="${escapeHtml(delayValue)}"
-      />
-      <strong>s</strong>
-    `
-    : branch.editableDelay === "route" && branch.sourceOrder
-      ? `
-        <input
-          data-jump-delay="true"
-          data-route-kind="${escapeHtml(branch.kind || "success")}"
-          data-source-order="${escapeHtml(String(branch.sourceOrder))}"
-          data-target-order="${escapeHtml(String(branch.targetOrder || ""))}"
-          type="number"
-          min="0"
-          step="0.1"
-          value="${escapeHtml(delayValue)}"
-        />
-        <strong>s</strong>
-      `
-      : `<strong>${escapeHtml(branch.displayDelayLabel || commandMapBranchDelayLabel(branch.delay))}</strong>`;
+  const delayControl = renderCommandMapTreeDelayControl(branch);
   return `
     <div class="command-map-tree-branch is-${escapeHtml(branch.kind || "success")}">
       <div class="command-map-tree-branch-link">
@@ -20866,6 +20473,19 @@ function renderCommandMapTreeDelayControl(edge) {
     return "";
   }
   const delayValue = formatTransitionDelayValue(edge.delay ?? 0);
+  if (edge.editableDelay === "ocr" && edge.sourceOrder) {
+    return `
+      <input
+        data-jump-delay="true"
+        data-ocr-route-index="${escapeHtml(String(edge.ocrIndex))}"
+        data-route-kind="${edge.kind === "failure" ? "failure" : "success"}"
+        data-source-order="${escapeHtml(String(edge.sourceOrder))}"
+        data-target-order="${escapeHtml(String(edge.targetOrder || ""))}"
+        type="number" min="0" step="0.1" value="${escapeHtml(delayValue)}"
+      />
+      <strong>s</strong>
+    `;
+  }
   if (edge.editableDelay === "next" && edge.targetOrder) {
     return `
       <input
@@ -22257,6 +21877,39 @@ function setCommandCardRouteDelay(card, routeKind, delayValue) {
   return true;
 }
 
+function setCommandCardOcrRouteDelay(card, index, routeKind, delayValue) {
+  if (!card || !Number.isInteger(index) || index < 0) return false;
+  const number = Number(String(delayValue ?? "").replace(",", "."));
+  const delay = Number.isFinite(number) ? Math.max(0, number) : 0;
+  const field = routeKind === "failure" ? "failureDelay" : "successDelay";
+  const row = ocrTargetRowByIndex(card, index);
+  const sourceField = row?.querySelector(routeKind === "failure"
+    ? "[data-ocr-target-failure-delay]" : "[data-ocr-target-success-delay]");
+  const hidden = card.querySelector("[data-ocr-target-layouts]");
+  let layouts;
+  try {
+    layouts = JSON.parse(hidden?.value || "[]");
+  } catch {
+    return false;
+  }
+  if (!Array.isArray(layouts)) return false;
+  if (!sourceField && (!layouts[index] || typeof layouts[index] !== "object")) return false;
+  if (sourceField) sourceField.value = formatTransitionDelayValue(delay);
+  layouts[index] = { ...(layouts[index] || {}), [field]: delay };
+  if (hidden) hidden.value = JSON.stringify(layouts);
+  const actionControl = row ? card.querySelector(`[data-ocr-target-action-index="${index}"] [data-ocr-target-action-control="${field}"]`) : null;
+  if (actionControl) actionControl.value = formatTransitionDelayValue(delay);
+  return true;
+}
+
+function setRoadmapEventOcrRouteDelay(sourceOrder, index, routeKind, delayValue) {
+  const event = findRoadmapEventByOrder(sourceOrder);
+  const layout = event?.details?.ocr_target_layouts?.[index];
+  if (!layout || typeof layout !== "object") return false;
+  layout[routeKind === "failure" ? "failureDelay" : "successDelay"] = normalizeTransitionDelay(delayValue);
+  return true;
+}
+
 function setRoadmapEventRouteDelay(sourceOrder, routeKind, delayValue) {
   const event = findRoadmapEventByOrder(sourceOrder);
   if (!event) {
@@ -22293,15 +21946,20 @@ function saveCommandJumpDelayFromInput(input) {
   }
   const cards = Array.from(commandMapList?.querySelectorAll(`.command-tree-card[data-order="${sourceOrder}"]`) || []);
   const card = cards[cards.length - 1] || null;
+  const ocrIndex = input?.dataset?.ocrRouteIndex === undefined ? null : Number(input.dataset.ocrRouteIndex);
+  if (ocrIndex !== null && (!Number.isInteger(ocrIndex) || ocrIndex < 0)) return;
   const updatedCards = cards.reduce((count, item) => (
-    setCommandCardRouteDelay(item, routeKind, input.value) ? count + 1 : count
+    (ocrIndex === null
+      ? setCommandCardRouteDelay(item, routeKind, input.value)
+      : setCommandCardOcrRouteDelay(item, ocrIndex, routeKind, input.value)) ? count + 1 : count
   ), 0);
   if (!card || !updatedCards) {
     setMessage("Nao foi possivel atualizar o tempo deste caminho.", "error");
     return;
   }
 
-  setRoadmapEventRouteDelay(sourceOrder, routeKind, input.value);
+  if (ocrIndex === null) setRoadmapEventRouteDelay(sourceOrder, routeKind, input.value);
+  else setRoadmapEventOcrRouteDelay(sourceOrder, ocrIndex, routeKind, input.value);
   const snapshot = commandCardSnapshot(card);
   const clientKey = String(snapshot.clientKey || "").trim();
   if (clientKey) {
@@ -22671,24 +22329,6 @@ async function invokeCommandCardUpdate(snapshot) {
     });
   }
 
-  if (type === "mouse_click") {
-    return invoke("update_mouse_block", {
-      order,
-      x: values.x,
-      y: values.y,
-      button: values.button,
-      clicks: values.clicks,
-      coordinateSpace: values.mouseTargetMode || "viewport",
-      delay: values.delay,
-      aoSucesso: values.successAction,
-      blocoSucesso: optionalPositiveInt(values.successBlock),
-      sequenciaSucesso: values.successAction === "ir_para_sequencia"
-        ? optionalSequenceValue(values.successSequence)
-        : null,
-      atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
-    });
-  }
-
   if (type === "clicar_imagem") {
     const recognitionMode = String(values.recognitionMode || "imagem");
     if (recognitionMode === "texto_ocr" && values.ocrSource === "elemento") {
@@ -22787,40 +22427,6 @@ async function invokeCommandCardUpdate(snapshot) {
         ? optionalSequenceValue(values.successSequence)
         : null,
       atrasoSequenciaSucesso: transitionSequenceDelayArg(values.successAction, values.successSequenceDelay),
-    });
-  }
-
-  if (type === "chrome_elemento_html") {
-    if (!normalizeStringValue(values.chromeHtml)) {
-      throw new Error(`O bloco ${order} de Chrome HTML esta sem o elemento colado.`);
-    }
-    const analysis = values.chromeAnalysis || await invoke("analyze_html_element", { html: values.chromeHtml });
-    const details = buildChromeDetailsFromAnalysisAndValues(analysis, values);
-    return invoke("update_chrome_html_block", {
-      order,
-      nome: details.nome,
-      htmlOriginal: details.html_original,
-      elemento: details.elemento,
-      alvo: details.alvo,
-      acao: details.acao,
-      timeout: details.timeout,
-      fallbackVisual: details.fallback_visual,
-      fallbackImagem: details.fallback_imagem || null,
-      aoSucesso: details.ao_sucesso,
-      blocoSucesso: optionalPositiveInt(details.bloco_sucesso),
-      sequenciaSucesso: details.ao_sucesso === "ir_para_sequencia"
-        ? optionalSequenceValue(details.sequencia_sucesso)
-        : null,
-      atrasoSequenciaSucesso: transitionSequenceDelayArg(details.ao_sucesso, details.atraso_antes_sequencia_sucesso),
-      aoFalhar: details.ao_falhar,
-      blocoFalha: optionalPositiveInt(details.bloco_falha),
-      sequenciaFalha: details.ao_falhar === "ir_para_sequencia"
-        ? optionalSequenceValue(details.sequencia_falha)
-        : null,
-      atrasoSequenciaFalha: transitionSequenceDelayArg(details.ao_falhar, details.atraso_antes_sequencia_falha),
-      quantidadeTentativas: details.quantidade_tentativas,
-      intervaloTentativas: details.intervalo_tentativas,
-      delay: values.delay,
     });
   }
 
@@ -23685,21 +23291,6 @@ document.getElementById("addKeyButton").addEventListener("click", () => {
   , focusLastCommandMapCard);
 });
 
-document.getElementById("addMouseButton").addEventListener("click", () => {
-  runMutation("Bloco de mouse adicionado", () =>
-    invoke("add_mouse_block", {
-      x: parseNumber(mouseXInput.value, 0),
-      y: parseNumber(mouseYInput.value, 0),
-      button: mouseButtonInput.value,
-      clicks: Math.max(1, Math.trunc(parseNumber(mouseClicksInput.value, 1))),
-      delay: parseNumber(mouseDelay.value, 0),
-      sequencia: currentSequenceName(),
-      aoSucesso: "continuar",
-      blocoSucesso: null,
-    })
-  , focusLastCommandMapCard);
-});
-
 document.getElementById("addImageButton").addEventListener("click", () => {
   const imagePath = imagePathInput.value.trim();
   if (!imagePath) {
@@ -23739,111 +23330,6 @@ document.getElementById("addImageButton").addEventListener("click", () => {
   , focusLastCommandMapCard);
 });
 
-analyzeChromeHtmlButton?.addEventListener("click", () => {
-  analyzeChromeHtmlForComposer().catch((error) => setMessage(String(error), "error"));
-});
-
-captureChromeElementButton?.addEventListener("click", async () => {
-  try {
-    setBusy("Capturando Chrome");
-    setMessage("Conectando na aba atual do Chrome...", "info");
-    const captured = await invoke("chrome_web_capture_element", { url: null, timeout: 60000 });
-    if (!captured?.ok) {
-      throw new Error(chromeWebFriendlyError(captured));
-    }
-    const analysis = chromeAnalysisFromCapturedElement(captured);
-    if (chromeHtmlInput) {
-      chromeHtmlInput.value = analysis.html_original || "";
-    }
-    applyChromeAnalysisToComposer(analysis);
-    setMessage(`Elemento capturado: ${analysis.nome_sugerido || "Chrome / Elemento"}`, "success");
-    setBusy("Pronto");
-  } catch (error) {
-    setBusy("Erro");
-    setMessage(String(error), "error");
-  }
-});
-
-testChromeElementButton?.addEventListener("click", async () => {
-  try {
-    const values = composerChromeValues();
-    const analysis = values.chromeAnalysis || (values.chromeHtml ? await invoke("analyze_html_element", { html: values.chromeHtml }) : null);
-    if (!analysis) {
-      setMessage("Capture ou analise um elemento antes de testar.", "error");
-      return;
-    }
-    const details = buildChromeDetailsFromAnalysisAndValues(analysis, values);
-    setBusy("Testando Chrome");
-    const result = await invoke("chrome_web_test_element", { details, timeout: details.timeout });
-    if (!result?.ok) {
-      setBusy("Erro");
-      setMessage(chromeWebFriendlyError(result), "error");
-      return;
-    }
-    setMessage(result?.message || (result?.ok ? "Elemento encontrado com sucesso." : "Nao encontrei esse elemento. Deseja capturar novamente?"), result?.ok ? "success" : "error");
-    setBusy("Pronto");
-  } catch (error) {
-    setBusy("Erro");
-    setMessage(String(error), "error");
-  }
-});
-
-chromeHtmlInput?.addEventListener("paste", () => {
-  setTimeout(() => {
-    analyzeChromeHtmlForComposer().catch(() => {});
-  }, 80);
-});
-
-chromeTargetMethodInput?.addEventListener("change", () => {
-  const analysis = parseChromeAnalysisJson(chromeAnalysisJsonInput?.value);
-  const selector = findChromeSelectorByMethod(analysis, chromeTargetMethodInput.value);
-  if (chromeTargetValueInput && selector?.valor) {
-    chromeTargetValueInput.value = selector.valor;
-  }
-});
-
-selectChromeFallbackImageButton?.addEventListener("click", () => {
-  openImagePicker({ scope: "composer-chrome-fallback" });
-});
-
-addChromeHtmlButton?.addEventListener("click", () => {
-  const values = composerChromeValues();
-  if (!values.chromeHtml.trim()) {
-    setMessage("Cole o HTML do elemento antes de adicionar o bloco Chrome.", "error");
-    return;
-  }
-  runMutation("Bloco Chrome HTML adicionado", async () => {
-    const analysis = values.chromeAnalysis || await invoke("analyze_html_element", { html: values.chromeHtml });
-    const details = buildChromeDetailsFromAnalysisAndValues(analysis, values);
-    return invoke("add_chrome_html_block", {
-      nome: details.nome,
-      htmlOriginal: details.html_original,
-      elemento: details.elemento,
-      alvo: details.alvo,
-      acao: details.acao,
-      timeout: details.timeout,
-      fallbackVisual: details.fallback_visual,
-      fallbackImagem: details.fallback_imagem || null,
-      aoSucesso: details.ao_sucesso,
-      blocoSucesso: optionalPositiveInt(details.bloco_sucesso),
-      sequenciaSucesso: details.ao_sucesso === "ir_para_sequencia"
-        ? optionalSequenceValue(details.sequencia_sucesso)
-        : null,
-      atrasoSequenciaSucesso: transitionSequenceDelayArg(details.ao_sucesso, details.atraso_antes_sequencia_sucesso),
-      aoFalhar: details.ao_falhar,
-      blocoFalha: optionalPositiveInt(details.bloco_falha),
-      sequenciaFalha: details.ao_falhar === "ir_para_sequencia"
-        ? optionalSequenceValue(details.sequencia_falha)
-        : null,
-      atrasoSequenciaFalha: transitionSequenceDelayArg(details.ao_falhar, details.atraso_antes_sequencia_falha),
-      quantidadeTentativas: details.quantidade_tentativas,
-      intervaloTentativas: details.intervalo_tentativas,
-      delay: values.delay,
-      sequencia: currentSequenceName(),
-    });
-  }, focusLastCommandMapCard);
-});
-
 document.getElementById("addVerifyButton").addEventListener("click", () => {
   if (!verifyActiveImageInput.value.trim() || !verifyInactiveImageInput.value.trim()) {
     setMessage("Selecione as referencias ativa e desativada antes de adicionar a verificacao.", "error");
@@ -23866,10 +23352,6 @@ document.getElementById("addVerifyButton").addEventListener("click", () => {
       sequencia: currentSequenceName(),
     })
   , focusLastCommandMapCard);
-});
-
-captureMouseButton.addEventListener("click", () => {
-  beginMouseCapture({ scope: "composer-mouse" });
 });
 
 captureImageButton?.addEventListener("click", () => {
@@ -25996,12 +25478,6 @@ timelineList.addEventListener("click", (event) => {
     return;
   }
 
-  if (action === "record-mouse") {
-    state.commandMapFocusOrder = order;
-    beginMouseCapture({ scope: "update-editor", order });
-    return;
-  }
-
   if (action === "record-after-action") {
     state.commandMapFocusOrder = order;
     beginKeyCapture({ scope: "update-editor", order, field: "afterAction" });
@@ -26849,12 +26325,6 @@ commandMapList.addEventListener("click", async (event) => {
     return;
   }
 
-  if (action === "record-mouse") {
-    setCommandMapFocus(order);
-    beginMouseCapture({ scope: "update-tree", order });
-    return;
-  }
-
   if (action === "record-after-action") {
     setCommandMapFocus(order);
     beginKeyCapture({ scope: "update-tree", order, field: "afterAction" });
@@ -27343,12 +26813,6 @@ commandMapList.addEventListener("click", async (event) => {
     return;
   }
 
-  if (action === "record-mouse") {
-    setCommandMapFocus(Number(panel.dataset.targetOrder));
-    beginMouseCapture({ scope: "insert-panel", order: Number(panel.dataset.targetOrder) });
-    return;
-  }
-
   if (action === "record-after-action") {
     setCommandMapFocus(Number(panel.dataset.targetOrder));
     beginKeyCapture({ scope: "insert-panel", order: Number(panel.dataset.targetOrder), field: "afterAction" });
@@ -27555,35 +27019,6 @@ commandMapList.addEventListener("click", async (event) => {
               sequenciaSucesso: common.sequenciaSucesso,
               atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
             });
-    } else if (values.type === "mouse") {
-      promiseFactory = () =>
-        isFirstBlock
-          ? invoke("add_mouse_block", {
-              x: values.x,
-              y: values.y,
-              button: values.button,
-              clicks: values.clicks,
-              delay: common.delay,
-              sequencia: currentSequenceName(),
-              aoSucesso: common.aoSucesso,
-              blocoSucesso: common.blocoSucesso,
-              sequenciaSucesso: common.sequenciaSucesso,
-              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
-            })
-          : invoke("insert_mouse_block", {
-              targetOrder: common.targetOrder,
-              position: common.position,
-              x: values.x,
-              y: values.y,
-              button: values.button,
-              clicks: values.clicks,
-              delay: common.delay,
-              sequencia: currentSequenceName(),
-              aoSucesso: common.aoSucesso,
-              blocoSucesso: common.blocoSucesso,
-              sequenciaSucesso: common.sequenciaSucesso,
-              atrasoSequenciaSucesso: common.atrasoSequenciaSucesso,
-            });
     } else if (values.type === "image") {
       promiseFactory = () =>
         isFirstBlock
@@ -27716,66 +27151,6 @@ commandMapList.addEventListener("click", async (event) => {
               position: common.position,
               ...ocrPayload,
             });
-    } else if (values.type === "chrome") {
-      promiseFactory = async () => {
-        const analysis = values.chromeAnalysis || null;
-        const details = buildChromeDetailsFromAnalysisAndValues(analysis, values);
-        return isFirstBlock
-          ? invoke("add_chrome_html_block", {
-              nome: details.nome,
-              htmlOriginal: details.html_original,
-              elemento: details.elemento,
-              alvo: details.alvo,
-              acao: details.acao,
-              timeout: details.timeout,
-              fallbackVisual: details.fallback_visual,
-              fallbackImagem: details.fallback_imagem || null,
-              aoSucesso: details.ao_sucesso,
-              blocoSucesso: optionalPositiveInt(details.bloco_sucesso),
-              sequenciaSucesso: details.ao_sucesso === "ir_para_sequencia"
-                ? optionalSequenceValue(details.sequencia_sucesso)
-                : null,
-              atrasoSequenciaSucesso: transitionSequenceDelayArg(details.ao_sucesso, details.atraso_antes_sequencia_sucesso),
-              aoFalhar: details.ao_falhar,
-              blocoFalha: optionalPositiveInt(details.bloco_falha),
-              sequenciaFalha: details.ao_falhar === "ir_para_sequencia"
-                ? optionalSequenceValue(details.sequencia_falha)
-                : null,
-              atrasoSequenciaFalha: transitionSequenceDelayArg(details.ao_falhar, details.atraso_antes_sequencia_falha),
-              quantidadeTentativas: details.quantidade_tentativas,
-              intervaloTentativas: details.intervalo_tentativas,
-              delay: common.delay,
-              sequencia: currentSequenceName(),
-            })
-          : invoke("insert_chrome_html_block", {
-              targetOrder: common.targetOrder,
-              position: common.position,
-              nome: details.nome,
-              htmlOriginal: details.html_original,
-              elemento: details.elemento,
-              alvo: details.alvo,
-              acao: details.acao,
-              timeout: details.timeout,
-              fallbackVisual: details.fallback_visual,
-              fallbackImagem: details.fallback_imagem || null,
-              aoSucesso: details.ao_sucesso,
-              blocoSucesso: optionalPositiveInt(details.bloco_sucesso),
-              sequenciaSucesso: details.ao_sucesso === "ir_para_sequencia"
-                ? optionalSequenceValue(details.sequencia_sucesso)
-                : null,
-              atrasoSequenciaSucesso: transitionSequenceDelayArg(details.ao_sucesso, details.atraso_antes_sequencia_sucesso),
-              aoFalhar: details.ao_falhar,
-              blocoFalha: optionalPositiveInt(details.bloco_falha),
-              sequenciaFalha: details.ao_falhar === "ir_para_sequencia"
-                ? optionalSequenceValue(details.sequencia_falha)
-                : null,
-              atrasoSequenciaFalha: transitionSequenceDelayArg(details.ao_falhar, details.atraso_antes_sequencia_falha),
-              quantidadeTentativas: details.quantidade_tentativas,
-              intervaloTentativas: details.intervalo_tentativas,
-              delay: common.delay,
-              sequencia: currentSequenceName(),
-            });
-      };
     } else if (values.type === "uia_element") {
       const element = buildUiaElementWithActionValues(values.uiaElement || selectedUiaElement() || {}, values);
       if (!element || !Object.keys(element).length) {

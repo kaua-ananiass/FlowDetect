@@ -272,9 +272,7 @@ function blockChipLabel(event = {}) {
     texto_livre: "TEXTO",
     tecla: "TECLA",
     atalho: "ATALHO",
-    mouse_click: "MOUSE",
     clicar_imagem: "RECONHECIMENTO",
-    chrome_elemento_html: "CHROME",
     abrir_url: "ABRIR URL",
     abrir_programa: "PROGRAMA",
     verificar_estado_botao: "VERIFICACAO",
@@ -387,10 +385,6 @@ function buildDetailRows(event = {}) {
   } else if (type === "tecla" || type === "atalho") {
     rows.push({ label: type === "atalho" ? "Atalho" : "Tecla", value: compactText(event.subtitle || (event.keys || []).join(" + "), 60), emphasis: true });
     rows.push({ label: "Repeticao", value: formatRepeatLabel(details.repeticoes || 1) });
-  } else if (type === "mouse_click") {
-    rows.push({ label: "Botao", value: String(details.botao || "left").toUpperCase() });
-    rows.push({ label: "Cliques", value: formatRepeatLabel(details.cliques || 1) });
-    rows.push({ label: "Posicao", value: `X ${details.x ?? 0} | Y ${details.y ?? 0}` });
   } else if (type === "clicar_imagem") {
     rows.push({ label: "Arquivo", value: compactText(String(details.imagem || event.subtitle || "").split(/[\\/]/).pop(), 36), emphasis: true });
     rows.push({ label: "Precisao", value: `${Math.round(Number(details.confianca || 0.8) * 100)}% | ${formatSearchProfile(details.perfil_busca)} | ${formatSearchAreaMode(details.modo_area_busca || details.area_busca || "target_window")}` });
@@ -406,11 +400,6 @@ function buildDetailRows(event = {}) {
     rows.push({ label: "Destino", value: `${compactText(details.aba || "Sheet1", 18)} -> ${compactText(details.coluna || "-", 18)}` });
     rows.push({ label: "Valor", value: compactText(details.valor || "-", 42) });
     rows.push({ label: "Linha", value: "Linha atual do loop" });
-  } else if (type === "chrome_elemento_html") {
-    const alvo = details.alvo || {};
-    const acao = details.acao || {};
-    rows.push({ label: "Elemento", value: compactText(`${alvo.metodo || "css"}: ${alvo.valor || "-"}`, 86), emphasis: true });
-    rows.push({ label: "Acao", value: compactText(acao.tipo || "clicar", 28) });
   } else if (type === "abrir_url") {
     rows.push({ label: "URL", value: compactText(details.url || event.subtitle || "-", 92), emphasis: true });
     rows.push({ label: "Navegador", value: compactText(details.navegador || "padrao", 24) });

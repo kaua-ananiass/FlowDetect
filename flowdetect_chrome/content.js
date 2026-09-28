@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_RUNTIME_VERSION = "0.2.22";
+const CONTENT_RUNTIME_VERSION = "0.2.28";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
@@ -14,7 +14,6 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     .toLocaleLowerCase("pt-BR");
   const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
   let currentRunId = "";
-  let lastOcrClickPoint = null;
 
   function escapeCss(value) {
     return globalThis.CSS?.escape ? CSS.escape(String(value)) : String(value).replace(/(["\\#.:,[\]>+~*^$|= !])/g, "\\$1");
@@ -219,7 +218,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   }
 
   function focusableTarget(element) {
-    return element?.closest?.("button,a,input,textarea,select,label,[role='button'],[role='link'],[role='option'],[role='menuitem'],[role='tab'],[role='treeitem'],[role='gridcell'],[contenteditable='true']") || element;
+    return element?.closest?.("button,a,input,textarea,select,label,[role='button'],[role='checkbox'],[role='link'],[role='option'],[role='menuitem'],[role='tab'],[role='treeitem'],[role='gridcell'],[contenteditable='true']") || element;
   }
 
   function isClickReady(element) {
@@ -255,6 +254,32 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     const clickable = focusableTarget(preferTarget ? target : (atRecognizedPoint || target));
     if (!clickable || !isVisible(clickable)) throw new Error("O alvo reconhecido nao esta visivel para receber o clique.");
     if (!isClickReady(clickable)) throw new Error("O alvo reconhecido esta desativado e nao recebeu o clique.");
+    const checkbox = checkboxControl(clickable);
+    if (checkbox) {
+      if (!isClickReady(checkbox)) throw new Error("A caixa de selecao esta desativada e nao recebeu o clique.");
+      // Um evento por clique configurado. Clicar no label tambem produz um segundo evento
+      // no input; eventos down/up sinteticos podem acionar handlers extras da tabela.
+      const boxRect = checkbox.getBoundingClientRect();
+      const boxStyle = getComputedStyle(checkbox);
+      const isNative = checkbox.matches?.("input[type='checkbox']");
+      const nearbyNative = isNative && boxRect.width > 0 && boxRect.height > 0
+        && boxStyle.display !== "none" && boxStyle.visibility !== "hidden" && boxStyle.pointerEvents !== "none"
+        && Number.isFinite(x) && Number.isFinite(y)
+        && Math.hypot(boxRect.left + boxRect.width / 2 - x, boxRect.top + boxRect.height / 2 - y) <= 24;
+      const nativeTarget = clickable === checkbox || clickable.control === checkbox || nearbyNative;
+      const activationTarget = nativeTarget ? checkbox : clickable;
+      activationTarget.focus?.({ preventScroll: true });
+      const activationRect = activationTarget.getBoundingClientRect();
+      for (let index = 0; index < Math.max(1, Math.floor(Number(clicks) || 1)); index += 1) {
+        activationTarget.dispatchEvent(new MouseEvent("click", {
+        bubbles: true, cancelable: true, composed: true, view: window, detail: 1,
+        clientX: nativeTarget ? activationRect.left + activationRect.width / 2 : (Number.isFinite(x) ? x : activationRect.left + activationRect.width / 2),
+        clientY: nativeTarget ? activationRect.top + activationRect.height / 2 : (Number.isFinite(y) ? y : activationRect.top + activationRect.height / 2),
+        button: 0, buttons: 0,
+        }));
+      }
+      return clickable;
+    }
     clickable?.focus?.({ preventScroll: true });
     for (let index = 0; index < Math.max(1, Number(clicks || 1)); index += 1) {
       const rect = clickable.getBoundingClientRect();
@@ -271,19 +296,102 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     return clickable;
   }
 
+  function checkboxControl(element) {
+    if (!element) return null;
+    if (element.matches?.("input[type='checkbox'],[role='checkbox']")) return element;
+    const label = element.closest?.("label");
+    if (label?.control?.matches?.("input[type='checkbox']")) return label.control;
+    const role = element.closest?.("[role='checkbox']");
+    if (role) return role;
+    if (element.matches?.("button,a,input,textarea,select,[role='button'],[role='link']")) return null;
+    // Componentes de tabela desenham a caixa num div e mantem o input oculto
+    // como irmao. Procura somente no componente/celula, nunca na linha ou tabela.
+    for (let current = element, depth = 0; current && depth < 5; current = current.parentElement, depth += 1) {
+      if (current.matches?.("tr,table,thead,tbody,tfoot,body,html")) break;
+      const controls = current.querySelectorAll?.("input[type='checkbox'],[role='checkbox']") || [];
+      if (controls.length === 1) return controls[0];
+      if (controls.length > 1 || current.matches?.("td,th,[role='gridcell'],[role='columnheader']")) break;
+    }
+    return null;
+  }
+
+  function checkboxState(control) {
+    if (!control) return null;
+    if (control.matches?.("input[type='checkbox']")) return Boolean(control.checked);
+    const value = control.getAttribute?.("aria-checked");
+    return value === "true" ? true : value === "false" ? false : null;
+  }
+
+  async function clickAndConfirm(target, clicks = 1, point = null, preferTarget = false, ensureChecked = false) {
+    const x = Number(point?.x);
+    const y = Number(point?.y);
+    const hit = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y) : null;
+    let clickable = focusableTarget(preferTarget ? target : (hit || target));
+    let control = checkboxControl(clickable);
+    const before = checkboxState(control);
+    if (ensureChecked && !control) throw new Error("O elemento encontrado nao e uma caixa de selecao.");
+    if (ensureChecked && before === true) return clickable;
+    if (!control) return clickTarget(clickable, clicks, point, true);
+    const rect = clickable.getBoundingClientRect();
+    const refreshX = Number.isFinite(x) ? x : rect.left + rect.width / 2;
+    const refreshY = Number.isFinite(y) ? y : rect.top + rect.height / 2;
+    let clicked = clickable;
+    const count = ensureChecked ? 1 : Math.max(1, Math.floor(Number(clicks) || 1));
+    for (let index = 0; index < count; index += 1) {
+      const expected = checkboxState(control) !== true;
+      clicked = clickTarget(clickable, 1, point, true);
+      const deadline = Date.now() + 1800;
+      let confirmed = false;
+      while (Date.now() <= deadline) {
+        if (!control || control.isConnected === false) {
+          clickable = focusableTarget(document.elementFromPoint(refreshX, refreshY));
+          control = checkboxControl(clickable);
+        }
+        if (control && checkboxState(control) === expected) {
+          // Espera a pagina processar cada alternancia antes de enviar o proximo clique.
+          await sleep(140);
+          if (control.isConnected === false) {
+            clickable = focusableTarget(document.elementFromPoint(refreshX, refreshY));
+            control = checkboxControl(clickable);
+          }
+          if (control && checkboxState(control) === expected) { confirmed = true; break; }
+        }
+        await sleep(120);
+      }
+      if (!confirmed) throw new Error(`O clique ${index + 1}/${count} foi enviado, mas a caixa de selecao nao confirmou o estado esperado. A automacao nao confirmou esta etapa.`);
+    }
+    return clicked;
+  }
+
   function preciseClickTarget(point) {
-    const selector = "button, a, input[type='button'], input[type='checkbox'], input[type='radio'], [role='button'], [role='checkbox'], [role='menuitem']";
+    const selector = "button, a, label, input[type='button'], input[type='checkbox'], input[type='radio'], [role='button'], [role='checkbox'], [role='menuitem']";
     const candidates = document.querySelectorAll?.(selector) || [];
+    const hit = document.elementFromPoint?.(point.x, point.y);
+    const associated = checkboxControl(hit);
     let best = null;
     for (const element of candidates) {
+      if (element.tagName?.toLowerCase() === "label" && !checkboxControl(element)) continue;
       const rect = element.getBoundingClientRect?.();
       if (!rect || rect.width <= 0 || rect.height <= 0 || rect.width > 96 || rect.height > 96) continue;
+      const control = checkboxControl(element);
+      if (control && control !== associated && (point.x < rect.left || point.x > rect.left + rect.width
+        || point.y < rect.top || point.y > rect.top + rect.height)) continue;
       const centerX = rect.left + rect.width / 2;
       const centerY = rect.top + rect.height / 2;
       const distance = Math.hypot(centerX - point.x, centerY - point.y);
       if (distance > 24 || !isVisible(element)) continue;
       if (!best || distance < best.distance || (distance === best.distance && rect.width * rect.height < best.area)) {
         best = { element, point: { x: centerX, y: centerY }, distance, area: rect.width * rect.height };
+      }
+    }
+    if (!best && associated?.matches?.("input[type='checkbox']") && isVisible(hit)) {
+      const rect = associated.getBoundingClientRect();
+      const style = getComputedStyle(associated);
+      const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      if (rect.width > 0 && rect.height > 0 && rect.width <= 96 && rect.height <= 96
+        && style.display !== "none" && style.visibility !== "hidden" && style.pointerEvents !== "none"
+        && Math.hypot(center.x - point.x, center.y - point.y) <= 24) {
+        best = { element: focusableTarget(hit), point: center };
       }
     }
     return best;
@@ -422,16 +530,15 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     }
     if (type === "marcar_checkbox") {
       const clickable = await waitForClickableTarget(element, null, step.timeout_ms);
-      if (element instanceof HTMLInputElement && !element.checked) clickTarget(clickable); else if (!(element instanceof HTMLInputElement)) clickTarget(clickable);
+      await clickAndConfirm(clickable, 1, null, true, true);
       return "Opção marcada.";
     }
     const clickable = await waitForClickableTarget(element, null, step.timeout_ms);
-    clickTarget(clickable, Math.max(1, Number(step.clicks || 1)));
+    await clickAndConfirm(clickable, Math.max(1, Number(step.clicks || 1)));
     return "Clique executado.";
   }
 
   async function executeOcrText(step) {
-    lastOcrClickPoint = null;
     const shouldClick = Boolean(step.click) && !["confirmar", "esperar", "verificar"].includes(String(step.action || "").toLowerCase());
     const target = await waitForTextTarget(step.text, step.timeout_ms, step.attempts, step.interval_ms, {
       allowDocumentText: !shouldClick
@@ -457,38 +564,17 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       x: rawX,
       y: rawY
     };
-    // Texto encontrado somente no corpo inteiro da pagina confirma a etapa,
-    // mas nao fornece um ponto preciso para o bloco de mouse seguinte.
-    lastOcrClickPoint = refreshedTarget.documentText ? null : clickPoint;
     highlightRect(rect, { color: "#44b9ff", label: "OCR" });
     if (shouldClick) {
       const precise = preciseClickTarget(clickPoint);
       const finalPoint = precise?.point || clickPoint;
       const clickable = await waitForClickableTarget(precise?.element || refreshedTarget.element, finalPoint, step.timeout_ms, Boolean(precise));
-      clickTarget(clickable, step.clicks, finalPoint, Boolean(precise));
-      lastOcrClickPoint = finalPoint;
-      return `OCR encontrou "${String(step.text).slice(0, 80)}" e clicou em ${Math.round(finalPoint.x)}, ${Math.round(finalPoint.y)} (${String(clickable.tagName || "elemento").toLowerCase()}).`;
+      await clickAndConfirm(clickable, step.clicks, finalPoint, Boolean(precise));
+      const checked = checkboxState(checkboxControl(clickable));
+      const selection = checked === null ? "" : ` Caixa de selecao confirmada: ${checked ? "marcada" : "desmarcada"}.`;
+      return `OCR encontrou "${String(step.text).slice(0, 80)}" e clicou em ${Math.round(finalPoint.x)}, ${Math.round(finalPoint.y)} (${String(clickable.tagName || "elemento").toLowerCase()}).${selection}`;
     }
     return `OCR encontrou “${String(step.text).slice(0, 80)}”${shouldClick ? " e clicou" : ""}.`;
-  }
-
-  async function clickAt(step) {
-    const relativeToOcr = step.coordinate_space === "last_ocr_click";
-    if (relativeToOcr && !lastOcrClickPoint) {
-      throw new Error("O clique depende do OCR anterior, mas nenhum texto foi confirmado nesta execucao.");
-    }
-    const x = Number(step.x || 0) + (relativeToOcr ? lastOcrClickPoint.x : 0);
-    const y = Number(step.y || 0) + (relativeToOcr ? lastOcrClickPoint.y : 0);
-    if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) throw new Error(`Clique ${Math.round(x)}, ${Math.round(y)} está fora da aba visível.`);
-    const precise = relativeToOcr ? preciseClickTarget({ x, y }) : null;
-    const finalPoint = precise?.point || { x, y };
-    const target = precise?.element || document.elementFromPoint(finalPoint.x, finalPoint.y);
-    if (!target) throw new Error("Não encontrei um elemento na coordenada do clique.");
-    const rect = target.getBoundingClientRect();
-    highlightRect(rect.width && rect.height ? rect : { left: finalPoint.x - 5, top: finalPoint.y - 5, width: 10, height: 10 }, { color: "#54ecd2", label: "CLIQUE" });
-    const clickable = await waitForClickableTarget(target, finalPoint, step.timeout_ms, Boolean(precise));
-    clickTarget(clickable, step.clicks, finalPoint, Boolean(precise));
-    return `Clique executado em ${Math.round(finalPoint.x)}, ${Math.round(finalPoint.y)} (${String(clickable.tagName || "elemento").toLowerCase()}).`;
   }
 
   async function visualCoordinate(request) {
@@ -499,12 +585,18 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       const target = document.elementFromPoint(x, y);
       if (!target) throw new Error("Não encontrei o alvo visual para receber o clique.");
       const clickable = await waitForClickableTarget(target, { x, y }, request.timeout_ms);
-      clickTarget(clickable, request.clicks, { x, y });
+      await clickAndConfirm(clickable, request.clicks, { x, y });
     }
     return { x, y };
   }
 
   const flowDetectMessageListener = (request, _sender, sendResponse) => {
+    if (request?.type === "flowdetect-screen-check-v2") {
+      const expected = normalize(request.text);
+      const rendered = normalize(document.body?.innerText || "");
+      sendResponse({ ok: true, url: location.href, hasText: Boolean(expected && rendered.includes(expected)) });
+      return;
+    }
     if (request?.type === "flowdetect-viewport-info-v2") {
       sendResponse({ ok: true, width: innerWidth, height: innerHeight, devicePixelRatio });
       return;
@@ -518,14 +610,12 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     if (request?.type !== "flowdetect-execute-step-v2") return;
     if (request.run_id && request.run_id !== currentRunId) {
       currentRunId = request.run_id;
-      lastOcrClickPoint = null;
-    }
+      }
     const step = request.step || {};
     let execute;
     if (step.type === "ocr_text") execute = executeOcrText(step);
     else if (step.type === "focused_text") execute = Promise.resolve().then(() => applyTextToFocused(step));
     else if (step.type === "key_sequence") execute = Promise.resolve().then(() => dispatchKeySequence(step.keys || [], step.repetitions));
-    else if (step.type === "viewport_click") execute = Promise.resolve().then(() => clickAt(step));
     else if (step.type === "wait_text") execute = waitForTextTarget(step.text, step.timeout_ms, 1, 0, {
       allowDocumentText: true
     }).then(() => `Texto confirmado: ${step.text}.`);

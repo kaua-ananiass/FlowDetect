@@ -2086,7 +2086,7 @@ fn run_helper_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
 fn run_chrome_bridge_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
     let raw = run_python_script(root, "chrome_web_bridge.py", args)?;
     serde_json::from_str(&raw)
-        .map_err(|err| format!("Falha ao interpretar retorno do Chrome/Web: {err}"))
+        .map_err(|err| format!("Falha ao interpretar retorno da integracao Chrome: {err}"))
 }
 
 fn run_uia_mapper_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
@@ -5886,12 +5886,6 @@ fn append_compare_diverge_args(
     }
 }
 
-#[tauri::command]
-fn capture_mouse_click(app: AppHandle) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    run_script_json(&root, "capturar_mouse_global.py", &[])
-}
-
 fn smart_recorder_dir(root: &Path) -> PathBuf {
     root.join(".flowdetect_recorder")
 }
@@ -6299,48 +6293,6 @@ fn add_loop_end_block(
             args.push("--sequencia".into());
             args.push(sequence_name);
         }
-    }
-    append_success_flow_args(
-        &mut args,
-        ao_sucesso,
-        bloco_sucesso,
-        sequencia_sucesso,
-        atraso_sequencia_sucesso,
-    );
-    run_helper_json(&root, &args)
-}
-
-#[tauri::command]
-fn add_mouse_block(
-    app: AppHandle,
-    x: i32,
-    y: i32,
-    button: String,
-    clicks: i32,
-    delay: f64,
-    sequencia: Option<String>,
-    ao_sucesso: Option<String>,
-    bloco_sucesso: Option<i32>,
-    sequencia_sucesso: Option<String>,
-    atraso_sequencia_sucesso: Option<f64>,
-) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    let mut args = vec![
-        "add-mouse".into(),
-        "--x".into(),
-        x.to_string(),
-        "--y".into(),
-        y.to_string(),
-        "--button".into(),
-        button,
-        "--clicks".into(),
-        clicks.max(1).to_string(),
-        "--delay".into(),
-        delay.to_string(),
-    ];
-    if let Some(sequence_name) = sequencia {
-        args.push("--sequencia".into());
-        args.push(sequence_name);
     }
     append_success_flow_args(
         &mut args,
@@ -6952,100 +6904,6 @@ fn add_verify_button_state_block(
 }
 
 #[tauri::command]
-fn add_chrome_html_block(
-    app: AppHandle,
-    nome: String,
-    html_original: String,
-    elemento: Value,
-    alvo: Value,
-    acao: Value,
-    timeout: i32,
-    fallback_visual: bool,
-    fallback_imagem: Option<String>,
-    ao_sucesso: String,
-    bloco_sucesso: Option<i32>,
-    sequencia_sucesso: Option<String>,
-    atraso_sequencia_sucesso: Option<f64>,
-    ao_falhar: String,
-    bloco_falha: Option<i32>,
-    sequencia_falha: Option<String>,
-    atraso_sequencia_falha: Option<f64>,
-    quantidade_tentativas: i32,
-    intervalo_tentativas: f64,
-    delay: f64,
-    sequencia: Option<String>,
-) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    let mut args = vec![
-        "add-chrome-html".into(),
-        "--nome".into(),
-        nome,
-        "--html-original".into(),
-        html_original,
-        "--elemento-json".into(),
-        serde_json::to_string(&elemento)
-            .map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
-        "--alvo-json".into(),
-        serde_json::to_string(&alvo).map_err(|err| format!("Falha ao serializar alvo: {err}"))?,
-        "--acao-json".into(),
-        serde_json::to_string(&acao).map_err(|err| format!("Falha ao serializar acao: {err}"))?,
-        "--timeout".into(),
-        timeout.max(500).to_string(),
-        "--fallback-visual".into(),
-        fallback_visual.to_string(),
-        "--fallback-imagem".into(),
-        fallback_imagem.unwrap_or_default(),
-        "--ao-sucesso".into(),
-        ao_sucesso,
-        "--ao-falhar".into(),
-        ao_falhar,
-        "--quantidade-tentativas".into(),
-        quantidade_tentativas.max(1).to_string(),
-        "--intervalo-tentativas".into(),
-        intervalo_tentativas.max(0.0).to_string(),
-        "--delay".into(),
-        delay.to_string(),
-    ];
-    if let Some(value) = bloco_falha {
-        if value > 0 {
-            args.push("--bloco-falha".into());
-            args.push(value.to_string());
-        }
-    }
-    if let Some(value) = bloco_sucesso {
-        if value > 0 {
-            args.push("--bloco-sucesso".into());
-            args.push(value.to_string());
-        }
-    }
-    if let Some(value) = sequencia_sucesso {
-        if !value.trim().is_empty() {
-            args.push("--sequencia-sucesso".into());
-            args.push(value);
-        }
-    }
-    if let Some(value) = atraso_sequencia_sucesso {
-        args.push("--atraso-sequencia-sucesso".into());
-        args.push(value.max(0.0).to_string());
-    }
-    if let Some(value) = sequencia_falha {
-        if !value.trim().is_empty() {
-            args.push("--sequencia-falha".into());
-            args.push(value);
-        }
-    }
-    if let Some(value) = atraso_sequencia_falha {
-        args.push("--atraso-sequencia-falha".into());
-        args.push(value.max(0.0).to_string());
-    }
-    if let Some(sequence_name) = sequencia {
-        args.push("--sequencia".into());
-        args.push(sequence_name);
-    }
-    run_helper_json(&root, &args)
-}
-
-#[tauri::command]
 fn add_uia_element_block(
     app: AppHandle,
     element: Value,
@@ -7389,56 +7247,6 @@ fn insert_loop_end_block(
         target_order.to_string(),
         "--position".into(),
         position,
-        "--delay".into(),
-        delay.to_string(),
-    ];
-    if let Some(sequence_name) = sequencia {
-        if !sequence_name.trim().is_empty() {
-            args.push("--sequencia".into());
-            args.push(sequence_name);
-        }
-    }
-    append_success_flow_args(
-        &mut args,
-        ao_sucesso,
-        bloco_sucesso,
-        sequencia_sucesso,
-        atraso_sequencia_sucesso,
-    );
-    run_helper_json(&root, &args)
-}
-
-#[tauri::command]
-fn insert_mouse_block(
-    app: AppHandle,
-    target_order: i32,
-    position: String,
-    x: i32,
-    y: i32,
-    button: String,
-    clicks: i32,
-    delay: f64,
-    sequencia: Option<String>,
-    ao_sucesso: Option<String>,
-    bloco_sucesso: Option<i32>,
-    sequencia_sucesso: Option<String>,
-    atraso_sequencia_sucesso: Option<f64>,
-) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    let mut args = vec![
-        "insert-mouse".into(),
-        "--target-order".into(),
-        target_order.to_string(),
-        "--position".into(),
-        position,
-        "--x".into(),
-        x.to_string(),
-        "--y".into(),
-        y.to_string(),
-        "--button".into(),
-        button,
-        "--clicks".into(),
-        clicks.max(1).to_string(),
         "--delay".into(),
         delay.to_string(),
     ];
@@ -7938,108 +7746,6 @@ fn insert_compare_spreadsheet_block(
 }
 
 #[tauri::command]
-fn insert_chrome_html_block(
-    app: AppHandle,
-    target_order: i32,
-    position: String,
-    nome: String,
-    html_original: String,
-    elemento: Value,
-    alvo: Value,
-    acao: Value,
-    timeout: i32,
-    fallback_visual: bool,
-    fallback_imagem: Option<String>,
-    ao_sucesso: String,
-    bloco_sucesso: Option<i32>,
-    sequencia_sucesso: Option<String>,
-    atraso_sequencia_sucesso: Option<f64>,
-    ao_falhar: String,
-    bloco_falha: Option<i32>,
-    sequencia_falha: Option<String>,
-    atraso_sequencia_falha: Option<f64>,
-    quantidade_tentativas: i32,
-    intervalo_tentativas: f64,
-    delay: f64,
-    sequencia: Option<String>,
-) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    let mut args = vec![
-        "insert-chrome-html".into(),
-        "--target-order".into(),
-        target_order.to_string(),
-        "--position".into(),
-        position,
-        "--nome".into(),
-        nome,
-        "--html-original".into(),
-        html_original,
-        "--elemento-json".into(),
-        serde_json::to_string(&elemento)
-            .map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
-        "--alvo-json".into(),
-        serde_json::to_string(&alvo).map_err(|err| format!("Falha ao serializar alvo: {err}"))?,
-        "--acao-json".into(),
-        serde_json::to_string(&acao).map_err(|err| format!("Falha ao serializar acao: {err}"))?,
-        "--timeout".into(),
-        timeout.max(500).to_string(),
-        "--fallback-visual".into(),
-        fallback_visual.to_string(),
-        "--fallback-imagem".into(),
-        fallback_imagem.unwrap_or_default(),
-        "--ao-sucesso".into(),
-        ao_sucesso,
-        "--ao-falhar".into(),
-        ao_falhar,
-        "--quantidade-tentativas".into(),
-        quantidade_tentativas.max(1).to_string(),
-        "--intervalo-tentativas".into(),
-        intervalo_tentativas.max(0.0).to_string(),
-        "--delay".into(),
-        delay.to_string(),
-    ];
-    if let Some(value) = bloco_falha {
-        if value > 0 {
-            args.push("--bloco-falha".into());
-            args.push(value.to_string());
-        }
-    }
-    if let Some(value) = bloco_sucesso {
-        if value > 0 {
-            args.push("--bloco-sucesso".into());
-            args.push(value.to_string());
-        }
-    }
-    if let Some(value) = sequencia_sucesso {
-        if !value.trim().is_empty() {
-            args.push("--sequencia-sucesso".into());
-            args.push(value);
-        }
-    }
-    if let Some(value) = atraso_sequencia_sucesso {
-        args.push("--atraso-sequencia-sucesso".into());
-        args.push(value.max(0.0).to_string());
-    }
-    if let Some(value) = sequencia_falha {
-        if !value.trim().is_empty() {
-            args.push("--sequencia-falha".into());
-            args.push(value);
-        }
-    }
-    if let Some(value) = atraso_sequencia_falha {
-        args.push("--atraso-sequencia-falha".into());
-        args.push(value.max(0.0).to_string());
-    }
-    if let Some(sequence_name) = sequencia {
-        if !sequence_name.trim().is_empty() {
-            args.push("--sequencia".into());
-            args.push(sequence_name);
-        }
-    }
-    run_helper_json(&root, &args)
-}
-
-#[tauri::command]
 fn insert_uia_element_block(
     app: AppHandle,
     target_order: i32,
@@ -8332,49 +8038,6 @@ fn update_key_block(
         keys,
         "--repeat".into(),
         repeat.max(1).to_string(),
-        "--delay".into(),
-        delay.to_string(),
-    ];
-    append_success_flow_args(
-        &mut args,
-        ao_sucesso,
-        bloco_sucesso,
-        sequencia_sucesso,
-        atraso_sequencia_sucesso,
-    );
-    run_helper_json(&root, &args)
-}
-
-#[tauri::command]
-fn update_mouse_block(
-    app: AppHandle,
-    order: i32,
-    x: i32,
-    y: i32,
-    button: String,
-    clicks: i32,
-    coordinate_space: Option<String>,
-    delay: f64,
-    ao_sucesso: Option<String>,
-    bloco_sucesso: Option<i32>,
-    sequencia_sucesso: Option<String>,
-    atraso_sequencia_sucesso: Option<f64>,
-) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    let mut args = vec![
-        "update-mouse".into(),
-        "--order".into(),
-        order.to_string(),
-        "--x".into(),
-        x.to_string(),
-        "--y".into(),
-        y.to_string(),
-        "--button".into(),
-        button,
-        "--clicks".into(),
-        clicks.max(1).to_string(),
-        "--coordinate-space".into(),
-        coordinate_space.unwrap_or_else(|| "viewport".to_string()),
         "--delay".into(),
         delay.to_string(),
     ];
@@ -8866,98 +8529,6 @@ fn update_verify_button_state_block(
     if let Some(value) = sequencia_nao_encontrar {
         args.push("--sequencia-nao-encontrar".into());
         args.push(value);
-    }
-    run_helper_json(&root, &args)
-}
-
-#[tauri::command]
-fn update_chrome_html_block(
-    app: AppHandle,
-    order: i32,
-    nome: String,
-    html_original: String,
-    elemento: Value,
-    alvo: Value,
-    acao: Value,
-    timeout: i32,
-    fallback_visual: bool,
-    fallback_imagem: Option<String>,
-    ao_sucesso: String,
-    bloco_sucesso: Option<i32>,
-    sequencia_sucesso: Option<String>,
-    atraso_sequencia_sucesso: Option<f64>,
-    ao_falhar: String,
-    bloco_falha: Option<i32>,
-    sequencia_falha: Option<String>,
-    atraso_sequencia_falha: Option<f64>,
-    quantidade_tentativas: i32,
-    intervalo_tentativas: f64,
-    delay: f64,
-) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    let mut args = vec![
-        "update-chrome-html".into(),
-        "--order".into(),
-        order.to_string(),
-        "--nome".into(),
-        nome,
-        "--html-original".into(),
-        html_original,
-        "--elemento-json".into(),
-        serde_json::to_string(&elemento)
-            .map_err(|err| format!("Falha ao serializar elemento: {err}"))?,
-        "--alvo-json".into(),
-        serde_json::to_string(&alvo).map_err(|err| format!("Falha ao serializar alvo: {err}"))?,
-        "--acao-json".into(),
-        serde_json::to_string(&acao).map_err(|err| format!("Falha ao serializar acao: {err}"))?,
-        "--timeout".into(),
-        timeout.max(500).to_string(),
-        "--fallback-visual".into(),
-        fallback_visual.to_string(),
-        "--fallback-imagem".into(),
-        fallback_imagem.unwrap_or_default(),
-        "--ao-sucesso".into(),
-        ao_sucesso,
-        "--ao-falhar".into(),
-        ao_falhar,
-        "--quantidade-tentativas".into(),
-        quantidade_tentativas.max(1).to_string(),
-        "--intervalo-tentativas".into(),
-        intervalo_tentativas.max(0.0).to_string(),
-        "--delay".into(),
-        delay.to_string(),
-    ];
-    if let Some(value) = bloco_falha {
-        if value > 0 {
-            args.push("--bloco-falha".into());
-            args.push(value.to_string());
-        }
-    }
-    if let Some(value) = bloco_sucesso {
-        if value > 0 {
-            args.push("--bloco-sucesso".into());
-            args.push(value.to_string());
-        }
-    }
-    if let Some(value) = sequencia_sucesso {
-        if !value.trim().is_empty() {
-            args.push("--sequencia-sucesso".into());
-            args.push(value);
-        }
-    }
-    if let Some(value) = atraso_sequencia_sucesso {
-        args.push("--atraso-sequencia-sucesso".into());
-        args.push(value.max(0.0).to_string());
-    }
-    if let Some(value) = sequencia_falha {
-        if !value.trim().is_empty() {
-            args.push("--sequencia-falha".into());
-            args.push(value);
-        }
-    }
-    if let Some(value) = atraso_sequencia_falha {
-        args.push("--atraso-sequencia-falha".into());
-        args.push(value.max(0.0).to_string());
     }
     run_helper_json(&root, &args)
 }
@@ -9805,15 +9376,6 @@ fn test_ocr_recognition(
 }
 
 #[tauri::command]
-fn analyze_html_element(app: AppHandle, html: String) -> Result<Value, String> {
-    let root = workspace_root(&app);
-    run_helper_json(
-        &root,
-        &["analyze-html-element".into(), "--html".into(), html],
-    )
-}
-
-#[tauri::command]
 fn chrome_web_capture_element(
     app: AppHandle,
     url: Option<String>,
@@ -9847,7 +9409,7 @@ fn chrome_web_test_element(
             "test-element".into(),
             "--details-json".into(),
             serde_json::to_string(&details)
-                .map_err(|err| format!("Falha ao serializar ficha Chrome/Web: {err}"))?,
+                .map_err(|err| format!("Falha ao serializar elemento do Chrome: {err}"))?,
             "--timeout".into(),
             timeout.unwrap_or(10000).max(500).to_string(),
         ],
@@ -10580,7 +10142,6 @@ pub fn run() {
             capture_image_asset,
             open_images_folder,
             open_recognition_diagnostics_folder,
-            capture_mouse_click,
             start_smart_recorder,
             stop_smart_recorder,
             get_smart_recorder_status,
@@ -10592,11 +10153,9 @@ pub fn run() {
             add_key_block,
             add_loop_start_block,
             add_loop_end_block,
-            add_mouse_block,
             add_image_click_block,
             add_ocr_text_block,
             add_verify_button_state_block,
-            add_chrome_html_block,
             add_uia_element_block,
             add_open_url_block,
             add_open_program_block,
@@ -10609,10 +10168,8 @@ pub fn run() {
             insert_key_block,
             insert_loop_start_block,
             insert_loop_end_block,
-            insert_mouse_block,
             insert_image_click_block,
             insert_ocr_text_block,
-            insert_chrome_html_block,
             insert_uia_element_block,
             insert_open_url_block,
             insert_open_program_block,
@@ -10624,11 +10181,9 @@ pub fn run() {
             update_text_block,
             update_key_block,
             update_loop_marker_block,
-            update_mouse_block,
             update_image_click_block,
             update_ocr_text_block,
             update_verify_button_state_block,
-            update_chrome_html_block,
             update_uia_element_block,
             update_open_url_block,
             update_open_program_block,
@@ -10647,7 +10202,6 @@ pub fn run() {
             remove_block,
             clear_blocks,
             launch_legacy_capture,
-            analyze_html_element,
             chrome_web_capture_element,
             chrome_web_test_element,
             chrome_web_open_site,

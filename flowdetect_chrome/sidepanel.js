@@ -1,12 +1,17 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.38";
+const REQUIRED_RUNTIME_VERSION = "0.2.46";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
 const newButton = document.querySelector("#newButton");
 let automationsCache = [];
 let currentRun = {};
+const screenGuardRefreshers = new Set();
+
+function refreshScreenGuards() {
+  for (const refresh of screenGuardRefreshers) refresh(true);
+}
 
 const getAutomations = async () => (await chrome.storage.local.get(AUTOMATIONS_KEY))[AUTOMATIONS_KEY] || [];
 const setAutomations = async (automations) => chrome.storage.local.set({ [AUTOMATIONS_KEY]: automations });
@@ -135,6 +140,29 @@ async function saveLoopDisplayColumn(automationId, column) {
   await setAutomations(updated);
 }
 
+function screenGuardFromForm(form) {
+  const enabled = form.querySelector(".screen-guard-enabled").checked;
+  const text = form.querySelector(".screen-guard-text").value.trim();
+  let url = form.querySelector(".screen-guard-url").value.trim();
+  if (enabled) {
+    let parsed;
+    try { parsed = new URL(url); } catch (_) { throw new Error("Informe uma URL valida para a tela da automacao."); }
+    if (!["http:", "https:"].includes(parsed.protocol) || !text) throw new Error("Informe a URL HTTP/HTTPS e o texto esperado na tela.");
+    parsed.search = "";
+    url = parsed.href;
+  }
+  return { enabled, url, text };
+}
+
+async function saveScreenGuard(automation, form) {
+  const guard = screenGuardFromForm(form);
+  const updated = { ...automation, screen_guard: guard };
+  const stored = await getAutomations();
+  await setAutomations(stored.map((item) => String(item.id) === String(automation.id) ? updated : item));
+  automation.screen_guard = guard;
+  return updated;
+}
+
 function clampSpreadsheetStartRow(value, total) {
   const parsed = Math.trunc(Number(value));
   return Math.min(Math.max(1, Number.isFinite(parsed) ? parsed : 1), Math.max(1, Number(total) || 1));
@@ -144,6 +172,10 @@ async function runAutomation(automation, startRow = 1) {
   if (!await ensureCurrentRuntime()) return;
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab?.id) throw new Error("Abra a pagina onde deseja executar a automacao.");
+  if (automation.screen_guard?.enabled) {
+    const screen = await chrome.runtime.sendMessage({ type: "flowdetect-screen-ready", screenGuard: automation.screen_guard, tabId: tab.id });
+    if (!screen?.ready) throw new Error(screen?.reason || "Aguardando tela da automacao.");
+  }
   const loop = spreadsheetLoopInfo(automation);
   const selectedStartRow = loop ? clampSpreadsheetStartRow(startRow, loop.total) : 1;
   currentRun = {
@@ -189,7 +221,7 @@ async function deleteAutomation(automation) {
   if (!window.confirm(`Excluir "${nome}"? Essa acao nao pode ser desfeita.`)) return;
 
   const isCurrent = String(currentRun?.automationId || "") === String(automation.id);
-  if (isCurrent && currentRun?.status === "running") {
+  if (isCurrent && ["running", "waiting_screen"].includes(currentRun?.status)) {
     await chrome.runtime.sendMessage({ type: "flowdetect-stop" }).catch(() => null);
   }
 
@@ -209,6 +241,57 @@ function renderAutomation(automation) {
   fragment.querySelector(".automation-source").textContent = automation.automation?.source || "FLOWDETECT";
   fragment.querySelector(".automation-name").textContent = automation.automation?.nome || "Automacao Chrome";
   fragment.querySelector(".step-count").textContent = `${automation.steps.length} blocos`;
+  const busy = ["running", "waiting_screen"].includes(currentRun?.status);
+  const guardForm = fragment.querySelector(".screen-guard-form");
+  const guard = automation.screen_guard || {};
+  guardForm.querySelector(".screen-guard-enabled").checked = Boolean(guard.enabled);
+  guardForm.querySelector(".screen-guard-url").value = guard.url || "";
+  guardForm.querySelector(".screen-guard-text").value = guard.text || "";
+  fragment.querySelector(".screen-guard-state").textContent = guard.enabled ? "Ativa" : "Desativada";
+  guardForm.querySelector("fieldset").disabled = busy;
+  const runButton = fragment.querySelector(".run-automation");
+  const screenHint = fragment.querySelector(".screen-guard-hint");
+  let checkVersion = 0;
+  let lastGuardKey = "";
+  const refreshGuard = async (invalidate = false) => {
+    const version = ++checkVersion;
+    if (invalidate) lastGuardKey = "";
+    if (busy) { runButton.disabled = true; screenHint.hidden = true; return; }
+    let configured;
+    try { configured = screenGuardFromForm(guardForm); } catch (error) {
+      runButton.disabled = true; screenHint.hidden = false; screenHint.textContent = error.message; return;
+    }
+    screenHint.hidden = !configured.enabled;
+    if (!configured.enabled) { runButton.disabled = false; runButton.title = ""; return; }
+    const key = JSON.stringify(configured);
+    if (key !== lastGuardKey) { runButton.disabled = true; screenHint.textContent = "Identificando a tela da automacao..."; }
+    lastGuardKey = key;
+    const screen = await chrome.runtime.sendMessage({ type: "flowdetect-screen-ready", screenGuard: configured }).catch(() => null);
+    if (version !== checkVersion || !runButton.isConnected) return;
+    runButton.disabled = !screen?.ready;
+    runButton.title = screen?.reason || "Aguardando tela da automacao.";
+    screenHint.textContent = screen?.reason || "Aguardando tela da automacao.";
+    screenHint.classList.toggle("ready", Boolean(screen?.ready));
+  };
+  const invalidateGuard = () => { lastGuardKey = ""; refreshGuard(); };
+  screenGuardRefreshers.add(refreshGuard);
+  guardForm.addEventListener("input", invalidateGuard);
+  runButton.disabled = busy || Boolean(guard.enabled);
+  guardForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveScreenGuard(automation, guardForm).catch((error) => window.alert(error.message));
+  });
+  fragment.querySelector(".screen-guard-current").addEventListener("click", async () => {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      const url = new URL(tab?.url || "");
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error("Abra a pagina da automacao para usar sua URL.");
+      url.search = "";
+      guardForm.querySelector(".screen-guard-url").value = url.href;
+      guardForm.querySelector(".screen-guard-enabled").checked = true;
+      invalidateGuard();
+    } catch (error) { window.alert(error.message); }
+  });
   const loop = spreadsheetLoopInfo(automation);
   const loopStart = fragment.querySelector(".loop-start");
   const loopStartChoice = fragment.querySelector(".loop-start-choice");
@@ -226,7 +309,7 @@ function renderAutomation(automation) {
   const isCurrent = String(currentRun?.automationId || "") === String(automation.id);
   if (isCurrent) {
     const status = currentRun.status || "ready";
-    const labels = { ready: "Pronto", running: "Executando", completed: "Concluida", failed: "Falhou", stopped: "Parada" };
+    const labels = { ready: "Pronto", running: "Executando", waiting_screen: "Aguardando tela", completed: "Concluida", failed: "Falhou", stopped: "Parada" };
     const progress = runProgress(currentRun);
     card.classList.add("is-active");
     const execution = fragment.querySelector(".execution");
@@ -240,6 +323,11 @@ function renderAutomation(automation) {
     const executionColumnLabel = fragment.querySelector(".execution-column-label");
     const executionColumnChoice = fragment.querySelector(".execution-column-choice");
     const refreshExecutionLoopSummary = () => {
+      if (status === "waiting_screen") {
+        executionSummary.textContent = "Aguardando tela da automacao";
+        executionSummary.title = currentRun.waitingReason || "URL e texto esperado ainda nao foram confirmados.";
+        return;
+      }
       if (!loop?.columns?.length) {
         executionSummary.textContent = "Preparando execucao";
         return;
@@ -276,7 +364,7 @@ function renderAutomation(automation) {
     refreshExecutionLoopSummary();
     fragment.querySelector(".progress-bar").style.width = `${progress.percent}%`;
     const stop = fragment.querySelector(".stop-button");
-    stop.hidden = status !== "running";
+    stop.hidden = !["running", "waiting_screen"].includes(status);
     stop.addEventListener("click", () => chrome.runtime.sendMessage({ type: "flowdetect-stop" }));
     const reportButton = fragment.querySelector(".report-button");
     const canGenerateReport = hasFinishedRun(status);
@@ -292,7 +380,13 @@ function renderAutomation(automation) {
 
   fragment.querySelector(".run-automation").addEventListener("click", () => {
     const startRow = loop ? clampSpreadsheetStartRow(loopStartChoice.value, loop.total) : 1;
-    return runAutomation(automation, startRow).catch((error) => {
+    return saveScreenGuard(automation, guardForm).then((configured) => runAutomation(configured, startRow)).catch((error) => {
+      if (!["running", "waiting_screen"].includes(currentRun?.status)) {
+        screenHint.hidden = false;
+        screenHint.textContent = String(error.message || error);
+        invalidateGuard();
+        return;
+      }
       updateRun({
         automationId: automation.id,
         automationName: automation.automation?.nome,
@@ -310,6 +404,7 @@ function renderAutomation(automation) {
 }
 
 function renderAutomations(automations = automationsCache) {
+  screenGuardRefreshers.clear();
   automationsCache = Array.isArray(automations) ? automations : [];
   automationList.replaceChildren();
   if (!automationsCache.length) {
@@ -324,7 +419,13 @@ function renderAutomations(automations = automationsCache) {
     Number(String(second.id) === activeId) - Number(String(first.id) === activeId)
   ));
   ordered.forEach((automation) => automationList.append(renderAutomation(automation)));
+  refreshScreenGuards();
 }
+
+chrome.tabs.onActivated?.addListener(refreshScreenGuards);
+chrome.tabs.onUpdated?.addListener(refreshScreenGuards);
+chrome.windows?.onFocusChanged?.addListener(refreshScreenGuards);
+setInterval(() => { for (const refresh of screenGuardRefreshers) refresh(); }, 1000);
 
 importInput.addEventListener("change", async () => {
   const file = importInput.files?.[0];
@@ -357,9 +458,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes[AUTOMATIONS_KEY]) renderAutomations(changes[AUTOMATIONS_KEY].newValue || []);
 });
 
-Promise.all([getAutomations(), chrome.storage.local.get(RUN_STORAGE_KEY)])
-  .then(([automations, storage]) => {
+function reconcileStoredRun(run, runtime) {
+  if (!["running", "waiting_screen"].includes(run?.status) ||
+      !Array.isArray(runtime?.activeRunIds) || runtime.activeRunIds.includes(run.id)) return run;
+  return { ...run, status: "stopped", finishedAt: new Date().toISOString(), waitingReason: "" };
+}
+
+Promise.all([getAutomations(), chrome.storage.local.get(RUN_STORAGE_KEY),
+  chrome.runtime.sendMessage({ type: "flowdetect-runtime-info" }).catch(() => null)])
+  .then(async ([automations, storage, runtime]) => {
     automationsCache = automations;
-    currentRun = storage[RUN_STORAGE_KEY] || {};
+    const storedRun = storage[RUN_STORAGE_KEY] || {};
+    currentRun = reconcileStoredRun(storedRun, runtime);
+    if (currentRun !== storedRun) await chrome.storage.local.set({ [RUN_STORAGE_KEY]: currentRun });
     renderAutomations();
   });
