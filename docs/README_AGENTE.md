@@ -15,7 +15,7 @@ O produto atual possui:
 - execucao assistida em tempo real;
 - loop por planilha;
 - reconhecimento visual por imagem/OCR;
-- captura de elementos Chrome/Web;
+- OCR por elemento da pagina e extensao Chrome;
 - captura de elementos de janela via UI Automation;
 - gravador inteligente de cliques/teclas/textos;
 - controle remoto do Agent pelo Studio;
@@ -35,7 +35,7 @@ Use a pasta do checkout que contem `tauri_gerador/`, `flowdetect_agent/` e `gere
 - OCR: mecanismo Python usado no executor, com otimizacoes por area.
 - Planilhas: OpenPyXL.
 - UI Automation Windows: `uiautomation` + Win32 fallback.
-- Chrome/Web: ponte local com Chrome DevTools/Playwright/bridge interno.
+- Integracao Chrome: ponte local usada pelo OCR por elemento e pela extensao.
 - Controle remoto/tela do Agent: fluxo interno via rede local/WebRTC/snapshots conforme implementacao atual.
 
 ## 4. Projetos dentro da raiz
@@ -80,7 +80,7 @@ Arquivos centrais na raiz:
 - `gerenciar_roteiro.py`: cria, atualiza, move, remove, importa/exporta e salva blocos.
 - `capturar_imagem_tela.py`: captura de referencias visuais.
 - `mapear_elementos_janela.py`: mapeamento UI Automation/Win32 de janelas.
-- `chrome_web_bridge.py`: ponte Chrome/Web.
+- `chrome_web_bridge.py`: ponte local usada pela captura/validação de elementos do OCR.
 - `gerenciar_dados_planilha.py`: leitura/preview/limpeza/alteracao de planilhas.
 - `gravador_inteligente.py`: apoio ao gravador de cliques/teclas/textos.
 - `listar_janelas_abertas.py`: lista janelas para janela alvo.
@@ -300,18 +300,9 @@ Pontos atuais:
 - pode clicar, confirmar ou seguir fluxo;
 - se falhar, pode parar, continuar, tentar de novo ou ir para bloco.
 
-### Chrome/Web
+### OCR por elemento / extensao Chrome
 
-Automatiza elementos do Chrome sem expor selector tecnico ao usuario.
-
-Tela principal deve mostrar:
-
-- nome amigavel;
-- tipo do elemento;
-- acao simples;
-- capturar/testar.
-
-Detalhes tecnicos ficam escondidos.
+O bloco Chrome/Web foi removido. Automacoes web novas usam a extensao Chrome, enquanto o OCR pode continuar usando um elemento da pagina como fonte de reconhecimento. A ponte local do Chrome permanece somente para essa captura/validacao compartilhada.
 
 ### Mapear janela / Elemento da janela
 

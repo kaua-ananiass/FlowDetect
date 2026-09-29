@@ -11,7 +11,7 @@ from tkinter import messagebox, ttk
 
 import pyautogui
 from openpyxl import load_workbook
-from pynput import keyboard, mouse as pynput_mouse
+from pynput import keyboard
 
 
 ARQUIVO_SAIDA = Path("mapeamento_teclado.json")
@@ -31,7 +31,6 @@ INTERVALO_TEXTO = 0.01
 PAUSA_ANTES_DE_DIGITAR = 0.3
 INTERVALO_ENTRE_ITENS_PLANILHA = 0.5
 TIPOS_SEQUENCIA_PLANILHA = {"sequencia_planilha"}
-TIPOS_MOUSE = {"mouse_click"}
 TECLAS_MODIFICADORAS = {
     "shift",
     "shift_r",
@@ -125,7 +124,6 @@ class GravadorTeclado:
         self.encerrando = False
         self.fila_acoes = queue.Queue()
         self.listener = None
-        self.mouse_listener = None
         self.root = None
         self.notebook = None
         self.janela_texto = None
@@ -144,7 +142,6 @@ class GravadorTeclado:
         self.evento_selecionado_ordem = None
         self.evento_execucao_atual_ordem = None
         self.pausa_manual = False
-        self.capturando_mouse = False
 
     def normalizar_nome_tecla(self, key):
         if hasattr(key, "char") and key.char is not None:
@@ -193,13 +190,6 @@ class GravadorTeclado:
             quantidade = len((metadados or {}).get("valores", []))
             acao = (metadados or {}).get("acao_apos_item_texto") or "nenhuma"
             return f"[PLANILHA:{coluna} x{quantidade} | apos:{acao}]"
-
-        if tipo_evento in TIPOS_MOUSE:
-            detalhes = metadados or {}
-            x = detalhes.get("x", 0)
-            y = detalhes.get("y", 0)
-            botao = str(detalhes.get("botao", "left")).upper()
-            return f"[MOUSE:{botao} x={x} y={y}]"
 
         if len(teclas) == 1:
             nome = teclas[0]
@@ -286,7 +276,6 @@ class GravadorTeclado:
             "instrucoes": [
                 "Teclas simples e atalhos sao gravados individualmente.",
                 "F8 abre uma caixa de texto grande e salva o bloco como um unico comando.",
-                "O botao Capturar mouse salva a coordenada exata do proximo clique.",
                 "Cada evento tambem salva o intervalo em segundos desde a acao anterior.",
                 "A aba Planilha pode adicionar uma sequencia inteira ou so linhas selecionadas ao roteiro.",
                 "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura.",
@@ -324,13 +313,6 @@ class GravadorTeclado:
                 f"acao_apos_item={acao_apos_item!r}, "
                 f"intervalo_entre_itens={intervalo_entre_itens!r})"
             )
-
-        if tipo_evento in TIPOS_MOUSE:
-            detalhes = metadados or {}
-            x = int(detalhes.get("x", 0))
-            y = int(detalhes.get("y", 0))
-            botao = str(detalhes.get("botao", "left"))
-            return f'pyautogui.click(x={x}, y={y}, button="{botao}")'
 
         teclas_pyautogui = [self.tecla_para_pyautogui(tecla) for tecla in teclas]
 
@@ -566,11 +548,6 @@ class GravadorTeclado:
                     self.root.lift()
                 except tk.TclError:
                     pass
-            elif acao == "mouse_capturado":
-                self.concluir_captura_mouse(payload)
-            elif acao == "mouse_erro":
-                self.finalizar_captura_mouse_com_erro(payload["mensagem"])
-
         if not self.encerrando and self.root is not None:
             self.root.after(100, self.processar_fila)
 
@@ -833,11 +810,6 @@ class GravadorTeclado:
                 detalhe = f"Planilha {coluna} item {indice_item + 1}/{total_valores}: {valor}"
             else:
                 detalhe = f"Planilha {coluna} com {total_valores} itens"
-        elif tipo in TIPOS_MOUSE:
-            x = int(detalhes.get("x", 0))
-            y = int(detalhes.get("y", 0))
-            botao = str(detalhes.get("botao", "left")).upper()
-            detalhe = f"Mouse {botao} em X={x} Y={y}"
         else:
             conteudo = evento.get("texto") or self.formatar_evento(evento.get("teclas", []), tipo)
             detalhe = self.resumir_para_lista(conteudo, 95)
@@ -913,10 +885,9 @@ class GravadorTeclado:
         total = len(self.eventos)
         total_texto_grande = sum(1 for evento in self.eventos if evento["tipo"] == "texto_livre")
         total_planilha = sum(1 for evento in self.eventos if evento["tipo"] in TIPOS_SEQUENCIA_PLANILHA)
-        total_mouse = sum(1 for evento in self.eventos if evento["tipo"] in TIPOS_MOUSE)
         sufixo_status = " | captura pausada" if self.pausa_manual else " | captura ativa"
         self.status_var.set(
-            f"{total} eventos no roteiro | {total_texto_grande} blocos de texto | {total_planilha} sequencias de planilha | {total_mouse} cliques do mouse{sufixo_status}"
+            f"{total} eventos no roteiro | {total_texto_grande} blocos de texto | {total_planilha} sequencias de planilha{sufixo_status}"
         )
         self.atualizar_editor_tempo()
 
@@ -1034,7 +1005,6 @@ class GravadorTeclado:
         self.execucao_detalhe_var = tk.StringVar(value="Passo atual: nenhum evento em execucao ainda.")
         self.evento_tempo_info_var = tk.StringVar(value="Selecione um item do roteiro para editar os tempos.")
         self.botao_pausa_var = tk.StringVar(value="Pausar captura")
-        self.mouse_posicao_var = tk.StringVar(value="Nenhum clique do mouse capturado ainda.")
         self.planilha_info_var = tk.StringVar(value="Planilha ainda nao carregada.")
         self.coluna_info_var = tk.StringVar(value="Selecione uma coluna para ver os valores.")
         self.planilha_aba_var = tk.StringVar()
@@ -1053,10 +1023,10 @@ class GravadorTeclado:
         topo = ttk.Frame(container)
         topo.pack(fill="x", pady=(0, 14))
 
-        ttk.Label(topo, text="Automacao com Captura de Teclas e Mouse", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(topo, text="Automacao com Captura de Teclas", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             topo,
-            text="A captura roda em segundo plano, mostra o historico visualmente, captura cliques do mouse e conversa com a planilha db.xlsx.",
+            text="A captura roda em segundo plano, mostra o historico visualmente e conversa com a planilha db.xlsx.",
             style="Sub.TLabel",
         ).pack(anchor="w", pady=(4, 0))
 
@@ -1190,30 +1160,6 @@ class GravadorTeclado:
             command=self.aplicar_tempo_evento_selecionado,
             style="Primary.TButton",
         ).pack(anchor="e", pady=(10, 0))
-
-        quadro_mouse = ttk.LabelFrame(direita, text="Captura de mouse", style="Section.TLabelframe", padding=10)
-        quadro_mouse.pack(fill="x", pady=(0, 10))
-
-        ttk.Label(
-            quadro_mouse,
-            text="Clique no botao abaixo e depois clique no ponto exato da tela que deve ser repetido no roteiro.",
-            style="Sub.TLabel",
-            wraplength=360,
-            justify="left",
-        ).pack(anchor="w")
-        ttk.Label(
-            quadro_mouse,
-            textvariable=self.mouse_posicao_var,
-            background="#FFFFFF",
-            foreground="#17324D",
-            font=("Consolas", 10),
-        ).pack(anchor="w", pady=(8, 10))
-        ttk.Button(
-            quadro_mouse,
-            text="Capturar mouse",
-            command=self.capturar_mouse_pelo_botao,
-            style="Primary.TButton",
-        ).pack(anchor="w")
 
         quadro_resumo = ttk.LabelFrame(direita, text="Resumo digitado", style="Section.TLabelframe", padding=10)
         quadro_resumo.pack(fill="both", expand=True, pady=(0, 10))
@@ -1373,90 +1319,6 @@ class GravadorTeclado:
         self.resetar_estado_captura()
         self.abrir_janela_texto()
 
-    def capturar_mouse_pelo_botao(self):
-        if self.capturando_mouse:
-            self.adicionar_log("Ja existe uma captura de mouse aguardando clique.", "alerta")
-            return
-
-        if self.executando_roteiro:
-            self.adicionar_log("Aguarde a automacao terminar antes de capturar um clique do mouse.", "alerta")
-            return
-
-        self.capturando_mouse = True
-        self.captura_pausada = True
-        self.resetar_estado_captura()
-        self.mouse_posicao_var.set("Aguardando clique na tela...")
-        self.adicionar_log(
-            "Captura de mouse iniciada. Clique no ponto exato da tela para salvar esse clique no roteiro.",
-            "info",
-        )
-
-        try:
-            self.root.iconify()
-        except tk.TclError:
-            pass
-
-        threading.Thread(target=self.capturar_posicao_mouse, daemon=True).start()
-
-    def capturar_posicao_mouse(self):
-        time.sleep(0.2)
-
-        try:
-            def ao_clicar(x, y, button, pressed):
-                if not pressed:
-                    return True
-
-                nome_botao = getattr(button, "name", str(button).replace("Button.", ""))
-                self.enfileirar_ui(
-                    "mouse_capturado",
-                    {
-                        "x": int(x),
-                        "y": int(y),
-                        "botao": nome_botao,
-                    },
-                )
-                return False
-
-            self.mouse_listener = pynput_mouse.Listener(on_click=ao_clicar)
-            self.mouse_listener.start()
-            self.mouse_listener.join()
-        except Exception as erro:
-            self.enfileirar_ui("mouse_erro", {"mensagem": f"Falha ao capturar o mouse: {erro}"})
-        finally:
-            self.mouse_listener = None
-
-    def concluir_captura_mouse(self, payload):
-        self.capturando_mouse = False
-        self.captura_pausada = False
-
-        x = int(payload["x"])
-        y = int(payload["y"])
-        botao = str(payload.get("botao", "left"))
-        self.mouse_posicao_var.set(f"Ultimo clique salvo: {botao.upper()} em X={x} | Y={y}")
-        self.registrar_evento(["mouse"], "mouse_click", metadados={"x": x, "y": y, "botao": botao})
-        self.adicionar_log(
-            f"Clique do mouse salvo no roteiro: botao {botao.upper()} em X={x}, Y={y}.",
-            "ok",
-        )
-
-        try:
-            self.root.deiconify()
-            self.root.lift()
-        except tk.TclError:
-            pass
-
-    def finalizar_captura_mouse_com_erro(self, mensagem):
-        self.capturando_mouse = False
-        self.captura_pausada = False
-        self.mouse_posicao_var.set("Nenhum clique do mouse capturado ainda.")
-        self.adicionar_log(mensagem, "removido")
-
-        try:
-            self.root.deiconify()
-            self.root.lift()
-        except tk.TclError:
-            pass
-
     def executar_roteiro_pelo_botao(self):
         if self.executando_roteiro:
             self.adicionar_log("Ja existe uma automacao em andamento.", "alerta")
@@ -1565,14 +1427,6 @@ class GravadorTeclado:
                 if indice < total - 1 and intervalo_entre_itens > 0:
                     if not self.esperar_com_cancelamento(intervalo_entre_itens):
                         return False
-            return True
-
-        if tipo in TIPOS_MOUSE:
-            detalhes = evento.get("detalhes", {})
-            x = int(detalhes.get("x", 0))
-            y = int(detalhes.get("y", 0))
-            botao = str(detalhes.get("botao", "left"))
-            pyautogui.click(x=x, y=y, button=botao)
             return True
 
         teclas = evento.get("teclas", [])
@@ -2210,9 +2064,6 @@ class GravadorTeclado:
 
         if self.listener is not None:
             self.listener.stop()
-        if self.mouse_listener is not None:
-            self.mouse_listener.stop()
-
         if self.root is not None:
             self.root.quit()
 
@@ -2231,8 +2082,8 @@ class GravadorTeclado:
             self.planilha_info_var.set(mensagem)
             self.adicionar_log(mensagem, "removido")
 
-        self.adicionar_log("Captura iniciada. Teclas, atalhos e cliques do mouse podem entrar no roteiro.", "info")
-        self.adicionar_log("F8 abre o texto grande. O botao Capturar mouse salva o proximo clique. Backspace remove a ultima entrada. F9 fecha o programa.", "info")
+        self.adicionar_log("Captura iniciada. Teclas e atalhos podem entrar no roteiro.", "info")
+        self.adicionar_log("F8 abre o texto grande. Backspace remove a ultima entrada. F9 fecha o programa.", "info")
 
         self.listener = keyboard.Listener(
             on_press=self.on_press,

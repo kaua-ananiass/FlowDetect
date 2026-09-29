@@ -39,7 +39,6 @@ INTERVALO_ENTRE_ITENS_PLANILHA = 0.5
 INSTRUCOES_PADRAO = [
     "Teclas simples e atalhos sao gravados individualmente.",
     "F8 abre uma caixa de texto grande e salva o bloco como um unico comando.",
-    "O botao Capturar mouse salva a coordenada exata do proximo clique.",
     "Cada evento tambem salva o intervalo em segundos desde a acao anterior.",
     "A aba Planilha pode adicionar uma sequencia inteira ou so linhas selecionadas ao roteiro.",
     "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura.",
@@ -47,11 +46,9 @@ INSTRUCOES_PADRAO = [
 TIPOS_SEQUENCIA_PLANILHA = {"sequencia_planilha"}
 TIPOS_RESULTADO_RELATORIO = {"resultado_relatorio"}
 TIPOS_MARCADORES_LOOP = {"inicio_loop", "fim_loop"}
-TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
 TIPOS_OCR = {"procurar_texto_ocr"}
 TIPOS_VERIFICACAO = {"verificar_estado_botao"}
-TIPOS_CHROME = {"chrome_elemento_html"}
 TIPOS_UIA = {"uia_elemento"}
 TIPOS_PREPARACAO_TELA = {"abrir_url", "abrir_programa"}
 TIPOS_SUPORTADOS_RUNTIME = {
@@ -61,11 +58,9 @@ TIPOS_SUPORTADOS_RUNTIME = {
     *TIPOS_SEQUENCIA_PLANILHA,
     *TIPOS_RESULTADO_RELATORIO,
     *TIPOS_MARCADORES_LOOP,
-    *TIPOS_MOUSE,
     *TIPOS_IMAGEM,
     *TIPOS_OCR,
     *TIPOS_VERIFICACAO,
-    *TIPOS_CHROME,
     *TIPOS_UIA,
     *TIPOS_PREPARACAO_TELA,
 }
@@ -77,7 +72,6 @@ ARQUIVOS_RUNTIME_ATUALIZACAO = [
     "gerenciar_dados_planilha.py",
     "capturar_imagem_tela.py",
     "capturar_cliques.py",
-    "capturar_mouse_global.py",
     "comandos_teclado.py",
     "overlay_janela_alvo.py",
     "mapear_elementos_janela.py",
@@ -740,7 +734,11 @@ def fluxo_alvo_ocr_para_chrome(alvo, fluxo_padrao, resultado="sucesso"):
     }
     acao = aliases.get(acao, acao)
     if acao == "ir_para_bloco":
-        return {"action": "ir_para_bloco", "block": bloco, "sequence": ""}
+        fluxo = {"action": "ir_para_bloco", "block": bloco, "sequence": ""}
+        atraso = normalizar_atraso_transicao(alvo.get("failureDelay" if resultado == "falha" else "successDelay", 0))
+        if atraso > 0:
+            fluxo["delay_ms"] = round(atraso * 1000)
+        return fluxo
     if resultado == "falha" and acao in {"continuar", "parar", "ir_para_sequencia"}:
         return {"action": acao, "block": bloco, "sequence": ""}
     return fluxo_padrao
@@ -861,7 +859,7 @@ def aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes):
 
 
 def passo_chrome_base(evento, tipo, detalhes):
-    chave_falha = "ao_falhar" if str(evento.get("tipo") or "") == "chrome_elemento_html" else "ao_nao_encontrar"
+    chave_falha = "ao_nao_encontrar"
     return {
         "id": f"step_{int(evento.get('ordem') or 0)}",
         "source_order": int(evento.get("ordem") or 0),
@@ -890,30 +888,6 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
             "timeout_ms": max(500, round(float(detalhes.get("aguardar_segundos") or 10) * 1000)),
         })
         return passo, None
-
-    if tipo == "chrome_elemento_html":
-        alvo = detalhes.get("alvo") or {}
-        acao = detalhes.get("acao") or {}
-        metodo = str(alvo.get("metodo") or "css").strip().lower()
-        valor = str(alvo.get("valor") or alvo.get("seletor_css") or "").strip()
-        if not valor:
-            return None, f"Bloco {ordem}: seletor Chrome vazio nao foi exportado."
-        passo = passo_chrome_base(evento, "element_action", detalhes)
-        passo.update({
-            "selector": {"method": metodo, "value": valor},
-            "action": {
-                "type": str(acao.get("tipo") or "clicar").strip().lower(),
-                "value": str(acao.get("valor") or ""),
-                "clear_before": bool(acao.get("limpar_antes", True)),
-                "press_after": str(acao.get("pressionar_depois") or "").strip().lower(),
-            },
-            "timeout_ms": max(500, int(detalhes.get("timeout") or 10000)),
-        })
-        fallback, erro_fallback = recurso_imagem_para_chrome(detalhes.get("fallback_imagem"))
-        if bool(detalhes.get("fallback_visual")) and fallback:
-            passo["visual_fallback"] = fallback
-        aviso = f"Bloco {ordem}: fallback visual sem imagem valida ({erro_fallback})." if bool(detalhes.get("fallback_visual")) and not fallback else None
-        return passo, aviso
 
     if tipo == "procurar_texto_ocr":
         if str(detalhes.get("fonte_ocr") or "").lower() == "elemento":
@@ -981,17 +955,6 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
             return None, f"Bloco {ordem}: tecla nao configurada nao foi exportada."
         passo = passo_chrome_base(evento, "key_sequence", detalhes)
         passo.update({"keys": teclas, "repetitions": max(1, int(detalhes.get("repeticoes") or 1))})
-        return passo, None
-
-    if tipo == "mouse_click":
-        passo = passo_chrome_base(evento, "viewport_click", detalhes)
-        passo.update({
-            "x": int(detalhes.get("x") or 0),
-            "y": int(detalhes.get("y") or 0),
-            "button": str(detalhes.get("botao") or "left").lower(),
-            "clicks": max(1, int(detalhes.get("cliques") or 1)),
-            "coordinate_space": "last_ocr_click" if detalhes.get("coordinate_space") == "last_ocr_click" else "viewport",
-        })
         return passo, None
 
     if tipo == "clicar_imagem":
@@ -1475,269 +1438,14 @@ class ElementoHTMLParser(HTMLParser):
                 self.textos.append(texto)
 
 
-def classificar_tipo_elemento_html(elemento):
-    tag = str((elemento or {}).get("tag", "")).lower()
-    tipo_input = str((elemento or {}).get("type", "")).lower()
-    role = str((elemento or {}).get("role", "")).lower()
-    if tag == "select":
-        return "select"
-    if tag == "textarea":
-        return "textarea"
-    if tag == "a" or role == "link":
-        return "link"
-    if tag == "button" or role == "button" or tipo_input in {"button", "submit", "reset"}:
-        return "button"
-    if tag == "input":
-        if tipo_input in {"checkbox", "radio"}:
-            return "choice"
-        if tipo_input in {"text", "email", "password", "search", "tel", "number", "url", ""}:
-            return "text_input"
-    if str((elemento or {}).get("contenteditable", "")).lower() in {"true", "plaintext-only"}:
-        return "editable"
-    return "generic"
 
 
-def sugestao_valor_chrome(elemento):
-    pistas = " ".join(
-        [
-            str((elemento or {}).get("placeholder", "")),
-            str((elemento or {}).get("aria_label", "")),
-            str((elemento or {}).get("name", "")),
-            str((elemento or {}).get("text", "")),
-        ]
-    ).lower()
-    if "cnpj" in pistas:
-        return "{{CNPJ}}"
-    if "cpf" in pistas:
-        return "{{CPF}}"
-    if "empresa" in pistas:
-        return "{{EMPRESA}}"
-    if "nome" in pistas:
-        return "{{NOME}}"
-    return ""
 
 
-def sugerir_nome_bloco_chrome(elemento, acao_tipo):
-    placeholder = str((elemento or {}).get("placeholder", "")).strip()
-    aria_label = str((elemento or {}).get("aria_label", "")).strip()
-    texto = str((elemento or {}).get("text", "")).strip()
-    alvo = placeholder or aria_label or texto or str((elemento or {}).get("name", "")).strip()
-    alvo = alvo or str((elemento or {}).get("tag", "elemento")).strip()
-    alvo = re.sub(r"\s+", " ", alvo).strip()
-    if acao_tipo == "preencher":
-        return f"Preencher {alvo}"
-    if acao_tipo == "clicar":
-        return f"Clicar {alvo}"
-    if acao_tipo.startswith("selecionar"):
-        return f"Selecionar {alvo}"
-    return f"Usar {alvo}"
 
 
-def gerar_seletores(elemento):
-    elemento = elemento or {}
-    tag = str(elemento.get("tag", "")).strip().lower() or "*"
-    role = str(elemento.get("role", "")).strip().lower()
-    seletores = []
-
-    def adicionar(metodo, valor, codigo, confianca="media", motivo="", extra=None):
-        if not str(valor or "").strip():
-            return
-        seletores.append(
-            {
-                "metodo": metodo,
-                "valor": str(valor).strip(),
-                "codigo_playwright": codigo,
-                "confianca": confianca,
-                "motivo": motivo,
-                **(extra or {}),
-            }
-        )
-
-    placeholder = str(elemento.get("placeholder", "")).strip()
-    name = str(elemento.get("name", "")).strip()
-    aria_label = str(elemento.get("aria_label", "")).strip()
-    aria_labelledby = str(elemento.get("aria_labelledby", "")).strip()
-    element_id = str(elemento.get("id", "")).strip()
-    texto = str(elemento.get("text", "")).strip()
-    tipo = str(elemento.get("type", "")).strip().lower()
-
-    adicionar(
-        "placeholder",
-        placeholder,
-        f"page.get_by_placeholder({placeholder!r})",
-        "alta",
-        extra={"seletor_css": f'{tag}[placeholder="{escape_css_attr_value(placeholder)}"]'},
-    )
-    adicionar(
-        "name",
-        name,
-        f"page.locator({f'{tag}[name=\"{escape_css_attr_value(name)}\"]'!r})",
-        "alta",
-        extra={"seletor_css": f'{tag}[name="{escape_css_attr_value(name)}"]'},
-    )
-    adicionar(
-        "aria-label",
-        aria_label,
-        f"page.get_by_label({aria_label!r})",
-        "alta",
-        extra={"seletor_css": f'{tag}[aria-label="{escape_css_attr_value(aria_label)}"]'},
-    )
-    adicionar(
-        "labelledby",
-        aria_labelledby,
-        f"page.locator({f'{tag}[aria-labelledby=\"{escape_css_attr_value(aria_labelledby)}\"]'!r})",
-        "media",
-        "Referencia indireta via aria-labelledby.",
-        extra={"seletor_css": f'{tag}[aria-labelledby="{escape_css_attr_value(aria_labelledby)}"]'},
-    )
-    if element_id:
-        confianca_id = "baixa" if id_parece_dinamico(element_id) else "media"
-        motivo_id = "ID parece gerado dinamicamente" if confianca_id == "baixa" else ""
-        adicionar(
-            "id",
-            element_id,
-            f"page.locator({f'[id=\"{escape_css_attr_value(element_id)}\"]'!r})",
-            confianca_id,
-            motivo_id,
-            extra={"seletor_css": f'[id="{escape_css_attr_value(element_id)}"]'},
-        )
-    if texto:
-        adicionar(
-            "text",
-            texto,
-            f"page.get_by_text({texto!r})",
-            "media",
-            extra={"seletor_css": tag},
-        )
-    if role and texto:
-        adicionar(
-            "role",
-            texto,
-            f"page.get_by_role({role!r}, name={texto!r})",
-            "alta",
-            extra={"role": role},
-        )
-
-    atributos_css = []
-    for chave in ("placeholder", "name", "aria-label", "type"):
-        valor = str(elemento.get(chave.replace("-", "_"), "") or elemento.get(chave, "")).strip()
-        if valor:
-            atributos_css.append((chave, valor))
-    if not atributos_css and tipo:
-        atributos_css.append(("type", tipo))
-    if atributos_css:
-        seletor_css = tag + "".join(
-            f'[{atributo}="{escape_css_attr_value(valor)}"]' for atributo, valor in atributos_css
-        )
-        adicionar(
-            "css",
-            seletor_css,
-            f"page.locator({seletor_css!r})",
-            "alta" if any(atributo in {"placeholder", "name", "aria-label"} for atributo, _ in atributos_css) else "media",
-            extra={"seletor_css": seletor_css},
-        )
-
-    predicados_xpath = []
-    for atributo in ("placeholder", "name", "aria-label", "type"):
-        valor = str(elemento.get(atributo.replace("-", "_"), "") or elemento.get(atributo, "")).strip()
-        if valor:
-            predicados_xpath.append(f"@{atributo}={xpath_literal(valor)}")
-    if texto:
-        predicados_xpath.append(f"normalize-space(.)={xpath_literal(texto)}")
-    if not predicados_xpath:
-        predicados_xpath.append("1=1")
-    xpath = f"//{tag}[{' and '.join(predicados_xpath)}]"
-    adicionar(
-        "xpath",
-        xpath,
-        f"page.locator({f'xpath={xpath}'!r})",
-        "baixa",
-        "XPath deve ser ultimo recurso.",
-    )
-
-    prioridade = {
-        "placeholder": 0,
-        "name": 1,
-        "aria-label": 2,
-        "role": 3,
-        "labelledby": 4,
-        "id": 5,
-        "css": 6,
-        "text": 7,
-        "xpath": 8,
-    }
-    confianca_score = {"alta": 0, "media": 1, "baixa": 2}
-    seletores.sort(
-        key=lambda seletor: (
-            prioridade.get(seletor.get("metodo"), 99),
-            confianca_score.get(seletor.get("confianca"), 9),
-            len(str(seletor.get("valor", ""))),
-        )
-    )
-    return seletores
 
 
-def parse_html_elemento(html):
-    trecho = unescape(str(html or "").strip())
-    if not trecho:
-        raise ValueError("Nenhum HTML foi informado para analise.")
-
-    parser = ElementoHTMLParser()
-    parser.feed(trecho)
-    parser.close()
-
-    if not parser.root_tag:
-        raise ValueError("Nao foi possivel identificar um elemento HTML valido no trecho informado.")
-
-    atributos = {str(chave): str(valor) for chave, valor in (parser.root_attrs or {}).items()}
-    classes = [classe for classe in str(atributos.get("class", "")).split() if classe]
-    elemento = {
-        "tag": parser.root_tag,
-        "type": str(atributos.get("type", "")).strip().lower(),
-        "id": str(atributos.get("id", "")).strip(),
-        "name": str(atributos.get("name", "")).strip(),
-        "placeholder": str(atributos.get("placeholder", "")).strip(),
-        "aria_label": str(atributos.get("aria-label", "")).strip(),
-        "aria_labelledby": str(atributos.get("aria-labelledby", "")).strip(),
-        "role": str(atributos.get("role", "")).strip().lower(),
-        "classes": classes,
-        "text": " ".join(parser.textos).strip(),
-        "value": str(atributos.get("value", "")).strip(),
-        "maxlength": str(atributos.get("maxlength", "")).strip(),
-        "required": "required" in atributos and str(atributos.get("required", "true")).lower() not in {"false", "0", "nao"},
-        "attributes": atributos,
-        "contenteditable": str(atributos.get("contenteditable", "")).strip(),
-    }
-    tipo_provavel = classificar_tipo_elemento_html(elemento)
-    seletores = gerar_seletores(elemento)
-    alvo_recomendado = dict(seletores[0]) if seletores else {
-        "metodo": "css",
-        "valor": elemento["tag"],
-        "codigo_playwright": f"page.locator({elemento['tag']!r})",
-        "confianca": "baixa",
-        "seletor_css": elemento["tag"],
-    }
-    acao_padrao = "preencher" if tipo_provavel in {"text_input", "textarea", "editable"} else (
-        "selecionar_texto" if tipo_provavel == "select" else "clicar"
-    )
-    nome_sugerido = sugerir_nome_bloco_chrome(elemento, acao_padrao)
-    return {
-        "html_original": trecho,
-        "elemento": elemento,
-        "tipo_provavel": tipo_provavel,
-        "seletores": seletores,
-        "alvo_recomendado": alvo_recomendado,
-        "acao_sugerida": {
-            "tipo": acao_padrao,
-            "origem_valor": "texto_fixo",
-            "valor": sugestao_valor_chrome(elemento),
-            "limpar_antes": True,
-            "pressionar_depois": "enter" if acao_padrao == "preencher" else "",
-            "salvar_em": "",
-        },
-        "nome_sugerido": nome_sugerido,
-        "confianca": alvo_recomendado.get("confianca", "media"),
-    }
 
 
 def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
@@ -1761,15 +1469,6 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         status = str(detalhes.get("status", "Concluida") or "Concluida").strip()
         resultado = str(detalhes.get("resultado", "") or "").strip()
         return f"[RELATORIO:{status} | {resultado[:56] or 'resultado padrao'}]"
-
-    if tipo_evento in TIPOS_MOUSE:
-        detalhes = metadados or {}
-        x = detalhes.get("x", 0)
-        y = detalhes.get("y", 0)
-        botao = str(detalhes.get("botao", "left")).upper()
-        cliques = max(1, int(detalhes.get("cliques", 1) or 1))
-        sufixo = " duplo" if cliques == 2 else ""
-        return f"[MOUSE:{botao}{sufixo} x={x} y={y}]"
 
     if tipo_evento in TIPOS_IMAGEM:
         detalhes = metadados or {}
@@ -1809,23 +1508,6 @@ def formatar_evento(teclas, tipo_evento, texto_livre=None, metadados=None):
         return (
             f"[OCR:{texto[:48]} | acao:{acao} | "
             f"timeout={timeout:g}s | similaridade={confianca:g} | tentativas={tentativas}]"
-        )
-
-    if tipo_evento in TIPOS_CHROME:
-        detalhes = metadados or {}
-        alvo = detalhes.get("alvo") or {}
-        acao = detalhes.get("acao") or {}
-        metodo = str(alvo.get("metodo", "css") or "css")
-        valor = str(alvo.get("valor", "") or "")
-        valor_curto = Path(valor).name if metodo == "xpath" else valor
-        acao_sucesso = str(detalhes.get("ao_sucesso", "continuar") or "continuar")
-        bloco_sucesso = str(detalhes.get("bloco_sucesso", "") or "").strip()
-        sufixo_sucesso = f" -> bloco {bloco_sucesso}" if acao_sucesso == "ir_para_bloco" and bloco_sucesso else ""
-        return (
-            f"[CHROME:{metodo}={valor_curto[:42]} | "
-            f"acao:{str(acao.get('tipo', 'clicar') or 'clicar')} | "
-            f"timeout={int(detalhes.get('timeout', 10000) or 10000)}ms | "
-            f"sucesso:{acao_sucesso}{sufixo_sucesso}]"
         )
 
     if tipo_evento in TIPOS_UIA:
@@ -1909,14 +1591,6 @@ def montar_comando_python(teclas, tipo_evento, texto_livre=None, metadados=None)
             f"resultado={str(detalhes.get('resultado', ''))!r})"
         )
 
-    if tipo_evento in TIPOS_MOUSE:
-        detalhes = metadados or {}
-        x = int(detalhes.get("x", 0))
-        y = int(detalhes.get("y", 0))
-        botao = str(detalhes.get("botao", "left"))
-        cliques = max(1, int(detalhes.get("cliques", 1) or 1))
-        return f'pyautogui.click(x={x}, y={y}, button="{botao}", clicks={cliques})'
-
     if tipo_evento in TIPOS_IMAGEM:
         detalhes = metadados or {}
         return (
@@ -1964,15 +1638,6 @@ def montar_comando_python(teclas, tipo_evento, texto_livre=None, metadados=None)
             f"varredura_scroll_direcao={str(detalhes.get('varredura_scroll_direcao', 'baixo'))!r}, "
             f"ao_nao_encontrar={str(detalhes.get('ao_nao_encontrar', 'parar'))!r}"
             ")"
-        )
-
-    if tipo_evento in TIPOS_CHROME:
-        detalhes = metadados or {}
-        alvo = detalhes.get("alvo") or {}
-        acao = detalhes.get("acao") or {}
-        return (
-            f"# chrome_elemento_html metodo={str(alvo.get('metodo', 'css'))!r} "
-            f"valor={str(alvo.get('valor', ''))!r} acao={str(acao.get('tipo', 'clicar'))!r}"
         )
 
     if tipo_evento in TIPOS_UIA:
@@ -2292,9 +1957,6 @@ def normalizar_eventos(payload):
             detalhes["imagem_ativo"] = normalizar_id_imagem(detalhes.get("imagem_ativo"))
             detalhes["imagem_desativado"] = normalizar_id_imagem(detalhes.get("imagem_desativado"))
             evento["detalhes"] = detalhes
-        elif tipo in TIPOS_CHROME:
-            detalhes["fallback_imagem"] = normalizar_id_imagem(detalhes.get("fallback_imagem"))
-            evento["detalhes"] = detalhes
         elif tipo in {"tecla", "atalho"}:
             detalhes["repeticoes"] = max(1, int(detalhes.get("repeticoes", 1) or 1))
             evento["detalhes"] = detalhes
@@ -2604,34 +2266,6 @@ def criar_bloco_teclas(
     }
 
 
-def criar_bloco_mouse(
-    x,
-    y,
-    button,
-    delay,
-    clicks=1,
-    sequencia="principal",
-    ao_sucesso="continuar",
-    bloco_sucesso="",
-    sequencia_sucesso="",
-    atraso_sequencia_sucesso=0,
-):
-    detalhes = aplicar_fluxo_sucesso({
-        "x": int(x),
-        "y": int(y),
-        "botao": str(button or "left").lower(),
-        "cliques": max(1, int(clicks or 1)),
-    }, ao_sucesso, bloco_sucesso, sequencia_sucesso, atraso_sequencia_sucesso)
-    return {
-        "ordem": 0,
-        "sequencia": normalizar_nome_sequencia(sequencia),
-        "tipo": "mouse_click",
-        "teclas": ["mouse"],
-        "texto": formatar_evento(["mouse"], "mouse_click", metadados=detalhes),
-        "intervalo_antes": round(float(delay), 3),
-        "comando_python": montar_comando_python(["mouse"], "mouse_click", metadados=detalhes),
-        "detalhes": detalhes,
-    }
 
 
 def criar_bloco_clicar_imagem(
@@ -2851,124 +2485,6 @@ def criar_bloco_verificar_estado_botao(
     }
 
 
-def criar_bloco_chrome_elemento_html(
-    nome,
-    html_original,
-    elemento,
-    alvo,
-    acao,
-    timeout=10000,
-    fallback_visual=False,
-    fallback_imagem="",
-    ao_sucesso="continuar",
-    bloco_sucesso="",
-    sequencia_sucesso="",
-    atraso_sequencia_sucesso=0,
-    ao_falhar="parar",
-    bloco_falha="",
-    sequencia_falha="",
-    atraso_sequencia_falha=0,
-    quantidade_tentativas=1,
-    intervalo_tentativas=0.5,
-    delay=0,
-    sequencia="principal",
-):
-    html_original_normalizado = str(html_original or "").strip()
-    elemento_informado = elemento if isinstance(elemento, dict) else {}
-    alvo_informado = alvo if isinstance(alvo, dict) else {}
-    alvo_manual_valor = str(alvo_informado.get("valor", "") or "").strip()
-    alvo_manual_metodo = str(alvo_informado.get("metodo") or "css")
-    if html_original_normalizado:
-        html_analisado = parse_html_elemento(html_original_normalizado)
-    else:
-        html_analisado = {
-            "html_original": "",
-            "elemento": {},
-            "tipo_provavel": "elemento",
-            "nome_sugerido": str(nome or "Chrome: capturar elemento").strip() or "Chrome: capturar elemento",
-            "alvo_recomendado": {
-                "metodo": alvo_manual_metodo,
-                "valor": alvo_manual_valor or "__capturar_elemento__",
-                "confianca": "manual",
-                "seletor_css": alvo_manual_valor if alvo_manual_metodo == "css" else "",
-            },
-            "acao_sugerida": {
-                "tipo": "clicar",
-                "origem_valor": "texto_fixo",
-                "valor": "",
-                "limpar_antes": True,
-                "pressionar_depois": "",
-                "salvar_em": "",
-            },
-        }
-    elemento_base = dict(html_analisado.get("elemento") or {})
-    elemento_base.update({chave: valor for chave, valor in elemento_informado.items() if valor not in (None, "")})
-
-    seletores = gerar_seletores(elemento_base)
-    seletores_por_metodo = {str(item.get("metodo")): item for item in seletores}
-    metodo_alvo = str(alvo_informado.get("metodo") or (html_analisado.get("alvo_recomendado") or {}).get("metodo") or "css")
-    alvo_recomendado = dict(seletores_por_metodo.get(metodo_alvo) or html_analisado.get("alvo_recomendado") or {})
-    alvo_final = {**alvo_recomendado, **alvo_informado}
-    alvo_final["metodo"] = metodo_alvo
-    if not str(alvo_final.get("valor", "")).strip():
-        alvo_final["valor"] = str(alvo_recomendado.get("valor", "")).strip()
-    if not alvo_final.get("confianca"):
-        alvo_final["confianca"] = alvo_recomendado.get("confianca", "media")
-    if not alvo_final.get("seletor_css"):
-        alvo_final["seletor_css"] = alvo_recomendado.get("seletor_css", "")
-    if str(alvo_final.get("valor", "")).strip() and not any(
-        str(item.get("metodo")) == metodo_alvo and str(item.get("valor", "")).strip() == str(alvo_final.get("valor", "")).strip()
-        for item in seletores
-    ):
-        seletores.insert(0, {
-            "metodo": metodo_alvo,
-            "valor": str(alvo_final.get("valor", "")).strip(),
-            "confianca": alvo_final.get("confianca", "manual"),
-            "seletor_css": alvo_final.get("seletor_css", "") if metodo_alvo == "css" else "",
-        })
-
-    acao_sugerida = dict(html_analisado.get("acao_sugerida") or {})
-    acao_informada = acao if isinstance(acao, dict) else {}
-    acao_final = {**acao_sugerida, **acao_informada}
-    acao_final["tipo"] = str(acao_final.get("tipo") or acao_sugerida.get("tipo") or "clicar")
-    acao_final["origem_valor"] = str(acao_final.get("origem_valor") or "texto_fixo")
-    acao_final["valor"] = str(acao_final.get("valor", "") or "")
-    acao_final["limpar_antes"] = bool(acao_final.get("limpar_antes", True))
-    acao_final["pressionar_depois"] = str(acao_final.get("pressionar_depois", "") or "")
-    acao_final["salvar_em"] = str(acao_final.get("salvar_em", "") or "")
-
-    detalhes = {
-        "nome": str(nome or html_analisado.get("nome_sugerido") or "Chrome: Elemento HTML").strip() or "Chrome: Elemento HTML",
-        "html_original": html_original_normalizado or str(html_analisado.get("html_original") or "").strip(),
-        "elemento": elemento_base,
-        "tipo_provavel": str(html_analisado.get("tipo_provavel") or classificar_tipo_elemento_html(elemento_base)),
-        "seletores": seletores,
-        "alvo": alvo_final,
-        "acao": acao_final,
-        "timeout": max(500, int(timeout or 10000)),
-        "fallback_visual": bool(fallback_visual),
-        "fallback_imagem": normalizar_id_imagem(fallback_imagem),
-        "ao_sucesso": str(ao_sucesso or "continuar"),
-        "bloco_sucesso": int(bloco_sucesso) if str(bloco_sucesso or "").strip() else "",
-        "sequencia_sucesso": normalizar_nome_sequencia(sequencia_sucesso) if str(sequencia_sucesso or "").strip() else "",
-        "atraso_antes_sequencia_sucesso": normalizar_atraso_transicao(atraso_sequencia_sucesso),
-        "ao_falhar": str(ao_falhar or "parar"),
-        "bloco_falha": int(bloco_falha) if str(bloco_falha or "").strip() else "",
-        "sequencia_falha": normalizar_nome_sequencia(sequencia_falha) if str(sequencia_falha or "").strip() else "",
-        "atraso_antes_sequencia_falha": normalizar_atraso_transicao(atraso_sequencia_falha),
-        "quantidade_tentativas": max(1, int(quantidade_tentativas or 1)),
-        "intervalo_tentativas": max(0.0, float(intervalo_tentativas or 0)),
-    }
-    return {
-        "ordem": 0,
-        "sequencia": normalizar_nome_sequencia(sequencia),
-        "tipo": "chrome_elemento_html",
-        "teclas": ["chrome"],
-        "texto": formatar_evento(["chrome"], "chrome_elemento_html", metadados=detalhes),
-        "intervalo_antes": round(float(delay), 3),
-        "comando_python": montar_comando_python(["chrome"], "chrome_elemento_html", metadados=detalhes),
-        "detalhes": detalhes,
-    }
 
 
 def criar_bloco_uia_elemento(
@@ -3261,15 +2777,6 @@ def card_do_evento(evento):
         subtitulo = " + ".join(tecla_para_exibicao(tecla) for tecla in evento.get("teclas", []))
         repeticoes = max(1, int(detalhes.get("repeticoes", 1) or 1))
         descricao = "Acao unica" if repeticoes == 1 else f"Repetir {repeticoes} vezes"
-    elif tipo == "mouse_click":
-        titulo = "Clique do mouse"
-        cliques = max(1, int(detalhes.get("cliques", 1) or 1))
-        tipo_clique = "Clique duplo" if cliques == 2 else "Clique simples"
-        subtitulo = (
-            f"{str(detalhes.get('botao', 'left')).upper()} em X {detalhes.get('x', 0)} | "
-            f"Y {detalhes.get('y', 0)}"
-        )
-        descricao = f"{tipo_clique} absoluto na tela"
     elif tipo == "clicar_imagem":
         if str(detalhes.get("modo_reconhecimento", "imagem") or "imagem").lower() == "texto_ocr":
             titulo = "Reconhecimento OCR"
@@ -3294,19 +2801,6 @@ def card_do_evento(evento):
         descricao = (
             f"Acao: {acao} | Similaridade {float(detalhes.get('confianca', 0.72) or 0.72):g} | "
             f"Tentativas {int(detalhes.get('quantidade_tentativas', 3) or 3)}"
-        )
-    elif tipo == "chrome_elemento_html":
-        titulo = detalhes.get("nome", "Chrome / Elemento HTML")
-        elemento = detalhes.get("elemento") or {}
-        alvo = detalhes.get("alvo") or {}
-        acao = detalhes.get("acao") or {}
-        subtitulo = (
-            f"{str(elemento.get('tag', 'elemento')).lower()} | "
-            f"{alvo.get('metodo', 'css')}: {str(alvo.get('valor', '') or '-')[:56]}"
-        )
-        descricao = (
-            f"Acao: {acao.get('tipo', 'clicar')} | "
-            f"Timeout {int(detalhes.get('timeout', 10000) or 10000)}ms"
         )
     elif tipo == "uia_elemento":
         titulo = detalhes.get("block_name", "Mapear elemento")
@@ -3399,10 +2893,8 @@ def payload_para_resposta(payload):
             "total": len(eventos),
             "text_blocks": sum(1 for evento in eventos if evento.get("tipo") == "texto_livre"),
             "key_blocks": sum(1 for evento in eventos if evento.get("tipo") in {"tecla", "atalho"}),
-            "mouse_blocks": sum(1 for evento in eventos if evento.get("tipo") == "mouse_click"),
             "image_blocks": sum(1 for evento in eventos if evento.get("tipo") == "clicar_imagem"),
             "ocr_blocks": sum(1 for evento in eventos if evento.get("tipo") == "procurar_texto_ocr"),
-            "chrome_blocks": sum(1 for evento in eventos if evento.get("tipo") == "chrome_elemento_html"),
             "branch_blocks": sum(1 for evento in eventos if evento.get("tipo") in TIPOS_VERIFICACAO),
             "spreadsheet_blocks": sum(1 for evento in eventos if evento.get("tipo") == "sequencia_planilha"),
             "unknown_blocks": sum(1 for evento in eventos if str(evento.get("tipo") or "").strip() not in TIPOS_SUPORTADOS_RUNTIME),
@@ -3842,10 +3334,6 @@ def comando_adicionar_teclas(args):
     return salvar_e_retornar(payload)
 
 
-def comando_adicionar_mouse(args):
-    payload = carregar_e_normalizar()
-    payload["eventos"].append(criar_bloco_mouse(args.x, args.y, args.button, args.delay, args.clicks, args.sequencia, args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso))
-    return salvar_e_retornar(payload)
 
 
 def comando_adicionar_imagem(args):
@@ -3957,33 +3445,6 @@ def comando_adicionar_verificacao(args):
     return salvar_e_retornar(payload)
 
 
-def comando_adicionar_chrome_html(args):
-    payload = carregar_e_normalizar()
-    payload["eventos"].append(
-        criar_bloco_chrome_elemento_html(
-            args.nome,
-            args.html_original,
-            json.loads(args.elemento_json) if args.elemento_json else {},
-            json.loads(args.alvo_json) if args.alvo_json else {},
-            json.loads(args.acao_json) if args.acao_json else {},
-            args.timeout,
-            args.fallback_visual,
-            args.fallback_imagem,
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-            args.ao_falhar,
-            args.bloco_falha,
-            args.sequencia_falha,
-            args.atraso_sequencia_falha,
-            args.quantidade_tentativas,
-            args.intervalo_tentativas,
-            args.delay,
-            args.sequencia,
-        )
-    )
-    return salvar_e_retornar(payload)
 
 
 def comando_adicionar_uia_elemento(args):
@@ -4130,15 +3591,6 @@ def comando_inserir_teclas(args):
     return salvar_e_retornar(payload)
 
 
-def comando_inserir_mouse(args):
-    payload = carregar_e_normalizar()
-    inserir_evento(
-        payload,
-        criar_bloco_mouse(args.x, args.y, args.button, args.delay, args.clicks, args.sequencia, args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso),
-        args.target_order,
-        args.position,
-    )
-    return salvar_e_retornar(payload)
 
 
 def comando_inserir_imagem(args):
@@ -4259,36 +3711,6 @@ def comando_inserir_verificacao(args):
     return salvar_e_retornar(payload)
 
 
-def comando_inserir_chrome_html(args):
-    payload = carregar_e_normalizar()
-    inserir_evento(
-        payload,
-        criar_bloco_chrome_elemento_html(
-            args.nome,
-            args.html_original,
-            json.loads(args.elemento_json) if args.elemento_json else {},
-            json.loads(args.alvo_json) if args.alvo_json else {},
-            json.loads(args.acao_json) if args.acao_json else {},
-            args.timeout,
-            args.fallback_visual,
-            args.fallback_imagem,
-            args.ao_sucesso,
-            args.bloco_sucesso,
-            args.sequencia_sucesso,
-            args.atraso_sequencia_sucesso,
-            args.ao_falhar,
-            args.bloco_falha,
-            args.sequencia_falha,
-            args.atraso_sequencia_falha,
-            args.quantidade_tentativas,
-            args.intervalo_tentativas,
-            args.delay,
-            args.sequencia,
-        ),
-        args.target_order,
-        args.position,
-    )
-    return salvar_e_retornar(payload)
 
 
 def comando_inserir_uia_elemento(args):
@@ -4466,24 +3888,6 @@ def comando_atualizar_teclas(args):
     return salvar_e_retornar(payload)
 
 
-def comando_atualizar_mouse(args):
-    payload = carregar_e_normalizar()
-    _, evento = localizar_evento(payload, args.order)
-    if evento.get("tipo") != "mouse_click":
-        raise ValueError("O bloco selecionado nao eh do tipo mouse.")
-    detalhes = evento.get("detalhes") or {}
-    detalhes["x"] = int(args.x)
-    detalhes["y"] = int(args.y)
-    detalhes["botao"] = str(args.button).lower()
-    detalhes["cliques"] = max(1, int(args.clicks or 1))
-    detalhes["coordinate_space"] = "last_ocr_click" if args.coordinate_space == "last_ocr_click" else "viewport"
-    detalhes = aplicar_fluxo_sucesso(detalhes, args.ao_sucesso, args.bloco_sucesso, args.sequencia_sucesso, args.atraso_sequencia_sucesso)
-    evento["detalhes"] = detalhes
-    if args.sequencia is not None:
-        evento["sequencia"] = normalizar_nome_sequencia(args.sequencia)
-    if args.delay is not None:
-        evento["intervalo_antes"] = args.delay
-    return salvar_e_retornar(payload)
 
 
 def comando_atualizar_imagem(args):
@@ -4607,35 +4011,6 @@ def comando_atualizar_verificacao(args):
     return salvar_e_retornar(payload)
 
 
-def comando_atualizar_chrome_html(args):
-    payload = carregar_e_normalizar()
-    _, evento = localizar_evento(payload, args.order)
-    if evento.get("tipo") != "chrome_elemento_html":
-        raise ValueError("O bloco selecionado nao eh do tipo Chrome / Elemento HTML.")
-    bloco = criar_bloco_chrome_elemento_html(
-        args.nome,
-        args.html_original,
-        json.loads(args.elemento_json) if args.elemento_json else (evento.get("detalhes") or {}).get("elemento", {}),
-        json.loads(args.alvo_json) if args.alvo_json else (evento.get("detalhes") or {}).get("alvo", {}),
-        json.loads(args.acao_json) if args.acao_json else (evento.get("detalhes") or {}).get("acao", {}),
-        args.timeout,
-        args.fallback_visual,
-        args.fallback_imagem,
-        args.ao_sucesso,
-        args.bloco_sucesso,
-        args.sequencia_sucesso,
-        args.atraso_sequencia_sucesso,
-        args.ao_falhar,
-        args.bloco_falha,
-        args.sequencia_falha,
-        args.atraso_sequencia_falha,
-        args.quantidade_tentativas,
-        args.intervalo_tentativas,
-        args.delay if args.delay is not None else evento.get("intervalo_antes", 0),
-        args.sequencia if args.sequencia is not None else evento.get("sequencia", "principal"),
-    )
-    evento.update(bloco)
-    return salvar_e_retornar(payload)
 
 
 def comando_atualizar_uia_elemento(args):
@@ -4882,8 +4257,6 @@ def comando_limpar(_args):
     return salvar_e_retornar(payload)
 
 
-def comando_analisar_html_elemento(args):
-    return parse_html_elemento(args.html)
 
 
 def build_parser():
@@ -4957,8 +4330,6 @@ def build_parser():
     subparsers.add_parser("list")
     subparsers.add_parser("automation-library-list")
     subparsers.add_parser("workbook-meta")
-    analyze_html = subparsers.add_parser("analyze-html-element")
-    analyze_html.add_argument("--html", required=True)
     preview_sheet = subparsers.add_parser("workbook-preview")
     preview_sheet.add_argument("--workbook")
     preview_sheet.add_argument("--sheet")
@@ -5022,14 +4393,6 @@ def build_parser():
     add_key.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(add_key)
 
-    add_mouse = subparsers.add_parser("add-mouse")
-    add_mouse.add_argument("--x", type=int, required=True)
-    add_mouse.add_argument("--y", type=int, required=True)
-    add_mouse.add_argument("--button", default="left")
-    add_mouse.add_argument("--clicks", type=int, default=1)
-    add_mouse.add_argument("--delay", type=float, default=0)
-    add_mouse.add_argument("--sequencia", default="principal")
-    adicionar_argumentos_fluxo_sucesso(add_mouse)
 
     add_image = subparsers.add_parser("add-image-click")
     add_image.add_argument("--imagem", default="")
@@ -5079,27 +4442,6 @@ def build_parser():
     add_verify.add_argument("--delay", type=float, default=0)
     add_verify.add_argument("--sequencia", default="principal")
 
-    add_chrome = subparsers.add_parser("add-chrome-html")
-    add_chrome.add_argument("--nome", default="Chrome / Elemento HTML")
-    add_chrome.add_argument("--html-original", required=True)
-    add_chrome.add_argument("--elemento-json", default="{}")
-    add_chrome.add_argument("--alvo-json", default="{}")
-    add_chrome.add_argument("--acao-json", default="{}")
-    add_chrome.add_argument("--timeout", type=int, default=10000)
-    add_chrome.add_argument("--fallback-visual", type=lambda value: str(value).lower() in {"1", "true", "sim", "yes"}, default=False)
-    add_chrome.add_argument("--fallback-imagem", default="")
-    add_chrome.add_argument("--ao-sucesso", choices=["continuar", "ir_para_bloco", "ir_para_sequencia"], default="continuar")
-    add_chrome.add_argument("--bloco-sucesso", default="")
-    add_chrome.add_argument("--sequencia-sucesso", default="")
-    add_chrome.add_argument("--atraso-sequencia-sucesso", type=float, default=0)
-    add_chrome.add_argument("--ao-falhar", choices=["parar", "continuar", "tentar_novamente", "ir_para_bloco", "ir_para_sequencia"], default="parar")
-    add_chrome.add_argument("--bloco-falha", default="")
-    add_chrome.add_argument("--sequencia-falha", default="")
-    add_chrome.add_argument("--atraso-sequencia-falha", type=float, default=0)
-    add_chrome.add_argument("--quantidade-tentativas", type=int, default=1)
-    add_chrome.add_argument("--intervalo-tentativas", type=float, default=0.5)
-    add_chrome.add_argument("--delay", type=float, default=0)
-    add_chrome.add_argument("--sequencia", default="principal")
 
     add_uia = subparsers.add_parser("add-uia-element")
     add_uia.add_argument("--elemento-json", required=True)
@@ -5175,16 +4517,6 @@ def build_parser():
     insert_key.add_argument("--sequencia", default="principal")
     adicionar_argumentos_fluxo_sucesso(insert_key)
 
-    insert_mouse = subparsers.add_parser("insert-mouse")
-    insert_mouse.add_argument("--target-order", type=int, required=True)
-    insert_mouse.add_argument("--position", choices=["before", "after"], required=True)
-    insert_mouse.add_argument("--x", type=int, required=True)
-    insert_mouse.add_argument("--y", type=int, required=True)
-    insert_mouse.add_argument("--button", default="left")
-    insert_mouse.add_argument("--clicks", type=int, default=1)
-    insert_mouse.add_argument("--delay", type=float, default=0)
-    insert_mouse.add_argument("--sequencia", default="principal")
-    adicionar_argumentos_fluxo_sucesso(insert_mouse)
 
     insert_image = subparsers.add_parser("insert-image-click")
     insert_image.add_argument("--target-order", type=int, required=True)
@@ -5240,29 +4572,6 @@ def build_parser():
     insert_verify.add_argument("--delay", type=float, default=0)
     insert_verify.add_argument("--sequencia", default="principal")
 
-    insert_chrome = subparsers.add_parser("insert-chrome-html")
-    insert_chrome.add_argument("--target-order", type=int, required=True)
-    insert_chrome.add_argument("--position", choices=["before", "after"], required=True)
-    insert_chrome.add_argument("--nome", default="Chrome / Elemento HTML")
-    insert_chrome.add_argument("--html-original", required=True)
-    insert_chrome.add_argument("--elemento-json", default="{}")
-    insert_chrome.add_argument("--alvo-json", default="{}")
-    insert_chrome.add_argument("--acao-json", default="{}")
-    insert_chrome.add_argument("--timeout", type=int, default=10000)
-    insert_chrome.add_argument("--fallback-visual", type=lambda value: str(value).lower() in {"1", "true", "sim", "yes"}, default=False)
-    insert_chrome.add_argument("--fallback-imagem", default="")
-    insert_chrome.add_argument("--ao-sucesso", choices=["continuar", "ir_para_bloco", "ir_para_sequencia"], default="continuar")
-    insert_chrome.add_argument("--bloco-sucesso", default="")
-    insert_chrome.add_argument("--sequencia-sucesso", default="")
-    insert_chrome.add_argument("--atraso-sequencia-sucesso", type=float, default=0)
-    insert_chrome.add_argument("--ao-falhar", choices=["parar", "continuar", "tentar_novamente", "ir_para_bloco", "ir_para_sequencia"], default="parar")
-    insert_chrome.add_argument("--bloco-falha", default="")
-    insert_chrome.add_argument("--sequencia-falha", default="")
-    insert_chrome.add_argument("--atraso-sequencia-falha", type=float, default=0)
-    insert_chrome.add_argument("--quantidade-tentativas", type=int, default=1)
-    insert_chrome.add_argument("--intervalo-tentativas", type=float, default=0.5)
-    insert_chrome.add_argument("--delay", type=float, default=0)
-    insert_chrome.add_argument("--sequencia", default="principal")
 
     insert_uia = subparsers.add_parser("insert-uia-element")
     insert_uia.add_argument("--target-order", type=int, required=True)
@@ -5350,16 +4659,6 @@ def build_parser():
     update_key.add_argument("--sequencia")
     adicionar_argumentos_fluxo_sucesso(update_key)
 
-    update_mouse = subparsers.add_parser("update-mouse")
-    update_mouse.add_argument("--order", type=int, required=True)
-    update_mouse.add_argument("--x", type=int, required=True)
-    update_mouse.add_argument("--y", type=int, required=True)
-    update_mouse.add_argument("--button", default="left")
-    update_mouse.add_argument("--clicks", type=int, default=1)
-    update_mouse.add_argument("--coordinate-space", choices=["viewport", "last_ocr_click"], default="viewport")
-    update_mouse.add_argument("--delay", type=float)
-    update_mouse.add_argument("--sequencia")
-    adicionar_argumentos_fluxo_sucesso(update_mouse)
 
     update_image = subparsers.add_parser("update-image-click")
     update_image.add_argument("--order", type=int, required=True)
@@ -5412,28 +4711,6 @@ def build_parser():
     update_verify.add_argument("--delay", type=float)
     update_verify.add_argument("--sequencia")
 
-    update_chrome = subparsers.add_parser("update-chrome-html")
-    update_chrome.add_argument("--order", type=int, required=True)
-    update_chrome.add_argument("--nome", default="Chrome / Elemento HTML")
-    update_chrome.add_argument("--html-original", required=True)
-    update_chrome.add_argument("--elemento-json", default="{}")
-    update_chrome.add_argument("--alvo-json", default="{}")
-    update_chrome.add_argument("--acao-json", default="{}")
-    update_chrome.add_argument("--timeout", type=int, default=10000)
-    update_chrome.add_argument("--fallback-visual", type=lambda value: str(value).lower() in {"1", "true", "sim", "yes"}, default=False)
-    update_chrome.add_argument("--fallback-imagem", default="")
-    update_chrome.add_argument("--ao-sucesso", choices=["continuar", "ir_para_bloco", "ir_para_sequencia"], default="continuar")
-    update_chrome.add_argument("--bloco-sucesso", default="")
-    update_chrome.add_argument("--sequencia-sucesso", default="")
-    update_chrome.add_argument("--atraso-sequencia-sucesso", type=float, default=0)
-    update_chrome.add_argument("--ao-falhar", choices=["parar", "continuar", "tentar_novamente", "ir_para_bloco", "ir_para_sequencia"], default="parar")
-    update_chrome.add_argument("--bloco-falha", default="")
-    update_chrome.add_argument("--sequencia-falha", default="")
-    update_chrome.add_argument("--atraso-sequencia-falha", type=float, default=0)
-    update_chrome.add_argument("--quantidade-tentativas", type=int, default=1)
-    update_chrome.add_argument("--intervalo-tentativas", type=float, default=0.5)
-    update_chrome.add_argument("--delay", type=float)
-    update_chrome.add_argument("--sequencia")
 
     update_uia = subparsers.add_parser("update-uia-element")
     update_uia.add_argument("--order", type=int, required=True)
@@ -5525,7 +4802,6 @@ def build_parser():
 COMANDOS = {
     "list": comando_listar,
     "automation-library-list": comando_listar_automacoes,
-    "analyze-html-element": comando_analisar_html_elemento,
     "automation-create": comando_criar_automacao,
     "automation-open": comando_abrir_automacao,
     "automation-duplicate": comando_duplicar_automacao,
@@ -5542,11 +4818,9 @@ COMANDOS = {
     "workbook-preview": comando_preview_planilha,
     "add-text": comando_adicionar_texto,
     "add-key": comando_adicionar_teclas,
-    "add-mouse": comando_adicionar_mouse,
     "add-image-click": comando_adicionar_imagem,
     "add-ocr-text": comando_adicionar_texto_ocr,
     "add-verify-button-state": comando_adicionar_verificacao,
-    "add-chrome-html": comando_adicionar_chrome_html,
     "add-uia-element": comando_adicionar_uia_elemento,
     "add-open-url": comando_adicionar_abrir_url,
     "add-open-program": comando_adicionar_abrir_programa,
@@ -5556,11 +4830,9 @@ COMANDOS = {
     "add-loop-end": comando_adicionar_fim_loop,
     "insert-text": comando_inserir_texto,
     "insert-key": comando_inserir_teclas,
-    "insert-mouse": comando_inserir_mouse,
     "insert-image-click": comando_inserir_imagem,
     "insert-ocr-text": comando_inserir_texto_ocr,
     "insert-verify-button-state": comando_inserir_verificacao,
-    "insert-chrome-html": comando_inserir_chrome_html,
     "insert-uia-element": comando_inserir_uia_elemento,
     "insert-open-url": comando_inserir_abrir_url,
     "insert-open-program": comando_inserir_abrir_programa,
@@ -5570,11 +4842,9 @@ COMANDOS = {
     "insert-loop-end": comando_inserir_fim_loop,
     "update-text": comando_atualizar_texto,
     "update-key": comando_atualizar_teclas,
-    "update-mouse": comando_atualizar_mouse,
     "update-image-click": comando_atualizar_imagem,
     "update-ocr-text": comando_atualizar_texto_ocr,
     "update-verify-button-state": comando_atualizar_verificacao,
-    "update-chrome-html": comando_atualizar_chrome_html,
     "update-uia-element": comando_atualizar_uia_elemento,
     "update-open-url": comando_atualizar_abrir_url,
     "update-open-program": comando_atualizar_abrir_programa,

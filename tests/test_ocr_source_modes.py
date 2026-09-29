@@ -62,6 +62,11 @@ class OcrSourceModesTest(unittest.TestCase):
         first_target.click.assert_called_once()
         self.executor.clicar_imagem.assert_not_called()
 
+        event["detalhes"]["ocr_target_layouts"][0]["successDelay"] = 1.5
+        result = self.executor.executar_bloco_procurar_texto_ocr(event)
+        self.assertEqual(result["atraso"], 1.5)
+        self.assertEqual(result["bloco"], "16")
+
     def test_element_source_clicks_only_a_unique_page_match(self):
         target = Mock()
         locator = Mock(first=target)

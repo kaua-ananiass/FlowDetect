@@ -39,7 +39,6 @@
     "resources": {
       "../../capturar_cliques.py": "capturar_cliques.py",
       "../../capturar_imagem_tela.py": "capturar_imagem_tela.py",
-      "../../capturar_mouse_global.py": "capturar_mouse_global.py",
       "../../diagnostico_ambiente.py": "diagnostico_ambiente.py",
       "../../executar_automacao.py": "executar_automacao.py",
       "../../scripts/runtime/executar_automacao.bat": "executar_automacao.bat",

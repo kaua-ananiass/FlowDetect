@@ -175,7 +175,6 @@ ARQUIVO_PLANILHA = Path("db.xlsx")
 PASTA_PLANILHAS = Path("planilhas")
 PASTA_IMAGENS = Path("imagens")
 PASTA_DIAGNOSTICOS_RECONHECIMENTO = Path("diagnosticos_reconhecimento")
-PASTA_DIAGNOSTICOS_CHROME = Path("diagnosticos_chrome")
 PASTA_RELATORIOS_LOOP = Path("relatorios_loop")
 ARQUIVO_CANCELAMENTO = Path(".parar_automacao.flag")
 INTERVALO_TEXTO = 0.01
@@ -187,11 +186,9 @@ TIPOS_ESCRITA_PLANILHA = {"escrever_planilha"}
 TIPOS_COMPARACAO_PLANILHA = {"comparar_planilha_tela"}
 TIPOS_RESULTADO_RELATORIO = {"resultado_relatorio"}
 TIPOS_MARCADORES_LOOP = {"inicio_loop", "fim_loop"}
-TIPOS_MOUSE = {"mouse_click"}
 TIPOS_IMAGEM = {"clicar_imagem"}
 TIPOS_OCR = {"procurar_texto_ocr"}
 TIPOS_VERIFICACAO = {"verificar_estado_botao"}
-TIPOS_CHROME = {"chrome_elemento_html"}
 TIPOS_UIA = {"uia_elemento"}
 TIPOS_PREPARACAO_TELA = {"abrir_url", "abrir_programa"}
 TIPOS_SUPORTADOS_EXECUTOR = {
@@ -203,11 +200,9 @@ TIPOS_SUPORTADOS_EXECUTOR = {
     *TIPOS_COMPARACAO_PLANILHA,
     *TIPOS_RESULTADO_RELATORIO,
     *TIPOS_MARCADORES_LOOP,
-    *TIPOS_MOUSE,
     *TIPOS_IMAGEM,
     *TIPOS_OCR,
     *TIPOS_VERIFICACAO,
-    *TIPOS_CHROME,
     *TIPOS_UIA,
     *TIPOS_PREPARACAO_TELA,
 }
@@ -2838,6 +2833,7 @@ class ExecutorAutomacao:
                             "acao": "ir_para_bloco",
                             "bloco": bloco_falha,
                             "origem": "falha_ocr",
+                            **({"atraso": max(0.0, float(layout_origem["failureDelay"]))} if layout_origem.get("failureDelay") else {}),
                         },
                     }
                 safe_print(
@@ -2889,6 +2885,7 @@ class ExecutorAutomacao:
         return {
             "acao": acao,
             "bloco": regra["bloco"],
+            "atraso": max(0.0, float(config.get("successDelay") or 0)),
             "clicks": regra["clicks"],
             "indice": int(local.get("ocr_target_index", 0) or 0),
         }
@@ -2901,7 +2898,7 @@ class ExecutorAutomacao:
             if not acao["bloco"]:
                 safe_print("OCR individual encontrou a regra de salto sem bloco de destino; mantendo o fluxo normal.", flush=True)
                 return None
-            local["ocr_target_flow"] = {"acao": "ir_para_bloco", "bloco": acao["bloco"]}
+            local["ocr_target_flow"] = {"acao": "ir_para_bloco", "bloco": acao["bloco"], **({"atraso": acao["atraso"]} if acao.get("atraso") else {})}
             safe_print(
                 f"OCR {acao['indice'] + 1}: redirecionando para o bloco {acao['bloco']}.",
                 flush=True,
@@ -2949,7 +2946,7 @@ class ExecutorAutomacao:
             if not acao["bloco"]:
                 safe_print("OCR individual clicou, mas a regra nao possui bloco de destino; mantendo o fluxo normal.", flush=True)
                 return "clicar"
-            local["ocr_target_flow"] = {"acao": "ir_para_bloco", "bloco": acao["bloco"]}
+            local["ocr_target_flow"] = {"acao": "ir_para_bloco", "bloco": acao["bloco"], **({"atraso": acao["atraso"]} if acao.get("atraso") else {})}
             safe_print(
                 f"OCR {acao['indice'] + 1}: clique concluido. Indo para bloco {acao['bloco']}.",
                 flush=True,
@@ -6156,250 +6153,8 @@ class ExecutorAutomacao:
             return page.locator(seletor_css)
         return page.locator(valor)
 
-    def salvar_captura_erro_chrome(self, nome_bloco, page=None):
-        PASTA_DIAGNOSTICOS_CHROME.mkdir(parents=True, exist_ok=True)
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        arquivo = PASTA_DIAGNOSTICOS_CHROME / f"{self.slug_texto(nome_bloco)}_{timestamp}.png"
-        pagina = page or self._chrome_page
-        try:
-            if pagina is not None:
-                pagina.screenshot(path=str(arquivo), full_page=True)
-            else:
-                pyautogui.screenshot(str(arquivo))
-            return str(arquivo)
-        except Exception:
-            try:
-                pyautogui.screenshot(str(arquivo))
-                return str(arquivo)
-            except Exception:
-                return ""
 
-    def executar_fallback_visual_chrome(self, evento, contexto_loop=None):
-        detalhes = evento.get("detalhes", {}) or {}
-        if not detalhes.get("fallback_visual"):
-            return False
 
-        imagem_fallback = str(detalhes.get("fallback_imagem", "") or "").strip()
-        if not imagem_fallback:
-            safe_print("Fallback visual habilitado, mas nenhuma imagem foi vinculada ao bloco Chrome.", flush=True)
-            return False
-
-        nome_bloco = str(detalhes.get("nome") or "Chrome / Elemento HTML")
-        acao = dict(detalhes.get("acao") or {})
-        tipo_acao = str(acao.get("tipo") or "clicar").strip().lower()
-        timeout = max(0.5, float(detalhes.get("timeout", 10000) or 10000) / 1000.0)
-
-        safe_print(f"[Chrome: {nome_bloco}] Tentando fallback visual com {imagem_fallback}.", flush=True)
-
-        if tipo_acao in {"esperar", "verificar_existe"}:
-            return bool(
-                self.clicar_imagem(
-                    imagem=imagem_fallback,
-                    timeout=timeout,
-                    confianca=0.8,
-                    clicar=False,
-                    perfil_busca="balanced",
-                )
-            )
-
-        local = self.clicar_imagem(
-            imagem=imagem_fallback,
-            timeout=timeout,
-            confianca=0.8,
-            clicar=True,
-            clicks=1,
-            perfil_busca="balanced",
-        )
-        if not local:
-            return False
-
-        if tipo_acao == "limpar":
-            pyautogui.hotkey("ctrl", "a")
-            pyautogui.press("backspace")
-            return True
-
-        if tipo_acao == "preencher":
-            valor = self.substituir_variaveis_texto(acao.get("valor", ""), contexto_loop)
-            if acao.get("limpar_antes", True):
-                pyautogui.hotkey("ctrl", "a")
-                time.sleep(0.05)
-                pyautogui.press("backspace")
-            if valor:
-                self.escrever_texto(valor)
-            tecla_depois = str(acao.get("pressionar_depois", "") or "").strip()
-            if tecla_depois:
-                self.executar_acao(tecla_depois.lower())
-            return True
-
-        if tipo_acao in {"selecionar_texto", "selecionar_valor", "selecionar_indice"}:
-            valor = self.substituir_variaveis_texto(acao.get("valor", ""), contexto_loop)
-            if valor:
-                self.escrever_texto(valor)
-                pyautogui.press("enter")
-            return True
-
-        if tipo_acao in {"clicar", "clicar_aguardar_carregamento", "clicar_aguardar_download", "pegar_texto"}:
-            return True
-
-        return False
-
-    def executar_bloco_chrome_elemento_html(self, evento, contexto_loop=None):
-        detalhes = evento.get("detalhes", {}) or {}
-        nome_bloco = str(detalhes.get("nome") or "Chrome / Elemento HTML").strip() or "Chrome / Elemento HTML"
-        html_resumido = self.resumir_html(detalhes.get("html_original", ""))
-        alvo = dict(detalhes.get("alvo") or {})
-        acao = dict(detalhes.get("acao") or {})
-        metodo = str(alvo.get("metodo") or "css").strip()
-        valor_alvo = str(alvo.get("valor") or "").strip()
-        tipo_acao = str(acao.get("tipo") or "clicar").strip().lower()
-        timeout = max(500, int(detalhes.get("timeout", 10000) or 10000))
-        tentativas = max(1, int(detalhes.get("quantidade_tentativas", 1) or 1))
-        intervalo_tentativas = max(0.0, float(detalhes.get("intervalo_tentativas", 0.5) or 0.0))
-        ao_sucesso = str(detalhes.get("ao_sucesso", "continuar") or "continuar").strip().lower()
-        bloco_sucesso = detalhes.get("bloco_sucesso", "")
-        sequencia_sucesso = str(detalhes.get("sequencia_sucesso", "") or "").strip()
-        atraso_sequencia_sucesso = max(0.0, float(detalhes.get("atraso_antes_sequencia_sucesso", 0) or 0))
-        ao_falhar = str(detalhes.get("ao_falhar", "parar") or "parar").strip().lower()
-        bloco_falha = detalhes.get("bloco_falha", "")
-        sequencia_falha = str(detalhes.get("sequencia_falha", "") or "").strip()
-        atraso_sequencia_falha = max(0.0, float(detalhes.get("atraso_antes_sequencia_falha", 0) or 0))
-        ultima_falha = None
-
-        def finalizar_sucesso():
-            if ao_sucesso == "ir_para_sequencia" and sequencia_sucesso:
-                safe_print(f"[Chrome: {nome_bloco}] Sucesso. Redirecionando para pagina {sequencia_sucesso}.", flush=True)
-                return self.resultado_fluxo("ir_para_sequencia", sequencia=sequencia_sucesso, atraso=atraso_sequencia_sucesso)
-            if ao_sucesso == "ir_para_bloco" and str(bloco_sucesso or "").strip():
-                safe_print(f"[Chrome: {nome_bloco}] Sucesso. Redirecionando para bloco {bloco_sucesso}.", flush=True)
-                return self.resultado_fluxo("ir_para_bloco", bloco=bloco_sucesso, atraso=atraso_sequencia_sucesso)
-            return self.resultado_fluxo("continuar")
-
-        for tentativa in range(1, tentativas + 1):
-            if self.cancelamento_solicitado():
-                return self.resultado_fluxo("parar")
-
-            safe_print(f"[Chrome: {nome_bloco}] Reconhecendo... tentativa {tentativa}/{tentativas}", flush=True)
-            safe_print(f"[Chrome: {nome_bloco}] HTML: {html_resumido}", flush=True)
-            safe_print(
-                f"[Chrome: {nome_bloco}] Metodo: {metodo} | Alvo: {valor_alvo} | Acao: {tipo_acao}",
-                flush=True,
-            )
-
-            try:
-                page = self.obter_pagina_chrome()
-                try:
-                    page.bring_to_front()
-                except Exception:
-                    pass
-                locator = self.criar_locator_playwright(page, alvo).first
-
-                valor_acao = self.substituir_variaveis_texto(acao.get("valor", ""), contexto_loop)
-                tecla_depois = str(acao.get("pressionar_depois", "") or "").strip()
-                salvar_em = str(acao.get("salvar_em", "") or "").strip()
-
-                if tipo_acao == "preencher":
-                    locator.wait_for(state="visible", timeout=timeout)
-                    if acao.get("limpar_antes", True):
-                        locator.fill("", timeout=timeout)
-                    locator.fill(valor_acao, timeout=timeout)
-                    if tecla_depois:
-                        locator.press(tecla_depois, timeout=timeout)
-                    safe_print(f"[Chrome: {nome_bloco}] Valor usado: {valor_acao}", flush=True)
-
-                elif tipo_acao == "limpar":
-                    locator.wait_for(state="visible", timeout=timeout)
-                    locator.fill("", timeout=timeout)
-
-                elif tipo_acao == "clicar":
-                    locator.wait_for(state="visible", timeout=timeout)
-                    locator.click(timeout=timeout)
-
-                elif tipo_acao == "esperar":
-                    locator.wait_for(state="visible", timeout=timeout)
-
-                elif tipo_acao == "verificar_existe":
-                    locator.wait_for(state="attached", timeout=timeout)
-
-                elif tipo_acao == "pegar_texto":
-                    locator.wait_for(state="visible", timeout=timeout)
-                    texto_capturado = locator.inner_text(timeout=timeout)
-                    if salvar_em:
-                        self.salvar_variavel_contexto(salvar_em, texto_capturado)
-                    safe_print(f"[Chrome: {nome_bloco}] Texto capturado: {texto_capturado}", flush=True)
-
-                elif tipo_acao == "clicar_aguardar_carregamento":
-                    locator.wait_for(state="visible", timeout=timeout)
-                    locator.click(timeout=timeout)
-                    page.wait_for_load_state("load", timeout=timeout)
-
-                elif tipo_acao == "clicar_aguardar_download":
-                    locator.wait_for(state="visible", timeout=timeout)
-                    with page.expect_download(timeout=timeout) as download_info:
-                        locator.click(timeout=timeout)
-                    download = download_info.value
-                    if salvar_em:
-                        self.salvar_variavel_contexto(salvar_em, download.suggested_filename)
-                    safe_print(
-                        f"[Chrome: {nome_bloco}] Download detectado: {download.suggested_filename}",
-                        flush=True,
-                    )
-
-                elif tipo_acao == "selecionar_texto":
-                    locator.wait_for(state="visible", timeout=timeout)
-                    locator.select_option(label=valor_acao, timeout=timeout)
-
-                elif tipo_acao == "selecionar_valor":
-                    locator.wait_for(state="visible", timeout=timeout)
-                    locator.select_option(value=valor_acao, timeout=timeout)
-
-                elif tipo_acao == "selecionar_indice":
-                    locator.wait_for(state="visible", timeout=timeout)
-                    indice = max(0, int(valor_acao or 0))
-                    locator.select_option(index=indice, timeout=timeout)
-
-                else:
-                    raise ValueError(f"A acao Chrome nao eh suportada: {tipo_acao}")
-
-                safe_print(f"[Chrome: {nome_bloco}] Resultado: sucesso", flush=True)
-                return finalizar_sucesso()
-
-            except Exception as erro:
-                ultima_falha = erro
-                caminho_print = self.salvar_captura_erro_chrome(nome_bloco)
-                safe_print(f"[Chrome: {nome_bloco}] Resultado: erro | {erro}", flush=True)
-                if caminho_print:
-                    safe_print(f"[Chrome: {nome_bloco}] Print salvo em: {caminho_print}", flush=True)
-
-                if detalhes.get("fallback_visual") and detalhes.get("fallback_imagem"):
-                    try:
-                        if self.executar_fallback_visual_chrome(evento, contexto_loop=contexto_loop):
-                            safe_print(f"[Chrome: {nome_bloco}] Fallback visual executado com sucesso.", flush=True)
-                            return finalizar_sucesso()
-                    except Exception as erro_fallback:
-                        safe_print(f"[Chrome: {nome_bloco}] Falha no fallback visual: {erro_fallback}", flush=True)
-
-                if tentativa < tentativas and intervalo_tentativas > 0:
-                    if not self.esperar(intervalo_tentativas):
-                        return self.resultado_fluxo("parar")
-
-        if ao_falhar == "continuar":
-            safe_print(f"[Chrome: {nome_bloco}] Falha final. Acao configurada: continuar.", flush=True)
-            return self.resultado_fluxo("continuar")
-        if ao_falhar == "ir_para_sequencia" and sequencia_falha:
-            safe_print(f"[Chrome: {nome_bloco}] Falha final. Redirecionando para pagina {sequencia_falha}.", flush=True)
-            return self.resultado_fluxo("ir_para_sequencia", sequencia=sequencia_falha, atraso=atraso_sequencia_falha)
-        if ao_falhar == "ir_para_bloco" and str(bloco_falha or "").strip():
-            safe_print(f"[Chrome: {nome_bloco}] Falha final. Redirecionando para bloco {bloco_falha}.", flush=True)
-            return self.resultado_fluxo("ir_para_bloco", bloco=bloco_falha, atraso=atraso_sequencia_falha)
-
-        if ao_falhar == "tentar_novamente":
-            raise RuntimeError(
-                f"Falha ao executar bloco Chrome apos {tentativas} tentativa(s): {nome_bloco} | erro: {ultima_falha}"
-            ) from ultima_falha
-
-        raise RuntimeError(
-            f"Falha ao executar bloco Chrome: {nome_bloco} | metodo={metodo} | alvo={valor_alvo} | erro: {ultima_falha}"
-        ) from ultima_falha
 
     def carregar_uia_runtime(self):
         try:
@@ -6959,16 +6714,6 @@ class ExecutorAutomacao:
             status = self.limpar_saida_status(detalhes.get("status", "Concluida"))
             return f"Evento #{ordem}: resultado do relatorio {status[:35]}"
 
-        if tipo in TIPOS_MOUSE:
-            detalhes = evento.get("detalhes", {})
-            cliques = max(1, int(detalhes.get("cliques", 1) or 1))
-            return (
-                f"Evento #{ordem}: mouse "
-                f"{str(detalhes.get('botao', 'left')).upper()} "
-                f"{'duplo ' if cliques == 2 else ''}"
-                f"X={int(detalhes.get('x', 0))} Y={int(detalhes.get('y', 0))}"
-            )
-
         if tipo in TIPOS_IMAGEM:
             detalhes = evento.get("detalhes", {})
             nome_imagem = Path(str(detalhes.get("imagem", ""))).name or "imagem"
@@ -6983,17 +6728,6 @@ class ExecutorAutomacao:
         if tipo in TIPOS_VERIFICACAO:
             detalhes = evento.get("detalhes", {})
             return f"Evento #{ordem}: {detalhes.get('nome', 'verificar estado do botao')}"
-
-        if tipo in TIPOS_CHROME:
-            detalhes = evento.get("detalhes", {})
-            alvo = detalhes.get("alvo", {}) or {}
-            acao = detalhes.get("acao", {}) or {}
-            return (
-                f"Evento #{ordem}: chrome "
-                f"{self.limpar_saida_status(detalhes.get('nome', 'elemento html'))} "
-                f"[{self.limpar_saida_status(alvo.get('metodo', 'css'))} -> "
-                f"{self.limpar_saida_status(acao.get('tipo', 'clicar'))}]"
-            )
 
         if tipo in TIPOS_UIA:
             detalhes = evento.get("detalhes", {})
@@ -8681,7 +8415,7 @@ class ExecutorAutomacao:
                     if acao in {"clicar_ir_para_bloco", "clicar_e_ir_para_bloco", "confirmar_ir_para_bloco", "ir_para_bloco"}:
                         bloco = str(layout.get("block") or "").strip()
                         if bloco:
-                            return self.resultado_fluxo("ir_para_bloco", bloco=bloco)
+                            return self.resultado_fluxo("ir_para_bloco", bloco=bloco, **({"atraso": layout["successDelay"]} if layout.get("successDelay") else {}))
                     safe_print(f"Bloco {ordem}: OCR {indice + 1} encontrado pelo Chrome: {capturado}", flush=True)
                     break
                 except Exception as erro:
@@ -8695,7 +8429,7 @@ class ExecutorAutomacao:
                 if acao_falha == "ir_para_bloco":
                     bloco = str(layout.get("failureBlock") or "").strip()
                     if bloco:
-                        return self.resultado_fluxo("ir_para_bloco", bloco=bloco)
+                        return self.resultado_fluxo("ir_para_bloco", bloco=bloco, **({"atraso": layout["failureDelay"]} if layout.get("failureDelay") else {}))
                 safe_print(f"Bloco {ordem}: OCR {indice + 1} nao encontrado pelo Chrome: {ultimo_erro}", flush=True)
         return self.resultado_sucesso_evento(evento)
 
@@ -10244,23 +9978,6 @@ class ExecutorAutomacao:
         if tipo in TIPOS_RESULTADO_RELATORIO:
             return self.executar_bloco_resultado_relatorio(evento, contexto_loop=contexto_loop)
 
-        if tipo in TIPOS_MOUSE:
-            if self.cancelamento_solicitado():
-                return self.resultado_fluxo("parar")
-            self.preparar_janela_para_acao()
-            detalhes = evento.get("detalhes", {})
-            destino_x, destino_y = self.ajustar_coordenadas_para_janela_alvo(
-                detalhes.get("x", 0),
-                detalhes.get("y", 0),
-            )
-            pyautogui.click(
-                x=destino_x,
-                y=destino_y,
-                button=str(detalhes.get("botao", "left")),
-                clicks=max(1, int(detalhes.get("cliques", 1) or 1)),
-            )
-            return self.resultado_sucesso_evento(evento)
-
         if tipo in TIPOS_IMAGEM:
             detalhes = evento.get("detalhes", {})
             modo_reconhecimento = str(detalhes.get("modo_reconhecimento", "imagem") or "imagem").strip().lower()
@@ -10401,7 +10118,7 @@ class ExecutorAutomacao:
                                 mensagem_ocr,
                                 flush=True,
                             )
-                            return self.resultado_fluxo("ir_para_bloco", bloco=bloco_destino_ocr)
+                            return self.resultado_fluxo("ir_para_bloco", bloco=bloco_destino_ocr, atraso=fluxo_ocr.get("atraso", 0))
                     safe_print(
                         f"Bloco {ordem_evento}: reconhecimento confirmou {nome_imagem}.",
                         flush=True,
@@ -10488,9 +10205,6 @@ class ExecutorAutomacao:
             if resultado.get("acao") == "ir_para_sequencia" and resultado.get("sequencia"):
                 safe_print(f"Redirecionando para sequencia {resultado['sequencia']}", flush=True)
             return resultado
-
-        if tipo in TIPOS_CHROME:
-            return self.executar_bloco_chrome_elemento_html(evento, contexto_loop=contexto_loop)
 
         if tipo in TIPOS_UIA:
             return self.executar_bloco_uia_elemento(evento, contexto_loop=contexto_loop)

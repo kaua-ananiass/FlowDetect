@@ -170,7 +170,6 @@ $cleanRoadmap = @'
   "instrucoes": [
     "Teclas simples e atalhos sao gravados individualmente.",
     "F8 abre uma caixa de texto grande e salva o bloco como um unico comando.",
-    "O botao Capturar mouse salva a coordenada exata do proximo clique.",
     "Cada evento tambem salva o intervalo em segundos desde a acao anterior.",
     "A aba Planilha pode adicionar uma sequencia inteira ou so linhas selecionadas ao roteiro.",
     "Backspace remove a ultima entrada salva e F9 ou ESC encerram a captura."
@@ -297,7 +296,6 @@ foreach ($sidecar in $sidecarFiles) {
 $itemsToCopy = @(
     "capturar_cliques.py",
     "capturar_imagem_tela.py",
-    "capturar_mouse_global.py",
     "diagnostico_ambiente.py",
     "executar_automacao.py",
     "gerenciar_roteiro.py",

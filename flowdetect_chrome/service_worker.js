@@ -1,11 +1,50 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.37";
+const RUNTIME_VERSION = "0.2.46";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 let creatingCaptureDocument = null;
 
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
+
+function normalizeScreenGuard(raw = {}) {
+  if (!raw?.enabled) return { enabled: false };
+  const text = String(raw.text || "").trim();
+  let url;
+  try { url = new URL(String(raw.url || "").trim()); } catch (_) { throw new Error("Informe uma URL valida para a tela da automacao."); }
+  if (!["http:", "https:"].includes(url.protocol) || !text) throw new Error("A tela da automacao precisa de uma URL HTTP/HTTPS e um texto esperado.");
+  url.search = "";
+  return { enabled: true, url: url.href, text };
+}
+
+function screenUrlMatches(actual, expected) {
+  try {
+    const current = new URL(actual);
+    const required = new URL(expected);
+    return current.origin === required.origin && current.pathname === required.pathname && current.hash === required.hash;
+  } catch (_) { return false; }
+}
+
+async function checkAutomationScreen(raw, tabId) {
+  const guard = normalizeScreenGuard(raw);
+  if (!guard.enabled) return { ready: true, tabId };
+  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!active?.id || (tabId != null && active.id !== tabId)) return { ready: false, reason: "Abra a aba da automacao." };
+  const tab = await chrome.tabs.get(active.id).catch(() => null);
+  if (!tab || !screenUrlMatches(tab.url, guard.url)) return { ready: false, reason: "Aguardando tela da automacao: abra a URL configurada." };
+  if (tab.status !== "complete") return { ready: false, reason: "Aguardando a pagina carregar." };
+  const response = await chrome.tabs.sendMessage(tab.id, {
+    type: "flowdetect-screen-check-v2", text: guard.text,
+  }).catch(() => null);
+  // Recheck after the asynchronous text read: focus/navigation may have changed.
+  const [latestActive] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const latestTab = await chrome.tabs.get(tab.id).catch(() => null);
+  if (latestActive?.id !== tab.id || latestTab?.status !== "complete" || !screenUrlMatches(latestTab?.url, guard.url))
+    return { ready: false, reason: "Aguardando tela da automacao na aba atual." };
+  const ready = Boolean(response?.ok && response.hasText && screenUrlMatches(response.url, guard.url));
+  return { ready, tabId: tab.id, reason: ready ? "Tela da automacao identificada." :
+    response?.ok ? `Aguardando o texto: ${guard.text}` : "Recarregue a pagina para a extensao identificar a tela." };
+}
 
 function createRun(automation, tabId, startRow = 1) {
   return {
@@ -645,7 +684,7 @@ async function executeStep(run, rawStep) {
     return `Resultado do relatorio: ${result.status}.`;
   }
   if (step.type === "loop_end" || step.type === "loop_start") return "Marcador de loop processado.";
-  if (["element_action", "ocr_text", "focused_text", "viewport_click", "wait_text"].includes(step.type)) {
+  if (["element_action", "ocr_text", "focused_text", "wait_text"].includes(step.type)) {
     try {
       return await executePageStep(run, step);
     } catch (error) {
@@ -725,6 +764,17 @@ function flowLabel(flow) {
   if (["ir_para_bloco", "ir_para_outro_bloco", "ir_para"].includes(action)) return `Indo para bloco ${flow?.block}.`;
   if (["ir_para_sequencia", "ir_para_pagina", "ir_para_pag"].includes(action)) return `Indo para pagina ${normalizedSequence(flow?.sequence)}.`;
   return "Continuando conforme o bloco.";
+}
+
+async function waitForRouteDelay(run, flow) {
+  const milliseconds = Number(flow?.delay_ms || 0);
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return;
+  await addLog(run, `Aguardando ${milliseconds / 1000}s antes do bloco de destino.`, "info");
+  for (let remaining = milliseconds; remaining > 0; remaining -= 100) {
+    if (run.cancelled) throw new Error("Execucao interrompida pelo usuario.");
+    await sleep(Math.min(remaining, 100));
+  }
+  if (run.cancelled) throw new Error("Execucao interrompida pelo usuario.");
 }
 
 function findSpreadsheetLoopSource(steps) {
@@ -863,6 +913,7 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       }
       if (!Number.isInteger(nextIndex)) return;
       if (nextIndex !== indexes.nextByIndex.get(index)) await addLog(run, flowLabel(flow), "info");
+      await waitForRouteDelay(run, flow);
       index = nextIndex;
     } catch (error) {
       if (run.cancelled || error?.flowdetectCaptureUnavailable) throw error;
@@ -875,18 +926,24 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
         return;
       }
       if (!Number.isInteger(nextIndex)) return;
+      await waitForRouteDelay(run, step.on_failure);
       index = nextIndex;
     }
   }
 }
 
 async function executeAutomation(automation, tabId, startRow = 1) {
+  if (activeRuns.size) throw new Error("Ja existe uma automacao executando ou aguardando a tela. Pare essa execucao primeiro.");
   if (!automation || automation.schema !== "flowdetect_chrome_automation" || ![1, 2, 3].includes(Number(automation.version))) {
     throw new Error("Arquivo de automação Chrome inválido.");
   }
   if (!Array.isArray(automation.steps) || !automation.steps.length) {
     throw new Error("Essa automação não possui blocos compatíveis com a extensão.");
   }
+  const screenGuard = normalizeScreenGuard(automation.screen_guard);
+  const screen = await checkAutomationScreen(screenGuard, tabId);
+  if (!screen.ready) throw new Error(screen.reason);
+  if (activeRuns.size) throw new Error("Ja existe uma automacao executando.");
   const run = createRun(automation, tabId, startRow);
   activeRuns.set(run.id, run);
   await addLog(run, `Iniciando ${run.automationName}.`);
@@ -899,6 +956,7 @@ async function executeAutomation(automation, tabId, startRow = 1) {
       await stopTabCapture(run);
       await addLog(run, `A captura em segundo plano nao iniciou: ${String(error?.message || error)}. O reconhecimento visual aguardara a aba da automacao ficar ativa.`, "warning");
     }
+    if (run.cancelled) throw new Error("Execucao interrompida pelo usuario.");
     const steps = automation.steps;
     const indexes = buildFlowIndexes(steps);
     const initialSequence = normalizedSequence(automation.initial_sequence);
@@ -957,11 +1015,15 @@ async function executeAutomation(automation, tabId, startRow = 1) {
 }
 
 async function handleMessage(message, sender) {
+  if (message?.type === "flowdetect-screen-ready") {
+    return { ok: true, ...await checkAutomationScreen(message.screenGuard, message.tabId) };
+  }
   if (message?.type === "flowdetect-runtime-info") {
     return {
       ok: true,
       version: RUNTIME_VERSION,
-      capabilities: ["ocr_text", "visual_match", "visual_state", "focused_text", "data_source", "key_sequence", "viewport_click"]
+      activeRunIds: [...activeRuns.keys()],
+      capabilities: ["ocr_text", "visual_match", "visual_state", "focused_text", "data_source", "key_sequence"]
     };
   }
   if (message?.type === "flowdetect-start") {
@@ -971,7 +1033,7 @@ async function handleMessage(message, sender) {
     return { ok: run.status === "completed", run };
   }
   if (message?.type === "flowdetect-stop") {
-    const running = [...activeRuns.values()].find((run) => run.status === "running");
+    const running = [...activeRuns.values()].find((run) => ["running", "waiting_screen"].includes(run.status));
     if (running) {
       running.cancelled = true;
       await addLog(running, "Parada solicitada pelo usuário.", "warning");

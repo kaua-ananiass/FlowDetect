@@ -6,6 +6,8 @@ const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../tauri_gerador/web/main.js"), "utf8");
 const names = [
+  "normalizeTransitionDelay",
+  "formatTransitionDelayValue",
   "normalizeOcrTargetAction",
   "normalizeOcrTargetFailureAction",
   "resolveCommandMapTreeTarget",
@@ -78,4 +80,51 @@ test("a failure route is not merged into a normal route with the same target", (
     Array.from(branches, (branch) => branch.kind).sort(),
     ["failure", "success"],
   );
+});
+
+
+test("cross-page OCR route exposes its independent delay beside the destination",()=>{
+  const {context,events}=setup();
+  const sourceEvent={...events[0],details:{modo_reconhecimento:'texto_ocr',ocr_target_layouts:[
+    {action:'confirmar_ir_para_bloco',block:'16',successDelay:1.5,failureAction:'ir_para_bloco',failureBlock:'17',failureDelay:2.4}]}};
+  const branches=context.getCommandMapOcrActionBranches(sourceEvent,0,[sourceEvent],{orderToEvent:new Map(),orderToIndex:new Map()});
+  assert.equal(branches[0].editableDelay,'ocr');
+  assert.equal(branches[0].hideDelay,false);
+  assert.equal(branches[0].delay,1.5);
+  assert.equal(branches[1].delay,2.4);
+});
+
+test("editing a compact OCR card preserves its target layout and independent waits",()=>{
+  const fn=source.match(/^function setCommandCardOcrRouteDelay\(.*?^}/ms)[0];
+  const context=vm.createContext({ocrTargetRowByIndex:()=>null,formatTransitionDelayValue:String});
+  vm.runInContext(fn,context);
+  const hidden={value:JSON.stringify([{texto:'Empresa',block:'7',successDelay:0,failureDelay:0}])};
+  const card={querySelector:()=>hidden};
+  assert.equal(context.setCommandCardOcrRouteDelay(card,0,'success',1.5),true);
+  assert.equal(context.setCommandCardOcrRouteDelay(card,0,'failure',2),true);
+  const layout=JSON.parse(hidden.value)[0];
+  assert.deepEqual(layout,{texto:'Empresa',block:'7',successDelay:1.5,failureDelay:2});
+});
+
+
+test("the OCR destination label renders an editable seconds field",()=>{
+  const fn=source.match(/^function renderCommandMapTreeDelayControl\(.*?^}/ms)[0];
+  const context=vm.createContext({escapeHtml:String,formatTransitionDelayValue:String});
+  vm.runInContext(fn,context);
+  const markup=context.renderCommandMapTreeDelayControl({editableDelay:'ocr',sourceOrder:8,ocrIndex:1,kind:'ocr_action',delay:1.5});
+  assert.match(markup,/data-ocr-route-index="1"/);
+  assert.match(markup,/value="1.5"/);
+  assert.match(markup,/<strong>s<\/strong>/);
+});
+
+test("OCR failures to the same destination retain separately editable waits", () => {
+  const {context, events} = setup();
+  const branches = context.dedupeCommandMapTreeBranches([
+    {kind: "failure", ocrIndex: 0, label: "OCR 1", targetEvent: events[1], targetOrder: 9, delay: 1, editableDelay: "ocr"},
+    {kind: "failure", ocrIndex: 1, label: "OCR 2", targetEvent: events[1], targetOrder: 9, delay: 2, editableDelay: "ocr"},
+    {kind: "failure", label: "Se nao achar", targetEvent: events[1], targetOrder: 9, delay: 3, editableDelay: "route"},
+  ]);
+  assert.equal(branches.length, 3);
+  assert.deepEqual(Array.from(branches, branch => branch.delay), [1, 2, 3]);
+  assert.equal(branches[1].editableDelay, "ocr");
 });

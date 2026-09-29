@@ -10,7 +10,7 @@ function productionFunction(name) {
   assert.ok(found, `Production function ${name}`);
   return found[0];
 }
-const names = ["isVisible", "focusableTarget", "isClickReady", "waitForClickableTarget", "clickTarget"];
+const names = ["isVisible", "focusableTarget", "isClickReady", "waitForClickableTarget", "checkboxControl", "clickTarget"];
 const functions = names.map(productionFunction).join("\n");
 
 test("OCR click ignores a hidden menu and presses the option at the recognized point", () => {
@@ -34,7 +34,7 @@ test("OCR click ignores a hidden menu and presses the option at the recognized p
       for (let current = this; current; current = current.parentElement) {
         if (current.role && selector.includes(`[role='${current.role}']`)) return current;
       }
-      return this;
+      return null;
     }
     focus() { this.events.push("focus"); }
     dispatchEvent(event) { this.events.push(event.type); return true; }
@@ -167,7 +167,7 @@ test("a marker near a small icon clicks the icon instead of the wide field", () 
     isVisible: () => true,
     Math,
   });
-  vm.runInContext(productionFunction("preciseClickTarget"), context);
+  vm.runInContext(productionFunction("checkboxControl") + "\n" + productionFunction("preciseClickTarget"), context);
   const chosen = context.preciseClickTarget({ x: 337, y: 54 });
   assert.equal(chosen.element, icon);
   assert.equal(chosen.point.x, 322);
@@ -185,37 +185,27 @@ test("a snapped icon remains the click target even when the field overlaps its p
     MouseEvent: class { constructor(type) { this.type = type; } },
     window: {}, globalThis: {}, Number, Math, Error,
   });
-  vm.runInContext(productionFunction("clickTarget"), context);
+  vm.runInContext(productionFunction("checkboxControl") + "\n" + productionFunction("clickTarget"), context);
   context.clickTarget(icon, 1, { x: 322, y: 49 }, true);
   assert.equal(icon.clicks, 1);
   assert.equal(field.clicks, 0);
 });
 
-test("a separate mouse block clicks the marker saved by the preceding OCR", async () => {
-  const target = { scrollIntoView() {}, getBoundingClientRect: () => ({ left: 40, top: 50, width: 100, height: 20 }) };
-  const clicks = [];
+test("a checkbox marker never snaps to a neighboring checkbox outside its bounds", () => {
+  const box = (top) => ({
+    matches: () => true,
+    getBoundingClientRect: () => ({ left: 40, top, width: 20, height: 20 }),
+  });
+  const header = box(40);
+  const row = box(80);
   const context = vm.createContext({
-    innerWidth: 500, innerHeight: 400,
-    Number, Math, Boolean, String, Error,
-    waitForTextTarget: async () => ({ element: target }),
-    findTextTarget: () => ({ element: target }),
-    sleep: async () => {},
-    highlightRect() {},
-    preciseClickTarget: () => null,
-    document: { elementFromPoint: (x, y) => ({ x, y, getBoundingClientRect: () => ({ left: x, top: y, width: 1, height: 1 }) }) },
-    waitForClickableTarget: async (element) => element,
-    clickTarget: (_element, count, point) => clicks.push({ count, point }),
+    document: { querySelectorAll: () => [header, row] },
+    isVisible: () => true, Math,
   });
-  vm.runInContext(`let lastOcrClickPoint = null;\n${productionFunction("executeOcrText")}\n${productionFunction("clickAt")}`, context);
-  await assert.rejects(context.clickAt({ coordinate_space: "last_ocr_click", x: 0, y: 0 }), /OCR anterior/);
-  await context.executeOcrText({
-    text: "50.317.977/0001-05", click: false, offset_x: 200, offset_y: 0,
-    click_anchor: { from_text_left: 268.5, from_text_top: 18 },
-  });
-  await context.clickAt({ coordinate_space: "last_ocr_click", x: 0, y: 0, clicks: 1 });
-  assert.deepEqual(JSON.parse(JSON.stringify(clicks)), [{ count: 1, point: { x: 308.5, y: 68 } }]);
+  vm.runInContext(productionFunction("checkboxControl") + "\n" + productionFunction("preciseClickTarget"), context);
+  assert.equal(context.preciseClickTarget({ x: 50, y: 90 }).element, row);
+  assert.equal(context.preciseClickTarget({ x: 50, y: 70 }), null);
 });
-
 
 test("content runner uses a versioned message channel after an extension update", () => {
   assert.match(source, /CONTENT_RUNTIME_VERSION = "0\.2\.\d+"/);
