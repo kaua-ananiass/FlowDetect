@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.46";
+const RUNTIME_VERSION = "0.2.52";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 let creatingCaptureDocument = null;
@@ -58,6 +58,7 @@ function createRun(automation, tabId, startRow = 1) {
     finishedAt: "",
     currentStep: 0,
     totalSteps: Array.isArray(automation?.steps) ? automation.steps.length : 0,
+    recentSteps: [],
     lastMessage: "",
     logs: [],
     variables: {},
@@ -854,6 +855,7 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
     if (run.cancelled) throw new Error("Execução interrompida pelo usuário.");
     const step = steps[index];
     run.currentIndex = index;
+    run.lastBlockIndex = index;
     if (step.type === "loop_end") return;
     if (step.type === "loop_start") {
       const loopEnd = pairs.get(index);
@@ -899,14 +901,22 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       continue;
     }
     run.currentStep += 1;
+    run.recentSteps = [...(run.recentSteps || []), {
+      serial: run.currentStep, index, state: "running"
+    }].slice(-4);
     await persistRun(run);
     await addLog(run, `Bloco ${step.source_order || index + 1}: ${step.type}.`);
     try {
       const output = await executeStep(run, step);
       const message = typeof output === "object" ? output.message : output;
       const flow = typeof output === "object" ? output.flow : step.on_success;
-      await addLog(run, message, typeof output === "object" ? output.level || "success" : "success");
       const nextIndex = actionToIndex(flow, indexes, indexes.nextByIndex.get(index));
+      if (typeof output === "object" && output.level === "warning") {
+        run.blockFailure = { serial: Number(run.blockFailure?.serial || 0) + 1,
+          index, nextIndex, message: String(message || ""), at: Date.now() };
+      }
+      run.recentSteps.at(-1).state = typeof output === "object" && output.level === "warning" ? "failed" : "done";
+      await addLog(run, message, typeof output === "object" ? output.level || "success" : "success");
       if (mustAdvanceSpreadsheetRow(run, index, nextIndex)) {
         await addLog(run, `Linha ${run.spreadsheetLoop.row + 1}/${run.spreadsheetLoop.total} concluida; avancando para o proximo valor.`);
         return;
@@ -916,10 +926,16 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       await waitForRouteDelay(run, flow);
       index = nextIndex;
     } catch (error) {
-      if (run.cancelled || error?.flowdetectCaptureUnavailable) throw error;
-      if (error?.flowdetectOcrTargetFailure) throw error;
-      if (!flowContinues(step.on_failure)) throw error;
-      const nextIndex = actionToIndex(step.on_failure, indexes, indexes.nextByIndex.get(index));
+      if (run.recentSteps?.at(-1)?.index === index) {
+        run.recentSteps.at(-1).state = run.cancelled ? "stopped" : "failed";
+      }
+      if (run.cancelled) throw error;
+      const canRoute = !error?.flowdetectCaptureUnavailable
+        && !error?.flowdetectOcrTargetFailure && flowContinues(step.on_failure);
+      const nextIndex = canRoute ? actionToIndex(step.on_failure, indexes, indexes.nextByIndex.get(index)) : null;
+      run.blockFailure = { serial: Number(run.blockFailure?.serial || 0) + 1,
+        index, nextIndex, message: String(error?.message || error), at: Date.now() };
+      if (!canRoute) throw error;
       await addLog(run, `${String(error?.message || error)} ${flowLabel(step.on_failure)}`, "warning");
       if (mustAdvanceSpreadsheetRow(run, index, nextIndex)) {
         await addLog(run, `Linha ${run.spreadsheetLoop.row + 1}/${run.spreadsheetLoop.total} finalizada pela regra do bloco; avancando para o proximo valor.`, "warning");
