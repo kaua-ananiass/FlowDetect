@@ -15,6 +15,9 @@ const db={flowdetectChromeAutomations:[{id:'test',schema:'flowdetect_chrome_auto
 const listeners=[];
 let ready=false;
 let started=0;
+let mapped=0;
+let tabUrl='https://site.test/page?id=1';
+window.close=()=>{window.pickerClosed=true};
 window.chrome={storage:{local:{get:async key=>({[key]:db[key]}),set:async items=>{
   Object.assign(db,items);for(const callback of listeners) callback(Object.fromEntries(
     Object.entries(items).map(([key,value])=>[key,{newValue:value}])),'local');
@@ -22,9 +25,12 @@ window.chrome={storage:{local:{get:async key=>({[key]:db[key]}),set:async items=
 runtime:{sendMessage:async message=>{
   if(message.type==='flowdetect-screen-ready') return {ok:true,ready,reason:ready?'Tela da automacao identificada.':'Aguardando tela da automacao.'};
   if(message.type==='flowdetect-start') started++;
-  return {ok:true,version:'0.2.45',activeRunIds:[]};
+  return {ok:true,version:'0.2.52',activeRunIds:[]};
 }},
-tabs:{query:async()=>[{id:42,url:'https://site.test/page?id=1'}]}};
+tabs:{query:async()=>[{id:42,url:tabUrl}],sendMessage:async(_id,message)=>{
+  if(message.type==='flowdetect-map-element-v1') mapped++;
+  return {ok:true};
+}}};
 """
 SCENARIO = r"""
 (async()=>{
@@ -33,6 +39,13 @@ SCENARIO = r"""
   const check=(name,ok)=>{if(!ok)throw Error(name);checks.push(name)};
   try{
     await pause();
+    document.querySelector('#mapElementButton').click();await pause();
+    check('toolbar starts the page picker and closes only its popup',mapped===1 && window.pickerClosed===true);
+    tabUrl='chrome://extensions';window.pickerClosed=false;
+    document.querySelector('#mapElementButton').click();await pause();
+    check('unsupported page shows an error without starting picker',mapped===1 &&
+      !document.querySelector('#mapElementStatus').hidden && window.pickerClosed===false);
+    tabUrl='https://site.test/page?id=1';
     check('settings initially collapsed',!document.querySelector('details').open);
     document.querySelector('.screen-guard-current').click();await pause();
     check('current tab fills normalized URL',document.querySelector('.screen-guard-url').value==='https://site.test/page');
@@ -82,4 +95,4 @@ class ChromeScreenGuardBrowserTest(unittest.TestCase):
             self.assertTrue(match and match.group(1), completed.stderr.decode(errors='replace')[-2000:])
             result = json.loads(html.unescape(match.group(1)))
             self.assertEqual(result['errors'], [])
-            self.assertEqual(len(result['checks']), 9)
+            self.assertEqual(len(result['checks']), 11)

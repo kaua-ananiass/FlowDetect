@@ -25,6 +25,35 @@ Extensão que executa automações web exportadas pelo FlowDetect Studio na aba 
 
 Ao atualizar de uma versão anterior, aceite as novas permissões de captura de aba solicitadas pelo Chrome e recarregue a extensão. A captura vinculada à aba usa os recursos disponíveis a partir do Chrome 116; em versões mais antigas, o reconhecimento visual fica restrito à aba ativa.
 
+Depois de atualizar a extensao, recarregue tambem a pagina da automacao para que o
+destaque visual do OCR apareca sobre janelas modais ja abertas.
+
+## Mapear um elemento da pagina
+
+Abra a pagina desejada e clique no icone da extensao. Selecione **Mapear elemento da pagina**,
+passe o mouse sobre o elemento e clique nele. O clique de selecao nao executa a acao do site.
+Uma janela na propria pagina mostra um seletor CSS unico; clique em **Copiar seletor**.
+No FlowDetect Studio, abra um bloco OCR, escolha **Chrome · elemento da pagina** e cole o
+seletor no campo do elemento. Use **Escolher outro** para repetir ou Esc para cancelar.
+
+O mapeador funciona em paginas HTTP/HTTPS e nao copia valores digitados nem o HTML inteiro.
+Elementos dentro de Shadow DOM ou frames internos podem exigir outro alvo acessivel na pagina.
+
+## Acompanhar a execucao
+
+Durante a execucao, o popup mostra apenas o card compacto do bloco e a barra de
+progresso. O carrossel faz uma transicao em flip quando o fluxo avanca. Se um
+bloco falhar e tiver outro destino configurado, ele treme em vermelho antes de
+mostrar o proximo bloco, sem atrasar a execucao. Ao parar ou terminar, o card
+compacto permanece; **Automacoes** retorna a uma lista limpa, sem repetir o
+card da execucao. As tres etapas mais recentes aparecem discretamente em
+**Ao vivo**, logo abaixo do card. As setas
+permitem revisar outros blocos; **Seguir execucao** volta
+ao bloco atual. Referencias visuais e previews de OCR exportadas pelo Studio
+aparecem no card. Blocos sem imagem mostram o texto ou a acao configurada.
+Para incluir novas previews em automacoes ja importadas, exporte o JSON novamente no Studio e
+importe o novo arquivo na extensao.
+
 ## Enviar uma automacao do Studio
 
 1. Abra a Biblioteca de automacoes no FlowDetect Studio.
