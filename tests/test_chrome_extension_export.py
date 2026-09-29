@@ -201,6 +201,20 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertEqual(len(step["ocr_targets"]), 2)
         self.assertEqual(str(step["ocr_targets"][1]["on_success"]["block"]), "16")
 
+    def test_ocr_reference_is_embedded_for_the_execution_carousel(self):
+        image_path = Path("preview.png")
+        image_path.write_bytes(bytes.fromhex(
+            "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+            "0000000d49444154789c6360f8cfc0000003010100c9fe92ef0000000049454e44ae426082"
+        ))
+        step, warning = self.roadmap.converter_evento_para_chrome({
+            "ordem": 5, "sequencia": "principal", "tipo": "procurar_texto_ocr",
+            "detalhes": {"texto": "Pesquisar", "imagem_ocr": str(image_path)},
+        })
+        self.assertIsNone(warning)
+        self.assertEqual(step["type"], "ocr_text")
+        self.assertTrue(step["preview_image"]["data_url"].startswith("data:image/png;base64,"))
+
     def test_hybrid_ocr_click_uses_distance_from_text_to_click_marker(self):
         block = {
             "ordem": 3, "sequencia": "principal", "tipo": "clicar_imagem",

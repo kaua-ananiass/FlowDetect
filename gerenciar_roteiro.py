@@ -903,6 +903,9 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
                 "require_unique": True,
                 "timeout_ms": max(500, round(float(detalhes.get("timeout") or 8) * 1000)),
             })
+            preview, _ = recurso_imagem_para_chrome(detalhes.get("imagem_ocr") or detalhes.get("imagem"))
+            if preview:
+                passo["preview_image"] = preview
             return passo, None
         if str(detalhes.get("fonte_ocr") or "legado").lower() == "visual":
             imagem, erro = recurso_imagem_para_chrome(detalhes.get("imagem_ocr"))
@@ -939,6 +942,9 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
             "attempts": max(1, int(detalhes.get("quantidade_tentativas") or 1)),
             "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
         })
+        preview, _ = recurso_imagem_para_chrome(detalhes.get("imagem_ocr") or detalhes.get("imagem"))
+        if preview:
+            passo["preview_image"] = preview
         return aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes), None
 
     if tipo == "texto_livre":
@@ -988,6 +994,10 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
                 imagem_visual, _ = recurso_imagem_para_chrome(detalhes.get("imagem"))
                 if imagem_visual:
                     passo["visual_fallback"] = imagem_visual
+            if "visual_fallback" not in passo:
+                preview, _ = recurso_imagem_para_chrome(detalhes.get("imagem_ocr") or detalhes.get("imagem"))
+                if preview:
+                    passo["preview_image"] = preview
             alvos = alvos_ocr_para_chrome(detalhes, passo)
             if alvos:
                 passo["ocr_targets"] = alvos
