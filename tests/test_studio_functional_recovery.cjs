@@ -33,7 +33,8 @@ test("Studio loads with the original styles and preserves expanded and compact O
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "flowdetect-studio-functional-"));
   const exported = ["renderOcrTargetRows", "renderOcrTargetActionRows", "ocrTargetLayoutsFromContainer",
     "syncOcrTargetActionRows", "setCommandCardOcrRouteDelay", "syncOcrTargetActionControlToSource",
-    "relativeOcrInvokeArgs", "renderCommandMapTreeDelayControl", "state"];
+    "applyOcrTargetActionChoice", "relativeOcrInvokeArgs", "renderCommandMapTreeDelayControl", "createInsertPanelState",
+    "insertValuesFromPanel", "state"];
   // Instrument only the served copy; the production module exposes no test API.
   const instrumented = main.replace(/\nboot\(\);\r?\n}\s*$/,
     `\nwindow.__functionalQA = {${exported.join(",")}};\nboot();\n}`);
@@ -126,6 +127,10 @@ test("Studio loads with the original styles and preserves expanded and compact O
       const serialized = JSON.parse(payload.ocrTargetLayouts)[0];
       check('native payload includes waits and geometry', serialized.successDelay===3.5 && serialized.failureDelay===4.2
         && serialized.offsetX===4 && serialized.width===140);
+      const oneClick = card.querySelector('[data-ocr-target-action-choice="clickChoice"][data-ocr-target-action-value="single"]');
+      qa.applyOcrTargetActionChoice(oneClick);
+      check('explicit one-click choice persists in the saved target',
+        qa.ocrTargetLayoutsFromContainer(card)[0].action==='clicar_ir_para_bloco');
       card.innerHTML = '<input data-ocr-target-layouts type="hidden" />';
       card.querySelector('input').value = JSON.stringify([serialized]);
       qa.setCommandCardOcrRouteDelay(card,0,'success',6);
@@ -136,9 +141,20 @@ test("Studio loads with the original styles and preserves expanded and compact O
         && qa.ocrTargetLayoutsFromContainer(card).length===1);
       qa.setCommandCardOcrRouteDelay(card,0,'success',-10);
       check('negative delay is clamped', qa.ocrTargetLayoutsFromContainer(card)[0].successDelay===0);
+      const originalInsertPanel = qa.state.insertPanel;
+      qa.state.insertPanel = {...qa.createInsertPanelState(1,'after'),type:'image',
+        recognitionMode:'texto_ocr',ocrTargetLayouts:[{action:'clicar',clicks:1}]};
+      const compactCreate = document.createElement('div');
+      compactCreate.className = 'insert-card-panel is-compact-create';
+      compactCreate.dataset.targetOrder = '1';
+      const created = qa.insertValuesFromPanel(compactCreate);
+      check('compact creation retains one-click OCR rule', created.ocrTargetLayouts[0]?.action==='clicar');
+      check('native creation payload retains one-click OCR rule',
+        JSON.parse(qa.relativeOcrInvokeArgs(created).ocrTargetLayouts)[0]?.action==='clicar');
+      qa.state.insertPanel = originalInsertPanel;
       card.remove(); return checks;
     })()`);
-    assert.equal(result.length, 9);
+    assert.equal(result.length, 12);
     assert.deepEqual(errors, []);
   } finally {
     if (socket) socket.close();

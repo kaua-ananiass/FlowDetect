@@ -1,5 +1,5 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.52";
+const RUNTIME_VERSION = "0.2.53";
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 let creatingCaptureDocument = null;
@@ -914,6 +914,9 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       if (typeof output === "object" && output.level === "warning") {
         run.blockFailure = { serial: Number(run.blockFailure?.serial || 0) + 1,
           index, nextIndex, message: String(message || ""), at: Date.now() };
+      } else if (step.type === "ocr_text") {
+        run.blockSuccess = { serial: Number(run.blockSuccess?.serial || 0) + 1,
+          index, at: Date.now() };
       }
       run.recentSteps.at(-1).state = typeof output === "object" && output.level === "warning" ? "failed" : "done";
       await addLog(run, message, typeof output === "object" ? output.level || "success" : "success");

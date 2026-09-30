@@ -464,6 +464,18 @@ const bulkDelayInput = document.getElementById("bulkDelayInput");
 const applyBulkDelayButton = document.getElementById("applyBulkDelayButton");
 const mapSaveButton = document.getElementById("mapSaveButton");
 const mapReorganizeButton = document.getElementById("mapReorganizeButton");
+const mapCaptureButton = document.getElementById("mapCaptureButton");
+const flowCaptureDialog = document.getElementById("flowCaptureDialog");
+const flowCaptureImage = document.getElementById("flowCaptureImage");
+const flowCaptureMeta = document.getElementById("flowCaptureMeta");
+const flowCaptureStatus = document.getElementById("flowCaptureStatus");
+const flowCapturePreview = document.getElementById("flowCapturePreview");
+const flowCaptureZoomButton = document.getElementById("flowCaptureZoomButton");
+const flowCapturePngButton = document.getElementById("flowCapturePngButton");
+const flowCaptureSvgButton = document.getElementById("flowCaptureSvgButton");
+const flowCaptureCloseButton = document.getElementById("flowCaptureCloseButton");
+const flowCaptureScope = document.getElementById("flowCaptureScope");
+const flowCaptureState = { preparing: false, saving: false, diagram: null, previewUrl: "", fileName: "", warning: "" };
 const mapSavePercent = document.getElementById("mapSavePercent");
 const mapSaveFill = document.getElementById("mapSaveFill");
 const mapSaveStatus = document.getElementById("mapSaveStatus");
@@ -1625,11 +1637,11 @@ function createCommandMapTreeLinkEnergy(pathData, kind = "success", duration = 1
   return energy;
 }
 
-function renderCommandMapTreeReferenceLinks() {
-  if (!commandMapList || state.activeTab !== "commands") {
+function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive = false) {
+  if (!root || (!allowInactive && state.activeTab !== "commands")) {
     return;
   }
-  const tree = commandMapList.querySelector(".command-map-tree");
+  const tree = root.querySelector(".command-map-tree");
   if (!tree) {
     return;
   }
@@ -2093,6 +2105,11 @@ function setCommandMapZoom(nextZoom, options = {}) {
         y: Number(options.preservePoint.y),
       }
     : null;
+  const tree = point && commandMapList.classList.contains("is-tree-view")
+    ? commandMapList.querySelector(".command-map-tree")
+    : null;
+  const treeRect = tree?.getBoundingClientRect();
+  const listRect = treeRect ? commandMapList.getBoundingClientRect() : null;
   const anchor = point && Number.isFinite(point.x) && Number.isFinite(point.y)
     ? {
         x: (commandMapList.scrollLeft + point.x) / previousZoom,
@@ -2101,8 +2118,16 @@ function setCommandMapZoom(nextZoom, options = {}) {
     : null;
   state.commandMapRequestedZoom = normalizeCommandMapZoom(nextZoom, previousZoom);
   state.commandMapZoom = state.commandMapRequestedZoom;
+  if (treeRect && listRect && anchor) {
+    const ratio = state.commandMapZoom / previousZoom;
+    const pan = state.commandMapTreePanOffset || {};
+    state.commandMapTreePanOffset = {
+      x: commandMapTreePanCoordinate(pan.x, (listRect.left + point.x - treeRect.left) * (1 - ratio)),
+      y: commandMapTreePanCoordinate(pan.y, (listRect.top + point.y - treeRect.top) * (1 - ratio)),
+    };
+  }
   applyCommandMapZoom();
-  if (anchor) {
+  if (anchor && !treeRect) {
     commandMapList.scrollLeft = Math.max(0, anchor.x * state.commandMapZoom - point.x);
     commandMapList.scrollTop = Math.max(0, anchor.y * state.commandMapZoom - point.y);
   }
@@ -4346,6 +4371,9 @@ function updateCommandMapSaveUI() {
   if (mapReorganizeButton) {
     mapReorganizeButton.disabled = Boolean(state.commandMapSave.running);
   }
+  if (mapCaptureButton) {
+    mapCaptureButton.disabled = Boolean(state.commandMapSave.running || flowCaptureState.preparing);
+  }
   mapSaveButton.textContent = state.commandMapSave.running ? "Salvando..." : "Salvar mapa";
 
   shell?.classList.toggle("is-running", Boolean(state.commandMapSave.running));
@@ -4740,8 +4768,17 @@ function decorateRoadmapForClient(roadmap, previousRoadmap = null) {
     return roadmap;
   }
 
+  const previousEvents = previousRoadmap?.events ?? [];
+  const incomingEvents = roadmap.events ?? [];
+  const previousById = new Map(previousEvents
+    .filter((event) => String(event.id || "").trim())
+    .map((event) => [String(event.id), event]));
+  const matchingIds = incomingEvents.some((event) => previousById.has(String(event.id || "")));
+  // Roteiros antigos ainda nao possuem IDs gravados. Na primeira resposta
+  // apos a migracao, a ordem continua a mesma para uma edicao de card.
+  const migratingIds = !matchingIds && incomingEvents.length === previousEvents.length;
   const previousQueues = new Map();
-  for (const previousEvent of previousRoadmap?.events ?? []) {
+  for (const previousEvent of previousEvents) {
     const fingerprint = buildCommandEventFingerprint(previousEvent);
     if (!previousQueues.has(fingerprint)) {
       previousQueues.set(fingerprint, []);
@@ -4749,12 +4786,27 @@ function decorateRoadmapForClient(roadmap, previousRoadmap = null) {
     previousQueues.get(fingerprint).push(previousEvent.clientKey || nextCommandMapClientKey());
   }
 
+  const reservedKeys = new Set(incomingEvents
+    .map((event) => event.clientKey || previousById.get(String(event.id || ""))?.clientKey || "")
+    .filter(Boolean));
+  const usedKeys = new Set();
   return {
     ...roadmap,
-    events: (roadmap.events ?? []).map((event) => {
+    events: incomingEvents.map((event, index) => {
       const fingerprint = buildCommandEventFingerprint(event);
       const queue = previousQueues.get(fingerprint);
-      const clientKey = event.clientKey || queue?.shift() || nextCommandMapClientKey();
+      const sameId = previousById.get(String(event.id || ""));
+      const samePosition = migratingIds && Number(previousEvents[index]?.order) === Number(event.order)
+        && previousEvents[index]?.type === event.type
+        && previousEvents[index]?.sequence === event.sequence
+        ? previousEvents[index] : null;
+      let clientKey = event.clientKey || sameId?.clientKey || samePosition?.clientKey || "";
+      while (!clientKey && queue?.length) {
+        const candidate = queue.shift();
+        if (!usedKeys.has(candidate) && !reservedKeys.has(candidate)) clientKey = candidate;
+      }
+      if (!clientKey || usedKeys.has(clientKey)) clientKey = nextCommandMapClientKey();
+      usedKeys.add(clientKey);
       return {
         ...event,
         clientKey,
@@ -5493,10 +5545,14 @@ function applyCommandMapFocus(behavior = "smooth", options = {}) {
   const suppressScroll = Boolean(options.suppressScroll);
   const suppressVisualFocus = Boolean(options.suppressVisualFocus);
   const scrollMode = options.scrollMode || "center";
-  const events = getCommandMapEvents();
-  const focusOrder = resolveNearestCommandMapFocus(state.roadmap, state.commandMapFocusOrder ?? events[0]?.order ?? null);
+  const visibleOrders = state.commandMapOrderCache?.length
+    ? state.commandMapOrderCache
+    : getCommandMapEvents().map((event) => Number(event.order)).filter(Number.isFinite);
+  const requestedOrder = Number(state.commandMapFocusOrder);
+  const focusOrder = visibleOrders.includes(requestedOrder)
+    ? requestedOrder
+    : resolveNearestCommandMapFocus(state.roadmap, state.commandMapFocusOrder ?? visibleOrders[0] ?? null);
   state.commandMapFocusOrder = focusOrder;
-  const visibleOrders = events.map((event) => Number(event.order)).filter((order) => Number.isFinite(order));
   const focusIndex = visibleOrders.indexOf(Number(focusOrder));
   const neighborOrders = new Set(
     [visibleOrders[focusIndex - 1], visibleOrders[focusIndex + 1]].filter((order) => Number.isFinite(order))
@@ -5508,28 +5564,47 @@ function applyCommandMapFocus(behavior = "smooth", options = {}) {
     return;
   }
 
+  if (state.commandMapFocusDomCache?.row !== row) {
+    const segmentsByOrder = new Map();
+    commandMapList.querySelectorAll(".command-flow-segment[data-order]").forEach((segment) => {
+      const order = Number(segment.dataset.order);
+      if (!segmentsByOrder.has(order)) segmentsByOrder.set(order, []);
+      segmentsByOrder.get(order).push(segment);
+    });
+    const connectorsByOrder = new Map();
+    commandMapList.querySelectorAll(".command-inline-connector[data-target-index]").forEach((connector) => {
+      const order = Number(connector.dataset.targetIndex);
+      if (!connectorsByOrder.has(order)) connectorsByOrder.set(order, []);
+      connectorsByOrder.get(order).push(connector);
+    });
+    state.commandMapFocusDomCache = { row, segmentsByOrder, connectorsByOrder, focusOrder: null, neighborOrders: new Set(), suppressVisualFocus: null };
+  }
+  const cache = state.commandMapFocusDomCache;
+  const fullUpdate = cache.suppressVisualFocus !== suppressVisualFocus;
+  const affectedOrders = fullUpdate
+    ? new Set([...cache.segmentsByOrder.keys(), ...cache.connectorsByOrder.keys()])
+    : new Set([cache.focusOrder, ...cache.neighborOrders, focusOrder, ...neighborOrders]);
   row.classList.toggle("is-carousel-focus", Boolean(focusOrder) && !suppressVisualFocus);
-  commandMapList.querySelectorAll(".command-flow-segment").forEach((segment) => {
-    const order = Number(segment.dataset.order);
+  affectedOrders.forEach((order) => {
     const isFocused = !suppressVisualFocus && order === focusOrder;
     const isNeighbor = !suppressVisualFocus && neighborOrders.has(order);
-    segment.classList.toggle("is-focused", isFocused);
-    segment.classList.toggle("is-neighbor", isNeighbor);
-    if (isFocused && animateFocusPulse) {
-      segment.classList.remove("is-focus-pulse");
-      void segment.offsetWidth;
-      segment.classList.add("is-focus-pulse");
-      window.setTimeout(() => {
+    (cache.segmentsByOrder.get(order) || []).forEach((segment) => {
+      segment.classList.toggle("is-focused", isFocused);
+      segment.classList.toggle("is-neighbor", isNeighbor);
+      if (isFocused && animateFocusPulse) {
         segment.classList.remove("is-focus-pulse");
-      }, 260);
-    }
+        void segment.offsetWidth;
+        segment.classList.add("is-focus-pulse");
+        window.setTimeout(() => segment.classList.remove("is-focus-pulse"), 260);
+      }
+    });
+    (cache.connectorsByOrder.get(order) || []).forEach((connector) => {
+      connector.classList.toggle("is-near-focus", !suppressVisualFocus && focusOrder != null && (isFocused || isNeighbor));
+    });
   });
-
-  commandMapList.querySelectorAll(".command-inline-connector").forEach((connector) => {
-    const targetIndex = Number(connector.dataset.targetIndex);
-    const nearFocus = !suppressVisualFocus && focusOrder != null && (targetIndex === focusOrder || neighborOrders.has(targetIndex));
-    connector.classList.toggle("is-near-focus", nearFocus);
-  });
+  cache.focusOrder = focusOrder;
+  cache.neighborOrders = neighborOrders;
+  cache.suppressVisualFocus = suppressVisualFocus;
 
   if (!skipConnectorLayout) {
     scheduleCommandConnectorLayout();
@@ -9590,6 +9665,8 @@ function refreshOcrTargetRows(container) {
 function addOcrTargetRow(container, fieldAttr, actionAttr, value = "") {
   const list = container?.querySelector("[data-ocr-target-list]");
   if (!list) return;
+  const recognitionMode = container.querySelector('[data-tree-field="recognitionMode"], [data-field="recognitionMode"], [data-insert-field="recognitionMode"]')?.value;
+  const defaultAction = recognitionMode === "texto_ocr" ? "clicar" : "continuar";
   const index = list.querySelectorAll("[data-ocr-target-row]").length;
   const row = document.createElement("div");
   row.className = "ocr-target-row";
@@ -9604,7 +9681,7 @@ function addOcrTargetRow(container, fieldAttr, actionAttr, value = "") {
       <input ${fieldAttr}="ocrTargetOffsetY" data-ocr-target-offset-y type="hidden" value="" />
       <input ${fieldAttr}="ocrTargetWidth" data-ocr-target-width type="hidden" value="" />
       <input ${fieldAttr}="ocrTargetHeight" data-ocr-target-height type="hidden" value="" />
-      <input ${fieldAttr}="ocrTargetAction" data-ocr-target-action type="hidden" value="continuar" />
+      <input ${fieldAttr}="ocrTargetAction" data-ocr-target-action type="hidden" value="${defaultAction}" />
       <input ${fieldAttr}="ocrTargetBlock" data-ocr-target-block type="hidden" value="" />
       <input ${fieldAttr}="ocrTargetClicks" data-ocr-target-clicks type="hidden" value="1" />
       <input ${fieldAttr}="ocrTargetFailureAction" data-ocr-target-failure-action type="hidden" value="continuar" />
@@ -10001,13 +10078,13 @@ function renderOcrTextFields(fieldAttr, details = {}, currentOrder = null, optio
       <div class="ocr-source-element-fields field-stack">
         <label class="recognition-cell recognition-cell-full">
           <span>Elemento do Chrome</span>
-          <textarea ${fieldAttr}="ocrElement" rows="2" spellcheck="false" placeholder="Clique em Capturar na pagina ou cole o elemento aqui">${escapeHtml(ocrSource === "elemento" ? details.texto ?? "" : "")}</textarea>
+          <textarea ${fieldAttr}="ocrElement" rows="2" spellcheck="false" placeholder="Cole o seletor CSS copiado da extensao ou capture aqui">${escapeHtml(ocrSource === "elemento" ? details.texto ?? "" : "")}</textarea>
         </label>
         <div class="ocr-source-element-actions">
           <button class="tree-open-button" ${actionAttr}="capture-ocr-element" type="button">Capturar na pagina</button>
           <button class="tree-open-button" ${actionAttr}="validate-ocr-element" type="button">Validar</button>
         </div>
-        <p class="recognition-card-helper">Clique em Capturar na pagina e depois no elemento do site. Voce tambem pode colar um seletor CSS ou HTML.</p>
+        <p class="recognition-card-helper">Na extensao, use Mapear elemento da pagina e Copiar seletor; cole aqui e clique em Validar. A captura direta tambem continua disponivel.</p>
       </div>
       ${embeddedHybrid ? "" : `
         <label class="recognition-cell recognition-cell-full">
@@ -19829,6 +19906,173 @@ function reorganizeCommandMapTree(pageSequence = state.commandMapPageSequence) {
   );
 }
 
+async function prepareFlowCapturePreviews(root) {
+  // Reloading a ready preview replaces its overlay with fallback dimensions and
+  // starts the 180 ms OCR transition again. Capture the existing preview instead.
+  const pending = recognitionPreviewCardsWithin(root).filter((preview) => {
+    const image = preview.querySelector(".recognition-preview-image");
+    const host = preview.closest(".command-tree-card, .insert-card-panel");
+    const path = resolveRecognitionPreviewPath(host, preview.dataset.recognitionPreviewPath);
+    return !image?.complete || !image.naturalWidth
+      || path !== normalizeRecognitionImagePath(preview.dataset.recognitionPreviewPath);
+  });
+  await Promise.all(pending.map((preview) => hydrateRecognitionPreviewCard(preview)));
+  await Promise.all(Array.from(root.querySelectorAll(".recognition-preview-image"), (image) =>
+    typeof image.decode === "function" ? image.decode().catch(() => null) : Promise.resolve()
+  ));
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  // Newly hydrated images (including offscreen pages) must finish their size /
+  // position transitions. Do not wait on the map's continuous energy animations.
+  const transitions = Array.from(root.querySelectorAll("[data-relative-ocr-target], [data-click-target-point]"))
+    .flatMap((marker) => marker.getAnimations?.() || [])
+    .filter((animation) => typeof CSSTransition !== "undefined" && animation instanceof CSSTransition);
+  await Promise.all(transitions.map((animation) => animation.finished.catch(() => null)));
+}
+
+async function captureOriginalFlowPage(sequence) {
+  const currentPage = normalizeSequenceName(state.commandMapPageSequence);
+  const label = getCommandMapPageLabel(sequence);
+  if (sequence === currentPage) {
+    let root = commandMapList.querySelector(".command-map-tree, .command-flow-row");
+    if (!root || !getCommandMapEvents(sequence).length) throw new Error("A página atual não tem blocos para capturar.");
+    await prepareFlowCapturePreviews(root);
+    const refreshedRoot = commandMapList.querySelector(".command-map-tree, .command-flow-row");
+    if (refreshedRoot && refreshedRoot !== root) {
+      root = refreshedRoot;
+      await prepareFlowCapturePreviews(root);
+    }
+    if (root.classList.contains("command-map-tree")) renderCommandMapTreeReferenceLinks();
+    return window.FlowDetectFlowCapture.captureDom(root, { label });
+  }
+  // Other pages use the program's OWN renderer, CSS and saved manual positions.
+  // An isolated offscreen sibling preserves the real CSS ancestry and does not
+  // switch pages, reset pan/zoom, or rearrange the live editor.
+  const shell = commandMapShell.cloneNode(false);
+  shell.removeAttribute("id");
+  shell.dataset.pageTheme = resolveCommandMapPageTheme(sequence);
+  shell.style.cssText = "position:fixed;left:-100000px;top:0;width:max-content;height:auto;display:block;pointer-events:none";
+  const list = document.createElement("div");
+  list.className = "command-map-list is-tree-view";
+  list.style.cssText = "display:block;width:max-content;height:auto;overflow:visible;padding:0";
+  list.style.setProperty("--command-map-zoom", "1");
+  list.style.setProperty("--command-map-tree-pan-x", "0px");
+  list.style.setProperty("--command-map-tree-pan-y", "0px");
+  list.style.setProperty("--command-map-stage-lift", "0px");
+  const events = getCommandMapEvents(sequence).map((event) => applyCommandMapDraftToEvent(event));
+  list.innerHTML = renderCommandMapTreeView(events, getCommandMapPageDefinition(sequence));
+  shell.append(list);
+  commandMapShell.parentElement.append(shell);
+  try {
+    await prepareFlowCapturePreviews(list);
+    renderCommandMapTreeReferenceLinks(list, true);
+    return await window.FlowDetectFlowCapture.captureDom(list.querySelector(".command-map-tree"), { label });
+  } finally {
+    shell.remove();
+  }
+}
+
+
+function releaseFlowCapturePreview() {
+  if (flowCaptureState.previewUrl) URL.revokeObjectURL(flowCaptureState.previewUrl);
+  flowCaptureState.previewUrl = "";
+  flowCaptureState.diagram = null;
+  flowCaptureImage?.removeAttribute("src");
+}
+
+async function captureEntireFlow() {
+  if (flowCaptureState.preparing || flowCaptureState.saving || state.commandMapSave.running) return;
+  try {
+    if (!window.FlowDetectFlowCapture || !flowCaptureDialog) throw new Error("Captura indisponível. Reinicie o Studio para carregar a atualização.");
+    if (!state.roadmap?.events?.length) throw new Error("Adicione pelo menos um bloco antes de capturar o fluxo.");
+    flowCaptureState.preparing = true;
+    updateCommandMapSaveUI();
+    mapCaptureButton.textContent = "Capturando...";
+    setBusy("Capturando fluxo");
+    syncVisibleCommandMapDrafts();
+    flowCapturePngButton.disabled = true;
+    flowCaptureSvgButton.disabled = true;
+    flowCaptureScope.disabled = true;
+    const sequences = flowCaptureScope.value === "all"
+      ? [...new Set((state.roadmap.events || []).map((event) => normalizeSequenceName(event.sequence || event.sequencia)))]
+      : [normalizeSequenceName(state.commandMapPageSequence)];
+    const captures = [];
+    for (const sequence of sequences) captures.push(await captureOriginalFlowPage(sequence));
+    const diagram = window.FlowDetectFlowCapture.combinePages(captures);
+    releaseFlowCapturePreview();
+    flowCaptureState.diagram = diagram;
+    const title = state.library.items.find((item) => String(item.id) === String(state.library.activeId))?.nome || exportNameInput?.value?.trim() || "FlowDetect";
+    flowCaptureState.fileName = String(title).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").replace(/[. ]+$/g, "").slice(0, 100) || "FlowDetect";
+    flowCaptureState.warning = diagram.missingImages ? `${diagram.missingImages} referência(s) visual(is) indisponível(is). ` : "";
+    const size = window.FlowDetectFlowCapture.pngDimensions(diagram.width, diagram.height);
+    flowCaptureMeta.textContent = `${diagram.nodeCount} blocos · ${diagram.edgeCount} caminhos · ${diagram.pageCount} páginas · PNG ${size.width} × ${size.height} px`;
+    flowCaptureStatus.textContent = `${flowCaptureState.warning}${size.scale < 2.99 ? "PNG ajustado ao limite de memória deste fluxo grande." : "PNG 3× em alta resolução."} Visual original, sem reorganizar os cards.${state.commandMapSave.dirty ? " Inclui alterações não salvas; não substitui Salvar mapa." : ""}`;
+    flowCaptureStatus.classList.remove("is-error");
+    flowCapturePreview.classList.remove("is-zoomed");
+    flowCaptureZoomButton.setAttribute("aria-pressed", "false");
+    flowCaptureZoomButton.textContent = "Ampliar prévia";
+    flowCaptureImage.src = window.FlowDetectFlowCapture.svgDataUrl(diagram.svg);
+    if (!flowCaptureDialog.open) flowCaptureDialog.showModal();
+    setMessage("Mapa original capturado em alta resolução. Escolha PNG para salvar a imagem.", "success");
+  } catch (error) {
+    releaseFlowCapturePreview();
+    setMessage(String(error), "error");
+    flowCaptureStatus.textContent = String(error);
+    flowCaptureStatus.classList.add("is-error");
+  } finally {
+    flowCaptureState.preparing = false;
+    flowCapturePngButton.disabled = !flowCaptureState.diagram;
+    flowCaptureSvgButton.disabled = !flowCaptureState.diagram;
+    flowCaptureScope.disabled = false;
+    mapCaptureButton.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h4l2-3h4l2 3h4v13H4z"/><circle cx="12" cy="13" r="4"/></svg> Capturar fluxo';
+    updateCommandMapSaveUI();
+    setBusy("Pronto");
+  }
+}
+
+async function saveFlowCapture(format) {
+  const diagram = flowCaptureState.diagram;
+  if (!diagram || flowCaptureState.saving || !["png", "svg"].includes(format)) return;
+  flowCaptureState.saving = true;
+  const buttons = [flowCapturePngButton, flowCaptureSvgButton, flowCaptureCloseButton, flowCaptureScope];
+  buttons.forEach((button) => { button.disabled = true; });
+  const previousStatus = flowCaptureStatus.textContent;
+  flowCaptureStatus.classList.remove("is-error");
+  try {
+    const filename = `${flowCaptureState.fileName}_fluxo.${format}`;
+    const native = typeof tauriCore?.invoke === "function";
+    // A canceled picker never saves silently to a fallback location.
+    const path = native ? await saveNativeFileDialog({ defaultPath: filename, filters: [{ name: format === "png" ? "Imagem PNG" : "Mapa SVG (abrir no navegador)", extensions: [format] }] }) : "";
+    if (native && !path) { flowCaptureStatus.textContent = previousStatus; return; }
+    flowCaptureStatus.textContent = `Gerando ${format.toUpperCase()} do fluxo completo...`;
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const blob = format === "png" ? (await window.FlowDetectFlowCapture.renderPng(diagram)).blob : new Blob([diagram.svg], { type: "image/svg+xml;charset=utf-8" });
+    if (native) {
+      const dataBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",")[1]);
+        reader.onerror = () => reject(new Error("Não foi possível preparar a imagem para salvar."));
+        reader.readAsDataURL(blob);
+      });
+      const result = await invoke("save_flow_capture", { filePath: path, dataBase64, fileFormat: format });
+      flowCaptureStatus.textContent = `${flowCaptureState.warning}Captura salva em ${result.path}.`;
+    } else {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = filename;
+      document.body.append(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      flowCaptureStatus.textContent = `${flowCaptureState.warning}Download de ${filename} iniciado.`;
+    }
+    setMessage(`Captura do fluxo exportada em ${format.toUpperCase()}.`, "success");
+  } catch (error) {
+    flowCaptureStatus.textContent = `Não foi possível salvar: ${String(error)}${format === "png" ? " Você também pode salvar o SVG para abrir no navegador." : ""}`;
+    flowCaptureStatus.classList.add("is-error");
+  } finally {
+    flowCaptureState.saving = false;
+    buttons.forEach((button) => { button.disabled = false; });
+  }
+}
+
 function rememberCommandMapTreeItemPosition(itemKey, x, y, pageSequence = state.commandMapPageSequence) {
   const normalizedKey = normalizeCommandMapTreeLayoutItemKey(itemKey);
   if (!normalizedKey) {
@@ -20842,10 +21086,12 @@ function expandCommandMapTreeStageForNode(stage, nodeSlot, x, y) {
   if (!stage || !nodeSlot) {
     return;
   }
-  const nextWidth = Math.ceil(Math.max(stage.offsetWidth, x + nodeSlot.offsetWidth + 220));
-  const nextHeight = Math.ceil(Math.max(stage.offsetHeight, y + nodeSlot.offsetHeight + 220));
-  stage.style.width = `${nextWidth}px`;
-  stage.style.height = `${nextHeight}px`;
+  const width = stage.offsetWidth;
+  const height = stage.offsetHeight;
+  const nextWidth = Math.ceil(x + nodeSlot.offsetWidth + 220);
+  const nextHeight = Math.ceil(y + nodeSlot.offsetHeight + 220);
+  if (nextWidth > width) stage.style.width = `${nextWidth}px`;
+  if (nextHeight > height) stage.style.height = `${nextHeight}px`;
 }
 
 function startCommandMapTreeNodeDrag(event, handle) {
@@ -20879,6 +21125,17 @@ function startCommandMapTreeNodeDrag(event, handle) {
     stage,
     offsetX: pointerStageX - currentX,
     offsetY: pointerStageY - currentY,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startX: currentX,
+    startY: currentY,
+    zoom,
+    stageWidth: stage.offsetWidth,
+    stageHeight: stage.offsetHeight,
+    nodeWidth: nodeSlot.offsetWidth,
+    nodeHeight: nodeSlot.offsetHeight,
+    lastRouteRefreshAt: 0,
+    routeRefreshInterval: (state.commandMapOrderCache?.length || 0) > 40 ? 180 : 75,
     latestX: currentX,
     latestY: currentY,
     frame: 0,
@@ -20899,13 +21156,8 @@ function updateCommandMapTreeNodeDrag(event) {
     return;
   }
   event.preventDefault();
-  const { rect, zoom } = commandMapTreeStageMetrics(drag.stage);
-  const pointerStageX = (event.clientX - rect.left) / zoom;
-  const pointerStageY = (event.clientY - rect.top) / zoom;
-  const maxX = Math.max(16, drag.stage.offsetWidth - Math.min(120, drag.nodeSlot.offsetWidth * 0.35));
-  const maxY = Math.max(24, drag.stage.offsetHeight - Math.min(120, drag.nodeSlot.offsetHeight * 0.35));
-  drag.latestX = Math.min(maxX, Math.max(16, pointerStageX - drag.offsetX));
-  drag.latestY = Math.min(maxY, Math.max(24, pointerStageY - drag.offsetY));
+  drag.latestX = Math.max(16, drag.startX + (event.clientX - drag.startClientX) / drag.zoom);
+  drag.latestY = Math.max(24, drag.startY + (event.clientY - drag.startClientY) / drag.zoom);
   if (drag.frame) {
     return;
   }
@@ -20914,11 +21166,18 @@ function updateCommandMapTreeNodeDrag(event) {
     if (state.commandMapTreeNodeDrag !== drag) {
       return;
     }
-    drag.nodeSlot.style.left = `${Math.round(drag.latestX)}px`;
-    drag.nodeSlot.style.top = `${Math.round(drag.latestY)}px`;
-    expandCommandMapTreeStageForNode(drag.stage, drag.nodeSlot, drag.latestX, drag.latestY);
+    drag.nodeSlot.style.transform = `translate3d(${Math.round(drag.latestX - drag.startX)}px, ${Math.round(drag.latestY - drag.startY)}px, 0)`;
+    if (drag.latestX + drag.nodeWidth + 220 > drag.stageWidth || drag.latestY + drag.nodeHeight + 220 > drag.stageHeight) {
+      expandCommandMapTreeStageForNode(drag.stage, drag.nodeSlot, drag.latestX, drag.latestY);
+      drag.stageWidth = drag.stage.offsetWidth;
+      drag.stageHeight = drag.stage.offsetHeight;
+    }
     rememberCommandMapTreeItemPosition(drag.itemKey, drag.latestX, drag.latestY);
-    scheduleCommandConnectorLayout({ refreshTreeLinks: true });
+    const now = performance.now();
+    if (now - drag.lastRouteRefreshAt >= drag.routeRefreshInterval) {
+      drag.lastRouteRefreshAt = now;
+      scheduleCommandConnectorLayout({ refreshTreeLinks: true });
+    }
   });
 }
 
@@ -20934,6 +21193,7 @@ function stopCommandMapTreeNodeDrag(event, commit = true) {
   }
   drag.nodeSlot.style.left = `${Math.round(drag.latestX)}px`;
   drag.nodeSlot.style.top = `${Math.round(drag.latestY)}px`;
+  drag.nodeSlot.style.removeProperty("transform");
   expandCommandMapTreeStageForNode(drag.stage, drag.nodeSlot, drag.latestX, drag.latestY);
   rememberCommandMapTreeItemPosition(drag.itemKey, drag.latestX, drag.latestY);
   if (commit) {
@@ -21386,7 +21646,14 @@ async function loadWorkbookPreview(
   }
 }
 
+let commandMapMutationActive = false;
+
 async function runMutation(label, promiseFactory, focusResolver = null, options = {}) {
+  if (commandMapMutationActive || state.commandMapSave.running) {
+    setMessage("Aguarde a edicao anterior terminar antes de alterar outro bloco.", "info");
+    return false;
+  }
+  commandMapMutationActive = true;
   const activeCommandMapSequence = normalizeSequenceName(state.commandMapPageSequence);
   try {
     setBusy(label);
@@ -21410,23 +21677,15 @@ async function runMutation(label, promiseFactory, focusResolver = null, options 
     await refreshAutomationLibrary();
     setBusy("Pronto");
     setMessage(`${label} com sucesso.`, "success");
+    return true;
   } catch (error) {
     options.onError?.(error);
     setBusy("Erro");
     setMessage(String(error), "error");
+    return false;
+  } finally {
+    commandMapMutationActive = false;
   }
-}
-
-function withOperationTimeout(promise, timeoutMs = 12000, message = "A operacao demorou demais para responder.") {
-  let timeoutId = null;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-  return Promise.race([promise, timeoutPromise]).finally(() => {
-    if (timeoutId) {
-      window.clearTimeout(timeoutId);
-    }
-  });
 }
 
 function formValuesFromCard(card) {
@@ -22297,6 +22556,10 @@ function commandCardHasUnsavedChanges(snapshot) {
 
 async function invokeCommandCardUpdate(snapshot) {
   const { order, type, values } = snapshot;
+  const currentEvent = findRoadmapEventByOrder(order);
+  if (!currentEvent || currentEvent.type !== type || (snapshot.clientKey && currentEvent.clientKey !== snapshot.clientKey)) {
+    throw new Error(`O bloco ${order} mudou enquanto era editado. Reabra o card antes de salvar.`);
+  }
 
   if (type === "texto_livre") {
     return invoke("update_text_block", {
@@ -22646,7 +22909,7 @@ function getPendingCommandMapSnapshots() {
   const pending = [];
   for (const [clientKey, draft] of Object.entries(state.commandMapDrafts || {})) {
     const event = findRoadmapEventByClientKey(clientKey);
-    if (!event) {
+    if (!event || (draft.type && draft.type !== event.type)) {
       delete state.commandMapDrafts[clientKey];
       continue;
     }
@@ -22669,6 +22932,9 @@ function getPendingCommandMapSnapshots() {
 }
 
 async function persistCommandMapDraftsForExecution(options = {}) {
+  if (commandMapMutationActive) {
+    throw new Error("Aguarde a edicao atual terminar antes de salvar o mapa.");
+  }
   const { onProgress = null } = options;
   const pending = getPendingCommandMapSnapshots();
   if (!pending.length) {
@@ -22815,7 +23081,9 @@ function insertValuesFromPanel(panelElement) {
     failureSequenceDelay: normalizeTransitionDelay(get("failureSequenceDelay")?.value ?? state.insertPanel?.failureSequenceDelay ?? 0),
     retryCount: Math.max(1, Math.trunc(parseNumber(get("retryCount")?.value, state.insertPanel?.retryCount ?? 1))),
     retryInterval: parseNumber(get("retryInterval")?.value, state.insertPanel?.retryInterval ?? 1),
-    ocrTargetLayouts: ocrTargetLayoutsFromContainer(panelElement),
+    ocrTargetLayouts: panelElement.querySelector("[data-ocr-target-row], [data-ocr-target-layouts]")
+      ? ocrTargetLayoutsFromContainer(panelElement)
+      : state.insertPanel?.ocrTargetLayouts ?? [],
     ocrElement: get("ocrElement")?.value ?? state.insertPanel?.ocrElement ?? "",
     ocrText: get("ocrSource")?.value === "elemento"
       ? readOcrElementField(get, state.insertPanel?.ocrText ?? "")
@@ -24942,6 +25210,19 @@ mapReorganizeButton?.addEventListener("click", () => {
   reorganizeCommandMapTree();
 });
 
+mapCaptureButton?.addEventListener("click", captureEntireFlow);
+flowCapturePngButton?.addEventListener("click", () => saveFlowCapture("png"));
+flowCaptureSvgButton?.addEventListener("click", () => saveFlowCapture("svg"));
+flowCaptureScope?.addEventListener("change", captureEntireFlow);
+flowCaptureCloseButton?.addEventListener("click", () => flowCaptureDialog.close());
+flowCaptureDialog?.addEventListener("cancel", (event) => { if (flowCaptureState.saving) event.preventDefault(); });
+flowCaptureDialog?.addEventListener("close", releaseFlowCapturePreview);
+flowCaptureZoomButton?.addEventListener("click", () => {
+  const zoomed = flowCapturePreview.classList.toggle("is-zoomed");
+  flowCaptureZoomButton.setAttribute("aria-pressed", String(zoomed));
+  flowCaptureZoomButton.textContent = zoomed ? "Ajustar prévia" : "Ampliar prévia";
+});
+
 testDelayInput.addEventListener("input", () => syncTestInputsFrom("top"));
 testLoopStartInput.addEventListener("input", () => syncTestInputsFrom("top"));
 assistDelayInput.addEventListener("input", () => syncTestInputsFrom("assist"));
@@ -26665,6 +26946,9 @@ commandMapList.addEventListener("click", async (event) => {
       if (state.insertPanel.recognitionMode === "texto_ocr" && state.insertPanel.ocrSource === "chrome") {
         state.insertPanel.ocrSource = "legado";
       }
+      if (state.insertPanel.recognitionMode === "texto_ocr" && !state.insertPanel.ocrTargetLayouts?.length) {
+        state.insertPanel.ocrTargetLayouts = [{ action: "clicar", clicks: 1 }];
+      }
     } else if (state.insertPanel.type === "image") {
       state.insertPanel.recognitionMode = "imagem";
     }
@@ -26910,6 +27194,10 @@ commandMapList.addEventListener("click", async (event) => {
   }
 
   if (action === "save") {
+    if (commandMapMutationActive || state.commandMapSave.running) {
+      setMessage("Aguarde a edicao anterior terminar antes de criar outro bloco.", "info");
+      return;
+    }
     const values = normalizeInsertValuesForDraft(insertValuesFromPanel(panel));
     if (values.ocrSource === "elemento" && (values.type === "ocr_text" || (values.type === "image" && values.recognitionMode === "texto_ocr"))) {
       try {
@@ -27446,31 +27734,10 @@ commandMapList.addEventListener("click", async (event) => {
     panel.classList.add("is-saving");
     setBusy("Criando bloco");
     setMessage("Criando bloco no mapa...", "info");
-    const savingPanelState = state.insertPanel;
-    const savingWatchdog = window.setTimeout(() => {
-      if (state.insertPanel === savingPanelState && state.insertPanel?.isSaving) {
-        state.insertPanel.isSaving = false;
-        panel.classList.remove("is-saving", "is-creating");
-        if (saveButton) {
-          saveButton.disabled = false;
-          saveButton.textContent = saveButton.closest(".is-compact-create") ? "Criar bloco" : "Adicionar bloco";
-        }
-        setBusy("Pronto");
-        setMessage("A criacao demorou demais. Tente novamente; se for Chrome/Web, crie o bloco e capture o elemento nos detalhes.", "error");
-      }
-    }, values.type === "chrome" ? 5000 : 9000);
-
     runMutation("Bloco inserido", async () => {
       void playInsertCreateAnimation(panel);
-      const roadmap = await withOperationTimeout(
-        promiseFactory(),
-        values.type === "chrome" ? 8000 : 12000,
-        values.type === "chrome"
-          ? "Nao consegui criar o bloco Chrome/Web. Tente criar novamente ou crie outro tipo de bloco."
-          : "A criacao do bloco demorou demais para responder."
-      );
+      const roadmap = await promiseFactory();
       state.insertPanel = null;
-      window.clearTimeout(savingWatchdog);
       return placeCreatedCommandMapTreeNode(roadmap, insertion);
     }, (roadmap) => {
       const createdOrder = resolveNearestCommandMapFocus(
@@ -27483,7 +27750,6 @@ commandMapList.addEventListener("click", async (event) => {
       commandMapLayoutSnapshot: creationLayoutSnapshot,
       commandMapLayoutAnimationMode: "slide",
       onError: () => {
-        window.clearTimeout(savingWatchdog);
         if (state.insertPanel) {
           state.insertPanel.isSaving = false;
         }
