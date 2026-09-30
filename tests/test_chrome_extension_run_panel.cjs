@@ -20,6 +20,7 @@ test("the panel keeps the complete stopped run returned by the extension", async
   const context = vm.createContext({
     ensureCurrentRuntime: async () => true,
     spreadsheetLoopInfo: () => null,
+    companyPreviewRows: new Map(),
     clampSpreadsheetStartRow: (value) => value,
     renderAutomations: () => {},
     updateRun: (run) => { shownRun = run; },

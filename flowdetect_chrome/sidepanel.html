@@ -60,17 +60,24 @@
         <button class="play-button run-automation" type="button"><span class="play-icon" aria-hidden="true">&#9654;</span><span>Executar automa&ccedil;&atilde;o</span></button>
         <section class="execution" hidden>
           <div class="execution-heading"><p class="execution-kicker">Execu&ccedil;&atilde;o</p><span class="execution-status"></span></div>
-          <div class="execution-progress" role="progressbar" aria-label="Progresso da automa&ccedil;&atilde;o" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-            <div class="execution-progress-value"><strong class="execution-percent">0%</strong><span>conclu&iacute;do</span></div>
-            <div class="progress-track"><i class="progress-bar"></i></div>
+          <div class="execution-overview">
+            <div class="execution-progress" role="progressbar" aria-label="Progresso da automa&ccedil;&atilde;o" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="execution-progress-value"><strong class="execution-percent">0%</strong><span>conclu&iacute;do</span></div>
+              <div class="progress-track"><i class="progress-bar"></i></div>
+            </div>
+            <label class="execution-company" hidden>
+              <span class="execution-company-heading"><span>Empresa</span><span class="execution-company-position"></span></span>
+              <select class="execution-company-choice" aria-label="Visualizar empresa sem alterar a execu&ccedil;&atilde;o"></select>
+            </label>
           </div>
           <div class="block-carousel" aria-label="Blocos da automa&ccedil;&atilde;o">
             <div class="block-carousel-heading"><span class="block-carousel-automation">Bloco do fluxo</span><span class="block-carousel-count"></span></div>
             <div class="block-carousel-stage"><div class="block-carousel-slide">
-              <div class="block-carousel-top"><span class="block-carousel-number"></span><span class="block-carousel-state"></span></div>
+              <div class="block-carousel-top"><span class="block-carousel-number"></span><span class="block-carousel-feedback" hidden></span><span class="block-carousel-state"></span></div>
               <h3 class="block-carousel-title"></h3>
               <p class="block-carousel-description"></p>
-              <div class="block-carousel-preview"><img class="block-carousel-image" alt="" hidden><div class="block-carousel-placeholder"><span class="block-carousel-placeholder-icon" aria-hidden="true"></span><span class="block-carousel-placeholder-text"></span></div></div>
+              <div class="block-carousel-preview"><img class="block-carousel-image" alt="" hidden><div class="block-carousel-placeholder"><span class="block-carousel-placeholder-icon" aria-hidden="true"></span><span class="block-carousel-placeholder-text"></span></div><div class="block-carousel-activity" hidden><div class="block-carousel-activity-heading"><span class="block-carousel-activity-symbol" aria-hidden="true"></span><span class="block-carousel-activity-kind"></span><span class="block-carousel-activity-count"></span></div><div class="block-carousel-activity-content"><span class="block-carousel-activity-label"></span><strong class="block-carousel-activity-value"></strong><span class="block-carousel-activity-caret" aria-hidden="true"></span></div><div class="block-carousel-activity-footer"><span class="block-carousel-activity-dot" aria-hidden="true"></span><span class="block-carousel-activity-message"></span></div></div></div>
+              <div class="block-carousel-ocr-progress" role="status" hidden><span class="block-carousel-ocr-label"></span><span class="block-carousel-ocr-track"><span class="block-carousel-ocr-fill"></span></span></div>
               <p class="block-carousel-page"></p>
             </div></div>
             <div class="block-carousel-controls"><button class="block-carousel-prev" type="button" aria-label="Bloco anterior">&#8592;</button><button class="block-carousel-follow" type="button">Acompanhando</button><button class="block-carousel-next" type="button" aria-label="Pr&oacute;ximo bloco">&#8594;</button><button class="stop-button" type="button" hidden>Parar</button><button class="block-carousel-manager" type="button" hidden>Automa&ccedil;&otilde;es</button></div>
