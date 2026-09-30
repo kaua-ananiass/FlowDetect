@@ -1,8 +1,9 @@
 (() => {
-const CONTENT_RUNTIME_VERSION = "0.2.28";
+const CONTENT_RUNTIME_VERSION = "0.2.52";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
+  globalThis.__flowDetectElementPickerStop?.();
   globalThis.__flowDetectChromeRunnerVersion = CONTENT_RUNTIME_VERSION;
 
   const normalize = (value) => String(value || "")
@@ -17,6 +18,189 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
 
   function escapeCss(value) {
     return globalThis.CSS?.escape ? CSS.escape(String(value)) : String(value).replace(/(["\\#.:,[\]>+~*^$|= !])/g, "\\$1");
+  }
+
+  function elementPickerAttributeValue(value) {
+    const text = String(value || "").trim();
+    if (!text || text.length > 120 || /[\u0000-\u001f\u007f]/.test(text)) return "";
+    return `"${text.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+  }
+
+  function buildElementPickerSelector(element) {
+    if (!(element instanceof Element) || element.getRootNode() !== document) {
+      throw new Error("Este elemento esta dentro de um Shadow DOM. Selecione o componente externo ou outro elemento da pagina.");
+    }
+    const unique = (selector) => {
+      if (!selector || selector.length > 1500) return false;
+      try {
+        const matches = document.querySelectorAll(selector);
+        return matches.length === 1 && matches[0] === element;
+      } catch (_) { return false; }
+    };
+    const tag = element.localName.toLowerCase();
+    if (element.id && unique(`#${escapeCss(element.id)}`)) return `#${escapeCss(element.id)}`;
+    for (const name of ["data-testid", "data-test-id", "data-test", "data-qa", "name", "aria-label", "placeholder", "title"]) {
+      const value = elementPickerAttributeValue(element.getAttribute(name));
+      if (!value) continue;
+      const selector = `${tag}[${name}=${value}]`;
+      if (unique(selector)) return selector;
+    }
+    const classes = [...element.classList].filter((name) => name.length < 64 && !/^[a-f\d_-]{8,}$/i.test(name));
+    for (const className of classes.slice(0, 5)) {
+      const selector = `${tag}.${escapeCss(className)}`;
+      if (unique(selector)) return selector;
+    }
+    const parts = [];
+    for (let current = element; current && current instanceof Element; current = current.parentElement) {
+      const siblings = current.parentElement
+        ? [...current.parentElement.children].filter((child) => child.localName === current.localName)
+        : [current];
+      parts.unshift(`${current.localName.toLowerCase()}:nth-of-type(${siblings.indexOf(current) + 1})`);
+      const selector = parts.join(" > ");
+      if (unique(selector)) return selector;
+    }
+    throw new Error("Nao foi possivel criar um seletor unico para este elemento.");
+  }
+
+  let elementPicker = null;
+
+  function stopElementPicker() {
+    if (!elementPicker) return;
+    const { host, move, click, key, position, suppress } = elementPicker;
+    document.removeEventListener("pointermove", move, true);
+    window.removeEventListener("click", click, true);
+    window.removeEventListener("keydown", key, true);
+    for (const name of ["pointerdown", "pointerup", "mousedown", "mouseup"]) {
+      window.removeEventListener(name, suppress, true);
+    }
+    window.removeEventListener("scroll", position, true);
+    window.removeEventListener("resize", position);
+    host.remove();
+    elementPicker = null;
+  }
+
+  function startElementPicker() {
+    stopElementPicker();
+    if (!document.documentElement) throw new Error("A pagina ainda nao esta pronta. Recarregue-a e tente novamente.");
+    const host = document.createElement("div");
+    host.setAttribute("data-flowdetect-picker", "true");
+    host.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none";
+    const shadow = host.attachShadow({ mode: "closed" });
+    shadow.innerHTML = `
+      <style>
+        :host{all:initial}
+        *,*::before,*::after{box-sizing:border-box}
+        .outline{position:fixed;display:none;pointer-events:none;border:2px solid #12b5cb;border-radius:5px;background:rgba(18,181,203,.12);box-shadow:0 0 0 2px rgba(255,255,255,.85),0 0 22px rgba(18,181,203,.5)}
+        .hint,.dialog{position:fixed;z-index:1;font:13px/1.45 "Segoe UI",Arial,sans-serif;color:#e6f7ff;background:#0e1b2e;border:1px solid rgba(94,234,212,.45);border-radius:12px;box-shadow:0 20px 55px rgba(0,0,0,.42);pointer-events:auto}
+        .hint{top:16px;left:50%;transform:translateX(-50%);max-width:calc(100vw - 32px);padding:10px 14px;display:flex;align-items:center;flex-wrap:wrap;gap:12px}
+        .dialog{top:16px;left:50%;transform:translateX(-50%);width:min(480px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow-y:auto;padding:17px;display:none}
+        .dialog[open]{display:block}
+        .dialog strong{display:block;font-size:15px;margin-bottom:5px}
+        .dialog p{margin:0 0 11px;color:#b9d3dd}
+        .dialog textarea{display:block;width:100%;height:74px;resize:vertical;padding:10px;border-radius:8px;border:1px solid rgba(94,234,212,.35);background:#07111f;color:#e6f7ff;font:12px/1.4 Consolas,monospace}
+        .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:11px}
+        button{padding:7px 11px;border:1px solid rgba(94,234,212,.38);border-radius:8px;background:#123147;color:#e6f7ff;font:600 12px "Segoe UI",Arial,sans-serif;cursor:pointer}
+        button.primary{background:#12b5cb;color:#05212a;border-color:#12b5cb}
+        button:hover{filter:brightness(1.15)}
+        .status{min-height:18px;margin-top:8px;color:#5eead4}
+      </style>
+      <div class="outline" aria-hidden="true"></div>
+      <div class="hint"><span>Passe o mouse e clique no elemento que deseja copiar.</span><button class="cancel" type="button">Cancelar (Esc)</button></div>
+      <section class="dialog" role="dialog" aria-label="Seletor do elemento">
+        <strong>Elemento mapeado</strong>
+        <p>Copie este seletor CSS e cole no bloco OCR, em Chrome · elemento da pagina.</p>
+        <textarea aria-label="Seletor CSS" spellcheck="false" readonly></textarea>
+        <div class="actions"><button class="again" type="button">Escolher outro</button><button class="copy primary" type="button">Copiar seletor</button><button class="close" type="button">Fechar</button></div>
+        <div class="status" role="status" aria-live="polite"></div>
+      </section>`;
+    document.documentElement.append(host);
+    const outline = shadow.querySelector(".outline");
+    const hint = shadow.querySelector(".hint");
+    const dialog = shadow.querySelector(".dialog");
+    const field = shadow.querySelector("textarea");
+    const status = shadow.querySelector(".status");
+    let selected = null;
+    const position = () => {
+      if (!selected || !elementPicker || dialog.hasAttribute("open")) return;
+      const rect = selected.getBoundingClientRect();
+      Object.assign(outline.style, {
+        display: "block", left: `${rect.left}px`, top: `${rect.top}px`,
+        width: `${rect.width}px`, height: `${rect.height}px`,
+      });
+    };
+    const move = (event) => {
+      if (dialog.hasAttribute("open") || event.composedPath().includes(host)) return;
+      const target = event.composedPath()[0];
+      selected = target instanceof Element ? target : null;
+      position();
+    };
+    const click = (event) => {
+      if (dialog.hasAttribute("open") || event.composedPath().includes(host)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      selected = event.composedPath()[0];
+      try {
+        field.value = buildElementPickerSelector(selected);
+        status.textContent = "";
+        dialog.setAttribute("open", "");
+        hint.style.display = "none";
+        outline.style.display = "none";
+        field.focus();
+        field.select();
+      } catch (error) {
+        hint.querySelector("span").textContent = String(error.message || error);
+      }
+    };
+    const suppress = (event) => {
+      if (dialog.hasAttribute("open") || event.composedPath().includes(host)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    const key = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      stopElementPicker();
+    };
+    shadow.querySelector(".cancel").addEventListener("click", stopElementPicker);
+    shadow.querySelector(".close").addEventListener("click", stopElementPicker);
+    shadow.querySelector(".again").addEventListener("click", () => {
+      dialog.removeAttribute("open");
+      hint.style.display = "flex";
+      hint.querySelector("span").textContent = "Passe o mouse e clique no elemento que deseja copiar.";
+      selected = null;
+      field.value = "";
+    });
+    shadow.querySelector(".copy").addEventListener("click", async () => {
+      try {
+        let copied = false;
+        if (navigator.clipboard?.writeText) {
+          try {
+            await navigator.clipboard.writeText(field.value);
+            copied = true;
+          } catch (_) { /* Tenta a copia tradicional abaixo. */ }
+        }
+        if (!copied) {
+          field.focus(); field.select();
+          copied = document.execCommand("copy");
+        }
+        if (!copied) throw new Error("Falha ao copiar.");
+        status.textContent = "Seletor copiado. Cole no campo do bloco no FlowDetect Studio.";
+      } catch (_) {
+        field.focus(); field.select();
+        status.textContent = "Nao foi possivel copiar automaticamente. Pressione Ctrl+C.";
+      }
+    });
+    document.addEventListener("pointermove", move, true);
+    window.addEventListener("click", click, true);
+    window.addEventListener("keydown", key, true);
+    for (const name of ["pointerdown", "pointerup", "mousedown", "mouseup"]) {
+      window.addEventListener(name, suppress, true);
+    }
+    window.addEventListener("scroll", position, true);
+    window.addEventListener("resize", position);
+    elementPicker = { host, move, click, key, position, suppress };
+    globalThis.__flowDetectElementPickerStop = stopElementPicker;
   }
 
   function isVisible(element) {
@@ -190,7 +374,8 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     const outline = document.createElement("div");
     outline.setAttribute("data-flowdetect-overlay", "true");
     outline.style.cssText = [
-      "position:fixed", "pointer-events:none", "z-index:2147483647", `border:2px solid ${color}`,
+      "position:fixed", "inset:auto", "margin:0", "padding:0", "background:transparent", "overflow:visible",
+      "pointer-events:none", "z-index:2147483647", `border:2px solid ${color}`,
       "border-radius:6px", `box-shadow:0 0 0 4px color-mix(in srgb, ${color} 18%, transparent),0 0 18px ${color}`,
       `left:${Math.round(rect.left)}px`, `top:${Math.round(rect.top)}px`, `width:${Math.max(4, Math.round(rect.width))}px`, `height:${Math.max(4, Math.round(rect.height))}px`,
       "transition:opacity .2s ease"
@@ -201,8 +386,25 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       tag.style.cssText = `position:absolute;left:-2px;top:-18px;padding:2px 5px;border-radius:5px;background:${color};color:#071018;font:800 10px/1 Inter,Arial,sans-serif;letter-spacing:.04em;`;
       outline.append(tag);
     }
-    document.documentElement.appendChild(outline);
-    setTimeout(() => outline.remove(), 1100);
+    // Um <dialog> modal fica na top layer do navegador, acima de qualquer z-index
+    // do documento. Hospedar o marcador dentro dele e abri-lo como popover o
+    // mantém visível mesmo quando a janela da empresa está aberta.
+    const openModals = document.querySelectorAll("dialog:modal");
+    const modal = openModals[openModals.length - 1];
+    if (modal) {
+      modal.appendChild(outline);
+      if (typeof outline.showPopover === "function") {
+        outline.setAttribute("popover", "manual");
+        try { outline.showPopover(); }
+        catch (_) { outline.removeAttribute("popover"); }
+      }
+    } else {
+      document.documentElement.appendChild(outline);
+    }
+    setTimeout(() => {
+      if (outline.matches(":popover-open")) outline.hidePopover();
+      outline.remove();
+    }, 1100);
   }
 
   function highlight(element, color = "#32e6c6", label = "") {
@@ -591,6 +793,15 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   }
 
   const flowDetectMessageListener = (request, _sender, sendResponse) => {
+    if (request?.type === "flowdetect-map-element-v1") {
+      try {
+        startElementPicker();
+        sendResponse({ ok: true });
+      } catch (error) {
+        sendResponse({ ok: false, error: String(error?.message || error) });
+      }
+      return;
+    }
     if (request?.type === "flowdetect-screen-check-v2") {
       const expected = normalize(request.text);
       const rendered = normalize(document.body?.innerText || "");

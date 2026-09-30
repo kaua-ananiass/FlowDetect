@@ -334,6 +334,11 @@ test("an OCR failure takes its configured route even when an image looks similar
 
   assert.deepEqual(queried, ["Não há débitos", "Competência de Apuração", "08/2026", "Pesquisar"]);
   assert.equal(visualMatches, 0);
+  assert.equal(run.blockFailure.index, 0);
+  assert.equal(run.blockFailure.nextIndex, 2);
+  assert.equal(run.blockFailure.serial, 1);
+  assert.equal(run.recentSteps[0].state, "failed");
+  assert.equal(run.recentSteps.at(-1).state, "done");
   assert.ok(logs.some((entry) => entry.level === "warning" && /OCR nao encontrou/.test(entry.message)));
 });
 

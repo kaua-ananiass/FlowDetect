@@ -22,6 +22,10 @@
           <button id="newButton" class="add-automation" type="button"><span>+</span> Adicionar</button>
         </div>
       </header>
+      <div class="element-picker-toolbar">
+        <button id="mapElementButton" class="map-element-button" type="button" title="Mapear elemento da página">Mapear elemento</button>
+        <p id="mapElementStatus" class="map-element-status" role="status" aria-live="polite" hidden></p>
+      </div>
       <section id="automationList" class="automation-list" aria-live="polite"></section>
     </main>
 
@@ -60,14 +64,24 @@
             <div class="execution-progress-value"><strong class="execution-percent">0%</strong><span>conclu&iacute;do</span></div>
             <div class="progress-track"><i class="progress-bar"></i></div>
           </div>
+          <div class="block-carousel" aria-label="Blocos da automa&ccedil;&atilde;o">
+            <div class="block-carousel-heading"><span class="block-carousel-automation">Bloco do fluxo</span><span class="block-carousel-count"></span></div>
+            <div class="block-carousel-stage"><div class="block-carousel-slide">
+              <div class="block-carousel-top"><span class="block-carousel-number"></span><span class="block-carousel-state"></span></div>
+              <h3 class="block-carousel-title"></h3>
+              <p class="block-carousel-description"></p>
+              <div class="block-carousel-preview"><img class="block-carousel-image" alt="" hidden><div class="block-carousel-placeholder"><span class="block-carousel-placeholder-icon" aria-hidden="true"></span><span class="block-carousel-placeholder-text"></span></div></div>
+              <p class="block-carousel-page"></p>
+            </div></div>
+            <div class="block-carousel-controls"><button class="block-carousel-prev" type="button" aria-label="Bloco anterior">&#8592;</button><button class="block-carousel-follow" type="button">Acompanhando</button><button class="block-carousel-next" type="button" aria-label="Pr&oacute;ximo bloco">&#8594;</button><button class="stop-button" type="button" hidden>Parar</button><button class="block-carousel-manager" type="button" hidden>Automa&ccedil;&otilde;es</button></div>
+          </div>
+          <section class="live-steps" aria-label="Etapas recentes"><div class="live-steps-heading"><span>Ao vivo</span><span class="live-steps-count"></span></div><ul class="live-steps-list" aria-live="polite"></ul></section>
           <div class="execution-loop-summary">
             <label class="execution-column-label" hidden><span>Exibir</span><select class="execution-column-choice" aria-label="Coluna exibida durante a execucao"></select></label>
             <p class="execution-summary">Preparando execucao</p>
           </div>
-          <button class="stop-button" type="button" hidden>Parar execu&ccedil;&atilde;o</button>
           <button class="report-button" type="button" hidden>Gerar relat&oacute;rio PDF</button>
-          <div class="run-log-heading"><span>Atividade da execu&ccedil;&atilde;o</span><span>ao vivo</span></div>
-          <ul class="run-log" aria-label="Logs da execucao" aria-live="polite"></ul>
+          <details class="run-log-details"><summary>Hist&oacute;rico da execu&ccedil;&atilde;o</summary><ul class="run-log" aria-label="Logs da execucao" aria-live="polite"></ul></details>
         </section>
       </article>
     </template>

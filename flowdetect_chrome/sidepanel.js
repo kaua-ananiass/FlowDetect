@@ -1,13 +1,18 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.46";
+const REQUIRED_RUNTIME_VERSION = "0.2.52";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
 const newButton = document.querySelector("#newButton");
+const mapElementButton = document.querySelector("#mapElementButton");
+const mapElementStatus = document.querySelector("#mapElementStatus");
 let automationsCache = [];
 let currentRun = {};
 const screenGuardRefreshers = new Set();
+const carouselStates = new Map();
+const expandedRunLogs = new Set();
+let managerViewRequested = false;
 
 function refreshScreenGuards() {
   for (const refresh of screenGuardRefreshers) refresh(true);
@@ -62,6 +67,202 @@ function appendLogs(container, logs) {
     item.textContent = entry.message;
     return item;
   }));
+}
+
+function blockPreviewImage(step) {
+  for (const asset of [step?.preview_image, step?.image, step?.visual_fallback, step?.active_image, step?.inactive_image]) {
+    const url = typeof asset === "string" ? asset : asset?.data_url;
+    if (/^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(url || "")) return url;
+  }
+  return "";
+}
+
+function blockCardDetails(step) {
+  const type = String(step?.type || "");
+  const titles = {
+    navigate: "Abrir página", element_action: "Elemento da página", ocr_text: "Reconhecimento OCR",
+    visual_match: "Reconhecimento visual", visual_state: "Verificar estado", focused_text: "Digitar texto",
+    key_sequence: "Atalho de teclado", data_source: "Dados da planilha", loop_start: "Início do loop",
+    loop_end: "Fim do loop", report_result: "Resultado do relatório"
+  };
+  const text = String(step?.text || step?.selector?.value || step?.url || step?.name || "").trim();
+  const description = text || (type === "key_sequence" ? (step.keys || []).join(" + ") : "");
+  const initials = { ocr_text: "OCR", visual_match: "IMG", visual_state: "ON", navigate: "URL", data_source: "XLS", focused_text: "TXT" };
+  return { title: titles[type] || String(step?.source_type || type || "Bloco do fluxo").replaceAll("_", " "),
+    description: description || "Executando a ação configurada neste bloco.", icon: initials[type] || "FD" };
+}
+
+function renderLiveSteps(container, automation, run) {
+  const list = container.querySelector(".live-steps-list");
+  const saved = Array.isArray(run.recentSteps) ? run.recentSteps.slice(-3).reverse() : [];
+  const fallbackIndex = Number(run.currentIndex ?? run.lastBlockIndex);
+  const entries = saved.length ? saved : Number(run.currentStep || 0) > 0 && Number.isInteger(fallbackIndex)
+    ? [{ index: fallbackIndex, state: run.status === "running" ? "running"
+      : run.status === "failed" ? "failed" : run.status === "stopped" ? "stopped" : "done" }] : [];
+  const states = { running: "Executando", done: "Concluído", failed: "Falhou", stopped: "Parado" };
+  container.querySelector(".live-steps-count").textContent = ["running", "waiting_screen"].includes(run.status)
+    ? "Atualizando" : "Últimas etapas";
+  if (!entries.length) {
+    const empty = document.createElement("li");
+    empty.className = "live-step-empty";
+    empty.textContent = "Aguardando a primeira etapa";
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...entries.map((entry) => {
+    const item = document.createElement("li");
+    item.className = `live-step ${states[entry.state] ? entry.state : "running"}`;
+    const number = document.createElement("span");
+    number.className = "live-step-number";
+    const order = automation.steps?.[entry.index]?.source_order || Number(entry.index || 0) + 1;
+    number.textContent = `B${String(order).padStart(2, "0")}`;
+    const title = document.createElement("span");
+    title.className = "live-step-title";
+    title.textContent = blockCardDetails(automation.steps?.[entry.index]).title;
+    const status = document.createElement("span");
+    status.className = "live-step-state";
+    status.textContent = states[entry.state] || states.running;
+    item.append(number, title, status);
+    return item;
+  }));
+}
+
+function renderBlockCarousel(container, automation, run) {
+  const steps = automation.steps || [];
+  if (!steps.length) { container.hidden = true; return; }
+  const runId = String(run.id || "pending");
+  let state = carouselStates.get(String(automation.id));
+  if (!state || state.runId !== runId) {
+    const recentFailure = Date.now() - Number(run.blockFailure?.at || 0) < 1600;
+    state = { runId, index: 0, following: true, lastRenderedIndex: null,
+      lastFailureSerial: recentFailure && !["completed", "stopped"].includes(run.status)
+        ? 0 : Number(run.blockFailure?.serial || 0) };
+    carouselStates.set(String(automation.id), state);
+  }
+  const position = Number(run.currentIndex ?? run.lastBlockIndex);
+  const activeIndex = Math.min(steps.length - 1, Math.max(0,
+    Number.isInteger(position) && (run.currentIndex != null || run.lastBlockIndex != null)
+      ? position : Number(run.currentStep || 0) - 1));
+  const failure = run.blockFailure;
+  const failureSerial = Number(failure?.serial || 0);
+  if (state.following && failureSerial > state.lastFailureSerial) {
+    const startedAt = performance.now();
+    state.lastFailureSerial = failureSerial;
+    state.failureIndex = Math.min(steps.length - 1, Math.max(0, Number(failure.index || 0)));
+    state.failureStartedAt = startedAt;
+    state.failureUntil = startedAt + 620;
+    const destination = Number(failure.nextIndex);
+    state.destinationIndex = failure.nextIndex != null && Number.isInteger(destination)
+      ? Math.min(steps.length - 1, Math.max(0, destination)) : null;
+    state.destinationUntil = state.destinationIndex === null ? 0
+      : activeIndex !== state.failureIndex ? state.failureUntil + 650 : Infinity;
+    for (const delay of [640, 1300]) {
+      if (delay === 1300 && !Number.isFinite(state.destinationUntil)) continue;
+      setTimeout(() => {
+        if (carouselStates.get(String(automation.id)) === state && state.following
+            && state.lastFailureSerial === failureSerial) renderAutomations();
+      }, delay);
+    }
+  }
+  const now = performance.now();
+  if (Number.isInteger(state.destinationIndex) && now >= Number(state.failureUntil || 0)
+      && !Number.isFinite(state.destinationUntil)) {
+    if (hasFinishedRun(run.status) && activeIndex === state.failureIndex) {
+      state.destinationIndex = null;
+      state.destinationUntil = 0;
+    } else if (activeIndex !== state.failureIndex) {
+      state.destinationUntil = now + 650;
+      setTimeout(() => {
+        if (carouselStates.get(String(automation.id)) === state && state.following
+            && state.lastFailureSerial === failureSerial) renderAutomations();
+      }, 670);
+    }
+  }
+  if (state.following) state.index = now < Number(state.failureUntil || 0) ? state.failureIndex
+    : now < Number(state.destinationUntil || 0) ? state.destinationIndex : activeIndex;
+  state.index = Math.min(steps.length - 1, Math.max(0, state.index));
+  const slide = container.querySelector(".block-carousel-slide");
+  const stage = container.querySelector(".block-carousel-stage");
+  const previous = container.querySelector(".block-carousel-prev");
+  const next = container.querySelector(".block-carousel-next");
+  const follow = container.querySelector(".block-carousel-follow");
+  const renderSlide = () => {
+    const step = steps[state.index];
+    const details = blockCardDetails(step);
+    const image = blockPreviewImage(step);
+    const changed = state.lastRenderedIndex !== null && state.lastRenderedIndex !== state.index;
+    if (changed) {
+      state.previousSlide = state.lastSlide?.cloneNode(true) || null;
+      state.flipStartedAt = performance.now();
+    }
+    slide.classList.remove("flip-in", "failure-shake", "terminal-failure");
+    slide.style.animationDelay = "";
+    state.lastRenderedIndex = state.index;
+    const automationName = container.querySelector(".block-carousel-automation");
+    automationName.textContent = automation.automation?.nome || "Bloco do fluxo";
+    automationName.title = automationName.textContent;
+    container.querySelector(".block-carousel-count").textContent = `${state.index + 1} / ${steps.length}`;
+    container.querySelector(".block-carousel-number").textContent = `B${String(step.source_order || state.index + 1).padStart(2, "0")}`;
+    const errorElapsed = performance.now() - Number(state.failureStartedAt || 0);
+    const showingFailure = state.following && state.index === state.failureIndex && errorElapsed < 620;
+    const showingDestination = state.following && state.index === state.destinationIndex
+      && state.index !== activeIndex && performance.now() < Number(state.destinationUntil || 0);
+    const status = showingFailure ? "Falhou · redirecionando" : showingDestination ? "Próximo bloco" : state.index !== activeIndex ? "No fluxo" :
+      run.status === "running" ? "Executando" : run.status === "completed" ? "Concluído" :
+      run.status === "failed" ? "Falhou" : run.status === "stopped" ? "Parado" : "Aguardando";
+    const statusElement = container.querySelector(".block-carousel-state");
+    statusElement.textContent = status;
+    statusElement.dataset.status = showingFailure ? "failed" : showingDestination ? "waiting_screen"
+      : state.index === activeIndex ? run.status || "ready" : "history";
+    container.querySelector(".block-carousel-title").textContent = details.title;
+    container.querySelector(".block-carousel-description").textContent = details.description;
+    const previewImage = container.querySelector(".block-carousel-image");
+    const placeholder = container.querySelector(".block-carousel-placeholder");
+    previewImage.hidden = !image;
+    placeholder.hidden = Boolean(image);
+    if (image) {
+      previewImage.alt = `Imagem de referência do bloco ${step.source_order || state.index + 1}`;
+      previewImage.onerror = () => { previewImage.hidden = true; placeholder.hidden = false; };
+      previewImage.src = image;
+    } else {
+      previewImage.removeAttribute("src");
+    }
+    container.querySelector(".block-carousel-placeholder-icon").textContent = details.icon;
+    container.querySelector(".block-carousel-placeholder-text").textContent = "Sem imagem de referência neste bloco";
+    container.querySelector(".block-carousel-page").textContent = `Página: ${step.sequence || "principal"}`;
+    previous.disabled = state.index === 0;
+    next.disabled = state.index === steps.length - 1;
+    follow.disabled = state.following;
+    follow.textContent = state.following ? "● Acompanhando" : "Seguir execução";
+    stage.querySelectorAll(".flip-out").forEach((oldFace) => oldFace.remove());
+    const elapsed = performance.now() - Number(state.flipStartedAt || 0);
+    if (!showingFailure && state.previousSlide && elapsed < 650) {
+      const outgoing = state.previousSlide.cloneNode(true);
+      outgoing.classList.remove("flip-in", "flip-out", "failure-shake", "terminal-failure");
+      if (state.previousSlide.classList.contains("failure-shake")) outgoing.classList.add("failure-exit");
+      outgoing.classList.add("flip-out");
+      outgoing.style.animationDelay = `-${Math.round(elapsed)}ms`;
+      outgoing.setAttribute("aria-hidden", "true");
+      stage.append(outgoing);
+      slide.classList.add("flip-in");
+      slide.style.animationDelay = `-${Math.round(elapsed)}ms`;
+      setTimeout(() => outgoing.remove(), Math.max(0, 650 - elapsed));
+    } else {
+      state.previousSlide = null;
+    }
+    if (showingFailure) {
+      slide.classList.remove("flip-in");
+      slide.classList.add("failure-shake");
+      slide.style.animationDelay = `-${Math.round(errorElapsed)}ms`;
+    } else if (run.status === "failed" && state.index === activeIndex) {
+      slide.classList.add("terminal-failure");
+    }
+    state.lastSlide = slide;
+  };
+  previous.addEventListener("click", () => { state.following = false; state.index -= 1; renderSlide(); });
+  next.addEventListener("click", () => { state.following = false; state.index += 1; renderSlide(); });
+  follow.addEventListener("click", () => { state.following = true; state.index = activeIndex; renderSlide(); });
+  renderSlide();
 }
 
 function normalizedSpreadsheetColumn(value) {
@@ -178,12 +379,14 @@ async function runAutomation(automation, startRow = 1) {
   }
   const loop = spreadsheetLoopInfo(automation);
   const selectedStartRow = loop ? clampSpreadsheetStartRow(startRow, loop.total) : 1;
+  managerViewRequested = false;
   currentRun = {
     automationId: automation.id,
     automationName: automation.automation?.nome,
     status: "running",
     currentStep: 0,
     totalSteps: loop ? automation.steps.length * (loop.total - selectedStartRow + 1) : automation.steps.length,
+    recentSteps: [],
     logs: [{ level: "info", message: loop ? `Iniciando na linha ${selectedStartRow} de ${loop.total}.` : "Iniciando automacao." }]
   };
   renderAutomations();
@@ -197,6 +400,12 @@ async function runAutomation(automation, startRow = 1) {
 }
 
 function updateRun(run = {}) {
+  if (["running", "waiting_screen"].includes(run?.status)
+      && String(run?.id || "") !== String(currentRun?.id || "")) managerViewRequested = false;
+  if (hasFinishedRun(run?.status) && !hasFinishedRun(currentRun?.status)) {
+    const state = carouselStates.get(String(run?.automationId || ""));
+    if (state) state.following = true;
+  }
   currentRun = run || {};
   renderAutomations();
 }
@@ -307,7 +516,7 @@ function renderAutomation(automation) {
   }
 
   const isCurrent = String(currentRun?.automationId || "") === String(automation.id);
-  if (isCurrent) {
+  if (isCurrent && !managerViewRequested) {
     const status = currentRun.status || "ready";
     const labels = { ready: "Pronto", running: "Executando", waiting_screen: "Aguardando tela", completed: "Concluida", failed: "Falhou", stopped: "Parada" };
     const progress = runProgress(currentRun);
@@ -319,6 +528,8 @@ function renderAutomation(automation) {
     statusElement.className = `execution-status ${status}`;
     fragment.querySelector(".execution-percent").textContent = `${progress.percent}%`;
     fragment.querySelector(".execution-progress").setAttribute("aria-valuenow", String(progress.percent));
+    renderBlockCarousel(fragment.querySelector(".block-carousel"), automation, currentRun);
+    renderLiveSteps(fragment.querySelector(".live-steps"), automation, currentRun);
     const executionSummary = fragment.querySelector(".execution-summary");
     const executionColumnLabel = fragment.querySelector(".execution-column-label");
     const executionColumnChoice = fragment.querySelector(".execution-column-choice");
@@ -366,6 +577,9 @@ function renderAutomation(automation) {
     const stop = fragment.querySelector(".stop-button");
     stop.hidden = !["running", "waiting_screen"].includes(status);
     stop.addEventListener("click", () => chrome.runtime.sendMessage({ type: "flowdetect-stop" }));
+    const managerButton = fragment.querySelector(".block-carousel-manager");
+    managerButton.hidden = !hasFinishedRun(status);
+    managerButton.addEventListener("click", () => { managerViewRequested = true; renderAutomations(); });
     const reportButton = fragment.querySelector(".report-button");
     const canGenerateReport = hasFinishedRun(status);
     reportButton.hidden = !canGenerateReport;
@@ -375,6 +589,12 @@ function renderAutomation(automation) {
         window.alert(`Nao foi possivel gerar o relatorio: ${String(error.message || error)}`);
       }));
     }
+    const logDetails = fragment.querySelector(".run-log-details");
+    logDetails.open = expandedRunLogs.has(String(automation.id));
+    logDetails.addEventListener("toggle", () => {
+      if (logDetails.open) expandedRunLogs.add(String(automation.id));
+      else expandedRunLogs.delete(String(automation.id));
+    });
     appendLogs(fragment.querySelector(".run-log"), currentRun.logs);
   }
 
@@ -406,6 +626,9 @@ function renderAutomation(automation) {
 function renderAutomations(automations = automationsCache) {
   screenGuardRefreshers.clear();
   automationsCache = Array.isArray(automations) ? automations : [];
+  document.body.classList.toggle("run-focused", !managerViewRequested
+    && Boolean(currentRun?.automationId)
+    && ["running", "waiting_screen", "completed", "failed", "stopped"].includes(currentRun?.status));
   automationList.replaceChildren();
   if (!automationsCache.length) {
     const empty = document.createElement("p");
@@ -450,6 +673,27 @@ newButton.addEventListener("click", async () => {
     warnings: []
   });
   await setAutomations([...(await getAutomations()), automation]);
+});
+
+mapElementButton.addEventListener("click", async () => {
+  mapElementButton.disabled = true;
+  mapElementStatus.hidden = true;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab?.id || !/^https?:\/\//i.test(tab.url || "")) {
+      throw new Error("Abra uma pagina HTTP/HTTPS no Chrome para mapear um elemento.");
+    }
+    const result = await chrome.tabs.sendMessage(tab.id, { type: "flowdetect-map-element-v1" });
+    if (!result?.ok) throw new Error(result?.error || "A pagina nao iniciou o mapeamento.");
+    window.close();
+  } catch (error) {
+    mapElementStatus.textContent = /Receiving end does not exist|Could not establish connection|message port closed/i.test(String(error))
+      ? "Recarregue a pagina e tente novamente."
+      : String(error?.message || error);
+    mapElementStatus.hidden = false;
+  } finally {
+    mapElementButton.disabled = false;
+  }
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
