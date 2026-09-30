@@ -1,6 +1,6 @@
 # FlowDetect — contexto para continuar o projeto
 
-Atualizado em 28/09/2026. Este documento descreve o checkout local e as decisões
+Atualizado em 30/09/2026. Este documento descreve o checkout local e as decisões
 recentes. Não significa que todas as alterações já foram commitadas ou publicadas.
 
 ## Objetivo e público
@@ -19,10 +19,11 @@ ser acessíveis.
 
 - Workspace: `C:\Users\KauaCalaça\Documents\FlowDetect`.
 - Raiz dos comandos deste documento: subpasta `Capturar_atalhos_hotkeys`.
-- Studio e Agent: versão `3.0.0` nas configurações Tauri e package.json.
-- Extensão Chrome: versão `0.2.46` no checkout atual.
-- A extensão tem versionamento próprio; não igualar automaticamente a 3.0.0.
-- Pacote recente: `saida_exe/FlowDetect-para-Chrome-v0.2.46.zip`.
+- Studio: versão `3.0.2`; Agent: versão `3.0.0` no checkout atual.
+- Extensão Chrome: versão `0.2.53` no checkout atual.
+- A extensão tem versionamento próprio; não igualar automaticamente ao Studio.
+- Pacote Chrome 0.2.53: `E:\FlowDetect_Entregas\Chrome_Studio_2026-09-30\FlowDetect-para-Chrome-v0.2.53.zip`.
+- Instalador Studio 3.0.2: `E:\FlowDetect_Entregas\Chrome_Studio_2026-09-30\FlowDetect Studio_3.0.2_x64-setup.exe`.
 
 ## Componentes e estrutura
 
@@ -106,6 +107,13 @@ Atualizar juntos `manifest.json`, `RUNTIME_VERSION` no worker e
 `REQUIRED_RUNTIME_VERSION` no painel ao gerar uma versão. `content.js` tem sua
 própria versão de runtime para reinjeção/canal de mensagens; verificar essa
 compatibilidade se mudar seu comportamento.
+
+Na 0.2.47, o popup tem **Mapear elemento da página**. O content script destaca
+o alvo clicado e mostra, na própria página, um seletor CSS único com botão de
+cópia. O clique de seleção não deve executar a ação do site; Esc/Fechar removem
+o overlay. O seletor pode ser colado no OCR com fonte **Chrome · elemento da
+página** no Studio. Não copiar HTML completo nem valores de campos. O mapeador
+atua na página principal HTTP/HTTPS, sem atravessar frames ou Shadow DOM.
 
 ### Comportamentos que precisam ser preservados
 
@@ -296,6 +304,45 @@ imports, comandos e runtime dos aplicativos.
   `executar_automacao.py` do HEAD anterior (`554ca07`), sem modificar o checkout.
   Elas tratam de repeticao de leitura OCR no diagnostico e continuam pendentes.
 - Gravacoes locais, caches, pacotes e temporarios nao fazem parte desta branch.
+
+## Captura completa do fluxo (29/09/2026)
+
+- O usuário rejeitou a primeira exportação que redesenhava os cards e criava
+  fileiras/legenda. A captura deve fotografar o visual ORIGINAL do mapa, com
+  os próprios cards, botões, posições, marcadores OCR, curvas e etiquetas.
+  Não voltar a reorganizar ou sintetizar um novo diagrama para esta função.
+- `Capturar fluxo` usa a página atual por padrão, inclusive blocos fora da
+  área visível. O seletor da prévia permite todas as páginas, usando o renderer
+  original e as posições manuais de cada uma. Não muda zoom, pan, página ativa
+  ou os arquivos da automação. Os drafts atuais aparecem no DOM capturado.
+- `web/flow-capture.js` congela o DOM e o CSS de forma síncrona numa cópia
+  isolada: o mapa ao vivo pode ser atualizado durante a serialização sem
+  perder os estilos da captura. Usa a cópia local MIT de html-to-image 1.11.13
+  em `web/vendor/`, com licença e documentação. Pode embutir as fontes web já
+  usadas pela interface; não envia os dados da automação a serviço externo.
+- Antes de fotografar, não reidratar as previews OCR já carregadas: isso
+  reinicia a transição de tamanho das caixas de reconhecimento e exporta uma
+  borda menor que a do mapa original. Carregar só as faltantes e aguardar as
+  transições dos marcadores terminarem. O teste de navegador compara as
+  dimensões de todos os alvos OCR do mapa com as dimensões no SVG exportado.
+- A folha Google Fonts externa pode estar carregada no mapa, mas
+  `html-to-image.getFontEmbedCSS` ainda retorna vazio. A exportação incorpora
+  WOFF2 locais (`web/vendor/fonts/`, com licenças OFL) somente das famílias já
+  carregadas na interface, mantendo a tipografia dos blocos. Campos numéricos
+  de espera são representados por texto de mesmo estilo na cópia somente-leitura
+  do mapa, evitando que o Chromium quebre `0,5` entre linhas no PNG/SVG.
+- PNG em 3×, limitado a 16.384 px por lado e 48 milhões de pixels para
+  controlar memória. Informa eventual ajuste. O SVG contém foreignObject e
+  deve ser aberto no Chrome/Edge; PNG é recomendado para compartilhar a foto.
+- O comando Rust `save_flow_capture` salva somente PNG/SVG no caminho escolhido
+  na janela nativa. Cancelar não cria arquivo. Sem Tauri, há download no browser.
+  Reiniciar o modo dev é necessário para carregar o novo comando nativo.
+- Teste: `node --test tests/test_flow_capture.cjs` inicializa o Studio real no
+  Chromium e verifica curvas copiadas literalmente, os botões originais,
+  marcadores OCR, posições manuais, zoom/pan, captura de outras páginas sem
+  troca de página ativa, PNG real 3× com imagens, cancelamento e limpeza.
+- As alterações de CSS desta função são restritas ao botão e à janela de
+  captura; não retomam o redesign descartado pelo usuário.
 
 ## Como continuar
 
