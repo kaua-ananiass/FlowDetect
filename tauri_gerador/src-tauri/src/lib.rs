@@ -2550,6 +2550,43 @@ fn import_runtime_update_zip_from_path(app: AppHandle, path: String) -> Result<V
 }
 
 #[tauri::command]
+fn save_flow_capture(
+    file_path: String,
+    data_base64: String,
+    file_format: String,
+) -> Result<Value, String> {
+    let format = file_format.trim().to_ascii_lowercase();
+    if format != "png" && format != "svg" {
+        return Err("Formato da captura deve ser PNG ou SVG.".into());
+    }
+    let mut path = PathBuf::from(file_path.trim());
+    if !path.is_absolute() || path.file_name().is_none() {
+        return Err("Escolha um caminho absoluto para salvar a captura.".into());
+    }
+    match path.extension().and_then(|value| value.to_str()) {
+        None => { path.set_extension(&format); }
+        Some(value) if value.eq_ignore_ascii_case(&format) => {}
+        _ => return Err(format!("O arquivo deve ter a extensao .{format}.")),
+    }
+    // Bound IPC/memory consumption; never interpret paths from the flow itself.
+    if data_base64.len() > 90_000_000 {
+        return Err("Captura muito grande para salvar. Reduza as referencias visuais.".into());
+    }
+    let bytes = general_purpose::STANDARD.decode(data_base64)
+        .map_err(|_| "Dados da captura invalidos.".to_string())?;
+    let valid = if format == "png" {
+        bytes.starts_with(b"\x89PNG\r\n\x1a\n") && bytes.len() >= 24
+    } else {
+        std::str::from_utf8(&bytes).map(|text| text.trim_start().starts_with("<svg ")).unwrap_or(false)
+    };
+    if !valid {
+        return Err("O conteudo da captura nao corresponde ao formato selecionado.".into());
+    }
+    fs::write(&path, bytes).map_err(|err| format!("Falha ao salvar captura: {err}"))?;
+    Ok(serde_json::json!({ "path": path.display().to_string(), "format": format }))
+}
+
+#[tauri::command]
 fn get_recognition_image_preview(app: AppHandle, image_id: String) -> Result<Value, String> {
     let root = workspace_root(&app);
     let normalized = image_id.replace('\\', "/");
@@ -10139,6 +10176,7 @@ pub fn run() {
             import_image_asset,
             rename_image_asset,
             get_recognition_image_preview,
+            save_flow_capture,
             capture_image_asset,
             open_images_folder,
             open_recognition_diagnostics_folder,

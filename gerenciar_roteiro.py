@@ -3,11 +3,15 @@ import base64
 import hashlib
 import json
 import mimetypes
+import os
 import re
 import shutil
 import sys
 import tempfile
+import time
+import uuid
 import zipfile
+from contextlib import contextmanager
 from html import unescape
 from html.parser import HTMLParser
 from datetime import datetime
@@ -17,6 +21,8 @@ from openpyxl import load_workbook
 
 
 ARQUIVO_SAIDA = Path("mapeamento_teclado.json")
+ARQUIVO_TRAVA_ROTEIRO = Path(".flowdetect_roteiro.lock")
+DIRETORIO_HISTORICO_ROTEIRO = Path(".flowdetect_roteiro_history")
 ARQUIVO_RESUMO = Path("resumo_teclado.txt")
 ARQUIVO_SCRIPT = Path("comandos_teclado.py")
 ARQUIVO_PLANILHA = Path("db.xlsx")
@@ -645,7 +651,7 @@ def exportar_automacao_para_zip(automacao_id, item, destino_zip=None):
     return destino_zip
 
 
-def recurso_imagem_para_chrome(imagem):
+def recurso_imagem_para_chrome(imagem, pasta_automacao=None):
     """Inclui a referencia visual no JSON que sera importado pela extensao.
 
     O arquivo exportado precisa ser portavel: a extensao nao deve depender da
@@ -655,12 +661,18 @@ def recurso_imagem_para_chrome(imagem):
     if not imagem_id:
         return None, "Imagem de referencia vazia."
 
-    caminho = Path(imagem_id)
-    if not caminho.exists() and not caminho.is_absolute():
-        alternativa = PASTA_IMAGENS / Path(imagem_id).name
-        if alternativa.exists():
-            caminho = alternativa
-    if not caminho.exists() or not caminho.is_file():
+    caminho_id = Path(imagem_id)
+    candidatos = []
+    if pasta_automacao:
+        pasta = Path(pasta_automacao)
+        if not caminho_id.is_absolute():
+            candidatos.append(pasta / caminho_id)
+        candidatos.append(pasta / PASTA_IMAGENS / caminho_id.name)
+    candidatos.append(caminho_id)
+    if not caminho_id.is_absolute():
+        candidatos.append(PASTA_IMAGENS / caminho_id.name)
+    caminho = next((candidato for candidato in candidatos if candidato.is_file()), None)
+    if caminho is None:
         return None, f"Imagem de referencia nao encontrada: {imagem_id}."
 
     mime, _ = mimetypes.guess_type(caminho.name)
@@ -872,7 +884,7 @@ def passo_chrome_base(evento, tipo, detalhes):
     }
 
 
-def converter_evento_para_chrome(evento, colunas_relatorio=None):
+def converter_evento_para_chrome(evento, colunas_relatorio=None, pasta_automacao=None):
     """Converte os blocos que fazem sentido dentro de uma pagina Chrome."""
     tipo = str((evento or {}).get("tipo") or "").strip()
     detalhes = (evento or {}).get("detalhes") or {}
@@ -903,12 +915,12 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
                 "require_unique": True,
                 "timeout_ms": max(500, round(float(detalhes.get("timeout") or 8) * 1000)),
             })
-            preview, _ = recurso_imagem_para_chrome(detalhes.get("imagem_ocr") or detalhes.get("imagem"))
+            preview, _ = recurso_imagem_para_chrome(detalhes.get("imagem_ocr") or detalhes.get("imagem"), pasta_automacao)
             if preview:
                 passo["preview_image"] = preview
             return passo, None
         if str(detalhes.get("fonte_ocr") or "legado").lower() == "visual":
-            imagem, erro = recurso_imagem_para_chrome(detalhes.get("imagem_ocr"))
+            imagem, erro = recurso_imagem_para_chrome(detalhes.get("imagem_ocr"), pasta_automacao)
             if not imagem:
                 return None, f"Bloco {ordem}: OCR visual sem imagem valida ({erro})."
             passo = passo_chrome_base(evento, "visual_match", detalhes)
@@ -942,7 +954,7 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
             "attempts": max(1, int(detalhes.get("quantidade_tentativas") or 1)),
             "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
         })
-        preview, _ = recurso_imagem_para_chrome(detalhes.get("imagem_ocr") or detalhes.get("imagem"))
+        preview, _ = recurso_imagem_para_chrome(detalhes.get("imagem_ocr") or detalhes.get("imagem"), pasta_automacao)
         if preview:
             passo["preview_image"] = preview
         return aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes), None
@@ -970,7 +982,7 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
                 **detalhes, "texto": detalhes.get("texto_ocr_busca"),
                 "acao": detalhes.get("acao_ocr") or "clicar",
             }}
-            return converter_evento_para_chrome(evento_elemento, colunas_relatorio)
+            return converter_evento_para_chrome(evento_elemento, colunas_relatorio, pasta_automacao)
         if modo in {"texto_ocr", "ocr", "texto"} and str(detalhes.get("fonte_ocr") or "legado").lower() != "visual":
             texto = str(detalhes.get("texto_ocr_busca") or detalhes.get("texto_ocr_esperado") or "").strip()
             if not texto:
@@ -991,11 +1003,11 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
                 "interval_ms": max(0, round(float(detalhes.get("intervalo_tentativas") or 0) * 1000)),
             })
             if str(detalhes.get("fonte_ocr") or "legado").lower() != "chrome":
-                imagem_visual, _ = recurso_imagem_para_chrome(detalhes.get("imagem"))
+                imagem_visual, _ = recurso_imagem_para_chrome(detalhes.get("imagem"), pasta_automacao)
                 if imagem_visual:
                     passo["visual_fallback"] = imagem_visual
             if "visual_fallback" not in passo:
-                preview, _ = recurso_imagem_para_chrome(detalhes.get("imagem_ocr") or detalhes.get("imagem"))
+                preview, _ = recurso_imagem_para_chrome(detalhes.get("imagem_ocr") or detalhes.get("imagem"), pasta_automacao)
                 if preview:
                     passo["preview_image"] = preview
             alvos = alvos_ocr_para_chrome(detalhes, passo)
@@ -1003,7 +1015,7 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
                 passo["ocr_targets"] = alvos
                 return passo, None
             return aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes), None
-        imagem, erro = recurso_imagem_para_chrome(detalhes.get("imagem"))
+        imagem, erro = recurso_imagem_para_chrome(detalhes.get("imagem"), pasta_automacao)
         if not imagem:
             return None, f"Bloco {ordem}: {erro}"
         passo = passo_chrome_base(evento, "visual_match", detalhes)
@@ -1021,8 +1033,8 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None):
         return passo, None
 
     if tipo == "verificar_estado_botao":
-        ativo, erro_ativo = recurso_imagem_para_chrome(detalhes.get("imagem_ativo"))
-        desativado, erro_desativado = recurso_imagem_para_chrome(detalhes.get("imagem_desativado"))
+        ativo, erro_ativo = recurso_imagem_para_chrome(detalhes.get("imagem_ativo"), pasta_automacao)
+        desativado, erro_desativado = recurso_imagem_para_chrome(detalhes.get("imagem_desativado"), pasta_automacao)
         if not ativo and not desativado:
             return None, f"Bloco {ordem}: verificacao visual sem referencias validas ({erro_ativo or erro_desativado})."
         passo = passo_chrome_base(evento, "visual_state", detalhes)
@@ -1118,7 +1130,7 @@ def exportar_automacao_para_chrome(automacao_id, item, destino_json=None):
     passos = []
     avisos = []
     for evento in eventos_ordenados:
-        passo, aviso = converter_evento_para_chrome(evento, colunas_relatorio)
+        passo, aviso = converter_evento_para_chrome(evento, colunas_relatorio, diretorio_automacao(automacao_id))
         if passo:
             passos.append(passo)
         if aviso:
@@ -1898,10 +1910,20 @@ def salvar_payload(payload):
     normalizar_sequencia_inicial_payload(payload)
     normalizar_configuracoes_sequencia(payload)
     payload["resumo_digitado"] = montar_resumo(payload["eventos"])
-    ARQUIVO_SAIDA.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    # Cada edicao preserva a versao anterior antes de substituir o roteiro.
+    # Assim um erro de interface nunca apaga a unica copia dos blocos.
+    if ARQUIVO_SAIDA.exists():
+        pasta_historico = DIRETORIO_HISTORICO_ROTEIRO
+        pasta_historico.mkdir(parents=True, exist_ok=True)
+        nome_backup = datetime.now().strftime("%Y%m%dT%H%M%S%f") + ".json"
+        shutil.copy2(ARQUIVO_SAIDA, pasta_historico / nome_backup)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=ARQUIVO_SAIDA.parent, prefix=".roteiro_", suffix=".tmp", delete=False) as arquivo_temporario:
+        caminho_temporario = Path(arquivo_temporario.name)
+        json.dump(payload, arquivo_temporario, indent=2, ensure_ascii=False)
+    try:
+        os.replace(caminho_temporario, ARQUIVO_SAIDA)
+    finally:
+        caminho_temporario.unlink(missing_ok=True)
     ARQUIVO_RESUMO.write_text(payload["resumo_digitado"], encoding="utf-8")
     ARQUIVO_SCRIPT.write_text(
         montar_script_python(payload["eventos"]),
@@ -1913,7 +1935,13 @@ def salvar_payload(payload):
 def normalizar_eventos(payload):
     payload.setdefault("configuracoes_sequencia", {})
     eventos = payload.get("eventos", [])
+    ids_vistos = set()
     for ordem, evento in enumerate(eventos, start=1):
+        identificador = str(evento.get("id") or "").strip()
+        if not identificador or identificador in ids_vistos:
+            identificador = uuid.uuid4().hex
+        evento["id"] = identificador
+        ids_vistos.add(identificador)
         evento["ordem"] = ordem
         evento["intervalo_antes"] = round(float(evento.get("intervalo_antes", 0) or 0), 3)
         evento["sequencia"] = normalizar_nome_sequencia(evento.get("sequencia"))
@@ -2877,6 +2905,7 @@ def card_do_evento(evento):
         subtitulo = resumir_texto(evento.get("texto", "")) or "Bloco importado de uma versao mais recente do Studio."
         descricao = "Este bloco veio de uma versao mais nova e sera executado quando o runtime do Agent estiver atualizado."
     return {
+        "id": evento.get("id", ""),
         "order": evento.get("ordem", 0),
         "type": tipo,
         "title": titulo,
@@ -4873,10 +4902,47 @@ COMANDOS = {
 }
 
 
+@contextmanager
+def trava_roteiro():
+    """Serializa comandos do helper, inclusive a leitura antes de cada escrita."""
+    ARQUIVO_TRAVA_ROTEIRO.parent.mkdir(parents=True, exist_ok=True)
+    with ARQUIVO_TRAVA_ROTEIRO.open("a+b") as arquivo:
+        arquivo.seek(0)
+        if arquivo.read(1) == b"":
+            arquivo.seek(0)
+            arquivo.write(b"0")
+            arquivo.flush()
+        arquivo.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            inicio = time.monotonic()
+            while True:
+                try:
+                    msvcrt.locking(arquivo.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if time.monotonic() - inicio >= 30:
+                        raise TimeoutError("O roteiro esta ocupado. Tente salvar novamente.")
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                arquivo.seek(0)
+                msvcrt.locking(arquivo.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(arquivo.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(arquivo.fileno(), fcntl.LOCK_UN)
+
+
 def main():
     parser = build_parser()
     args = parser.parse_args()
-    resposta = COMANDOS[args.command](args)
+    with trava_roteiro():
+        resposta = COMANDOS[args.command](args)
     payload = json.dumps(resposta, ensure_ascii=False)
     sys.stdout.buffer.write(payload.encode("utf-8"))
 

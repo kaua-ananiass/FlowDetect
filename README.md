@@ -41,6 +41,7 @@ Ele foi pensado para automatizar tarefas em programas Windows, ERPs, portais web
 
 ## Recursos Recentes
 
+- **Capturar fluxo:** fotografa o mapa original, mantendo cards, botões, posições, marcadores OCR e curvas das conexões. Inclui blocos fora da tela e salva em PNG de alta resolução (3×, com limite de memória para fluxos grandes). Captura a página atual por padrão; também pode incluir todas as páginas. O SVG opcional deve ser aberto no Chrome ou Edge.
 - **Mapa mais fluido:** criacao, exclusao e movimentacao de blocos com animacoes suaves.
 - **Cards compactos e detalhados:** o bloco mostra o essencial no mapa e abre detalhes quando necessario.
 - **Gravador Inteligente:** cria blocos automaticamente a partir de cliques, textos e teclas gravadas.

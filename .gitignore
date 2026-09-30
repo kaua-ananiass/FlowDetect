@@ -27,6 +27,8 @@ diagnostico_instalacao.json
 validacao_dependencias.json
 .parar_automacao.flag
 .flowdetect_temp/
+.flowdetect_roteiro.lock
+.flowdetect_roteiro_history/
 .flowdetect_recorder/
 .agents/
 dados_execucao/
