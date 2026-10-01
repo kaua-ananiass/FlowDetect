@@ -21,9 +21,10 @@ const automation={id:'carousel',schema:'flowdetect_chrome_automation',version:3,
     {type:'focused_text',source_order:7,sequence:'pagina_2',text:'Empresa ficticia'}]};
 const run={automationId:'carousel',id:'run-1',status:'running',currentIndex:0,currentStep:1,totalSteps:3,logs:[]};
 const db={flowdetectChromeAutomations:[automation],flowdetectChromeLastRun:run};
+globalThis.FlowDetectExecutionReport={download:()=> 'relatorio-teste.pdf'};
 window.chrome={storage:{local:{get:async key=>({[key]:db[key]}),set:async items=>Object.assign(db,items)},
   onChanged:{addListener(){}}},runtime:{sendMessage:async message=>message.type==='flowdetect-screen-ready'
-  ? {ok:true,ready:true} : {ok:true,version:'0.2.53',activeRunIds:['run-1']}},
+  ? {ok:true,ready:true} : {ok:true,version:'0.2.54',activeRunIds:['run-1']}},
   tabs:{query:async()=>[{id:42,url:'https://site.test/'}]}};
 """
 SCENARIO = r"""
@@ -94,6 +95,23 @@ SCENARIO = r"""
     updateRun({...run,currentIndex:2,currentStep:3,status:'completed'});
     check('completion remains on the last block',document.querySelector('.block-carousel-state').textContent==='Concluído'
       && document.querySelector('.execution-percent').textContent==='100%');
+    check('finished compact panel visibly offers the PDF report',!document.querySelector('.report-button').hidden
+      && getComputedStyle(document.querySelector('.report-button')).display!=='none'
+      && document.querySelector('.report-button').getBoundingClientRect().bottom
+         <= document.querySelector('.automation-list').getBoundingClientRect().bottom + 1);
+    document.querySelector('.report-button').click();await pause();
+    check('generating the report saves its result without leaving the run',db.flowdetectChromeLastRun.reportFilename==='relatorio-teste.pdf'
+      && document.body.classList.contains('run-focused')
+      && document.querySelector('.report-button').textContent.includes('novo relatório'));
+    document.querySelector('.block-carousel-manager').click();
+    check('a completed run remains accessible from the automation list',
+      !document.querySelector('.resume-run-button').hidden
+      && document.querySelector('.resume-run-button').textContent.includes('100%'));
+    document.querySelector('.resume-run-button').click();
+    check('returning to the completed run keeps its report and progress',
+      document.body.classList.contains('run-focused')
+      && document.querySelector('.execution-percent').textContent==='100%'
+      && document.querySelector('.report-button').textContent.includes('novo relatório'));
     const rapidRun={...run,id:'run-rapid',currentIndex:0,currentStep:1};
     updateRun(rapidRun);
     updateRun({...rapidRun,currentIndex:1,currentStep:2});
@@ -150,11 +168,22 @@ SCENARIO = r"""
     check('stopping keeps the compact card instead of returning to the menu',document.body.classList.contains('run-focused')
       && getComputedStyle(document.querySelector('.popup-toolbar')).display==='none'
       && document.querySelector('.stop-button').hidden
-      && !document.querySelector('.block-carousel-manager').hidden);
+      && !document.querySelector('.block-carousel-manager').hidden
+      && !document.querySelector('.report-button').hidden);
+    const stoppedProgress=document.querySelector('.execution-percent').textContent;
+    const stoppedBlock=document.querySelector('.block-carousel-count').textContent;
     document.querySelector('.block-carousel-manager').click();
     check('the menu returns only on request',!document.body.classList.contains('run-focused')
       && getComputedStyle(document.querySelector('.popup-toolbar')).display!=='none'
       && document.querySelector('.execution').hidden);
+    check('the automation menu offers a way back to the saved execution',
+      !document.querySelector('.resume-run-button').hidden
+      && document.querySelector('.resume-run-button').textContent.includes('Ver última execução'));
+    document.querySelector('.resume-run-button').click();
+    check('returning restores the same stopped card and progress',document.body.classList.contains('run-focused')
+      && document.querySelector('.block-carousel-count').textContent===stoppedBlock
+      && document.querySelector('.execution-percent').textContent===stoppedProgress
+      && !document.querySelector('.report-button').hidden);
     const delayedRun={...run,id:'run-3',currentIndex:1,currentStep:2};
     updateRun(delayedRun);
     updateRun({...delayedRun,blockFailure:{serial:1,index:1,nextIndex:2,message:'Nao encontrou o alvo'}});
@@ -229,7 +258,7 @@ class ChromeBlockCarouselBrowserTest(unittest.TestCase):
             self.assertTrue(match and match.group(1), completed.stderr.decode(errors='replace')[-2000:])
             result = json.loads(html.unescape(match.group(1)))
             self.assertEqual(result['errors'], [], '\n'.join(result['errors']))
-        self.assertEqual(len(result['checks']), 36)
+        self.assertEqual(len(result['checks']), 42)
 
 
 if __name__ == "__main__":

@@ -51,6 +51,11 @@ card da execucao. As tres etapas mais recentes aparecem discretamente em
 permitem revisar outros blocos; **Seguir execucao** volta
 ao bloco atual. Referencias visuais e previews de OCR exportadas pelo Studio
 aparecem no card. Blocos sem imagem mostram o texto ou a acao configurada.
+Enquanto o popup estiver fechado, a porcentagem continua visivel no icone da
+extensao, inclusive em outra aba. Ao concluir ou falhar, o Chrome mostra uma
+notificacao. No card finalizado, **Gerar relatorio PDF** salva o resultado;
+depois de abrir **Automacoes**, use **Ver ultima execucao** para voltar ao card
+sem reiniciar o fluxo.
 Para incluir novas previews em automacoes ja importadas, exporte o JSON novamente no Studio e
 importe o novo arquivo na extensao.
 
