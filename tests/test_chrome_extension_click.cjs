@@ -259,8 +259,9 @@ test("content runner can be reinjected into the same tab", () => {
 const workerSource = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/manifest.json"), "utf8"));
 
-test("service worker uses the persistent content runner instead of reinjecting it", () => {
-  assert.doesNotMatch(workerSource, /chrome\.scripting\.executeScript/);
+test("service worker leaves pages untouched and keeps the persistent content runner", () => {
+  assert.doesNotMatch(workerSource, /chrome\.scripting\.executeScript|progress-overlay/);
+  assert.ok(!manifest.permissions.includes("scripting"));
   assert.deepEqual(manifest.content_scripts, [{
     matches: ["http://*/*", "https://*/*"],
     js: ["content.js"],

@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.52";
+const REQUIRED_RUNTIME_VERSION = "0.2.54";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
@@ -11,6 +11,7 @@ let automationsCache = [];
 let currentRun = {};
 const screenGuardRefreshers = new Set();
 const carouselStates = new Map();
+const companyPreviewRows = new Map();
 const expandedRunLogs = new Set();
 let managerViewRequested = false;
 
@@ -86,10 +87,58 @@ function blockCardDetails(step) {
     loop_end: "Fim do loop", report_result: "Resultado do relatório"
   };
   const text = String(step?.text || step?.selector?.value || step?.url || step?.name || "").trim();
-  const description = text || (type === "key_sequence" ? (step.keys || []).join(" + ") : "");
+  const description = type === "report_result" ? `Status: ${String(step?.status || "Concluída")}`
+    : text || (type === "key_sequence" ? (step.keys || []).join(" + ") : "");
   const initials = { ocr_text: "OCR", visual_match: "IMG", visual_state: "ON", navigate: "URL", data_source: "XLS", focused_text: "TXT" };
   return { title: titles[type] || String(step?.source_type || type || "Bloco do fluxo").replaceAll("_", " "),
     description: description || "Executando a ação configurada neste bloco.", icon: initials[type] || "FD" };
+}
+
+function blockActivityPreview(step, run, active) {
+  if (step?.type === "data_source") {
+    const values = Array.isArray(step.values) ? step.values : [];
+    const row = Number(run?.spreadsheetLoop?.row);
+    const currentRow = run?.spreadsheetLoop && Number.isInteger(row) && row >= 0 && row < values.length;
+    const value = currentRow ? String(values[row] ?? "") : String(values[0] ?? "");
+    const typing = active && run?.status === "running" && currentRow
+      && Number(run.spreadsheetLoop.sourceIndex) === Number(run.currentIndex);
+    return {
+      kind: "PLANILHA", symbol: "▤", count: `${values.length} ${values.length === 1 ? "linha" : "linhas"}`,
+      label: String(step.name || "Coluna da planilha"), value: value || "Aguardando valor",
+      message: typing ? "Digitando na página" : currentRow ? `Linha ${row + 1} de ${values.length}` : "Prévia do primeiro valor",
+      mode: "spreadsheet", animating: typing,
+    };
+  }
+  if (step?.type === "report_result") {
+    const saving = active && run?.status === "running";
+    const status = String(step.status || "Concluída").trim();
+    const reportColumn = String(step.report_column || "").trim();
+    const rawResult = String(step.result || "").trim();
+    const result = rawResult.replace(/\{\{\s*empresa\s*\}\}/gi,
+      String(run?.spreadsheetLoop?.rowData?.Empresa || run?.variables?.empresa || "empresa atual"));
+    return {
+      kind: "RELATÓRIO PDF", symbol: "▦", count: reportColumn || "Resultado",
+      label: "Status do registro", value: status,
+      message: saving ? "Salvando no relatório" : result || "Resultado configurado para o PDF",
+      mode: "report", tone: ["success", "info", "warning", "danger"].includes(step.tone) ? step.tone : "success", animating: saving,
+    };
+  }
+  return null;
+}
+
+function renderBlockActivityPreview(container, preview) {
+  const activity = container.querySelector(".block-carousel-activity");
+  activity.hidden = !preview;
+  if (!preview) return;
+  activity.dataset.mode = preview.mode;
+  activity.dataset.tone = preview.tone || "";
+  activity.classList.toggle("is-animating", Boolean(preview.animating));
+  activity.querySelector(".block-carousel-activity-symbol").textContent = preview.symbol;
+  activity.querySelector(".block-carousel-activity-kind").textContent = preview.kind;
+  activity.querySelector(".block-carousel-activity-count").textContent = preview.count;
+  activity.querySelector(".block-carousel-activity-label").textContent = preview.label;
+  activity.querySelector(".block-carousel-activity-value").textContent = preview.value;
+  activity.querySelector(".block-carousel-activity-message").textContent = preview.message;
 }
 
 function renderLiveSteps(container, automation, run) {
@@ -134,55 +183,47 @@ function renderBlockCarousel(container, automation, run) {
   let state = carouselStates.get(String(automation.id));
   if (!state || state.runId !== runId) {
     const recentFailure = Date.now() - Number(run.blockFailure?.at || 0) < 1600;
+    const recentSuccess = Date.now() - Number(run.blockSuccess?.at || 0) < 1600;
     state = { runId, index: 0, following: true, lastRenderedIndex: null,
       lastFailureSerial: recentFailure && !["completed", "stopped"].includes(run.status)
-        ? 0 : Number(run.blockFailure?.serial || 0) };
+        ? 0 : Number(run.blockFailure?.serial || 0),
+      lastSuccessSerial: recentSuccess && !["stopped", "failed"].includes(run.status)
+        ? 0 : Number(run.blockSuccess?.serial || 0) };
     carouselStates.set(String(automation.id), state);
   }
   const position = Number(run.currentIndex ?? run.lastBlockIndex);
   const activeIndex = Math.min(steps.length - 1, Math.max(0,
     Number.isInteger(position) && (run.currentIndex != null || run.lastBlockIndex != null)
       ? position : Number(run.currentStep || 0) - 1));
+  const flipMs = 280;
+  const feedbackMs = 440;
   const failure = run.blockFailure;
   const failureSerial = Number(failure?.serial || 0);
+  const success = run.blockSuccess;
+  const successSerial = Number(success?.serial || 0);
+  const incoming = [];
   if (state.following && failureSerial > state.lastFailureSerial) {
-    const startedAt = performance.now();
     state.lastFailureSerial = failureSerial;
-    state.failureIndex = Math.min(steps.length - 1, Math.max(0, Number(failure.index || 0)));
-    state.failureStartedAt = startedAt;
-    state.failureUntil = startedAt + 620;
-    const destination = Number(failure.nextIndex);
-    state.destinationIndex = failure.nextIndex != null && Number.isInteger(destination)
-      ? Math.min(steps.length - 1, Math.max(0, destination)) : null;
-    state.destinationUntil = state.destinationIndex === null ? 0
-      : activeIndex !== state.failureIndex ? state.failureUntil + 650 : Infinity;
-    for (const delay of [640, 1300]) {
-      if (delay === 1300 && !Number.isFinite(state.destinationUntil)) continue;
-      setTimeout(() => {
-        if (carouselStates.get(String(automation.id)) === state && state.following
-            && state.lastFailureSerial === failureSerial) renderAutomations();
-      }, delay);
-    }
+    incoming.push({ type: "failure", index: failure.index, nextIndex: failure.nextIndex, at: Number(failure.at || 0) });
   }
-  const now = performance.now();
-  if (Number.isInteger(state.destinationIndex) && now >= Number(state.failureUntil || 0)
-      && !Number.isFinite(state.destinationUntil)) {
-    if (hasFinishedRun(run.status) && activeIndex === state.failureIndex) {
-      state.destinationIndex = null;
-      state.destinationUntil = 0;
-    } else if (activeIndex !== state.failureIndex) {
-      state.destinationUntil = now + 650;
-      setTimeout(() => {
-        if (carouselStates.get(String(automation.id)) === state && state.following
-            && state.lastFailureSerial === failureSerial) renderAutomations();
-      }, 670);
-    }
+  if (state.following && successSerial > state.lastSuccessSerial) {
+    state.lastSuccessSerial = successSerial;
+    incoming.push({ type: "success", index: success.index, at: Number(success.at || 0) });
   }
-  if (state.following) state.index = now < Number(state.failureUntil || 0) ? state.failureIndex
-    : now < Number(state.destinationUntil || 0) ? state.destinationIndex : activeIndex;
+  if (incoming.length) {
+    incoming.sort((a, b) => a.at - b.at);
+    const event = incoming.at(-1);
+    state.feedback = { type: event.type,
+      index: Math.min(steps.length - 1, Math.max(0, Number(event.index || 0))),
+      startedAt: performance.now() };
+    const feedback = state.feedback;
+    setTimeout(() => {
+      if (carouselStates.get(String(automation.id)) === state && state.feedback === feedback) renderAutomations();
+    }, feedbackMs + 20);
+  }
+  if (state.following) state.index = activeIndex;
   state.index = Math.min(steps.length - 1, Math.max(0, state.index));
   const slide = container.querySelector(".block-carousel-slide");
-  const stage = container.querySelector(".block-carousel-stage");
   const previous = container.querySelector(".block-carousel-prev");
   const next = container.querySelector(".block-carousel-next");
   const follow = container.querySelector(".block-carousel-follow");
@@ -191,11 +232,8 @@ function renderBlockCarousel(container, automation, run) {
     const details = blockCardDetails(step);
     const image = blockPreviewImage(step);
     const changed = state.lastRenderedIndex !== null && state.lastRenderedIndex !== state.index;
-    if (changed) {
-      state.previousSlide = state.lastSlide?.cloneNode(true) || null;
-      state.flipStartedAt = performance.now();
-    }
-    slide.classList.remove("flip-in", "failure-shake", "terminal-failure");
+    if (changed) state.flipStartedAt = performance.now();
+    slide.classList.remove("flip-in", "failure-shake", "terminal-failure", "success-shake");
     slide.style.animationDelay = "";
     state.lastRenderedIndex = state.index;
     const automationName = container.querySelector(".block-carousel-automation");
@@ -203,23 +241,36 @@ function renderBlockCarousel(container, automation, run) {
     automationName.title = automationName.textContent;
     container.querySelector(".block-carousel-count").textContent = `${state.index + 1} / ${steps.length}`;
     container.querySelector(".block-carousel-number").textContent = `B${String(step.source_order || state.index + 1).padStart(2, "0")}`;
-    const errorElapsed = performance.now() - Number(state.failureStartedAt || 0);
-    const showingFailure = state.following && state.index === state.failureIndex && errorElapsed < 620;
-    const showingDestination = state.following && state.index === state.destinationIndex
-      && state.index !== activeIndex && performance.now() < Number(state.destinationUntil || 0);
-    const status = showingFailure ? "Falhou · redirecionando" : showingDestination ? "Próximo bloco" : state.index !== activeIndex ? "No fluxo" :
+    const feedbackElapsed = performance.now() - Number(state.feedback?.startedAt || 0);
+    const feedback = state.following && feedbackElapsed < feedbackMs ? state.feedback : null;
+    const showingFailure = feedback?.type === "failure" && feedback.index === state.index;
+    const showingSuccess = feedback?.type === "success" && feedback.index === state.index;
+    const feedbackElement = container.querySelector(".block-carousel-feedback");
+    feedbackElement.hidden = !feedback;
+    if (feedback) {
+      const feedbackStep = steps[feedback.index];
+      const blockNumber = String(feedbackStep?.source_order || feedback.index + 1).padStart(2, "0");
+      const result = feedback.type === "success" ? "Encontrado"
+        : feedbackStep?.type === "ocr_text" ? "Não encontrado" : "Falhou";
+      feedbackElement.textContent = `B${blockNumber} · ${result}`;
+      feedbackElement.dataset.tone = feedback.type === "success" ? "success" : "failed";
+    }
+    const status = showingFailure ? (step.type === "ocr_text" ? "Não encontrado" : "Falhou · redirecionando")
+      : showingSuccess ? "Encontrado" : state.index !== activeIndex ? "No fluxo" :
       run.status === "running" ? "Executando" : run.status === "completed" ? "Concluído" :
       run.status === "failed" ? "Falhou" : run.status === "stopped" ? "Parado" : "Aguardando";
     const statusElement = container.querySelector(".block-carousel-state");
     statusElement.textContent = status;
-    statusElement.dataset.status = showingFailure ? "failed" : showingDestination ? "waiting_screen"
+    statusElement.dataset.status = showingFailure ? "failed" : showingSuccess ? "completed"
       : state.index === activeIndex ? run.status || "ready" : "history";
     container.querySelector(".block-carousel-title").textContent = details.title;
     container.querySelector(".block-carousel-description").textContent = details.description;
     const previewImage = container.querySelector(".block-carousel-image");
     const placeholder = container.querySelector(".block-carousel-placeholder");
+    const activity = !image ? blockActivityPreview(step, run, state.index === activeIndex) : null;
+    renderBlockActivityPreview(container, activity);
     previewImage.hidden = !image;
-    placeholder.hidden = Boolean(image);
+    placeholder.hidden = Boolean(image || activity);
     if (image) {
       previewImage.alt = `Imagem de referência do bloco ${step.source_order || state.index + 1}`;
       previewImage.onerror = () => { previewImage.hidden = true; placeholder.hidden = false; };
@@ -229,35 +280,39 @@ function renderBlockCarousel(container, automation, run) {
     }
     container.querySelector(".block-carousel-placeholder-icon").textContent = details.icon;
     container.querySelector(".block-carousel-placeholder-text").textContent = "Sem imagem de referência neste bloco";
+    const ocrProgress = container.querySelector(".block-carousel-ocr-progress");
+    const latestStep = run.recentSteps?.at(-1);
+    const currentOcrStep = latestStep?.index === state.index && latestStep?.serial === run.currentStep
+      ? latestStep : null;
+    const ocrRunning = step.type === "ocr_text" && state.index === activeIndex && run.status === "running";
+    ocrProgress.hidden = step.type !== "ocr_text" || !(ocrRunning || showingFailure || showingSuccess);
+    if (!ocrProgress.hidden) {
+      const progressState = showingFailure ? "failed" : showingSuccess ? "success"
+        : currentOcrStep?.state === "failed" ? "failed"
+          : currentOcrStep?.state === "done" ? "success" : "searching";
+      ocrProgress.dataset.state = progressState;
+      ocrProgress.querySelector(".block-carousel-ocr-label").textContent = progressState === "failed"
+        ? "Texto não encontrado" : progressState === "success" ? "Texto encontrado" : "Procurando e analisando OCR…";
+    }
     container.querySelector(".block-carousel-page").textContent = `Página: ${step.sequence || "principal"}`;
     previous.disabled = state.index === 0;
     next.disabled = state.index === steps.length - 1;
     follow.disabled = state.following;
     follow.textContent = state.following ? "● Acompanhando" : "Seguir execução";
-    stage.querySelectorAll(".flip-out").forEach((oldFace) => oldFace.remove());
-    const elapsed = performance.now() - Number(state.flipStartedAt || 0);
-    if (!showingFailure && state.previousSlide && elapsed < 650) {
-      const outgoing = state.previousSlide.cloneNode(true);
-      outgoing.classList.remove("flip-in", "flip-out", "failure-shake", "terminal-failure");
-      if (state.previousSlide.classList.contains("failure-shake")) outgoing.classList.add("failure-exit");
-      outgoing.classList.add("flip-out");
-      outgoing.style.animationDelay = `-${Math.round(elapsed)}ms`;
-      outgoing.setAttribute("aria-hidden", "true");
-      stage.append(outgoing);
+    const flipElapsed = performance.now() - Number(state.flipStartedAt || 0);
+    if (changed || (state.flipStartedAt != null && flipElapsed < flipMs)) {
       slide.classList.add("flip-in");
-      slide.style.animationDelay = `-${Math.round(elapsed)}ms`;
-      setTimeout(() => outgoing.remove(), Math.max(0, 650 - elapsed));
-    } else {
-      state.previousSlide = null;
+      slide.style.animationDelay = `-${Math.round(flipElapsed)}ms`;
     }
-    if (showingFailure) {
-      slide.classList.remove("flip-in");
+    if (showingFailure && !slide.classList.contains("flip-in")) {
       slide.classList.add("failure-shake");
-      slide.style.animationDelay = `-${Math.round(errorElapsed)}ms`;
+      slide.style.animationDelay = `-${Math.round(feedbackElapsed)}ms`;
+    } else if (showingSuccess && !slide.classList.contains("flip-in")) {
+      slide.classList.add("success-shake");
+      slide.style.animationDelay = `-${Math.round(feedbackElapsed)}ms`;
     } else if (run.status === "failed" && state.index === activeIndex) {
       slide.classList.add("terminal-failure");
     }
-    state.lastSlide = slide;
   };
   previous.addEventListener("click", () => { state.following = false; state.index -= 1; renderSlide(); });
   next.addEventListener("click", () => { state.following = false; state.index += 1; renderSlide(); });
@@ -309,6 +364,16 @@ function spreadsheetLoopInfo(automation) {
     rows,
     columns: spreadsheetLoopColumns(rows, name)
   };
+}
+
+function spreadsheetCompanyLabel(loop, index) {
+  const row = loop?.rows?.[index];
+  const companyColumn = loop?.columns?.find((column) => normalizedSpreadsheetColumn(column) === "empresa")
+    || loop?.columns?.find((column) => normalizedSpreadsheetColumn(column) === "razao social")
+    || loop?.columns?.find((column) => normalizedSpreadsheetColumn(column) === "razão social");
+  return spreadsheetLoopCellValue(row, companyColumn)
+    || String(loop?.values?.[index] ?? "").trim()
+    || "(sem nome)";
 }
 
 function loopDisplayColumn(automation, loop) {
@@ -380,6 +445,7 @@ async function runAutomation(automation, startRow = 1) {
   const loop = spreadsheetLoopInfo(automation);
   const selectedStartRow = loop ? clampSpreadsheetStartRow(startRow, loop.total) : 1;
   managerViewRequested = false;
+  companyPreviewRows.delete(String(automation.id));
   currentRun = {
     automationId: automation.id,
     automationName: automation.automation?.nome,
@@ -516,6 +582,12 @@ function renderAutomation(automation) {
   }
 
   const isCurrent = String(currentRun?.automationId || "") === String(automation.id);
+  const resumeButton = fragment.querySelector(".resume-run-button");
+  if (isCurrent && managerViewRequested && ["running", "waiting_screen", "completed", "failed", "stopped"].includes(currentRun?.status)) {
+    resumeButton.hidden = false;
+    resumeButton.textContent = `Ver última execução · ${runProgress(currentRun).percent}%`;
+    resumeButton.addEventListener("click", () => { managerViewRequested = false; renderAutomations(); });
+  }
   if (isCurrent && !managerViewRequested) {
     const status = currentRun.status || "ready";
     const labels = { ready: "Pronto", running: "Executando", waiting_screen: "Aguardando tela", completed: "Concluida", failed: "Falhou", stopped: "Parada" };
@@ -528,6 +600,32 @@ function renderAutomation(automation) {
     statusElement.className = `execution-status ${status}`;
     fragment.querySelector(".execution-percent").textContent = `${progress.percent}%`;
     fragment.querySelector(".execution-progress").setAttribute("aria-valuenow", String(progress.percent));
+    if (loop?.total) {
+      const companyField = fragment.querySelector(".execution-company");
+      const companyChoice = fragment.querySelector(".execution-company-choice");
+      const companyPosition = fragment.querySelector(".execution-company-position");
+      const liveRow = Number(currentRun.spreadsheetLoop?.row);
+      const hasLiveRow = currentRun.spreadsheetLoop && Number.isInteger(liveRow) && liveRow >= 0 && liveRow < loop.total;
+      const liveName = hasLiveRow ? spreadsheetCompanyLabel(loop, liveRow) : "Aguardando empresa";
+      const followOption = document.createElement("option");
+      followOption.value = "";
+      followOption.textContent = hasLiveRow ? `Atual · ${liveName}` : "Acompanhar empresa atual";
+      companyChoice.replaceChildren(followOption, ...loop.values.map((_, index) => {
+        const option = document.createElement("option");
+        option.value = String(index);
+        option.textContent = `#${index + 1} · ${spreadsheetCompanyLabel(loop, index)}`;
+        return option;
+      }));
+      const previewRow = companyPreviewRows.get(String(automation.id));
+      companyChoice.value = Number.isInteger(previewRow) && previewRow >= 0 && previewRow < loop.total ? String(previewRow) : "";
+      companyChoice.title = "A escolha altera somente a visualização; a automação continua na ordem normal.";
+      companyPosition.textContent = hasLiveRow ? `${liveRow + 1}/${loop.total}` : `${loop.total} no total`;
+      companyChoice.addEventListener("change", () => {
+        if (companyChoice.value === "") companyPreviewRows.delete(String(automation.id));
+        else companyPreviewRows.set(String(automation.id), Number(companyChoice.value));
+      });
+      companyField.hidden = false;
+    }
     renderBlockCarousel(fragment.querySelector(".block-carousel"), automation, currentRun);
     renderLiveSteps(fragment.querySelector(".live-steps"), automation, currentRun);
     const executionSummary = fragment.querySelector(".execution-summary");

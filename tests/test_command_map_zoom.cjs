@@ -55,6 +55,32 @@ test("zoom scales the existing map without rebuilding its connector layer", () =
   const zoomFunction = source.match(/^function setCommandMapZoom\(.*?^}/ms);
   assert.ok(zoomFunction, "Production function setCommandMapZoom");
   assert.doesNotMatch(zoomFunction[0], /scheduleCommandConnectorLayout/);
+  assert.match(styleSource, /\.command-map-tree\s*\{[^}]*\) scale\(var\(--command-map-zoom\)\)/s);
+  assert.doesNotMatch(styleSource.match(/\.command-map-tree\s*\{[^}]*\}/s)?.[0] || "", /\bzoom\s*:/);
+});
+
+test("tree zoom holds the point under the cursor without scrolling the whole map", () => {
+  const zoomFunction = source.match(/^function setCommandMapZoom\(.*?^}/ms);
+  const state = { commandMapZoom: 1, commandMapTreePanOffset: { x: 20, y: 30 }, activeTab: "commands" };
+  const list = {
+    scrollLeft: 0, scrollTop: 0,
+    classList: { contains: () => true },
+    querySelector: () => ({ getBoundingClientRect: () => ({ left: 100, top: 50 }) }),
+    getBoundingClientRect: () => ({ left: 0, top: 0 })
+  };
+  const zoomContext = vm.createContext({
+    state, commandMapList: list, Number, Math,
+    normalizeCommandMapZoom: context.normalizeCommandMapZoom,
+    commandMapTreePanCoordinate: context.commandMapTreePanCoordinate,
+    applyCommandMapZoom() {}
+  });
+  vm.runInContext(zoomFunction[0], zoomContext);
+  zoomContext.setCommandMapZoom(2, { preservePoint: { x: 200, y: 150 }, suppressFocusCenter: true });
+  assert.equal(state.commandMapZoom, 2);
+  assert.equal(state.commandMapTreePanOffset.x, -80);
+  assert.equal(state.commandMapTreePanOffset.y, -70);
+  assert.equal(list.scrollLeft, 0);
+  assert.equal(list.scrollTop, 0);
 });
 
 test("ordinary connector updates keep the tree layer, while layout changes refresh it", () => {
@@ -89,4 +115,36 @@ test("ordinary connector updates keep the tree layer, while layout changes refre
   context.scheduleCommandConnectorLayout({ refreshTreeLinks: true });
   frames.shift()();
   assert.equal(treeRefreshes, 1);
+});
+
+test("moving between blocks updates only nearby cards on a large map", () => {
+  const focusFunction = source.match(/^function applyCommandMapFocus\(.*?^}/ms);
+  assert.ok(focusFunction);
+  let classUpdates = 0;
+  const segments = Array.from({ length: 200 }, (_, index) => ({
+    dataset: { order: String(index + 1) },
+    classList: { toggle: () => { classUpdates += 1; } }
+  }));
+  const row = { classList: { toggle() {} } };
+  const state = {
+    commandMapFocusOrder: 1,
+    commandMapOrderCache: segments.map((_, index) => index + 1),
+    activeTab: "commands"
+  };
+  const context = vm.createContext({
+    state, commandMapList: {
+      querySelector: () => row,
+      querySelectorAll: (selector) => selector.includes("command-flow-segment") ? segments : []
+    },
+    getCommandMapEvents: () => { throw new Error("Focus navigation must use the cached order list"); },
+    resolveNearestCommandMapFocus: () => { throw new Error("Current focus is already valid"); },
+    updateCommandMapNavButtons() {},
+    Number, Set, Map
+  });
+  vm.runInContext(focusFunction[0], context);
+  context.applyCommandMapFocus("auto", { skipConnectorLayout: true, suppressScroll: true });
+  classUpdates = 0;
+  state.commandMapFocusOrder = 2;
+  context.applyCommandMapFocus("auto", { skipConnectorLayout: true, suppressScroll: true });
+  assert.ok(classUpdates <= 8, `Expected nearby updates, got ${classUpdates}`);
 });

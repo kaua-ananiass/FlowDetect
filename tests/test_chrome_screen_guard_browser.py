@@ -25,7 +25,7 @@ window.chrome={storage:{local:{get:async key=>({[key]:db[key]}),set:async items=
 runtime:{sendMessage:async message=>{
   if(message.type==='flowdetect-screen-ready') return {ok:true,ready,reason:ready?'Tela da automacao identificada.':'Aguardando tela da automacao.'};
   if(message.type==='flowdetect-start') started++;
-  return {ok:true,version:'0.2.52',activeRunIds:[]};
+  return {ok:true,version:'0.2.54',activeRunIds:[]};
 }},
 tabs:{query:async()=>[{id:42,url:tabUrl}],sendMessage:async(_id,message)=>{
   if(message.type==='flowdetect-map-element-v1') mapped++;

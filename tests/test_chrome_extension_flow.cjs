@@ -19,6 +19,30 @@ function runner(extra = {}) {
   return context;
 }
 
+test("OCR reports a green success event only when the target was found", async () => {
+  let outcome = { message: "Texto encontrado." };
+  const context = runner({
+    persistRun: async () => {},
+    addLog: async () => {},
+    executeStep: async () => outcome,
+    waitForRouteDelay: async () => {},
+  });
+  const steps = [{ type: "ocr_text", source_order: 1, sequence: "principal" }];
+  const indexes = context.buildFlowIndexes(steps);
+  const run = { currentStep: 0, recentSteps: [], logs: [] };
+
+  await context.executeRange(run, steps, 0, steps.length, new Map(), indexes);
+  assert.equal(run.blockSuccess.index, 0);
+  assert.equal(run.blockSuccess.serial, 1);
+  assert.equal(run.recentSteps[0].state, "done");
+
+  outcome = { message: "Não encontrado.", level: "warning" };
+  await context.executeRange(run, steps, 0, steps.length, new Map(), indexes);
+  assert.equal(run.blockSuccess.serial, 1);
+  assert.equal(run.blockFailure.index, 0);
+  assert.equal(run.recentSteps.at(-1).state, "failed");
+});
+
 test("a manually stopped row is reported as interrupted instead of failed", () => {
   const context = runner();
   const run = { cancelled: false, report: { sourceName: "CNPJ", rows: [], summary: {} } };
@@ -211,6 +235,7 @@ test("the persisted Chrome run carries the spreadsheet progress to the popup", a
   const saved = [];
   const context = runner({
     chrome: { storage: { local: { set: async (value) => saved.push(value) } } },
+    updateProgressBadge: async () => {},
   });
   const persistRun = source.match(/^async function persistRun\(.*?^}/ms);
   assert.ok(persistRun);

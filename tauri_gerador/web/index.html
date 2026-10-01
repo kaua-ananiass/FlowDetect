@@ -709,7 +709,6 @@
               <div class="command-map-save-panel">
                 <div class="command-map-save-top">
                   <button id="mapSaveButton" class="primary-button command-map-save-button" type="button">Salvar mapa</button>
-                  <button id="mapReorganizeButton" class="ghost-button command-map-reorganize-button" type="button" title="Reposiciona automaticamente os blocos desta pagina">Reorganizar mapa</button>
                   <span id="mapSavePercent" class="command-map-save-percent">0%</span>
                 </div>
                 <div class="command-map-save-bar">
@@ -726,6 +725,13 @@
                   <button class="micro-button map-view-button is-active" data-command-map-view="sequence" type="button" aria-pressed="true">Sequencia</button>
                   <button class="micro-button map-view-button" data-command-map-view="tree" type="button" aria-pressed="false">Arvore</button>
                 </div>
+              </div>
+              <div class="command-map-side-actions" role="group" aria-label="Acoes do mapa">
+                <button id="mapCaptureButton" class="ghost-button command-map-capture-button" type="button" title="Captura o mapa original em alta resolução, incluindo os blocos fora da tela">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h4l2-3h4l2 3h4v13H4z"/><circle cx="12" cy="13" r="4"/></svg>
+                  Capturar fluxo
+                </button>
+                <button id="mapReorganizeButton" class="ghost-button command-map-reorganize-button" type="button" title="Reposiciona automaticamente os blocos desta pagina">Reorganizar mapa</button>
               </div>
             </div>
 
@@ -1274,8 +1280,38 @@
       </article>
     </section>
 
+    <dialog id="flowCaptureDialog" class="flow-capture-dialog" aria-labelledby="flowCaptureTitle" aria-describedby="flowCaptureDescription">
+      <header class="flow-capture-header">
+        <div>
+          <span class="panel-kicker">Visual original · alta resolução</span>
+          <h2 id="flowCaptureTitle">Captura do fluxo</h2>
+          <p id="flowCaptureDescription">Os mesmos cards, posições e caminhos do editor, sem reorganizar ou redesenhar o fluxo.</p>
+        </div>
+        <button id="flowCaptureCloseButton" class="ghost-button" type="button">Fechar</button>
+      </header>
+      <div class="flow-capture-toolbar">
+        <p id="flowCaptureMeta" role="status" aria-live="polite"></p>
+        <label class="flow-capture-scope-label">Capturar
+          <select id="flowCaptureScope"><option value="current">Página atual</option><option value="all">Todas as páginas</option></select>
+        </label>
+        <button id="flowCaptureZoomButton" class="ghost-button" type="button" aria-pressed="false">Ampliar prévia</button>
+      </div>
+      <div id="flowCapturePreview" class="flow-capture-preview">
+        <img id="flowCaptureImage" alt="Fluxo completo da automação, com todos os blocos e caminhos" />
+      </div>
+      <footer class="flow-capture-footer">
+        <p id="flowCaptureStatus" role="status" aria-live="polite">PNG em alta resolução com a aparência original do mapa.</p>
+        <div>
+          <button id="flowCaptureSvgButton" class="ghost-button" type="button" title="Abra o SVG no Chrome ou Edge. Use PNG para compartilhar como foto.">Salvar SVG</button>
+          <button id="flowCapturePngButton" class="primary-button" type="button">Salvar PNG</button>
+        </div>
+      </footer>
+    </dialog>
+
     <datalist id="sequenceSuggestions"></datalist>
 
+    <script src="./vendor/html-to-image-1.11.13.js"></script>
+    <script src="./flow-capture.js"></script>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

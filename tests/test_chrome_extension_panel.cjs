@@ -7,6 +7,7 @@ const { test } = require("node:test");
 const root = path.join(__dirname, "../flowdetect_chrome");
 const html = fs.readFileSync(path.join(root, "sidepanel.html"), "utf8");
 const source = fs.readFileSync(path.join(root, "sidepanel.js"), "utf8");
+const css = fs.readFileSync(path.join(root, "sidepanel.css"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 
 test("a completed branched automation displays full progress", () => {
@@ -53,4 +54,71 @@ test("Chrome popup keeps execution details inside the active automation card", (
   assert.match(source, /loopStartChoice\.replaceChildren/);
   assert.match(source, /#\$\{index \+ 1\} - \$\{value/);
   assert.match(source, /startRow: selectedStartRow/);
+});
+
+test("the compact progress shows a selectable company without changing the run", () => {
+  assert.match(html, /class="execution-overview"/);
+  assert.match(html, /class="execution-company-choice" aria-label="Visualizar empresa sem alterar/);
+  assert.match(css, /\.execution-overview\s*\{[^}]*grid-template-columns:/);
+  assert.match(source, /companyPreviewRows\.set\(String\(automation\.id\), Number\(companyChoice\.value\)\)/);
+  assert.match(source, /companyPreviewRows\.delete\(String\(automation\.id\)\)/);
+  assert.match(source, /companyPosition\.textContent = hasLiveRow/);
+});
+
+test("company choices prefer the company column and fall back to the loop value", () => {
+  const declarations = ["normalizedSpreadsheetColumn", "spreadsheetLoopCellValue", "spreadsheetCompanyLabel"]
+    .map((name) => {
+      const match = source.match(new RegExp(`^function ${name}\\(.*?^}`, "ms"));
+      assert.ok(match, name);
+      return match[0];
+    });
+  const context = vm.createContext({});
+  vm.runInContext(declarations.join("\n"), context);
+  const loop = {
+    columns: ["CNPJ", "Empresa"],
+    values: ["00.000.101/0000-00", "00.000.102/0000-00"],
+    rows: [{ Empresa: "Aurora Papelaria" }, { Empresa: "" }]
+  };
+  assert.equal(context.spreadsheetCompanyLabel(loop, 0), "Aurora Papelaria");
+  assert.equal(context.spreadsheetCompanyLabel(loop, 1), "00.000.102/0000-00");
+});
+
+test("spreadsheet and PDF cards show contextual previews without pretending a stopped run is writing", () => {
+  const declarations = ["blockActivityPreview", "renderBlockActivityPreview"]
+    .map((name) => {
+      const match = source.match(new RegExp(`^function ${name}\\(.*?^}`, "ms"));
+      assert.ok(match, name);
+      return match[0];
+    });
+  const context = vm.createContext({});
+  vm.runInContext(declarations.join("\n"), context);
+  const sheet = { type: "data_source", name: "CNPJ", values: ["00.000.101/0000-00", "00.000.102/0000-00"] };
+  const running = { status: "running", currentIndex: 1, spreadsheetLoop: { row: 1, sourceIndex: 1 } };
+  const sheetPreview = context.blockActivityPreview(sheet, running, true);
+  assert.equal(sheetPreview.value, "00.000.102/0000-00");
+  assert.equal(sheetPreview.message, "Digitando na página");
+  assert.equal(sheetPreview.animating, true);
+  assert.equal(context.blockActivityPreview(sheet, { ...running, status: "stopped" }, true).animating, false);
+  assert.equal(context.blockActivityPreview(sheet, {}, false).message, "Prévia do primeiro valor");
+
+  const report = { type: "report_result", status: "Não encontrado", tone: "danger", result: "Resultado de {{empresa}}" };
+  const reportPreview = context.blockActivityPreview(report, running, true);
+  assert.equal(reportPreview.message, "Salvando no relatório");
+  assert.equal(reportPreview.tone, "danger");
+  assert.equal(context.blockActivityPreview(report, { ...running, status: "stopped" }, true).message, "Resultado de empresa atual");
+
+  const fields = new Map();
+  const activity = {
+    hidden: true, dataset: {},
+    classList: { toggle() {} },
+    querySelector(selector) {
+      if (!fields.has(selector)) fields.set(selector, { textContent: "" });
+      return fields.get(selector);
+    }
+  };
+  context.renderBlockActivityPreview({ querySelector: () => activity }, sheetPreview);
+  assert.equal(activity.hidden, false);
+  assert.equal(fields.get(".block-carousel-activity-value").textContent, "00.000.102/0000-00");
+  assert.match(html, /class="block-carousel-activity" hidden/);
+  assert.match(css, /\.block-carousel-preview > \[hidden\]/);
 });

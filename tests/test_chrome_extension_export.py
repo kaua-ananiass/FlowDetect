@@ -1,4 +1,5 @@
 import importlib.util
+import base64
 import json
 import os
 import tempfile
@@ -123,6 +124,42 @@ class ChromeExtensionExportTest(unittest.TestCase):
         self.assertEqual([step["type"] for step in exported["steps"]], ["ocr_text", "visual_match"])
         self.assertTrue(exported["steps"][1]["image"]["data_url"].startswith("data:image/png;base64,"))
         self.assertTrue(exported["steps"][0]["click"])
+
+    def test_export_uses_images_from_selected_automation_not_open_studio_map(self):
+        automation_id = "auto_selected"
+        payload = self.roadmap.criar_payload_vazio()
+        payload["eventos"] = [{
+            "ordem": 1, "sequencia": "pagina_2", "tipo": "clicar_imagem",
+            "detalhes": {
+                "imagem": "imagens/validacao-02",
+                "modo_reconhecimento": "texto_ocr",
+                "fonte_ocr": "legado",
+                "texto_ocr_busca": "Nenhum registro encontrado",
+                "acao_ocr": "clicar",
+            },
+        }]
+        self.roadmap.salvar_payload_em_automacao(automation_id, payload, incluir_recursos=False)
+        own_image = self.roadmap.diretorio_automacao(automation_id) / "imagens" / "validacao-02"
+        own_image.parent.mkdir(parents=True)
+        image_bytes = bytes.fromhex(
+            "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+            "0000000d49444154789c6360f8cfc0000003010100c9fe92ef0000000049454e44ae426082"
+        )
+        own_image.write_bytes(image_bytes)
+        root_image = Path("imagens") / own_image.name
+        root_image.parent.mkdir()
+        root_image.write_bytes(b"image from a different automation")
+
+        result = self.roadmap.exportar_automacao_para_chrome(automation_id, {"nome": "Selecionada"})
+        exported = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+        preview = exported["steps"][0]["visual_fallback"]["data_url"]
+        self.assertEqual(base64.b64decode(preview.split(",", 1)[1]), image_bytes)
+        self.assertEqual(exported["warnings"], [])
+
+        root_image.unlink()
+        result = self.roadmap.exportar_automacao_para_chrome(automation_id, {"nome": "Selecionada"})
+        exported = json.loads(Path(result["json_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(base64.b64decode(exported["steps"][0]["visual_fallback"]["data_url"].split(",", 1)[1]), image_bytes)
 
     def test_ocr_source_chooses_dom_text_or_image_matching(self):
         image_path = Path("imagens") / "icone.png"

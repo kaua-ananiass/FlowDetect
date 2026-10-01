@@ -7,6 +7,33 @@ const { test } = require("node:test");
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
 const manifest = require("../flowdetect_chrome/manifest.json");
 
+test("finished runs notify the user without showing a page overlay", async () => {
+  const calls = [];
+  const context = runner(["notifyRunFinished"], { chrome: {
+    runtime: { getURL: (path) => `chrome-extension://test/${path}` },
+    notifications: { create: async (...args) => { calls.push(args); } },
+  } });
+  await context.notifyRunFinished({ id: "done", status: "completed", automationName: "Rotina fiscal" });
+  await context.notifyRunFinished({ id: "failed", status: "failed", automationName: "Rotina fiscal" });
+  await context.notifyRunFinished({ id: "stopped", status: "stopped", automationName: "Rotina fiscal" });
+  assert.equal(calls.length, 2);
+  assert.match(calls[0][1].message, /relatório PDF/);
+  assert.match(calls[1][1].message, /falha/);
+  assert.ok(manifest.permissions.includes("notifications"));
+  assert.ok(!manifest.content_scripts[0].js.includes("progress-overlay.js"));
+});
+
+test("the extension icon keeps a compact percentage across tabs", async () => {
+  const calls = [];
+  const context = runner(["updateProgressBadge"], { chrome: { action: {
+    setBadgeText: async (options) => calls.push(options.text),
+    setBadgeBackgroundColor: async () => {},
+  } } });
+  await context.updateProgressBadge({ status: "running", currentStep: 2, totalSteps: 4 });
+  await context.updateProgressBadge({ status: "completed", currentStep: 4, totalSteps: 4 });
+  assert.deepEqual(calls, ["50%", ""]);
+});
+
 function runner(names, extra = {}) {
   const functions = names.map((name) => {
     const match = source.match(new RegExp(`^(?:async )?function ${name}\\(.*?^}`, "ms"));
