@@ -33,7 +33,7 @@ test("Studio loads with the original styles and preserves expanded and compact O
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "flowdetect-studio-functional-"));
   const exported = ["renderOcrTargetRows", "renderOcrTargetActionRows", "ocrTargetLayoutsFromContainer",
     "syncOcrTargetActionRows", "setCommandCardOcrRouteDelay", "syncOcrTargetActionControlToSource",
-    "applyOcrTargetActionChoice", "relativeOcrInvokeArgs", "renderCommandMapTreeDelayControl", "createInsertPanelState",
+    "applyOcrTargetActionChoice", "defaultDelayForNewBlockLink", "relativeOcrInvokeArgs", "renderCommandMapTreeDelayControl", "createInsertPanelState",
     "insertValuesFromPanel", "state"];
   // Instrument only the served copy; the production module exposes no test API.
   const instrumented = main.replace(/\nboot\(\);\r?\n}\s*$/,
@@ -105,6 +105,48 @@ test("Studio loads with the original styles and preserves expanded and compact O
       const check = (name, ok) => {if (!ok) throw new Error(name); checks.push(name);};
       check('original stylesheet loaded', [...document.styleSheets].some(s => s.href?.endsWith('/style.css')));
       check('obsolete composers absent', !document.querySelector('#addMouseButton, #addChromeHtmlButton'));
+      const fresh = document.createElement('div');
+      fresh.className = 'flow-card';
+      fresh.innerHTML = qa.renderOcrTargetRows('data-field','data-action','Teste',[])
+        + qa.renderOcrTargetActionRows({texto_ocr_busca:'Teste',ocr_target_layouts:[]});
+      document.body.append(fresh);
+      check('new OCR targets default both link waits to 0.3 seconds',
+        qa.ocrTargetLayoutsFromContainer(fresh)[0].successDelay===0.3
+        && qa.ocrTargetLayoutsFromContainer(fresh)[0].failureDelay===0.3);
+      fresh.querySelector('[data-ocr-target-success-delay]').value = '0';
+      fresh.querySelector('[data-ocr-target-failure-delay]').value = '0';
+      qa.syncOcrTargetActionRows(fresh);
+      qa.applyOcrTargetActionChoice(fresh.querySelector('[data-ocr-target-action-choice="nextStep"][data-ocr-target-action-value="goto"]'));
+      qa.applyOcrTargetActionChoice(fresh.querySelector('[data-ocr-target-action-choice="failureAction"][data-ocr-target-action-value="ir_para_bloco"]'));
+      check('linking an older OCR target replaces its unused zero waits',
+        qa.ocrTargetLayoutsFromContainer(fresh)[0].successDelay===0.3
+        && qa.ocrTargetLayoutsFromContainer(fresh)[0].failureDelay===0.3);
+      fresh.innerHTML = qa.renderOcrTargetRows('data-field','data-action','Teste',
+        [{action:'clicar_ir_para_bloco',block:'7',successDelay:0,failureAction:'ir_para_bloco',failureBlock:'9',failureDelay:0}]);
+      check('an already linked OCR target keeps explicitly configured zero waits',
+        qa.ocrTargetLayoutsFromContainer(fresh)[0].successDelay===0
+        && qa.ocrTargetLayoutsFromContainer(fresh)[0].failureDelay===0);
+      fresh.remove();
+      const generic = document.createElement('div');
+      generic.innerHTML = '<select data-tree-field="successAction"><option value="continuar" selected>Continuar</option><option value="ir_para_bloco">Ir para bloco</option></select>'
+        + '<input data-tree-field="successSequenceDelay" value="0"><input data-tree-field="successSequenceDelay" value="0">';
+      const genericAction = generic.querySelector('select');
+      genericAction.value = 'ir_para_bloco';
+      check('new generic block links default to 0.3 seconds',
+        qa.defaultDelayForNewBlockLink(generic,genericAction)
+        && [...generic.querySelectorAll('input')].every(input=>input.value==='0.3'));
+      generic.querySelectorAll('input').forEach(input=>input.value='0');
+      genericAction.value = 'continuar'; qa.defaultDelayForNewBlockLink(generic,genericAction);
+      genericAction.value = 'ir_para_bloco';
+      check('a manually changed zero remains zero when revisiting the same link',
+        !qa.defaultDelayForNewBlockLink(generic,genericAction)
+        && [...generic.querySelectorAll('input')].every(input=>input.value==='0'));
+      generic.innerHTML = '<select data-tree-field="failureAction"><option value="continuar" selected>Continuar</option><option value="ir_para_bloco">Ir para bloco</option></select>'
+        + '<input data-tree-field="failureSequenceDelay" value="1.5">';
+      const failureAction = generic.querySelector('select'); failureAction.value='ir_para_bloco';
+      check('new links preserve a nonzero wait already configured',
+        !qa.defaultDelayForNewBlockLink(generic,failureAction)
+        && generic.querySelector('input').value==='1.5');
       const layout = {texto:'Empresa',offsetX:4,offsetY:8,width:140,height:40,action:'confirmar_ir_para_bloco',
         block:'7',clicks:1,failureAction:'ir_para_bloco',failureBlock:'9',successDelay:1.5,failureDelay:2.4};
       const card = document.createElement('div');
@@ -154,7 +196,7 @@ test("Studio loads with the original styles and preserves expanded and compact O
       qa.state.insertPanel = originalInsertPanel;
       card.remove(); return checks;
     })()`);
-    assert.equal(result.length, 12);
+    assert.equal(result.length, 18);
     assert.deepEqual(errors, []);
   } finally {
     if (socket) socket.close();

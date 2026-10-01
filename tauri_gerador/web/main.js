@@ -8391,6 +8391,34 @@ function applyActionVisibilityState(container) {
   });
 }
 
+function defaultDelayForNewBlockLink(container, actionControl) {
+  if (!container || !actionControl) return false;
+  const fieldAttr = ["data-tree-field", "data-insert-field", "data-field"]
+    .find((attribute) => actionControl.hasAttribute(attribute));
+  const delayFields = {
+    successAction: "successSequenceDelay",
+    failureAction: "failureSequenceDelay",
+    ocrFailureAction: "ocrFailureSequenceDelay",
+    compareDivergeAction: "compareDivergeSequenceDelay",
+    chromeSuccessAction: "chromeSuccessSequenceDelay",
+    chromeFailureAction: "chromeFailureSequenceDelay",
+  };
+  const delayField = fieldAttr && delayFields[actionControl.getAttribute(fieldAttr)];
+  if (!delayField) return false;
+  const initialAction = Array.from(actionControl.options || [])
+    .find((option) => option.defaultSelected)?.value || actionControl.options?.[0]?.value || "";
+  const previousAction = actionControl.dataset.previousRouteAction || initialAction;
+  actionControl.dataset.previousRouteAction = actionControl.value;
+  const isLink = (action) => ["ir_para_bloco", "ir_para_sequencia"].includes(String(action || ""));
+  if (!isLink(actionControl.value) || isLink(previousAction) || isLink(initialAction)
+    || actionControl.dataset.routeDelayInitialized === "true") return false;
+  actionControl.dataset.routeDelayInitialized = "true";
+  const inputs = Array.from(container.querySelectorAll(`[${fieldAttr}="${delayField}"]`));
+  if (!inputs.length || inputs.some((input) => normalizeTransitionDelay(input.value) !== 0)) return false;
+  inputs.forEach((input) => { input.value = "0.3"; });
+  return true;
+}
+
 function normalizeRecognitionTreeTab(tabName) {
   const normalized = String(tabName || "base").trim().toLowerCase();
   return ["base", "preview", "action", "advanced"].includes(normalized) ? normalized : "base";
@@ -9638,8 +9666,8 @@ function renderOcrTargetRows(fieldAttr, actionAttr, text = "", layouts = []) {
               <input ${fieldAttr}="ocrTargetClicks" data-ocr-target-clicks type="hidden" value="${escapeHtml(Math.max(1, Math.trunc(parseNumber(layouts?.[index]?.clicks, 1))))}" />
               <input ${fieldAttr}="ocrTargetFailureAction" data-ocr-target-failure-action type="hidden" value="${escapeHtml(normalizeOcrTargetFailureAction(layouts?.[index]?.failureAction ?? layouts?.[index]?.failure_action))}" />
               <input ${fieldAttr}="ocrTargetFailureBlock" data-ocr-target-failure-block type="hidden" value="${escapeHtml(layouts?.[index]?.failureBlock ?? layouts?.[index]?.failure_block ?? layouts?.[index]?.bloco_falha ?? "")}" />
-              <input ${fieldAttr}="ocrTargetSuccessDelay" data-ocr-target-success-delay type="hidden" value="${formatTransitionDelayValue(layouts?.[index]?.successDelay ?? layouts?.[index]?.success_delay ?? 0)}" />
-              <input ${fieldAttr}="ocrTargetFailureDelay" data-ocr-target-failure-delay type="hidden" value="${formatTransitionDelayValue(layouts?.[index]?.failureDelay ?? layouts?.[index]?.failure_delay ?? 0)}" />
+              <input ${fieldAttr}="ocrTargetSuccessDelay" data-ocr-target-success-delay type="hidden" value="${formatTransitionDelayValue(layouts?.[index]?.successDelay ?? layouts?.[index]?.success_delay ?? 0.3)}" />
+              <input ${fieldAttr}="ocrTargetFailureDelay" data-ocr-target-failure-delay type="hidden" value="${formatTransitionDelayValue(layouts?.[index]?.failureDelay ?? layouts?.[index]?.failure_delay ?? 0.3)}" />
             </label>
             <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo" ${targets.length <= 1 ? "disabled" : ""}>&times;</button>
           </div>
@@ -9686,8 +9714,8 @@ function addOcrTargetRow(container, fieldAttr, actionAttr, value = "") {
       <input ${fieldAttr}="ocrTargetClicks" data-ocr-target-clicks type="hidden" value="1" />
       <input ${fieldAttr}="ocrTargetFailureAction" data-ocr-target-failure-action type="hidden" value="continuar" />
       <input ${fieldAttr}="ocrTargetFailureBlock" data-ocr-target-failure-block type="hidden" value="" />
-      <input ${fieldAttr}="ocrTargetSuccessDelay" data-ocr-target-success-delay type="hidden" value="0" />
-      <input ${fieldAttr}="ocrTargetFailureDelay" data-ocr-target-failure-delay type="hidden" value="0" />
+      <input ${fieldAttr}="ocrTargetSuccessDelay" data-ocr-target-success-delay type="hidden" value="0.3" />
+      <input ${fieldAttr}="ocrTargetFailureDelay" data-ocr-target-failure-delay type="hidden" value="0.3" />
     </label>
     <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo">&times;</button>
   `;
@@ -9720,8 +9748,8 @@ function ocrTargetActionLayout(layouts = [], index = 0) {
     clicks: Math.max(1, Math.trunc(parseNumber(layout.clicks, 1))),
     failureAction: normalizeOcrTargetFailureAction(layout.failureAction ?? layout.failure_action),
     failureBlock: String(layout.failureBlock ?? layout.failure_block ?? layout.bloco_falha ?? "").trim(),
-    successDelay: normalizeTransitionDelay(layout.successDelay ?? layout.success_delay),
-    failureDelay: normalizeTransitionDelay(layout.failureDelay ?? layout.failure_delay),
+    successDelay: normalizeTransitionDelay(layout.successDelay ?? layout.success_delay ?? 0.3),
+    failureDelay: normalizeTransitionDelay(layout.failureDelay ?? layout.failure_delay ?? 0.3),
   };
 }
 
@@ -9979,8 +10007,18 @@ function applyOcrTargetActionChoice(button) {
     applyOcrTargetActionVisibility(actionRow);
     return false;
   }
+  const newLink = (control === "nextStep" && hiddenControl.value !== "goto" && value === "goto")
+    || (control === "failureAction" && hiddenControl.value !== "ir_para_bloco" && value === "ir_para_bloco");
   hiddenControl.value = value;
-  return syncOcrTargetActionControlToSource(hiddenControl);
+  const changed = syncOcrTargetActionControlToSource(hiddenControl);
+  if (!newLink) return changed;
+  const delayName = control === "failureAction" ? "failureDelay" : "successDelay";
+  const delayControl = actionRow?.querySelector(`[data-ocr-target-action-control="${delayName}"]`);
+  if (delayControl && normalizeTransitionDelay(delayControl.value) === 0) {
+    delayControl.value = "0.3";
+    return syncOcrTargetActionControlToSource(delayControl) || changed;
+  }
+  return changed;
 }
 
 function refreshOcrTargetActionRows(container) {
@@ -25996,8 +26034,20 @@ commandMapList.addEventListener("change", (event) => {
     target.matches('[data-tree-field="successAction"], [data-tree-field="failureAction"], [data-tree-field="ocrFailureAction"], [data-tree-field="compareDivergeAction"], [data-tree-field="chromeSuccessAction"], [data-tree-field="chromeFailureAction"], [data-insert-field="successAction"], [data-insert-field="failureAction"], [data-insert-field="ocrFailureAction"], [data-insert-field="compareDivergeAction"], [data-insert-field="chromeSuccessAction"], [data-insert-field="chromeFailureAction"], [data-field="successAction"], [data-field="failureAction"], [data-field="ocrFailureAction"], [data-field="compareDivergeAction"], [data-field="chromeSuccessAction"], [data-field="chromeFailureAction"]')
   ) {
     const container = target.closest(".command-tree-card, .insert-card-panel, .flow-card");
+    const defaultedDelay = defaultDelayForNewBlockLink(container, target);
     applyActionVisibilityState(container);
     if (state.insertPanel && container?.classList.contains("insert-card-panel")) {
+      if (defaultedDelay) {
+        const delayField = {
+          successAction: "successSequenceDelay",
+          failureAction: "failureSequenceDelay",
+          ocrFailureAction: "ocrFailureSequenceDelay",
+          compareDivergeAction: "compareDivergeSequenceDelay",
+          chromeSuccessAction: "chromeSuccessSequenceDelay",
+          chromeFailureAction: "chromeFailureSequenceDelay",
+        }[target.dataset.insertField];
+        if (delayField) state.insertPanel[delayField] = 0.3;
+      }
       if (target.matches('[data-insert-field="successAction"]')) {
         state.insertPanel.successAction = target.value;
       }
