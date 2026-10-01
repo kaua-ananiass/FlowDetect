@@ -84,11 +84,40 @@ function updateSpreadsheetProgress(run) {
   run.progressPercent = Math.max(Number(run.progressPercent || 0), percent);
 }
 
+async function updateProgressBadge(run) {
+  if (!chrome.action?.setBadgeText) return;
+  if (!["running", "waiting_screen"].includes(run?.status)) {
+    await chrome.action.setBadgeText({ text: "" });
+    return;
+  }
+  const total = Math.max(0, Number(run.totalSteps || 0));
+  const measured = typeof run.progressPercent === "number" ? run.progressPercent : NaN;
+  const estimated = total ? Math.round((Math.max(0, Number(run.currentStep || 0)) / total) * 100) : 0;
+  const percent = Math.max(0, Math.min(99, Number.isFinite(measured) ? measured : estimated));
+  await chrome.action.setBadgeBackgroundColor?.({ color: "#087d89" });
+  await chrome.action.setBadgeText({ text: `${percent}%` });
+}
+
 async function persistRun(run) {
   updateSpreadsheetProgress(run);
   const persisted = { ...run, logs: run.logs.slice(-100) };
   delete persisted.cancelled;
   await chrome.storage.local.set({ [RUN_STORAGE_KEY]: persisted });
+  await updateProgressBadge(run).catch(() => {});
+}
+
+async function notifyRunFinished(run) {
+  if (!["completed", "failed"].includes(run.status) || !chrome.notifications?.create) return;
+  const name = String(run.automationName || "Automação").trim();
+  await chrome.notifications.create(`flowdetect-run-${run.id}`, {
+    type: "basic",
+    iconUrl: chrome.runtime.getURL("icons/icon-128.png"),
+    title: run.status === "completed" ? "FlowDetect · Concluída" : "FlowDetect · Falhou",
+    message: run.status === "completed"
+      ? `${name} terminou. O relatório PDF está disponível na extensão.`
+      : `${name} foi interrompida por uma falha. Abra a extensão para ver os detalhes.`,
+    priority: 0,
+  });
 }
 
 async function addLog(run, message, level = "info") {
@@ -1029,6 +1058,7 @@ async function executeAutomation(automation, tabId, startRow = 1) {
     if (run.report) run.report.finishedAt = run.finishedAt;
     activeRuns.delete(run.id);
     await persistRun(run);
+    await notifyRunFinished(run).catch(() => {});
   }
   return run;
 }

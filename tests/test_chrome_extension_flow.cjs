@@ -235,6 +235,7 @@ test("the persisted Chrome run carries the spreadsheet progress to the popup", a
   const saved = [];
   const context = runner({
     chrome: { storage: { local: { set: async (value) => saved.push(value) } } },
+    updateProgressBadge: async () => {},
   });
   const persistRun = source.match(/^async function persistRun\(.*?^}/ms);
   assert.ok(persistRun);
