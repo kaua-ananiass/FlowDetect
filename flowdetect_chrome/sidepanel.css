@@ -259,6 +259,20 @@ h1, h2, p { margin: 0; }
 
 .automation-card-actions { flex: 0 0 auto; gap: 6px; }
 
+.resume-run-button {
+  width: 100%;
+  min-height: 29px;
+  margin: 0 0 9px;
+  border: 1px solid rgba(94, 234, 212, 0.36);
+  border-radius: 8px;
+  color: var(--accent-soft);
+  background: rgba(18, 181, 203, 0.1);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.resume-run-button:hover { background: rgba(18, 181, 203, 0.18); }
+
 .step-count,
 .execution-status {
   display: inline-flex;
@@ -814,7 +828,6 @@ body.run-focused .automation-card:not(.is-active),
 body.run-focused .automation-card.is-active > :not(.execution),
 body.run-focused .execution-heading,
 body.run-focused .execution-loop-summary,
-body.run-focused .report-button,
 body.run-focused .run-log-details { display: none !important; }
 body.run-focused .automation-list { max-height: 542px; }
 body.run-focused .automation-card.is-active { padding: 0; border: 0; background: none; }
@@ -864,6 +877,7 @@ body.run-focused .block-carousel-preview { height: 146px; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 100%;
   min-height: 29px;
   border-color: var(--line-strong);
   border-radius: 7px;

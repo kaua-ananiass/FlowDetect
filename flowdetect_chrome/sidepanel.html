@@ -41,6 +41,7 @@
             <button class="delete-automation" type="button" aria-label="Excluir automacao" title="Excluir automacao">&times;</button>
           </div>
         </div>
+        <button class="resume-run-button" type="button" hidden>Ver última execução</button>
         <div class="loop-start" hidden>
           <label class="loop-start-label"><span>Come&ccedil;ar em</span><select class="loop-start-choice" aria-label="Elemento inicial do loop"></select></label>
         </div>
@@ -81,13 +82,13 @@
               <p class="block-carousel-page"></p>
             </div></div>
             <div class="block-carousel-controls"><button class="block-carousel-prev" type="button" aria-label="Bloco anterior">&#8592;</button><button class="block-carousel-follow" type="button">Acompanhando</button><button class="block-carousel-next" type="button" aria-label="Pr&oacute;ximo bloco">&#8594;</button><button class="stop-button" type="button" hidden>Parar</button><button class="block-carousel-manager" type="button" hidden>Automa&ccedil;&otilde;es</button></div>
+            <button class="report-button" type="button" hidden>Gerar relat&oacute;rio PDF</button>
           </div>
           <section class="live-steps" aria-label="Etapas recentes"><div class="live-steps-heading"><span>Ao vivo</span><span class="live-steps-count"></span></div><ul class="live-steps-list" aria-live="polite"></ul></section>
           <div class="execution-loop-summary">
             <label class="execution-column-label" hidden><span>Exibir</span><select class="execution-column-choice" aria-label="Coluna exibida durante a execucao"></select></label>
             <p class="execution-summary">Preparando execucao</p>
           </div>
-          <button class="report-button" type="button" hidden>Gerar relat&oacute;rio PDF</button>
           <details class="run-log-details"><summary>Hist&oacute;rico da execu&ccedil;&atilde;o</summary><ul class="run-log" aria-label="Logs da execucao" aria-live="polite"></ul></details>
         </section>
       </article>

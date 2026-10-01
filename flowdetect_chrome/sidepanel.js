@@ -582,6 +582,12 @@ function renderAutomation(automation) {
   }
 
   const isCurrent = String(currentRun?.automationId || "") === String(automation.id);
+  const resumeButton = fragment.querySelector(".resume-run-button");
+  if (isCurrent && managerViewRequested && ["running", "waiting_screen", "completed", "failed", "stopped"].includes(currentRun?.status)) {
+    resumeButton.hidden = false;
+    resumeButton.textContent = `Ver última execução · ${runProgress(currentRun).percent}%`;
+    resumeButton.addEventListener("click", () => { managerViewRequested = false; renderAutomations(); });
+  }
   if (isCurrent && !managerViewRequested) {
     const status = currentRun.status || "ready";
     const labels = { ready: "Pronto", running: "Executando", waiting_screen: "Aguardando tela", completed: "Concluida", failed: "Falhou", stopped: "Parada" };
