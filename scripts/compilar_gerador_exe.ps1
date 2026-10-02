@@ -298,6 +298,7 @@ $itemsToCopy = @(
     "capturar_imagem_tela.py",
     "diagnostico_ambiente.py",
     "executar_automacao.py",
+    "marcador_visual.py",
     "gerenciar_roteiro.py",
     "gerenciar_dados_planilha.py",
     "listar_janelas_abertas.py",

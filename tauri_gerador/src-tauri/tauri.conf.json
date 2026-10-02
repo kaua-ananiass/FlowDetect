@@ -36,6 +36,7 @@
       "../../chrome_web_bridge.py": "chrome_web_bridge.py",
       "../../diagnostico_ambiente.py": "diagnostico_ambiente.py",
       "../../executar_automacao.py": "executar_automacao.py",
+      "../../marcador_visual.py": "marcador_visual.py",
       "../../scripts/runtime/executar_automacao.bat": "executar_automacao.bat",
       "../../reconhecimento_worker.py": "reconhecimento_worker.py",
       "../../gerenciar_roteiro.py": "gerenciar_roteiro.py",
