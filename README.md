@@ -116,8 +116,13 @@ A primeira versão da extensão fica em `flowdetect_chrome/`.
 
 1. No Chrome, abra `chrome://extensions` e ative o **Modo do desenvolvedor**.
 2. Clique em **Carregar sem compactação** e selecione `flowdetect_chrome`.
-3. No Studio, abra a Biblioteca, vire o card de uma automação e clique em **Exportar para Chrome**.
-4. No painel lateral da extensão, importe o arquivo JSON e execute a automação na aba atual.
+3. Para conectar diretamente, abra a extensão e copie o código de seis dígitos exibido no topo.
+4. No Launcher do Studio, clique em **Conectar Chrome**, digite o código e aguarde **Conectado ao Studio**. O pareamento é lembrado nos próximos reinícios.
+5. Na Biblioteca, use **Enviar à extensão** para importar uma nova cópia sem arquivo intermediário. A opção **Exportar para Chrome** continua disponível para gerar um JSON e importá-lo manualmente.
+
+O Studio e o Chrome precisam estar no mesmo computador. Se a extensão mostrar **Studio não encontrado**, confirme que o Studio atualizado está aberto; o código não substitui a comunicação local. Para testar OCR no Chrome, abra a página HTTP/HTTPS desejada e escolha **No Chrome** no teste do bloco.
+
+Para ajustar um OCR ao iniciar uma automação, marque **Editável na extensão** no texto alvo do bloco, salve o mapa e envie/exporte novamente. A extensão mostrará **Textos OCR editáveis** no card da automação. A troca altera só a validação daquela execução; o clique e as rotas permanecem os mesmos.
 
 Ela executa URL, texto, teclas, loops de planilha, OCR de texto ou elemento da página e reconhecimento visual por imagem. As referências visuais são incluídas no JSON exportado para a extensão funcionar sem depender da pasta de imagens do Studio.
 

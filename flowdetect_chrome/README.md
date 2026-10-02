@@ -1,5 +1,8 @@
 # FlowDetect para Chrome
 
+Versao 0.2.58: pareamento com o Studio, teste de reconhecimento na aba ativa e
+edicao opcional de textos OCR por execucao.
+
 Extensão que executa automações web exportadas pelo FlowDetect Studio na aba atual do Chrome.
 
 ## O que ela executa
@@ -27,6 +30,12 @@ Ao atualizar de uma versão anterior, aceite as novas permissões de captura de 
 
 Depois de atualizar a extensao, recarregue tambem a pagina da automacao para que o
 destaque visual do OCR apareca sobre janelas modais ja abertas.
+
+Para trocar um texto OCR antes da execucao, marque **Editavel na extensao** no alvo
+correspondente no Studio, salve o mapa e envie/exporte a automacao novamente.
+Abra **Textos OCR editaveis** no card da extensao e informe o novo texto. Apenas a
+validacao dessa execucao muda; o ponto de clique e as rotas continuam configurados.
+A imagem de referencia permanece como previa do texto original.
 
 ## Mapear um elemento da pagina
 
