@@ -1,5 +1,6 @@
 ﻿const tauriCore = window.__TAURI__?.core ?? null;
 const tauriEvent = window.__TAURI__?.event ?? null;
+import { validateRoadmap } from "./map-validator.js";
 const tauriDialog = window.__TAURI__?.dialog ?? null;
 window.__GENERATOR_MAIN_READY = true;
 
@@ -475,10 +476,28 @@ const flowCapturePngButton = document.getElementById("flowCapturePngButton");
 const flowCaptureSvgButton = document.getElementById("flowCaptureSvgButton");
 const flowCaptureCloseButton = document.getElementById("flowCaptureCloseButton");
 const flowCaptureScope = document.getElementById("flowCaptureScope");
+const ocrTestDialog = document.getElementById("ocrTestDialog");
+const ocrTestCloseButton = document.getElementById("ocrTestCloseButton");
+const ocrTestChromeButton = document.getElementById("ocrTestChromeButton");
+const ocrTestScreenButton = document.getElementById("ocrTestScreenButton");
+const ocrTestTargetSummary = document.getElementById("ocrTestTargetSummary");
+const ocrTestResult = document.getElementById("ocrTestResult");
+const ocrTestConnection = document.getElementById("ocrTestConnection");
+const chromePairDialog = document.getElementById("chromePairDialog");
+const chromePairForm = document.getElementById("chromePairForm");
+const chromePairCodeInput = document.getElementById("chromePairCodeInput");
+const chromePairStatus = document.getElementById("chromePairStatus");
+const chromePairSubmitButton = document.getElementById("chromePairSubmitButton");
+const chromePairCloseButton = document.getElementById("chromePairCloseButton");
+const openChromePairButton = document.getElementById("openChromePairButton");
+const ocrTestPairButton = document.getElementById("ocrTestPairButton");
 const flowCaptureState = { preparing: false, saving: false, diagram: null, previewUrl: "", fileName: "", warning: "" };
 const mapSavePercent = document.getElementById("mapSavePercent");
 const mapSaveFill = document.getElementById("mapSaveFill");
 const mapSaveStatus = document.getElementById("mapSaveStatus");
+const mapValidationPanel = document.getElementById("mapValidationPanel");
+const mapValidationSummary = document.getElementById("mapValidationSummary");
+const mapValidationIssues = document.getElementById("mapValidationIssues");
 const testOnceButton = document.getElementById("testOnceButton");
 const stopTestButton = document.getElementById("stopTestButton");
 const testWindowModeSelect = document.getElementById("testWindowModeSelect");
@@ -512,6 +531,7 @@ const assistPanel = document.getElementById("assistPanel");
 const assistShell = assistPanel?.querySelector(".assist-shell");
 const commandsPanel = document.getElementById("commandsPanel");
 const commandMapShell = commandsPanel?.querySelector(".command-map-shell");
+const commandMapChromeStatus = document.getElementById("commandMapChromeStatus");
 const mapPrevButton = document.getElementById("mapPrevButton");
 const mapNextButton = document.getElementById("mapNextButton");
 const workbookPanel = document.getElementById("workbookPanel");
@@ -1092,6 +1112,7 @@ function setWorkspaceTab(tabName) {
   editorPanel.classList.toggle("is-active", editorActive);
   assistPanel.classList.toggle("is-active", assistActive);
   commandsPanel.classList.toggle("is-active", commandsActive);
+  if (commandsActive) refreshCommandMapChromeStatus();
   workbookPanel.classList.toggle("is-active", workbookActive);
   remoteControlPanel?.classList.toggle("is-active", remoteControlActive);
   agentsPanel?.classList.toggle("is-active", agentsActive);
@@ -2591,6 +2612,14 @@ async function runImageRecognitionTest(values, options = {}) {
         setRecognitionTestStatusForOrder(Number(options.recognitionOrder), statusKey, true);
       }
       setMessage(result || "OCR inteligente encontrou e confirmou o texto.", "success");
+      if (options.returnDiagnostic) {
+        const matched = String(result || "").match(/Texto encontrado por [^:\r\n]+: '([^'\r\n]+)'/i)?.[1] || "";
+        return {
+          found: true,
+          markerShown: /Marcador visual exibido: OCR encontrado\./i.test(String(result || "")),
+          matched,
+        };
+      }
       return true;
     } catch (error) {
       setBusy("Erro");
@@ -2598,6 +2627,7 @@ async function runImageRecognitionTest(values, options = {}) {
         setRecognitionTestStatusForOrder(Number(options.recognitionOrder), statusKey, false);
       }
       setMessage(String(error || "OCR inteligente nao encontrou o texto."), "error");
+      if (options.returnDiagnostic) return { found: false, markerShown: false };
       return false;
     }
   }
@@ -3439,36 +3469,240 @@ function getEditableTextEvents(roadmap = state.roadmap) {
     .filter((event) => event?.type === "texto_livre" && Boolean(event?.details?.editavel_execucao));
 }
 
-async function runOcrRecognitionTest(values, options = {}) {
-  if (values?.ocrSource === "elemento") {
-    try {
-      return await validateOcrElement(values.ocrText, true);
-    } catch (error) {
-      setBusy("Erro");
-      setMessage(String(error), "error");
-      return false;
-    }
-  }
-  if (values?.ocrSource === "visual") {
-    return runImageRecognitionTest({
-      ...values,
-      recognitionMode: "imagem",
-      timeout: values.ocrTimeout,
-      confidence: values.ocrConfidence,
-    }, options);
-  }
-  if (values?.ocrSource === "chrome") {
-    setMessage("O modo Chrome consulta o texto da pagina durante a execucao. Execute o bloco para testar esse modo.", "info");
-    return false;
-  }
-  return runImageRecognitionTest(
-    {
-      ...values,
-      recognitionMode: "texto_ocr",
-    },
-    options
-  );
+let pendingOcrTest = null;
+let ocrConnectionTimer = null;
+let chromePairStatusTimer = null;
+let chromePairFormError = "";
+
+async function refreshChromePairStatus() {
+  if (!chromePairDialog?.open) return;
+  const status = await invoke("chrome_extension_connection_status").catch(() => null);
+  chromePairStatus.classList.toggle("is-connected", Boolean(status?.connected));
+  if (status?.connected) chromePairFormError = "";
+  chromePairStatus.textContent = chromePairFormError || (!status?.bridgeActive ? "Ponte local indisponível. Reinicie o Studio atualizado."
+    : status?.connected ? "Extensão conectada e pronta para testes e automações."
+    : status?.paired && status?.studioDetected ? "Código aceito. Aguardando a extensão confirmar..."
+    : status?.studioDetected ? "Extensão detectada. Digite o código mostrado nela."
+    : "Extensão não detectada. Abra a extensão atualizada neste computador.");
 }
+
+function openChromePairDialog() {
+  if (!chromePairDialog) return;
+  chromePairFormError = "";
+  chromePairCodeInput.value = "";
+  if (!chromePairDialog.open) chromePairDialog.showModal();
+  refreshChromePairStatus();
+  if (chromePairStatusTimer) clearInterval(chromePairStatusTimer);
+  chromePairStatusTimer = setInterval(refreshChromePairStatus, 2000);
+  chromePairCodeInput.focus();
+}
+
+async function refreshCommandMapChromeStatus() {
+  if (!commandMapChromeStatus || state.activeTab !== "commands") return;
+  const status = await invoke("chrome_extension_connection_status").catch(() => null);
+  commandMapChromeStatus.classList.toggle("is-connected", Boolean(status?.connected));
+  commandMapChromeStatus.classList.toggle("is-awaiting", !status?.connected && Boolean(status?.studioDetected));
+  commandMapChromeStatus.textContent = status?.connected ? "Chrome conectado"
+    : !status?.bridgeActive ? "Chrome indisponível"
+    : status?.studioDetected ? "Chrome: parear"
+    : status?.paired ? "Chrome offline" : "Chrome não pareado";
+  commandMapChromeStatus.title = status?.connected
+    ? `Extensão conectada (${String(status.extensionId || "").slice(-6)})`
+    : "Clique para conectar a extensão Chrome";
+}
+
+commandMapChromeStatus?.addEventListener("click", openChromePairDialog);
+setInterval(() => { if (state.activeTab === "commands") refreshCommandMapChromeStatus(); }, 3000);
+
+openChromePairButton?.addEventListener("click", openChromePairDialog);
+ocrTestPairButton?.addEventListener("click", openChromePairDialog);
+chromePairCloseButton?.addEventListener("click", () => chromePairDialog.close());
+chromePairCodeInput?.addEventListener("input", () => { chromePairFormError = ""; });
+chromePairDialog?.addEventListener("close", () => {
+  if (chromePairStatusTimer) clearInterval(chromePairStatusTimer);
+  chromePairStatusTimer = null;
+});
+chromePairForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const code = chromePairCodeInput.value.replace(/\D/g, "");
+  if (code.length !== 6) { chromePairFormError = "Digite os 6 números da extensão."; chromePairStatus.textContent = chromePairFormError; return; }
+  chromePairSubmitButton.disabled = true;
+  chromePairStatus.textContent = "Verificando código...";
+  try {
+    await invoke("pair_chrome_extension", { code });
+    chromePairStatus.textContent = "Código aceito. Aguardando a extensão confirmar...";
+    setMessage("Extensão pareada com o Studio.", "success");
+    await refreshChromePairStatus();
+    if (ocrTestDialog?.open) await refreshOcrTestConnection();
+    await refreshCommandMapChromeStatus();
+  } catch (error) {
+    chromePairFormError = String(error);
+    chromePairStatus.textContent = chromePairFormError;
+  } finally {
+    chromePairSubmitButton.disabled = false;
+  }
+});
+
+async function refreshOcrTestConnection() {
+  if (!ocrTestDialog?.open || !ocrTestConnection) return null;
+  let status;
+  try {
+    status = await invoke("chrome_extension_connection_status");
+  } catch (_) {
+    status = { connected: false, bridgeActive: false };
+  }
+  const phase = status?.phase || "";
+  ocrTestConnection.classList.toggle("is-connected", Boolean(status?.connected) && !["queued", "delivered"].includes(phase));
+  ocrTestConnection.classList.toggle("is-busy", Boolean(status?.connected) && ["queued", "delivered"].includes(phase));
+  ocrTestConnection.textContent = !status?.bridgeActive ? "Ponte com o Chrome indisponível — reinicie o Studio"
+    : !status?.connected ? "Extensão não pareada — clique em Conectar extensão"
+    : phase === "queued" ? "Conectado · enviando teste à extensão..."
+    : phase === "delivered" ? "Conectado · extensão recebeu o teste"
+    : "Extensão conectada ao Studio";
+  const waiting = ocrTestResult?.querySelector("[data-ocr-waiting]");
+  if (waiting && phase === "delivered") waiting.textContent = "Extensão recebeu o teste; aguardando a leitura da aba...";
+  return status;
+}
+
+function ocrTestTexts(values = {}) {
+  if (values.ocrSource === "elemento" || values.ocrSource === "visual") return [];
+  const configured = (Array.isArray(values.ocrTargetLayouts) ? values.ocrTargetLayouts : [])
+    .map((target) => String(target?.texto ?? target?.text ?? target?.ocrText ?? "").trim())
+    .filter(Boolean);
+  return configured.length ? configured : splitOcrTargetText(values.ocrText || values.expectedOcrText || "").filter(Boolean);
+}
+
+function openOcrTestChoice(values, options = {}) {
+  if (!ocrTestDialog) return;
+  const snapshot = { ...values, ocrTargetLayouts: Array.isArray(values.ocrTargetLayouts)
+    ? values.ocrTargetLayouts.map((target) => ({ ...target })) : [] };
+  const texts = ocrTestTexts(snapshot);
+  const selector = snapshot.ocrSource === "elemento"
+    ? String(snapshot.ocrElement || snapshot.ocrText || "").trim() : "";
+  const canUseScreen = snapshot.ocrSource !== "elemento" && (texts.length > 0 || Boolean(snapshot.imagePath));
+  const canUseChrome = snapshot.ocrSource !== "visual" && (texts.length > 0 || Boolean(selector));
+  pendingOcrTest = { values: snapshot, texts, selector, options };
+  ocrTestChromeButton.disabled = !canUseChrome;
+  ocrTestScreenButton.disabled = !canUseScreen;
+  ocrTestTargetSummary.textContent = selector
+    ? `Seletor configurado: ${selector.slice(0, 100)}`
+    : texts.length
+      ? `${texts.length} texto(s) configurado(s): ${texts.slice(0, 2).join(" · ").slice(0, 150)}`
+      : snapshot.imagePath ? "Imagem visual configurada para o teste na tela." : "Configure um texto ou imagem antes de testar.";
+  ocrTestResult.replaceChildren();
+  if (!ocrTestDialog.open) ocrTestDialog.showModal();
+  refreshOcrTestConnection();
+  if (ocrConnectionTimer) clearInterval(ocrConnectionTimer);
+  ocrConnectionTimer = setInterval(refreshOcrTestConnection, 1500);
+}
+
+async function runScreenOcrDiagnostic({ values, texts, options }) {
+  const testOptions = { ...options, inheritWindowFallback: false, returnDiagnostic: true };
+  if (!texts.length) {
+    const ok = await runImageRecognitionTest({ ...values, recognitionMode: "imagem" }, testOptions);
+    return { ok: Boolean(ok), results: [{ text: "Imagem de referência", found: Boolean(ok) }] };
+  }
+  const results = [];
+  for (const text of texts) {
+    const diagnostic = await runImageRecognitionTest({
+      ...values, imagePath: "", recognitionMode: "texto_ocr", ocrText: text,
+    }, testOptions);
+    results.push({
+      text,
+      found: Boolean(diagnostic?.found),
+      markerShown: Boolean(diagnostic?.markerShown),
+      matched: String(diagnostic?.matched || ""),
+    });
+  }
+  return { ok: results.every((item) => item.found), results };
+}
+
+async function runChosenOcrTest(mode) {
+  const context = pendingOcrTest;
+  if (!context) return;
+  ocrTestChromeButton.disabled = true;
+  ocrTestScreenButton.disabled = true;
+  ocrTestResult.replaceChildren();
+  const waiting = document.createElement("p");
+  waiting.dataset.ocrWaiting = "true";
+  waiting.textContent = mode === "chrome" ? "Aguardando a extensão na aba Chrome ativa..." : "Procurando na tela...";
+  ocrTestResult.append(waiting);
+  try {
+    if (mode === "chrome") {
+      const status = await refreshOcrTestConnection();
+      if (!status?.connected) throw new Error("Extensão não conectada. Clique em Conectar extensão e digite o código mostrado no Chrome.");
+    }
+    setBusy(mode === "chrome" ? "Testando Chrome" : "Testando tela");
+    const result = mode === "chrome"
+      ? await invoke("test_chrome_extension_recognition", {
+          textos: context.texts,
+          selector: context.selector || null,
+        })
+      : await runScreenOcrDiagnostic(context);
+    ocrTestResult.replaceChildren();
+    if (mode === "screen" && result.ok && context.texts.length) {
+      const markerShown = result.results.every((item) => item.markerShown);
+      const feedback = document.createElement("div");
+      feedback.className = `ocr-test-feedback${markerShown ? "" : " is-marker-missing"}`;
+      const icon = document.createElement("span");
+      icon.className = "ocr-test-feedback-icon";
+      icon.textContent = markerShown ? "✓" : "!";
+      const copy = document.createElement("span");
+      const heading = document.createElement("strong");
+      heading.textContent = markerShown ? "OCR encontrado na tela" : "OCR encontrado, sem destaque";
+      const detail = document.createElement("small");
+      detail.textContent = markerShown
+        ? "Alvo destacado em azul durante o teste."
+        : "O texto foi encontrado, mas o destaque visual não pôde ser exibido.";
+      copy.append(heading, detail);
+      feedback.append(icon, copy);
+      ocrTestResult.append(feedback);
+    }
+    if (result.url) {
+      const url = document.createElement("p");
+      url.textContent = `Aba testada: ${result.url}`;
+      ocrTestResult.append(url);
+    }
+    for (const item of result.results || []) {
+      const row = document.createElement("p");
+      row.className = item.found ? (mode === "screen" ? "is-found-ocr" : "is-found") : "is-missing";
+      row.textContent = `${item.found ? "✓" : "✕"} ${item.text}${item.matched ? ` — ${item.matched}` : ""}`;
+      ocrTestResult.append(row);
+    }
+    if (result.error) {
+      const error = document.createElement("p");
+      error.className = "is-missing";
+      error.textContent = result.error;
+      ocrTestResult.append(error);
+    }
+    const success = Boolean(result.ok);
+    setBusy(success ? "Pronto" : "Erro");
+    setMessage(success
+      ? `Teste ${mode === "chrome" ? "no Chrome" : "na tela"}: alvo encontrado.`
+      : `Teste ${mode === "chrome" ? "no Chrome" : "na tela"}: alvo não encontrado. Veja os detalhes no painel.`,
+    success ? "success" : "error");
+  } catch (error) {
+    setBusy("Erro");
+    ocrTestResult.replaceChildren();
+    const row = document.createElement("p");
+    row.className = "is-missing";
+    row.textContent = String(error);
+    ocrTestResult.append(row);
+    setMessage(String(error), "error");
+  } finally {
+    ocrTestChromeButton.disabled = context.values.ocrSource === "visual" || !(context.texts.length || context.selector);
+    ocrTestScreenButton.disabled = context.values.ocrSource === "elemento" || !(context.texts.length || context.values.imagePath);
+  }
+}
+
+ocrTestChromeButton?.addEventListener("click", () => runChosenOcrTest("chrome"));
+ocrTestScreenButton?.addEventListener("click", () => runChosenOcrTest("screen"));
+ocrTestCloseButton?.addEventListener("click", () => ocrTestDialog.close());
+ocrTestDialog?.addEventListener("close", () => {
+  pendingOcrTest = null;
+  if (ocrConnectionTimer) clearInterval(ocrConnectionTimer);
+  ocrConnectionTimer = null;
+});
 
 function normalizeOcrElementSelector(input) {
   const raw = String(input || "").trim().replace(/^\\(?=<)/, "");
@@ -4389,7 +4623,48 @@ function setCommandMapSaveState(partial = {}) {
   updateCommandMapSaveUI();
 }
 
+function showCommandMapValidation(report, { expand = false } = {}) {
+  if (!mapValidationPanel || !mapValidationSummary || !mapValidationIssues) return;
+  mapValidationPanel.hidden = false;
+  mapValidationPanel.classList.toggle("has-errors", report.errors.length > 0);
+  mapValidationPanel.classList.toggle("has-warnings", !report.errors.length && report.warnings.length > 0);
+  const errorLabel = `${report.errors.length} erro${report.errors.length === 1 ? "" : "s"}`;
+  const warningLabel = `${report.warnings.length} aviso${report.warnings.length === 1 ? "" : "s"}`;
+  mapValidationSummary.textContent = report.issues.length
+    ? `Validação · ${errorLabel} · ${warningLabel}`
+    : `Validação · ${report.blockCount} blocos verificados, sem problemas`;
+  mapValidationIssues.replaceChildren();
+  for (const issue of report.issues.slice(0, 40)) {
+    const row = document.createElement(issue.order ? "button" : "div");
+    row.className = `map-validation-issue is-${issue.severity}`;
+    row.textContent = `${issue.order ? `${issue.sequence || "Página"} · B${String(issue.order).padStart(2, "0")} — ` : ""}${issue.message}`;
+    if (issue.order) {
+      row.type = "button";
+      row.title = "Ir para este bloco";
+      row.addEventListener("click", () => setCommandMapFocus(issue.order));
+    }
+    mapValidationIssues.append(row);
+  }
+  if (report.issues.length > 40) {
+    const remainder = document.createElement("p");
+    remainder.textContent = `Mais ${report.issues.length - 40} avisos. Corrija os primeiros e valide novamente.`;
+    mapValidationIssues.append(remainder);
+  }
+  mapValidationPanel.open = expand && report.issues.length > 0;
+}
+
+function validateSavedCommandMap(options = {}) {
+  const report = validateRoadmap(state.roadmap);
+  showCommandMapValidation(report, options);
+  mapValidationPanel?.classList.remove("is-stale");
+  mapSaveButton?.classList.toggle("has-validation-errors", report.errors.length > 0);
+  return report;
+}
+
 function markCommandMapSaveDirty() {
+  if (mapValidationPanel && !mapValidationPanel.hidden) {
+    mapValidationPanel.classList.add("is-stale");
+  }
   setCommandMapSaveState({
     dirty: true,
     percent: 0,
@@ -4407,6 +4682,9 @@ function syncCommandMapSaveStateWithPending(pendingSnapshots = null) {
     : getPendingCommandMapSnapshots();
 
   if (pending.length) {
+    if (mapValidationPanel && !mapValidationPanel.hidden) {
+      mapValidationPanel.classList.add("is-stale");
+    }
     setCommandMapSaveState({
       dirty: true,
       percent: 0,
@@ -4440,7 +4718,12 @@ async function ensureCommandMapPreparedForExecution(options = {}) {
   } = options;
   const pending = syncCommandMapSaveStateWithPending();
   if (!pending.length) {
-    return true;
+    const report = validateSavedCommandMap({ expand: true });
+    if (!report.errors.length) return true;
+    const message = `Mapa com ${report.errors.length} erro(s). Abra Mapa dos comandos e corrija antes de executar.`;
+    if (typeof onError === "function") onError(message);
+    setMessage(message, "error");
+    return false;
   }
 
   const infoMessage = pending.length === 1
@@ -4483,7 +4766,12 @@ async function ensureCommandMapPreparedForExecution(options = {}) {
         : "Mapa ja estava sincronizado para executar.",
     });
     setBusy("Pronto");
-    return true;
+    const report = validateSavedCommandMap({ expand: true });
+    if (!report.errors.length) return true;
+    const message = `Mapa com ${report.errors.length} erro(s). Abra Mapa dos comandos e corrija antes de executar.`;
+    if (typeof onError === "function") onError(message);
+    setMessage(message, "error");
+    return false;
   } catch (error) {
     const message = `Nao foi possivel sincronizar o mapa antes de ${actionLabel}: ${String(error)}`;
     setCommandMapSaveState({
@@ -9630,6 +9918,7 @@ function ocrTargetLayoutsFromContainer(container) {
       width: hasSize ? parseNumber(widthField?.value, 140) : null,
       height: hasSize ? parseNumber(heightField?.value, 40) : null,
       texto: String(targetField?.value || "").trim(),
+      editableChrome: Boolean(row.querySelector("[data-ocr-target-editable]")?.checked),
       action: normalizeOcrTargetAction(actionField?.value),
       block: String(blockField?.value || "").trim(),
       clicks: Math.max(1, Math.trunc(parseNumber(clicksField?.value, 1))),
@@ -9654,7 +9943,7 @@ function renderOcrTargetRows(fieldAttr, actionAttr, text = "", layouts = []) {
         return `
           <div class="ocr-target-row" data-ocr-target-row data-ocr-target-color="${escapeHtml(color)}">
             <span class="ocr-target-color-dot" aria-hidden="true"></span>
-            <label>
+            <label class="ocr-target-text-label">
               <span>Texto alvo ${index + 1}</span>
               <input ${fieldAttr}="ocrTarget" data-ocr-target-field type="text" value="${escapeHtml(target)}" placeholder="${index === 0 ? "Ex.: Lanc Cont. Valor Docum" : "Ex.: 135"}" />
               <input ${fieldAttr}="ocrTargetOffsetX" data-ocr-target-offset-x type="hidden" value="${escapeHtml(layouts?.[index]?.offsetX ?? "")}" />
@@ -9668,6 +9957,10 @@ function renderOcrTargetRows(fieldAttr, actionAttr, text = "", layouts = []) {
               <input ${fieldAttr}="ocrTargetFailureBlock" data-ocr-target-failure-block type="hidden" value="${escapeHtml(layouts?.[index]?.failureBlock ?? layouts?.[index]?.failure_block ?? layouts?.[index]?.bloco_falha ?? "")}" />
               <input ${fieldAttr}="ocrTargetSuccessDelay" data-ocr-target-success-delay type="hidden" value="${formatTransitionDelayValue(layouts?.[index]?.successDelay ?? layouts?.[index]?.success_delay ?? 0.3)}" />
               <input ${fieldAttr}="ocrTargetFailureDelay" data-ocr-target-failure-delay type="hidden" value="${formatTransitionDelayValue(layouts?.[index]?.failureDelay ?? layouts?.[index]?.failure_delay ?? 0.3)}" />
+            </label>
+            <label class="ocr-target-editable" title="Permitir trocar somente este texto OCR na extensao antes de executar">
+              <input ${fieldAttr}="ocrTargetEditableChrome" data-ocr-target-editable type="checkbox" ${layouts?.[index]?.editableChrome || layouts?.[index]?.editable_chrome ? "checked" : ""} />
+              <span>Editavel na extensao</span>
             </label>
             <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo" ${targets.length <= 1 ? "disabled" : ""}>&times;</button>
           </div>
@@ -9702,7 +9995,7 @@ function addOcrTargetRow(container, fieldAttr, actionAttr, value = "") {
   row.dataset.ocrTargetColor = OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length];
   row.innerHTML = `
     <span class="ocr-target-color-dot" aria-hidden="true"></span>
-    <label>
+    <label class="ocr-target-text-label">
       <span>Texto alvo ${index + 1}</span>
       <input ${fieldAttr}="ocrTarget" data-ocr-target-field type="text" value="${escapeHtml(value)}" placeholder="${index === 0 ? "Ex.: Lanc Cont. Valor Docum" : "Ex.: 135"}" />
       <input ${fieldAttr}="ocrTargetOffsetX" data-ocr-target-offset-x type="hidden" value="" />
@@ -9716,6 +10009,10 @@ function addOcrTargetRow(container, fieldAttr, actionAttr, value = "") {
       <input ${fieldAttr}="ocrTargetFailureBlock" data-ocr-target-failure-block type="hidden" value="" />
       <input ${fieldAttr}="ocrTargetSuccessDelay" data-ocr-target-success-delay type="hidden" value="0.3" />
       <input ${fieldAttr}="ocrTargetFailureDelay" data-ocr-target-failure-delay type="hidden" value="0.3" />
+    </label>
+    <label class="ocr-target-editable" title="Permitir trocar somente este texto OCR na extensao antes de executar">
+      <input ${fieldAttr}="ocrTargetEditableChrome" data-ocr-target-editable type="checkbox" />
+      <span>Editavel na extensao</span>
     </label>
     <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo">&times;</button>
   `;
@@ -13562,6 +13859,7 @@ function renderLauncherLibrary() {
 
                     <div class="automation-library-actions">
                       <button class="ghost-button secondary-inline-action" data-library-action="edit-meta">Editar dados</button>
+                      <button class="ghost-button secondary-inline-action" data-library-action="send-chrome">Enviar à extensão</button>
                       <button class="ghost-button secondary-inline-action" data-library-action="export-chrome">Exportar para Chrome</button>
                       <button class="ghost-button secondary-inline-action" data-library-action="export-zip">Exportar ZIP</button>
                       <button class="danger-button secondary-inline-action" data-library-action="delete">Excluir</button>
@@ -23345,14 +23643,20 @@ async function saveEntireCommandMap() {
       },
     });
 
+    const report = validateSavedCommandMap({ expand: true });
+    mapValidationPanel?.classList.remove("is-stale");
     if (!result.total) {
       setCommandMapSaveState({
         running: false,
         dirty: false,
         percent: 100,
-        status: "Mapa ja estava salvo e pronto para o loop.",
+        status: report.errors.length
+          ? `Mapa salvo, mas com ${report.errors.length} erro(s) de validação.`
+          : "Mapa ja estava salvo e pronto para o loop.",
       });
-      setMessage("Mapa ja estava salvo e pronto para o loop.", "success");
+      setMessage(report.errors.length
+        ? `Mapa salvo com ${report.errors.length} erro(s). Corrija antes de executar.`
+        : "Mapa ja estava salvo e pronto para o loop.", report.errors.length ? "error" : "success");
       return;
     }
 
@@ -23360,9 +23664,13 @@ async function saveEntireCommandMap() {
       running: false,
       dirty: false,
       percent: 100,
-      status: `Mapa salvo com sucesso. ${result.saved} bloco(s) pronto(s) para o loop.`,
+      status: report.errors.length
+        ? `Mapa salvo, mas com ${report.errors.length} erro(s) de validação.`
+        : `Mapa salvo com sucesso. ${result.saved} bloco(s) pronto(s) para o loop.`,
     });
-    setMessage("Mapa salvo com sucesso e pronto para o loop.", "success");
+    setMessage(report.errors.length
+      ? `Mapa salvo com ${report.errors.length} erro(s). Corrija antes de executar.`
+      : `Mapa salvo com sucesso. ${report.warnings.length} aviso(s) na validação.`, report.errors.length ? "error" : "success");
   } catch (error) {
     setCommandMapSaveState({
       running: false,
@@ -24694,6 +25002,18 @@ launcherList.addEventListener("click", async (event) => {
       return;
     }
 
+    if (action === "send-chrome") {
+      const isActiveAutomation = String(automationId || "") === String(state.library.activeId || "");
+      if (isActiveAutomation && !ensureCommandMapSavedBefore("enviar a automação para a extensão")) return;
+      const status = await invoke("chrome_extension_connection_status");
+      if (!status?.connected) throw new Error("Extensão não conectada. Use Conectar Chrome no Launcher e digite o código mostrado na extensão.");
+      setBusy("Enviando ao Chrome");
+      const result = await invoke("send_saved_automation_chrome", { id: automationId });
+      setBusy("Pronto");
+      setMessage(`"${result.name}" enviada à extensão como nova automação (${result.steps || 0} etapas).`, "success");
+      return;
+    }
+
     if (action === "export-chrome") {
       const isActiveAutomation = String(automationId || "") === String(state.library.activeId || "");
       if (isActiveAutomation && !ensureCommandMapSavedBefore("enviar a automacao para o Chrome")) {
@@ -25873,8 +26193,8 @@ timelineList.addEventListener("click", (event) => {
 
   if (action === "test-image-recognition") {
       state.commandMapFocusOrder = order;
-      if (type === "procurar_texto_ocr") {
-        runOcrRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
+      if (type === "procurar_texto_ocr" || values.recognitionMode === "texto_ocr") {
+        openOcrTestChoice(values, { recognitionOrder: order });
       } else {
         runImageRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
       }
@@ -25883,7 +26203,7 @@ timelineList.addEventListener("click", (event) => {
 
   if (action === "test-ocr-recognition") {
     state.commandMapFocusOrder = order;
-    runOcrRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
+    openOcrTestChoice(values, { recognitionOrder: order });
     return;
   }
 
@@ -26734,8 +27054,8 @@ commandMapList.addEventListener("click", async (event) => {
 
   if (action === "test-image-recognition") {
       setCommandMapFocus(order);
-      if (type === "procurar_texto_ocr") {
-        runOcrRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
+      if (type === "procurar_texto_ocr" || values.recognitionMode === "texto_ocr") {
+        openOcrTestChoice(values, { recognitionOrder: order });
       } else {
         runImageRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
       }
@@ -26744,7 +27064,7 @@ commandMapList.addEventListener("click", async (event) => {
 
   if (action === "test-ocr-recognition") {
     setCommandMapFocus(order);
-    runOcrRecognitionTest(values, { inheritWindowFallback: false, recognitionOrder: order });
+    openOcrTestChoice(values, { recognitionOrder: order });
     return;
   }
 
@@ -27203,7 +27523,7 @@ commandMapList.addEventListener("click", async (event) => {
       ...state.insertPanel,
       ...insertValuesFromPanel(panel),
     };
-    runOcrRecognitionTest(state.insertPanel, { inheritWindowFallback: false });
+    openOcrTestChoice(state.insertPanel);
     return;
   }
 

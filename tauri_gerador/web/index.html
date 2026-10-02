@@ -154,6 +154,7 @@
           <div class="launcher-top-zone">
             <header class="launcher-header">
               <p id="launcherMeta" class="timeline-meta" hidden>Organize, abra e execute suas automacoes salvas.</p>
+              <button id="openChromePairButton" class="ghost-button chrome-pair-open" type="button">Conectar Chrome</button>
               <button id="newAutomationButton" class="primary-button">+ Nova Automacao</button>
               <input id="automationZipFileInput" type="file" accept=".zip,application/zip" hidden />
             </header>
@@ -716,6 +717,10 @@
                 </div>
                 <p id="mapSaveStatus" class="command-map-save-status">Mapa ainda nao salvo.</p>
               </div>
+              <details id="mapValidationPanel" class="map-validation-panel" hidden>
+                <summary id="mapValidationSummary">Validação do mapa</summary>
+                <div id="mapValidationIssues" class="map-validation-issues"></div>
+              </details>
               <button id="openEditorFromMap" class="ghost-button command-map-back-button">Voltar para edicao</button>
             </div>
             <div class="command-map-side-stack">
@@ -727,6 +732,7 @@
                 </div>
               </div>
               <div class="command-map-side-actions" role="group" aria-label="Acoes do mapa">
+                <button id="commandMapChromeStatus" class="command-map-chrome-status" type="button" aria-live="polite" title="Conectar a extensão Chrome">Chrome offline</button>
                 <button id="mapCaptureButton" class="ghost-button command-map-capture-button" type="button" title="Captura o mapa original em alta resolução, incluindo os blocos fora da tela">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h4l2-3h4l2 3h4v13H4z"/><circle cx="12" cy="13" r="4"/></svg>
                   Capturar fluxo
@@ -1306,6 +1312,42 @@
           <button id="flowCapturePngButton" class="primary-button" type="button">Salvar PNG</button>
         </div>
       </footer>
+    </dialog>
+
+    <dialog id="chromePairDialog" class="ocr-test-dialog chrome-pair-dialog" aria-labelledby="chromePairTitle">
+      <div class="ocr-test-dialog-head">
+        <div><span class="panel-kicker">FlowDetect para Chrome</span><h2 id="chromePairTitle">Conectar extensão</h2></div>
+        <button id="chromePairCloseButton" class="ghost-button" type="button">Fechar</button>
+      </div>
+      <p class="ocr-test-note">Abra a extensão no Chrome e digite aqui o código de 6 números mostrado nela.</p>
+      <form id="chromePairForm" class="chrome-pair-form">
+        <input id="chromePairCodeInput" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" placeholder="000000" aria-label="Código de 6 números da extensão" required />
+        <button id="chromePairSubmitButton" class="primary-button" type="submit">Conectar</button>
+      </form>
+      <p id="chromePairStatus" class="ocr-test-connection" role="status" aria-live="polite">Aguardando código da extensão.</p>
+    </dialog>
+
+    <dialog id="ocrTestDialog" class="ocr-test-dialog" aria-labelledby="ocrTestTitle">
+      <div class="ocr-test-dialog-head">
+        <div>
+          <span class="panel-kicker">Teste de reconhecimento</span>
+          <h2 id="ocrTestTitle">Onde testar este OCR?</h2>
+        </div>
+        <button id="ocrTestCloseButton" class="ghost-button" type="button">Fechar</button>
+      </div>
+      <p id="ocrTestTargetSummary" class="ocr-test-target-summary"></p>
+      <p id="ocrTestConnection" class="ocr-test-connection">Verificando conexão com a extensão...</p>
+      <button id="ocrTestPairButton" class="ghost-button chrome-pair-inline" type="button">Conectar extensão</button>
+      <div class="ocr-test-modes">
+        <button id="ocrTestChromeButton" class="ocr-test-mode" type="button">
+          <strong>No Chrome</strong><span>Procura o texto na aba ativa da extensão.</span>
+        </button>
+        <button id="ocrTestScreenButton" class="ocr-test-mode" type="button">
+          <strong>Na tela</strong><span>Lê o texto visível na janela com o motor do Studio.</span>
+        </button>
+      </div>
+      <p class="ocr-test-note">O teste só procura e destaca o alvo. Não executa cliques nem altera o mapa.</p>
+      <div id="ocrTestResult" class="ocr-test-result" role="status" aria-live="polite"></div>
     </dialog>
 
     <datalist id="sequenceSuggestions"></datalist>

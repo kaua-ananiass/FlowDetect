@@ -6,7 +6,7 @@ const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../tauri_gerador/web/main.js"), "utf8");
 const names = [
-  "runImageRecognitionTest", "hybridOcrTextForRecognition", "parseNumber",
+  "runImageRecognitionTest", "runScreenOcrDiagnostic", "hybridOcrTextForRecognition", "parseNumber",
   "parseOcrValidationResult", "recognitionValidationMessage", "renderRecognitionValidationDetails",
   "renderRecognitionOcrRuleTestResult",
   "recognitionOcrTargetRuleSummary", "splitOcrTargetText", "normalizeOcrTargetAction", "normalizeOcrTargetFailureAction",
@@ -93,6 +93,25 @@ test("a new successful test replaces stale failures and survives card rendering"
   assert.match(context.renderRecognitionValidationPanel(event), /OCR 5/);
   event.details.imagem = "imagens/outro-menu";
   assert.match(context.renderRecognitionValidationPanel(event), /hidden/);
+});
+
+test("screen OCR diagnostic reports whether the blue target marker appeared", async () => {
+  const { context } = fixture();
+  context.invoke = async () => "Texto encontrado por ocr: 'Meu Perfil' (similaridade=1.00).\nMarcador visual exibido: OCR encontrado.";
+  const visible = await context.runScreenOcrDiagnostic({
+    values: { ocrTimeout: 4 }, texts: ["Meu Perfil"], options: {},
+  });
+  assert.equal(visible.ok, true);
+  assert.equal(visible.results[0].found, true);
+  assert.equal(visible.results[0].markerShown, true);
+  assert.equal(visible.results[0].matched, "Meu Perfil");
+
+  context.invoke = async () => "Texto encontrado.\nTeste OCR: texto encontrado, mas o marcador visual nao abriu.";
+  const unavailable = await context.runScreenOcrDiagnostic({
+    values: { ocrTimeout: 4 }, texts: ["Pesquisar"], options: {},
+  });
+  assert.equal(unavailable.ok, true);
+  assert.equal(unavailable.results[0].markerShown, false);
 });
 
 test("malformed diagnostics preserve the ordinary error and never render raw HTML", () => {
