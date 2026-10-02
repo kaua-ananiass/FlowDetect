@@ -1,11 +1,162 @@
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.54";
+const RUNTIME_VERSION = "0.2.58";
+const STUDIO_TEST_BRIDGE = "http://127.0.0.1:18453";
+const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
+const PAIR_CODE_KEY = "flowdetectStudioPairCode";
+let studioTestPolling = false;
+let pairCodePromise = null;
+const studioConnection = { lastSeen: 0, paired: false, phase: "offline", error: "" };
 const activeRuns = new Map();
 const imageBitmapCache = new Map();
 let creatingCaptureDocument = null;
 
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, Math.max(0, milliseconds)));
+
+function newPairCode() {
+  const bytes = new Uint32Array(1);
+  crypto.getRandomValues(bytes);
+  return String(bytes[0] % 1000000).padStart(6, "0");
+}
+
+function getPairCode() {
+  if (!pairCodePromise) {
+    pairCodePromise = chrome.storage.local.get(PAIR_CODE_KEY).then(async (stored) => {
+      const existing = String(stored[PAIR_CODE_KEY] || "");
+      if (/^\d{6}$/.test(existing)) return existing;
+      const code = newPairCode();
+      await chrome.storage.local.set({ [PAIR_CODE_KEY]: code });
+      return code;
+    }).catch((error) => { pairCodePromise = null; throw error; });
+  }
+  return pairCodePromise;
+}
+
+async function regeneratePairCode() {
+  if (["testing", "importing"].includes(studioConnection.phase)) {
+    throw new Error("Aguarde o teste ou envio atual terminar antes de gerar outro codigo.");
+  }
+  const code = newPairCode();
+  await chrome.storage.local.set({ [PAIR_CODE_KEY]: code });
+  pairCodePromise = Promise.resolve(code);
+  studioConnection.paired = false;
+  studioConnection.phase = "waiting_pair";
+  return code;
+}
+
+async function runStudioRecognitionTest(job) {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab?.id || !/^https?:\/\//i.test(String(tab.url || ""))) {
+    return { ok: false, error: "Abra a aba do site no Chrome antes de testar.", results: [] };
+  }
+  try {
+    const result = await Promise.race([
+      chrome.tabs.sendMessage(tab.id, {
+        type: "flowdetect-test-recognition-v1",
+        texts: job.texts,
+        selector: job.selector,
+      }),
+      sleep(10000).then(() => { throw new Error("A aba nao respondeu ao teste em 10 segundos."); }),
+    ]);
+    return { ...result, tabId: tab.id, url: result?.url || tab.url };
+  } catch (error) {
+    return { ok: false, url: tab.url, results: [], error: `Nao foi possivel ler esta aba. Recarregue-a e tente novamente. ${String(error?.message || error)}` };
+  }
+}
+
+async function importStudioAutomation(job) {
+  const raw = job.automation;
+  if (raw?.schema !== "flowdetect_chrome_automation" || ![1, 2, 3].includes(Number(raw.version)) || !Array.isArray(raw.steps)) {
+    return { ok: false, error: "A automacao enviada pelo Studio e invalida." };
+  }
+  const stored = (await chrome.storage.local.get(AUTOMATIONS_KEY))[AUTOMATIONS_KEY] || [];
+  const previous = job.id && stored.find((item) => item.studioTransferId === job.id);
+  if (previous) return { ok: true, steps: previous.steps?.length || 0 };
+  const imported = {
+    ...raw,
+    id: crypto.randomUUID(),
+    studioTransferId: job.id,
+    automation: {
+      ...raw.automation,
+      nome: String(raw.automation?.nome || "Automacao Chrome"),
+      descricao: String(raw.automation?.descricao || ""),
+    },
+    warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
+  };
+  await chrome.storage.local.set({ [AUTOMATIONS_KEY]: [...stored, imported] });
+  return { ok: true, steps: imported.steps.length };
+}
+
+function startStudioTestBridge() {
+  if (studioTestPolling) return;
+  studioTestPolling = true;
+  (async () => {
+    while (studioTestPolling) {
+      try {
+        const pairCode = await getPairCode();
+        const response = await fetch(`${STUDIO_TEST_BRIDGE}/poll`, {
+          cache: "no-store", headers: {
+            "X-FlowDetect-Version": RUNTIME_VERSION,
+            "X-FlowDetect-Extension-ID": chrome.runtime.id,
+            "X-FlowDetect-Pair-Code": pairCode,
+          },
+        });
+        if (!response.ok) throw new Error(response.status === 426 ? "Versao do Studio incompativel. Reinicie o Studio atualizado." : "Studio indisponivel");
+        studioConnection.lastSeen = Date.now();
+        studioConnection.error = "";
+        const { job, paired } = await response.json();
+        if (pairCode !== await getPairCode()) {
+          studioConnection.paired = false;
+          studioConnection.phase = "waiting_pair";
+          if (job?.id) {
+            await fetch(`${STUDIO_TEST_BRIDGE}/result`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-FlowDetect-Extension-ID": chrome.runtime.id, "X-FlowDetect-Pair-Code": pairCode },
+              body: JSON.stringify({ id: job.id, result: { ok: false, error: "O codigo da extensao mudou. Pareie novamente." } }),
+            });
+          }
+          continue;
+        }
+        studioConnection.paired = Boolean(paired);
+        if (!paired) {
+          studioConnection.phase = "waiting_pair";
+          await sleep(2000);
+          continue;
+        }
+        if (!job?.id) { studioConnection.phase = "connected"; continue; }
+        studioConnection.phase = job.type === "import_automation" ? "importing" : "testing";
+        let result;
+        try {
+          result = job.type === "import_automation"
+            ? await importStudioAutomation(job)
+            : job.type === "test_recognition"
+              ? await runStudioRecognitionTest(job)
+              : { ok: false, error: "Pedido desconhecido do Studio." };
+        } catch (error) {
+          result = { ok: false, error: String(error?.message || error) };
+        }
+        await fetch(`${STUDIO_TEST_BRIDGE}/result`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-FlowDetect-Extension-ID": chrome.runtime.id, "X-FlowDetect-Pair-Code": pairCode },
+          body: JSON.stringify({ id: job.id, result }),
+        });
+        studioConnection.phase = result.ok ? "done" : "error";
+        studioConnection.error = result.error || "";
+      } catch (error) {
+        studioConnection.phase = "offline";
+        studioConnection.paired = false;
+        studioConnection.error = String(error?.message || error);
+        await sleep(3000);
+      }
+    }
+  })();
+}
+
+chrome.alarms.create("flowdetect-studio-test-bridge", { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "flowdetect-studio-test-bridge") startStudioTestBridge();
+});
+startStudioTestBridge();
 
 function normalizeScreenGuard(raw = {}) {
   if (!raw?.enabled) return { enabled: false };
@@ -1064,6 +1215,19 @@ async function executeAutomation(automation, tabId, startRow = 1) {
 }
 
 async function handleMessage(message, sender) {
+  if (message?.type === "flowdetect-studio-connection") {
+    return {
+      ok: true,
+      pairCode: await getPairCode(),
+      studioFound: Date.now() - studioConnection.lastSeen < 15000,
+      connected: studioConnection.paired && Date.now() - studioConnection.lastSeen < 15000,
+      phase: studioConnection.phase,
+      error: studioConnection.error,
+    };
+  }
+  if (message?.type === "flowdetect-studio-new-pair-code") {
+    return { ok: true, pairCode: await regeneratePairCode() };
+  }
   if (message?.type === "flowdetect-screen-ready") {
     return { ok: true, ...await checkAutomationScreen(message.screenGuard, message.tabId) };
   }

@@ -538,6 +538,7 @@ class ChromeExtensionExportTest(unittest.TestCase):
                     },
                     {
                         "texto": "09/2026",
+                        "editableChrome": True,
                         "action": "confirmar_ir_para_bloco",
                         "block": "15",
                         "failureAction": "ir_para_bloco",
@@ -553,9 +554,37 @@ class ChromeExtensionExportTest(unittest.TestCase):
         step = exported["steps"][0]
 
         self.assertEqual([target["text"] for target in step["ocr_targets"]], ["Competencia", "09/2026"])
+        self.assertEqual([target["editable"] for target in step["ocr_targets"]], [False, True])
         self.assertEqual(step["ocr_targets"][0]["on_failure"], {"action": "continuar", "block": "", "sequence": ""})
         self.assertEqual(step["ocr_targets"][1]["on_success"], {"action": "ir_para_bloco", "block": "15", "sequence": ""})
         self.assertEqual(step["ocr_targets"][1]["on_failure"], {"action": "ir_para_bloco", "block": "12", "sequence": ""})
+
+    def test_single_ocr_target_can_be_edited_in_chrome(self):
+        step, warning = self.roadmap.converter_evento_para_chrome({
+            "ordem": 17, "sequencia": "principal", "tipo": "clicar_imagem",
+            "detalhes": {
+                "modo_reconhecimento": "texto_ocr", "fonte_ocr": "chrome",
+                "texto_ocr_busca": "09/2026", "acao_ocr": "clicar",
+                "ocr_target_layouts": [{"texto": "09/2026", "editableChrome": True,
+                                        "action": "clicar", "offsetX": 12, "offsetY": 4}],
+            },
+        })
+        self.assertIsNone(warning)
+        self.assertTrue(step["editable_ocr"])
+        self.assertEqual(step["text"], "09/2026")
+        self.assertTrue(step["click"])
+        self.assertNotIn("ocr_targets", step)
+
+    def test_standalone_ocr_target_can_be_edited_in_chrome(self):
+        step, warning = self.roadmap.converter_evento_para_chrome({
+            "ordem": 3, "sequencia": "principal", "tipo": "procurar_texto_ocr",
+            "detalhes": {"texto": "09/2026", "ocr_target_layouts": [
+                {"texto": "09/2026", "editableChrome": True}
+            ]},
+        })
+        self.assertIsNone(warning)
+        self.assertTrue(step["editable_ocr"])
+        self.assertEqual(step["text"], "09/2026")
 
 
 if __name__ == "__main__":

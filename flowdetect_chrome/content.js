@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_RUNTIME_VERSION = "0.2.54";
+const CONTENT_RUNTIME_VERSION = "0.2.58";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
@@ -793,6 +793,26 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   }
 
   const flowDetectMessageListener = (request, _sender, sendResponse) => {
+    if (request?.type === "flowdetect-test-recognition-v1") {
+      try {
+        const selector = String(request.selector || "").trim();
+        const results = selector
+          ? (() => {
+              const matches = [...document.querySelectorAll(selector)].filter(isVisible);
+              if (matches[0]) highlightRect(matches[0].getBoundingClientRect(), { color: "#22c55e", label: "Teste Chrome" });
+              return [{ text: selector, found: matches.length === 1, matched: `${matches.length} elemento(s) visível(is)` }];
+            })()
+          : (Array.isArray(request.texts) ? request.texts : []).map((text) => {
+              const target = findTextTarget(text);
+              if (target?.rect) highlightRect(target.rect, { color: "#22c55e", label: "Teste Chrome" });
+              return { text: String(text), found: Boolean(target), matched: String(target?.text || "").trim().slice(0, 160) };
+            });
+        sendResponse({ ok: results.length > 0 && results.every((item) => item.found), url: location.href, results });
+      } catch (error) {
+        sendResponse({ ok: false, url: location.href, error: String(error?.message || error), results: [] });
+      }
+      return;
+    }
     if (request?.type === "flowdetect-map-element-v1") {
       try {
         startElementPicker();

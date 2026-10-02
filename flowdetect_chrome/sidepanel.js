@@ -1,17 +1,22 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.54";
+const REQUIRED_RUNTIME_VERSION = "0.2.58";
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
 const newButton = document.querySelector("#newButton");
 const mapElementButton = document.querySelector("#mapElementButton");
 const mapElementStatus = document.querySelector("#mapElementStatus");
+const studioConnection = document.querySelector("#studioConnection");
+const studioConnectionCompact = document.querySelector("#studioConnectionCompact");
+const studioPairCode = document.querySelector("#studioPairCode");
+const studioNewPairCode = document.querySelector("#studioNewPairCode");
 let automationsCache = [];
 let currentRun = {};
 const screenGuardRefreshers = new Set();
 const carouselStates = new Map();
 const companyPreviewRows = new Map();
+const editableOcrDrafts = new Map();
 const expandedRunLogs = new Set();
 let managerViewRequested = false;
 
@@ -21,6 +26,45 @@ function refreshScreenGuards() {
 
 const getAutomations = async () => (await chrome.storage.local.get(AUTOMATIONS_KEY))[AUTOMATIONS_KEY] || [];
 const setAutomations = async (automations) => chrome.storage.local.set({ [AUTOMATIONS_KEY]: automations });
+
+async function refreshStudioConnection() {
+  if (!studioConnection) return;
+  const state = await chrome.runtime.sendMessage({ type: "flowdetect-studio-connection" }).catch(() => null);
+  if (studioPairCode) studioPairCode.textContent = state?.pairCode || "······";
+  const connected = Boolean(state?.connected);
+  const busy = connected && ["testing", "importing"].includes(state.phase);
+  const error = connected && state.phase === "error";
+  const label = !connected && /versao do studio/i.test(state?.error || "") ? "Studio desatualizado"
+    : !connected && !state?.studioFound ? "Studio não encontrado"
+    : !connected ? "Studio encontrado · digite o código"
+    : state.phase === "testing" ? "Testando com Studio..."
+    : state.phase === "importing" ? "Recebendo automacao..."
+    : error ? "Falha no ultimo pedido"
+    : "Conectado ao Studio";
+  for (const badge of [studioConnection, studioConnectionCompact]) {
+    if (!badge) continue;
+    badge.classList.toggle("is-connected", connected && !busy && !error);
+    badge.classList.toggle("is-busy", busy);
+    badge.classList.toggle("is-error", error);
+    badge.textContent = label;
+    badge.title = state?.error || label;
+  }
+}
+
+refreshStudioConnection();
+setInterval(refreshStudioConnection, 2000);
+studioNewPairCode?.addEventListener("click", async () => {
+  studioNewPairCode.disabled = true;
+  try {
+    const result = await chrome.runtime.sendMessage({ type: "flowdetect-studio-new-pair-code" });
+    if (!result?.ok) throw new Error(result?.error || "Nao foi possivel gerar codigo.");
+    await refreshStudioConnection();
+  } catch (error) {
+    window.alert(String(error?.message || error));
+  } finally {
+    studioNewPairCode.disabled = false;
+  }
+});
 
 function normalizeImportedAutomation(raw) {
   const version = Number(raw?.version);
@@ -434,6 +478,40 @@ function clampSpreadsheetStartRow(value, total) {
   return Math.min(Math.max(1, Number.isFinite(parsed) ? parsed : 1), Math.max(1, Number(total) || 1));
 }
 
+function editableOcrEntries(automation) {
+  return (automation.steps || []).flatMap((step, stepIndex) => {
+    if (step.type !== "ocr_text") return [];
+    const targets = Array.isArray(step.ocr_targets) && step.ocr_targets.length
+      ? step.ocr_targets.map((target, targetIndex) => ({ target, targetIndex })).filter(({ target }) => target.editable === true)
+      : step.editable_ocr === true ? [{ target: step, targetIndex: -1 }] : [];
+    return targets.map(({ target, targetIndex }) => ({
+      stepIndex,
+      targetIndex,
+      key: `${stepIndex}:${targetIndex}`,
+      block: Number(step.source_order) || stepIndex + 1,
+      label: targetIndex < 0 ? "OCR 1" : `OCR ${Number(target.index) || targetIndex + 1}`,
+      text: String(target.text || "")
+    }));
+  });
+}
+
+function automationWithEditableOcr(automation, values) {
+  const steps = automation.steps.map((step) => ({ ...step }));
+  for (const entry of editableOcrEntries(automation)) {
+    const text = String(values.get(entry.key) ?? entry.text).trim();
+    if (!text) throw new Error(`Informe o texto do bloco ${entry.block}, ${entry.label}.`);
+    const step = steps[entry.stepIndex];
+    if (entry.targetIndex < 0) step.text = text;
+    else {
+      if (step.ocr_targets === automation.steps[entry.stepIndex].ocr_targets) {
+        step.ocr_targets = step.ocr_targets.map((target) => ({ ...target }));
+      }
+      step.ocr_targets[entry.targetIndex].text = text;
+    }
+  }
+  return { ...automation, steps };
+}
+
 async function runAutomation(automation, startRow = 1) {
   if (!await ensureCurrentRuntime()) return;
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -526,6 +604,33 @@ function renderAutomation(automation) {
   guardForm.querySelector("fieldset").disabled = busy;
   const runButton = fragment.querySelector(".run-automation");
   const screenHint = fragment.querySelector(".screen-guard-hint");
+  const editableEntries = editableOcrEntries(automation);
+  const editSettings = fragment.querySelector(".ocr-edit-settings");
+  const editError = fragment.querySelector(".ocr-edit-error");
+  const draftKey = JSON.stringify([automation.id, editableEntries.map(({ key, text }) => [key, text])]);
+  const drafts = editableOcrDrafts.get(draftKey) || new Map();
+  if (editableEntries.length) {
+    editableOcrDrafts.set(draftKey, drafts);
+    editSettings.hidden = false;
+    fragment.querySelector(".ocr-edit-count").textContent = `${editableEntries.length}`;
+    const editFields = fragment.querySelector(".ocr-edit-fields");
+    for (const entry of editableEntries) {
+      const label = document.createElement("label");
+      const caption = document.createElement("span");
+      caption.textContent = `Bloco ${entry.block} · ${entry.label}`;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = drafts.get(entry.key) ?? entry.text;
+      input.autocomplete = "off";
+      input.setAttribute("aria-label", `${caption.textContent}: texto para validar`);
+      input.addEventListener("input", () => {
+        drafts.set(entry.key, input.value);
+        editError.hidden = true;
+      });
+      label.append(caption, input);
+      editFields.append(label);
+    }
+  }
   let checkVersion = 0;
   let lastGuardKey = "";
   const refreshGuard = async (invalidate = false) => {
@@ -698,7 +803,16 @@ function renderAutomation(automation) {
 
   fragment.querySelector(".run-automation").addEventListener("click", () => {
     const startRow = loop ? clampSpreadsheetStartRow(loopStartChoice.value, loop.total) : 1;
-    return saveScreenGuard(automation, guardForm).then((configured) => runAutomation(configured, startRow)).catch((error) => {
+    let configuredOcr;
+    try {
+      configuredOcr = automationWithEditableOcr(automation, drafts);
+    } catch (error) {
+      editSettings.open = true;
+      editError.textContent = String(error.message || error);
+      editError.hidden = false;
+      return;
+    }
+    return saveScreenGuard(automation, guardForm).then((configured) => runAutomation({ ...configuredOcr, screen_guard: configured.screen_guard }, startRow)).catch((error) => {
       if (!["running", "waiting_screen"].includes(currentRun?.status)) {
         screenHint.hidden = false;
         screenHint.textContent = String(error.message || error);
