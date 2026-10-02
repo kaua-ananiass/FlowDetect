@@ -1,6 +1,7 @@
 ﻿import argparse
 import ctypes
 import difflib
+import importlib.util
 import json
 import math
 import os
@@ -8,6 +9,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import unicodedata
@@ -1408,8 +1410,19 @@ class ExecutorAutomacao:
         etiqueta=None,
         margem=16,
     ):
+        if os.name == "nt" and hasattr(ctypes, "windll"):
+            esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
+            # O marcador Win32 recebe coordenadas absolutas; antes a margem
+            # era passada somente ao caminho Tk e a borda cortava o botao.
+            margem = max(0, int(margem or 0))
+            return self.marcar_area_reconhecida_windows(
+                esquerda - margem, topo - margem,
+                largura + margem * 2, altura + margem * 2,
+                duracao=duracao, etiqueta=etiqueta or ("OCR confirmado" if tema == "ocr" else "Reconhecido"),
+                tema=tema,
+            )
         if not TK_DISPONIVEL:
-            safe_print("Marcador visual indisponivel: Tk nao esta carregado.", flush=True)
+            safe_print("Marcador visual indisponivel nesta plataforma.", flush=True)
             return False
 
         esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
@@ -1442,6 +1455,197 @@ class ExecutorAutomacao:
                 margem=margem,
             )
         return bool(exibido)
+
+    def marcar_area_reconhecida_windows(self, esquerda, topo, largura, altura, duracao=1.8, etiqueta="OCR encontrado", tema="visual"):
+        """Marcador alfa Win32, com contorno GDI simples como reserva."""
+        if os.name != "nt" or not hasattr(ctypes, "windll"):
+            safe_print("Marcador visual indisponivel: Tk e Win32 nao estao disponiveis.", flush=True)
+            return False
+
+        try:
+            # O Python embutido usa python312._pth e nao inclui a pasta do
+            # script no sys.path. Carregamos o modulo vizinho explicitamente.
+            modulo = sys.modules.get("_flowdetect_marcador_visual")
+            if modulo is None:
+                caminho = APP_ROOT / "marcador_visual.py"
+                especificacao = importlib.util.spec_from_file_location(
+                    "_flowdetect_marcador_visual", caminho,
+                )
+                if not especificacao or not especificacao.loader:
+                    raise ImportError(f"Marcador nao encontrado: {caminho}")
+                modulo = importlib.util.module_from_spec(especificacao)
+                sys.modules[especificacao.name] = modulo
+                try:
+                    especificacao.loader.exec_module(modulo)
+                except Exception:
+                    sys.modules.pop(especificacao.name, None)
+                    raise
+
+            if modulo.exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, tema):
+                safe_print(f"Marcador visual exibido: {etiqueta}.", flush=True)
+                return True
+        except Exception as erro:
+            safe_print(f"Marcador alfa indisponivel; usando contorno simples: {erro}", flush=True)
+
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            wndproc_type = ctypes.WINFUNCTYPE(
+                ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+            )
+
+            class WindowClass(ctypes.Structure):
+                _fields_ = [
+                    ("style", wintypes.UINT), ("lpfnWndProc", wndproc_type),
+                    ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
+                    ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HICON),
+                    ("hCursor", wintypes.HANDLE), ("hbrBackground", wintypes.HBRUSH),
+                    ("lpszMenuName", wintypes.LPCWSTR), ("lpszClassName", wintypes.LPCWSTR),
+                ]
+
+            user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            user32.DefWindowProcW.restype = ctypes.c_ssize_t
+            user32.RegisterClassW.argtypes = [ctypes.POINTER(WindowClass)]
+            user32.RegisterClassW.restype = wintypes.ATOM
+            user32.CreateWindowExW.argtypes = [
+                wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, ctypes.c_void_p,
+            ]
+            user32.CreateWindowExW.restype = wintypes.HWND
+            user32.SetLayeredWindowAttributes.argtypes = [wintypes.HWND, wintypes.DWORD, wintypes.BYTE, wintypes.DWORD]
+            user32.SetLayeredWindowAttributes.restype = wintypes.BOOL
+            user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+            user32.UpdateWindow.argtypes = [wintypes.HWND]
+            user32.DestroyWindow.argtypes = [wintypes.HWND]
+            user32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+            user32.GetDC.argtypes = [wintypes.HWND]
+            user32.GetDC.restype = wintypes.HDC
+            user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+            user32.FillRect.argtypes = [wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.HBRUSH]
+            user32.ValidateRect.argtypes = [wintypes.HWND, ctypes.c_void_p]
+            user32.PeekMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT]
+            user32.PeekMessageW.restype = wintypes.BOOL
+            user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+            user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+            user32.DrawTextW.argtypes = [wintypes.HDC, wintypes.LPCWSTR, ctypes.c_int, ctypes.POINTER(wintypes.RECT), wintypes.UINT]
+            gdi32.CreateSolidBrush.argtypes = [wintypes.DWORD]
+            gdi32.CreateSolidBrush.restype = wintypes.HBRUSH
+            gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
+            gdi32.SetBkMode.argtypes = [wintypes.HDC, ctypes.c_int]
+            gdi32.SetTextColor.argtypes = [wintypes.HDC, wintypes.DWORD]
+            gdi32.CreateFontW.argtypes = [
+                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+                wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.LPCWSTR,
+            ]
+            gdi32.CreateFontW.restype = wintypes.HANDLE
+            gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HANDLE]
+            gdi32.SelectObject.restype = wintypes.HANDLE
+            kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+            kernel32.GetModuleHandleW.restype = wintypes.HINSTANCE
+
+            largura = max(12, int(largura))
+            altura = max(12, int(altura))
+            largura_etiqueta = max(124, min(240, 32 + len(str(etiqueta)) * 10))
+            largura_janela = max(largura + 16, largura_etiqueta + 16)
+            altura_janela = altura + 39
+            magenta = 0x00FF00FF
+            # COLORREF usa BGR; acompanha as cores dos temas Tk do Studio.
+            cor_borda = 0x00F8BD38 if tema == "ocr" else 0x0071CC2E
+            cor_linha = 0x007D5030 if tema == "ocr" else 0x00425B27
+            cor_painel = 0x0021140B
+            cor_texto = 0x00FFEEE1
+            pincel_fundo = gdi32.CreateSolidBrush(magenta)
+            pincel_borda = gdi32.CreateSolidBrush(cor_borda)
+            pincel_linha = gdi32.CreateSolidBrush(cor_linha)
+            pincel_painel = gdi32.CreateSolidBrush(cor_painel)
+            fonte = gdi32.CreateFontW(-12, 0, 0, 0, 600, 0, 0, 0, 1, 0, 0, 5, 0, "Segoe UI")
+            if not all((pincel_fundo, pincel_borda, pincel_linha, pincel_painel, fonte)):
+                raise OSError("Nao foi possivel criar os pinceis do marcador.")
+
+            def preencher(hdc, x1, y1, x2, y2, pincel):
+                area = wintypes.RECT(x1, y1, x2, y2)
+                user32.FillRect(hdc, ctypes.byref(area), pincel)
+
+            @wndproc_type
+            def tratar_janela(hwnd, mensagem, wparam, lparam):
+                if mensagem == 0x000F:  # WM_PAINT
+                    hdc = user32.GetDC(hwnd)
+                    if hdc:
+                        preencher(hdc, 0, 0, largura_janela, altura_janela, pincel_fundo)
+                        x1, y1, x2, y2 = 8, 31, 8 + largura, 31 + altura
+                        # Contorno fino e continuo, com cantos mais luminosos.
+                        for borda in ((x1, y1, x2, y1 + 1), (x1, y2 - 1, x2, y2),
+                                      (x1, y1, x1 + 1, y2), (x2 - 1, y1, x2, y2)):
+                            preencher(hdc, *borda, pincel_linha)
+                        canto = min(14, max(5, min(largura, altura) // 3))
+                        for segmento in (
+                            (x1, y1, x1 + canto, y1 + 2), (x1, y1, x1 + 2, y1 + canto),
+                            (x2 - canto, y1, x2, y1 + 2), (x2 - 2, y1, x2, y1 + canto),
+                            (x1, y2 - 2, x1 + canto, y2), (x1, y2 - canto, x1 + 2, y2),
+                            (x2 - canto, y2 - 2, x2, y2), (x2 - 2, y2 - canto, x2, y2),
+                        ):
+                            preencher(hdc, *segmento, pincel_borda)
+                        preencher(hdc, 8, 4, 8 + largura_etiqueta, 26, pincel_painel)
+                        preencher(hdc, 8, 4, 10, 26, pincel_borda)
+                        preencher(hdc, 10, 4, 8 + largura_etiqueta, 5, pincel_linha)
+                        gdi32.SetBkMode(hdc, 1)  # TRANSPARENT
+                        gdi32.SetTextColor(hdc, cor_texto)
+                        fonte_anterior = gdi32.SelectObject(hdc, fonte)
+                        rotulo = wintypes.RECT(18, 5, 8 + largura_etiqueta - 5, 25)
+                        user32.DrawTextW(hdc, str(etiqueta).upper(), -1, ctypes.byref(rotulo), 0x24)
+                        gdi32.SelectObject(hdc, fonte_anterior)
+                        user32.ReleaseDC(hwnd, hdc)
+                    user32.ValidateRect(hwnd, None)
+                    return 0
+                if mensagem == 0x0084:  # WM_NCHITTEST
+                    return -1  # HTTRANSPARENT
+                return user32.DefWindowProcW(hwnd, mensagem, wparam, lparam)
+
+            classe_nome = f"FlowDetectOcrMarker_{os.getpid()}_{threading.get_ident()}_{time.monotonic_ns()}"
+            instancia = kernel32.GetModuleHandleW(None)
+            classe = WindowClass(0, tratar_janela, 0, 0, instancia, None, None, None, None, classe_nome)
+            atom = user32.RegisterClassW(ctypes.byref(classe))
+            if not atom:
+                raise OSError(f"RegisterClassW falhou: {ctypes.get_last_error()}")
+            hwnd = None
+            try:
+                # Topmost, transparente ao mouse e sem roubar o foco do aplicativo testado.
+                estilos = 0x00080000 | 0x00000008 | 0x00000020 | 0x00000080 | 0x08000000
+                hwnd = user32.CreateWindowExW(
+                    estilos, classe_nome, "", 0x80000000,
+                    int(esquerda) - 8, int(topo) - 31, largura_janela, altura_janela,
+                    None, None, instancia, None,
+                )
+                if not hwnd:
+                    raise OSError(f"CreateWindowExW falhou: {ctypes.get_last_error()}")
+                if not user32.SetLayeredWindowAttributes(hwnd, magenta, 255, 0x01):
+                    raise OSError(f"SetLayeredWindowAttributes falhou: {ctypes.get_last_error()}")
+                user32.ShowWindow(hwnd, 4)  # SW_SHOWNOACTIVATE
+                user32.UpdateWindow(hwnd)
+                msg = wintypes.MSG()
+                fim = time.monotonic() + max(0.4, float(duracao))
+                while time.monotonic() < fim:
+                    while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
+                        user32.TranslateMessage(ctypes.byref(msg))
+                        user32.DispatchMessageW(ctypes.byref(msg))
+                    time.sleep(0.02)
+                safe_print(f"Marcador visual exibido: {etiqueta}.", flush=True)
+                return True
+            finally:
+                if hwnd:
+                    user32.DestroyWindow(hwnd)
+                user32.UnregisterClassW(classe_nome, instancia)
+                gdi32.DeleteObject(pincel_fundo)
+                gdi32.DeleteObject(pincel_borda)
+                gdi32.DeleteObject(pincel_linha)
+                gdi32.DeleteObject(pincel_painel)
+                gdi32.DeleteObject(fonte)
+        except Exception as erro:
+            safe_print(f"Falha ao exibir marcador visual Win32: {erro}", flush=True)
+            return False
 
     def feedback_visual_habilitado(self):
         """Indica se os contornos de OCR/reconhecimento podem ser exibidos.
@@ -1554,15 +1758,17 @@ class ExecutorAutomacao:
             "visual": {
                 "cor_borda": "#2ecc71",
                 "cor_flash": "#9bffbf",
-                "cor_texto": "#f5fff8",
-                "cor_fundo_etiqueta": "#1c9f5b",
+                "cor_texto": "#e6fff1",
+                "cor_fundo_etiqueta": "#0b1421",
+                "cor_linha": "#275b42",
                 "etiqueta": "Reconhecido",
             },
             "ocr": {
                 "cor_borda": "#38BDF8",
                 "cor_flash": "#93C5FD",
                 "cor_texto": "#E6F7FF",
-                "cor_fundo_etiqueta": "#1D4ED8",
+                "cor_fundo_etiqueta": "#0b1421",
+                "cor_linha": "#30507d",
                 "etiqueta": "OCR confirmado",
             },
             "ocr_busca": {
@@ -1640,12 +1846,13 @@ class ExecutorAutomacao:
                 cor_flash = tema_config.get("cor_flash", "#9bffbf")
                 cor_texto = tema_config.get("cor_texto", "#f5fff8")
                 cor_fundo_etiqueta = tema_config.get("cor_fundo_etiqueta", "#1c9f5b")
+                cor_linha = tema_config.get("cor_linha", cor_borda)
                 texto_marcador = str(etiqueta or tema_config.get("etiqueta") or "Reconhecido")
                 fundo_transparente = "#ff00ff"
-                raio = 16
-                espessura = 3
+                raio = 9
+                espessura = 1
                 largura_minima_etiqueta = max(82, min(150, 22 + len(texto_marcador) * 7))
-                altura_etiqueta = 20
+                altura_etiqueta = 19
                 padding_overlay = 8
                 raiz = tk.Tk()
                 raiz.withdraw()
@@ -1784,10 +1991,23 @@ class ExecutorAutomacao:
                     pontos_retangulo_arredondado(retangulo_x1, retangulo_y1, retangulo_x2, retangulo_y2, raio),
                     smooth=True,
                     splinesteps=24,
-                    outline=cor_borda,
+                    outline=cor_linha,
                     fill="",
                     width=espessura,
                 )
+                if tema in {"visual", "ocr"}:
+                    tamanho_canto = min(15, max(5, min(retangulo_x2 - retangulo_x1, retangulo_y2 - retangulo_y1) // 3))
+                    for x1, y1, x2, y2 in (
+                        (retangulo_x1 + raio, retangulo_y1, retangulo_x1 + tamanho_canto, retangulo_y1),
+                        (retangulo_x1, retangulo_y1 + raio, retangulo_x1, retangulo_y1 + tamanho_canto),
+                        (retangulo_x2 - tamanho_canto, retangulo_y1, retangulo_x2 - raio, retangulo_y1),
+                        (retangulo_x2, retangulo_y1 + raio, retangulo_x2, retangulo_y1 + tamanho_canto),
+                        (retangulo_x1 + raio, retangulo_y2, retangulo_x1 + tamanho_canto, retangulo_y2),
+                        (retangulo_x1, retangulo_y2 - tamanho_canto, retangulo_x1, retangulo_y2 - raio),
+                        (retangulo_x2 - tamanho_canto, retangulo_y2, retangulo_x2 - raio, retangulo_y2),
+                        (retangulo_x2, retangulo_y2 - tamanho_canto, retangulo_x2, retangulo_y2 - raio),
+                    ):
+                        canvas_overlay.create_line(x1, y1, x2, y2, fill=cor_borda, width=2)
 
                 largura_etiqueta = min(104, max(largura_minima_etiqueta, overlay_largura - 20))
                 etiqueta_x1 = min(
@@ -1807,13 +2027,19 @@ class ExecutorAutomacao:
                     pontos_retangulo_arredondado(etiqueta_x1, etiqueta_y1, etiqueta_x2, etiqueta_y2, 10),
                     smooth=True,
                     splinesteps=24,
-                    outline="",
+                    outline=cor_linha,
                     fill=cor_fundo_etiqueta,
+                    width=1,
+                )
+                canvas_overlay.create_line(
+                    etiqueta_x1 + 2, etiqueta_y1 + 4,
+                    etiqueta_x1 + 2, etiqueta_y2 - 4,
+                    fill=cor_borda, width=2,
                 )
                 texto_etiqueta = canvas_overlay.create_text(
                     int((etiqueta_x1 + etiqueta_x2) / 2),
                     int((etiqueta_y1 + etiqueta_y2) / 2),
-                    text=texto_marcador,
+                    text=texto_marcador.upper(),
                     fill=cor_texto,
                     font=("Segoe UI", 8, "bold"),
                 )
@@ -1824,16 +2050,15 @@ class ExecutorAutomacao:
                     pass
 
                 flash_fases = [
-                    (0.12, cor_flash, 5),
-                    (0.92, cor_flash, 5),
-                    (0.35, cor_borda, 3),
+                    (0.18, cor_flash, 2),
+                    (0.82, cor_linha, 1),
                 ]
 
                 for alpha, cor_atual, largura_borda in flash_fases:
                     try:
                         overlay.attributes("-alpha", alpha)
                         canvas_overlay.itemconfigure(retangulo_principal, outline=cor_atual, width=largura_borda)
-                        canvas_overlay.itemconfigure(etiqueta_canvas, fill=cor_atual)
+                        canvas_overlay.itemconfigure(etiqueta_canvas, outline=cor_atual)
                         canvas_overlay.itemconfigure(texto_etiqueta, fill=cor_texto)
                         overlay.update_idletasks()
                         overlay.update()
@@ -1844,7 +2069,7 @@ class ExecutorAutomacao:
                 fim = time.perf_counter() + max(0.12, float(duracao))
                 while time.perf_counter() < fim:
                     try:
-                        overlay.attributes("-alpha", 0.72)
+                        overlay.attributes("-alpha", 0.88)
                         overlay.update_idletasks()
                         overlay.update()
                     except Exception:
@@ -2151,9 +2376,27 @@ class ExecutorAutomacao:
             # Mantem a confirmacao visivel, mas sem introduzir quase meio
             # segundo de espera para cada OCR de um bloco composto.
             indice_visual = indice_inicial + index
-            self.marcar_regiao_absoluta(x, y, w, h, tema=self.tema_alvo_ocr(indice_visual),
-                                       etiqueta=f"OCR {indice_visual + 1}", duracao=0.18,
-                                       bloqueante=True, margem=0)
+            self.marcar_area_reconhecida(
+                {"left": x, "top": y, "width": w, "height": h},
+                tema="ocr", etiqueta=f"OCR {indice_visual + 1}",
+                duracao=0.22, bloqueante=True, margem=18,
+            )
+
+    def marcar_confirmacao_hibrida(self, local, leitura_relativa=None, dimensoes_referencia=None, duracao_visual=0.28):
+        """Feedback sequencial: imagem verde, texto azul; sem sobreposicao."""
+        if not isinstance(local, dict) or not local.get("visual_confirmed"):
+            return False
+        if local.get("_marcadores_hibridos_exibidos"):
+            return True
+        self.marcar_area_reconhecida(
+            local, duracao=duracao_visual, bloqueante=True,
+            tema="visual", etiqueta="Imagem reconhecida", margem=18,
+        )
+        if self.cancelamento_solicitado():
+            return False
+        self.marcar_alvos_ocr_em_sequencia(local, leitura_relativa, dimensoes_referencia)
+        local["_marcadores_hibridos_exibidos"] = True
+        return True
 
     def regioes_alvos_ocr_por_layout(self, local, leitura_relativa=None, dimensoes_referencia=None, quantidade=0):
         config = leitura_relativa if isinstance(leitura_relativa, dict) else {}
@@ -2231,7 +2474,7 @@ class ExecutorAutomacao:
         except Exception:
             return 0.0
 
-    def confirmar_alvos_ocr_por_layout_visual(self, local, texto_esperado="", leitura_relativa=None, dimensoes_referencia=None, caminho_referencia=None, marcar=True):
+    def confirmar_alvos_ocr_por_layout_visual(self, local, texto_esperado="", leitura_relativa=None, dimensoes_referencia=None, caminho_referencia=None, marcar=True, permitir_equivalencia_visual=False):
         spec = self.interpretar_texto_ocr_composto(texto_esperado)
         partes = self.partes_alvos_ocr_esperados(texto_esperado, leitura_relativa)
         quantidade = self.quantidade_alvos_ocr_esperados(texto_esperado, leitura_relativa)
@@ -2275,10 +2518,43 @@ class ExecutorAutomacao:
                     self.extrair_texto_ocr_imagem_pil(captura, config="--psm 8"),
                     self.extrair_texto_ocr_imagem_pil(captura, config="--psm 13"),
                 ]
-            capturado = " ".join(str(item or "").strip() for item in textos if str(item or "").strip()).strip()
-            confirmado = self.texto_ocr_confirma_alvo(esperado, capturado, limite_ratio=0.86)
+            capturado = next(
+                (str(item).strip() for item in textos
+                 if self.texto_ocr_confirma_alvo(esperado, item, limite_ratio=0.86)),
+                "",
+            )
+            confirmado = bool(capturado)
+            if not confirmado or self.normalizar_texto_ocr(capturado) != self.normalizar_texto_ocr(esperado):
+                # O recorte salvo pode perder as letras das extremidades com
+                # pequenas mudancas de escala/fonte no navegador. Amplie so
+                # na horizontal e continue exigindo a frase OCR completa.
+                x_ocr, y_ocr, w_ocr, h_ocr = [int(valor) for valor in regiao]
+                margem_ocr = max(12, min(36, int(round(w_ocr * 0.22))))
+                regiao_larga = self.limitar_regiao(
+                    (x_ocr - margem_ocr, y_ocr, w_ocr + 2 * margem_ocr, h_ocr),
+                    limite=self.bounds_reconhecimento(local),
+                )
+                if regiao_larga and tuple(regiao_larga) != tuple(regiao):
+                    try:
+                        captura_larga, _left, _top = self.capturar_tela_pil(region=regiao_larga)
+                        texto_largo = self.extrair_texto_ocr_imagem_pil(captura_larga, config="--psm 7")
+                    except Exception:
+                        texto_largo = ""
+                    if (
+                        self.texto_ocr_confirma_alvo(esperado, texto_largo, limite_ratio=0.86)
+                        and (
+                            not confirmado
+                            or self.similaridade_texto(esperado, texto_largo)
+                            > self.similaridade_texto(esperado, capturado)
+                        )
+                    ):
+                        capturado = str(texto_largo).strip()
+                        confirmado = True
+                        regiao = regiao_larga
+            if not capturado:
+                capturado = " | ".join(str(item or "").strip() for item in textos[:3] if str(item or "").strip())
             score_visual = 0.0
-            if not confirmado and caminho_referencia:
+            if not confirmado and caminho_referencia and permitir_equivalencia_visual:
                 score_visual = self.comparar_recorte_alvo_ocr_visual(
                     captura,
                     caminho_referencia,
@@ -2319,6 +2595,62 @@ class ExecutorAutomacao:
             "ocr_bounds": bounds[0] if bounds else {},
         })
         return confirmado
+
+    def confirmar_visual_proximo_ocr(self, local, caminho_referencia, region=None):
+        """Confere bordas da referencia somente junto ao texto OCR confirmado.
+
+        Tabelas claras geram correlacao de cor quase perfeita em areas vazias.
+        Bordas de colunas/checkboxes sao mais discriminativas, e a busca local
+        impede que uma tabela parecida distante substitua a ancora OCR.
+        """
+        if not OPENCV_DISPONIVEL or np is None or Image is None or not local or not caminho_referencia:
+            return None
+        try:
+            esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
+            margem_x = max(16, min(32, int(round(largura * 0.08))))
+            margem_y = max(8, min(16, int(round(altura * 0.18))))
+            regiao = self.limitar_regiao(
+                (esquerda - margem_x, topo - margem_y,
+                 largura + 2 * margem_x, altura + 2 * margem_y),
+                limite=region,
+            )
+            if not regiao:
+                return None
+            with Image.open(caminho_referencia) as arquivo:
+                referencia = cv2.cvtColor(np.array(arquivo.convert("RGB")), cv2.COLOR_RGB2GRAY)
+            captura, base_left, base_top = self.capturar_tela_pil(region=regiao)
+            tela = cv2.cvtColor(np.array(captura.convert("RGB")), cv2.COLOR_RGB2GRAY)
+            bordas_tela = cv2.Canny(tela, 30, 100)
+            ref_h, ref_w = referencia.shape[:2]
+            if ref_w < 24 or ref_h < 18:
+                return None
+            escala_base = largura / max(1.0, float(ref_w))
+            melhor = None
+            for fator in (1.0, 0.97, 1.03, 0.9, 1.1):
+                escala = escala_base * fator
+                w = max(1, int(round(ref_w * escala)))
+                h = max(1, int(round(ref_h * escala)))
+                if w > tela.shape[1] or h > tela.shape[0]:
+                    continue
+                ref_escalada = cv2.resize(referencia, (w, h), interpolation=cv2.INTER_AREA)
+                bordas_ref = cv2.Canny(ref_escalada, 30, 100)
+                if cv2.countNonZero(bordas_ref) < 35:
+                    continue
+                mapa = cv2.matchTemplate(bordas_tela, bordas_ref, cv2.TM_CCOEFF_NORMED)
+                _minimo, score, _pos_min, pos = cv2.minMaxLoc(mapa)
+                if melhor is None or float(score) > melhor[0]:
+                    melhor = (float(score), int(base_left) + pos[0], int(base_top) + pos[1], w, h, escala)
+            if not melhor or melhor[0] < 0.55:
+                return None
+            score, x, y, w, h, escala = melhor
+            return {
+                "left": x, "top": y, "width": w, "height": h,
+                "x": int(round(x + w / 2)), "y": int(round(y + h / 2)),
+                "score": score, "rank_score": score, "scale": escala,
+                "search_stage": "ocr_guided_edges",
+            }
+        except Exception:
+            return None
 
     def quantidade_alvos_ocr_esperados(self, texto_esperado="", leitura_relativa=None):
         partes = self.partes_alvos_ocr_esperados(texto_esperado, leitura_relativa)
@@ -2496,12 +2828,36 @@ class ExecutorAutomacao:
         comparacao = self.comparar_texto_reconhecimento_preciso(texto_esperado, texto_capturado)
         if comparacao.get("reference") == comparacao.get("captured"):
             return True
+        referencia = str(comparacao.get("reference") or "")
+        leitura = str(comparacao.get("captured") or "")
+        referencia_compacta = re.sub(r"[^a-z0-9]+", "", referencia)
+        leitura_compacta = re.sub(r"[^a-z0-9]+", "", leitura)
+        if referencia_compacta == leitura_compacta:
+            return True
+        # A lupa do campo de busca pode virar uma letra colada ao texto OCR
+        # ("qmeuperfil"). Aceita so um prefixo de icone muito curto, mantendo
+        # a frase completa obrigatoria.
+        if (
+            len(referencia.split()) >= 2
+            and leitura_compacta.endswith(referencia_compacta)
+            and 0 < len(leitura_compacta) - len(referencia_compacta) <= 2
+        ):
+            return True
+        # Palavras curtas diferenciam controles parecidos: "Meu Perfil" nao
+        # pode confirmar "Perfil" nem "Seu Perfil" por ratio da frase inteira.
+        palavras_referencia = referencia.split()
+        palavras_lidas = leitura.split()
+        discriminadores = [
+            palavra for palavra in palavras_referencia
+            if len(palavra) <= 3 and palavra not in {"a", "o", "as", "os", "de", "da", "do", "das", "dos", "em", "no", "na"}
+        ]
+        if len(palavras_referencia) >= 2 and discriminadores:
+            if any(palavra not in palavras_lidas for palavra in discriminadores):
+                return False
         limite_ratio = float(limite_ratio or 0.90)
         if float(comparacao.get("ratio", 0.0) or 0.0) >= limite_ratio:
             return True
 
-        referencia = str(comparacao.get("reference") or "")
-        leitura = str(comparacao.get("captured") or "")
         # Fontes pequenas de programas desktop confundem uma letra isolada com
         # frequencia (por exemplo, "Codigo" vira "Cedigo"). Nos alvos OCR
         # compostos a posicao relativa e a imagem ainda precisam confirmar o
@@ -2681,7 +3037,7 @@ class ExecutorAutomacao:
             "ocr_layout_targets_marked": True,
             "search_stage": "ocr_visual_hybrid",
         })
-        if leitura.get("_mostrar_marcadores_ocr", True):
+        if leitura.get("_mostrar_marcadores_ocr", True) and not leitura.get("_testar_todos_alvos_ocr"):
             self.marcar_regiao_absoluta(
                 *regiao, tema=self.tema_alvo_ocr(indice), etiqueta=f"OCR {indice + 1}",
                 duracao=0.18, bloqueante=True, margem=0,
@@ -2730,6 +3086,7 @@ class ExecutorAutomacao:
             leitura_alvo = {
                 **leitura,
                 "_ocr_individual_resolvido": True,
+                "_total_alvos_ocr": len(partes),
                 "ocr_target_index": indice,
                 # A leitura individual recebe apenas sua propria geometria,
                 # mas o marcador ainda deve manter a cor e o numero originais
@@ -2773,7 +3130,7 @@ class ExecutorAutomacao:
                 safe_print(f"Falha OCR {indice + 1}: {motivo} ('{esperado}').", flush=True)
                 # Se outro alvo ja localizou a referencia, podemos mostrar
                 # onde este OCR falhou sem inventar uma posicao na tela.
-                if not confirmado and ultimo_confirmado and leitura.get("_mostrar_marcadores_ocr", True):
+                if not testar_todos and not confirmado and ultimo_confirmado and leitura.get("_mostrar_marcadores_ocr", True):
                     regioes = self.regioes_alvos_ocr_por_layout(
                         ultimo_confirmado, leitura, dimensoes_referencia, quantidade=len(partes),
                     )
@@ -2978,6 +3335,49 @@ class ExecutorAutomacao:
             return None
 
         leitura_configurada = leitura_relativa if isinstance(leitura_relativa, dict) else {}
+        # Nos blocos com recorte OCR configurado, a imagem e a ancora primaria:
+        # localizamos o controle e so depois lemos seu texto. Mapas antigos sem
+        # recorte mantem a busca por ancora OCR como compatibilidade.
+        if (
+            ocr_confirmado is None
+            and _escala_ocr is None
+            and not leitura_configurada.get("_ocr_anchor_first")
+            and not leitura_configurada.get("_testar_todos_alvos_ocr")
+            and (
+                not leitura_configurada.get("_ocr_individual_resolvido")
+                or int(leitura_configurada.get("_total_alvos_ocr", 0) or 0) == 1
+            )
+            and (leitura_configurada.get("largura") or leitura_configurada.get("ocr_target_layouts"))
+            and (
+                self.modo_acao_alvos_ocr(leitura_configurada) != "individual"
+                or bool(leitura_configurada.get("_ocr_individual_resolvido"))
+            )
+        ):
+            visual_primeiro = self.procurar_imagem_por_template(
+                caminho_referencia,
+                confianca=max(0.55, min(float(confianca_visual or 0.8), 0.9)),
+                region=region,
+                perfil_busca=perfil_busca,
+                incluir_ocr_referencia=False,
+            )
+            if self.cancelamento_solicitado():
+                return None
+            if visual_primeiro:
+                safe_print("Hibrido imagem + OCR: imagem localizada; conferindo o texto no recorte.", flush=True)
+                texto_confirmado = self.confirmar_alvos_ocr_por_layout_visual(
+                    visual_primeiro, texto_esperado=esperado,
+                    leitura_relativa=leitura_configurada,
+                    dimensoes_referencia=dimensoes_referencia,
+                    caminho_referencia=caminho_referencia,
+                    marcar=False,
+                    permitir_equivalencia_visual=False,
+                )
+                if texto_confirmado:
+                    texto_confirmado["visual_confirmed"] = True
+                    texto_confirmado["ocr_layout_targets_marked"] = False
+                    texto_confirmado["search_stage"] = "visual_ocr_hybrid"
+                    safe_print("Hibrido imagem + OCR: imagem e texto confirmados nessa ordem.", flush=True)
+                    return texto_confirmado
         if (
             not leitura_configurada.get("_ocr_individual_resolvido")
             and self.modo_acao_alvos_ocr(leitura_configurada) == "individual"
@@ -3059,7 +3459,10 @@ class ExecutorAutomacao:
             # mesma area uma unica vez ampliada. A ordem continua OCR primeiro
             # e reconhecimento visual depois; a imagem nao libera o bloco sem
             # que o texto seja confirmado.
-            if _escala_ocr is None:
+            if _escala_ocr is None and not (
+                leitura_configurada.get("_testar_todos_alvos_ocr")
+                and leitura_configurada.get("_ocr_individual_resolvido")
+            ):
                 safe_print(
                     "OCR nao gerou candidato na escala nativa; relendo a mesma area ampliada.",
                     flush=True,
@@ -3134,15 +3537,47 @@ class ExecutorAutomacao:
                     local[chave] = candidato[chave]
             if not self.ocr_hibrido_tem_todos_alvos(local, esperado, leitura_relativa):
                 continue
-            if not local.get("ocr_layout_targets_marked"):
-                self.marcar_alvos_ocr_em_sequencia(local, leitura_relativa, dimensoes_referencia)
-                if self.cancelamento_solicitado():
-                    return None
-                local["ocr_layout_targets_marked"] = True
-                safe_print(
-                    f"Hibrido OCR + imagem: etapa 1/2 concluida com {quantidade_esperada} OCR(s) confirmados.",
-                    flush=True,
+            # A confirmacao OCR so e animada depois da confirmacao visual.
+            # Desenhar aqui criava dois efeitos concorrentes no mesmo botao.
+
+            visual_bordas = self.confirmar_visual_proximo_ocr(
+                local, caminho_referencia, region=region,
+            )
+            if visual_bordas and not self.cancelamento_solicitado():
+                texto_no_controle = self.confirmar_alvos_ocr_por_layout_visual(
+                    visual_bordas,
+                    texto_esperado=esperado,
+                    leitura_relativa=leitura_configurada,
+                    dimensoes_referencia=dimensoes_referencia,
+                    caminho_referencia=caminho_referencia,
+                    marcar=False,
+                    permitir_equivalencia_visual=False,
                 )
+                if texto_no_controle:
+                    confirmado = dict(local)
+                    confirmado.update(visual_bordas)
+                    confirmado.update({
+                        chave: valor for chave, valor in texto_no_controle.items()
+                        if chave.startswith("ocr_")
+                    })
+                    confirmado.update({
+                        "ocr_score": float(local.get("score", 0.0) or 0.0),
+                        "visual_confirmed": True,
+                        "visual_scale": float(visual_bordas.get("scale", 1.0) or 1.0),
+                    })
+                    if self.modo_acao_alvos_ocr(leitura_configurada) == "individual":
+                        confirmado["ocr_target_individual"] = True
+                        confirmado["ocr_target_index"] = int(leitura_configurada.get("ocr_target_index", 0) or 0)
+                        confirmado["ocr_target_action"] = (
+                            leitura_configurada.get("ocr_target_action")
+                            if isinstance(leitura_configurada.get("ocr_target_action"), dict)
+                            else (leitura_configurada.get("ocr_target_layouts") or [{}])[0]
+                        )
+                    safe_print(
+                        "Hibrido OCR + imagem: texto e bordas da referencia confirmados na mesma area.",
+                        flush=True,
+                    )
+                    return confirmado
 
             esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
             # A geometria dos OCRs ja calcula onde a referencia deve estar. A
@@ -3228,8 +3663,38 @@ class ExecutorAutomacao:
                     and abs(centro_visual_y - centro_ocr_y) <= max(28, altura * 0.62, vh * 0.62)
                 )
                 if proximo_ao_ocr:
+                    # Um OCR lido em outro ponto da janela nao pode aprovar
+                    # uma imagem parecida (ex.: "Perfil" acima de "Meu Perfil").
+                    # Releia o texto dentro do controle visual encontrado.
+                    texto_no_controle = None
+                    if (
+                        quantidade_esperada == 1
+                        and not leitura_configurada.get("_ocr_anchor_first")
+                        and not leitura_configurada.get("_testar_todos_alvos_ocr")
+                        and (leitura_configurada.get("largura") or leitura_configurada.get("ocr_target_layouts"))
+                    ):
+                        texto_no_controle = self.confirmar_alvos_ocr_por_layout_visual(
+                            visual,
+                            texto_esperado=esperado,
+                            leitura_relativa=leitura_configurada,
+                            dimensoes_referencia=dimensoes_referencia,
+                            caminho_referencia=caminho_referencia,
+                            marcar=False,
+                            permitir_equivalencia_visual=False,
+                        )
+                        if not texto_no_controle:
+                            safe_print(
+                                f"Imagem parecida descartada: OCR do controle nao confirmou '{esperado}'.",
+                                flush=True,
+                            )
+                            continue
                     confirmado = dict(visual)
                     confirmado.update(local)
+                    if texto_no_controle:
+                        confirmado.update({
+                            chave: valor for chave, valor in texto_no_controle.items()
+                            if chave.startswith("ocr_")
+                        })
                     confirmado.update({
                         "left": int(vx),
                         "top": int(vy),
@@ -3270,7 +3735,10 @@ class ExecutorAutomacao:
         # gerar um candidato parecido sem atingir a confirmacao estrita. Nesse
         # caso fazemos uma unica releitura ampliada antes de repetir o ciclo;
         # nao deixamos o Tesseract rodar continuamente e travar o mouse.
-        if _escala_ocr is None:
+        if _escala_ocr is None and not (
+            leitura_configurada.get("_testar_todos_alvos_ocr")
+            and leitura_configurada.get("_ocr_individual_resolvido")
+        ):
             safe_print(
                 "OCR candidato parcial; conferindo uma vez a mesma janela ampliada.",
                 flush=True,
@@ -3407,30 +3875,25 @@ class ExecutorAutomacao:
                 captura, _base_left, _base_top = self.capturar_tela_pil(region=regiao_ocr)
             except Exception as erro:
                 safe_print(f"OCR nao confirmou: falha ao capturar area de leitura ({erro}).", flush=True)
-                return "", None
+                return [], None
             textos = self.extrair_textos_ocr_rapido(captura, texto_esperado=esperado)
             if not textos:
                 textos = [
                     self.extrair_texto_ocr_imagem_pil(captura, config="--psm 6"),
                     self.extrair_texto_ocr_imagem_pil(captura, config="--psm 7"),
                 ]
-            return " ".join(texto for texto in textos if texto).strip(), captura
+            return [str(texto).strip() for texto in textos if str(texto or "").strip()], captura
 
         def texto_confirma(capturado_atual):
             if not esperado:
                 return True
-            comparacao_atual = self.comparar_texto_reconhecimento_preciso(esperado, capturado_atual)
-            return (
-                comparacao_atual.get("reference") == comparacao_atual.get("captured")
-                or (
-                    comparacao_atual.get("has_digits")
-                    and float(comparacao_atual.get("digit_ratio", 0.0) or 0.0) >= 0.999
-                )
-                or float(comparacao_atual.get("ratio", 0.0) or 0.0) >= 0.96
-            )
+            return self.texto_ocr_confirma_alvo(esperado, capturado_atual, limite_ratio=0.96)
 
-        capturado, captura_ocr = ler_texto_regiao(regiao)
-        confirmado = texto_confirma(capturado)
+        variantes, captura_ocr = ler_texto_regiao(regiao)
+        capturado = next((texto for texto in variantes if texto_confirma(texto)), "")
+        confirmado = bool(capturado) if esperado else True
+        if not capturado:
+            capturado = " | ".join(variantes[:3])
 
         if not confirmado:
             limite_reconhecido = self.bounds_reconhecimento(local)
@@ -3458,29 +3921,21 @@ class ExecutorAutomacao:
                 regiao_ampliada = None
             if regiao_ampliada and regiao_ampliada != regiao:
                 safe_print(f"OCR tentando area ampliada: {self.formatar_regiao_log(regiao_ampliada)}", flush=True)
-                capturado_ampliado, captura_ampliada = ler_texto_regiao(regiao_ampliada)
-                if texto_confirma(capturado_ampliado):
+                variantes_ampliadas, captura_ampliada = ler_texto_regiao(regiao_ampliada)
+                capturado_ampliado = next((texto for texto in variantes_ampliadas if texto_confirma(texto)), "")
+                if capturado_ampliado:
                     regiao = regiao_ampliada
                     capturado = capturado_ampliado
                     captura_ocr = captura_ampliada
                     confirmado = True
-                elif not capturado and capturado_ampliado:
+                elif not capturado and variantes_ampliadas:
                     regiao = regiao_ampliada
-                    capturado = capturado_ampliado
+                    capturado = " | ".join(variantes_ampliadas[:3])
                     captura_ocr = captura_ampliada
 
-        if not confirmado and caminho_referencia:
-            confirmado_visual = self.confirmar_ocr_visual_pela_referencia(
-                captura_ocr,
-                caminho_referencia=caminho_referencia,
-                leitura_relativa=leitura_relativa,
-                dimensoes_referencia=dimensoes_referencia,
-            )
-            if confirmado_visual:
-                capturado = capturado or esperado
-                confirmado = True
-
-        if capturado:
+        # A imagem so localiza o controle; nunca substitui a palavra OCR
+        # configurada pelo usuario quando a leitura nao a confirma.
+        if capturado and (confirmado or not esperado):
             self.salvar_variavel_contexto("ultimo_ocr", capturado)
             if ordem_bloco:
                 self.salvar_variavel_contexto(f"ocr_bloco_{ordem_bloco}", capturado)
@@ -7832,6 +8287,113 @@ class ExecutorAutomacao:
                 }
         return None
 
+    def localizar_texto_por_ocr_em_campos(
+        self,
+        captura,
+        texto_alvo,
+        confianca=0.72,
+        base_left=0,
+        base_top=0,
+    ):
+        """Relê campos pequenos que desaparecem no OCR da tela inteira.
+
+        Placeholders claros ou em itálico podem ser ignorados pelo PSM 11 ao
+        analisar uma página inteira. O contorno serve só para escolher o
+        recorte: o texto do próprio campo ainda precisa confirmar o alvo.
+        """
+        if not OPENCV_DISPONIVEL or np is None or pytesseract is None or captura is None:
+            return None
+        try:
+            imagem_bgr = cv2.cvtColor(np.array(captura.convert("RGB")), cv2.COLOR_RGB2BGR)
+            cinza = cv2.cvtColor(imagem_bgr, cv2.COLOR_BGR2GRAY)
+            bordas = cv2.Canny(cinza, 40, 120)
+            contornos, _ = cv2.findContours(bordas, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+            # Campos arredondados de navegadores frequentemente nao possuem
+            # uma borda que o Canny consiga fechar. Seu fundo cinza-claro,
+            # entretanto, forma uma regiao preenchida bem delimitada.
+            fundo_claro = cv2.inRange(
+                imagem_bgr,
+                np.array([242, 242, 242], dtype=np.uint8),
+                np.array([253, 253, 253], dtype=np.uint8),
+            )
+            contornos_fundo, _ = cv2.findContours(
+                fundo_claro, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+            )
+            contornos = list(contornos) + list(contornos_fundo)
+        except Exception:
+            return None
+
+        largura_tela = int(getattr(captura, "width", 0) or 0)
+        campos = []
+        for contorno in contornos:
+            try:
+                x, y, largura, altura = cv2.boundingRect(contorno)
+                proporcao_contorno = float(cv2.contourArea(contorno)) / max(1.0, float(largura * altura))
+            except Exception:
+                continue
+            if (
+                largura < 120 or largura > min(900, max(120, largura_tela - 12))
+                or altura < 25 or altura > 90
+                or largura / max(1.0, altura) < 2.0
+                or proporcao_contorno < 0.72
+            ):
+                continue
+            # Canny costuma produzir as bordas interna e externa do mesmo
+            # campo. Manter uma só evita duas chamadas de OCR por controle.
+            if any(
+                abs(x - item[0]) <= 5 and abs(y - item[1]) <= 5
+                and abs(largura - item[2]) <= 10 and abs(altura - item[3]) <= 10
+                for item in campos
+            ):
+                continue
+            campos.append((x, y, largura, altura))
+
+        campos.sort(key=lambda item: (item[1], item[0]))
+        limite_ratio = max(0.86, min(0.95, float(confianca)))
+        for ampliado in (False, True):
+            for x, y, largura, altura in campos[:18]:
+                if self.cancelamento_solicitado():
+                    return None
+                try:
+                    # Desconsidere as extremidades: icones de busca e de
+                    # limpar nao devem entrar na frase lida do placeholder.
+                    margem_x = min(8, max(0, largura // 30))
+                    margem_direita = min(20, max(0, largura // 10))
+                    if largura <= margem_x + margem_direita + 80:
+                        margem_x = margem_direita = 0
+                    recorte = captura.crop((
+                        x + margem_x, y + 2,
+                        x + largura - margem_direita, y + altura - 2,
+                    )).convert("L")
+                    if ampliado:
+                        recorte = self.ampliar_imagem_para_ocr(recorte, fator=2)
+                        if ImageOps is not None:
+                            recorte = ImageOps.autocontrast(recorte)
+                    texto_lido = str(pytesseract.image_to_string(recorte, config="--psm 7") or "").strip()
+                except Exception:
+                    continue
+                if not texto_lido:
+                    continue
+                score = self.similaridade_texto(texto_alvo, texto_lido)
+                if score < float(confianca) or not self.texto_ocr_confirma_alvo(
+                    texto_alvo, texto_lido, limite_ratio=limite_ratio,
+                ):
+                    continue
+                safe_print(
+                    f"OCR confirmou texto em campo: esperado='{texto_alvo}' | capturado='{texto_lido}'.",
+                    flush=True,
+                )
+                return {
+                    "left": int(base_left) + x,
+                    "top": int(base_top) + y,
+                    "width": int(largura),
+                    "height": int(altura),
+                    "text": texto_lido,
+                    "score": float(score),
+                    "source": "ocr_campo",
+                }
+        return None
+
     def localizar_texto_por_ocr_screenshot(
         self,
         texto,
@@ -7923,7 +8485,9 @@ class ExecutorAutomacao:
                         grupo = grupo_linha[inicio : inicio + tamanho]
                         texto_grupo = " ".join(item["text"] for item in grupo)
                         score = self.similaridade_texto(texto_alvo, texto_grupo)
-                        if score < float(confianca):
+                        if score < float(confianca) or not self.texto_ocr_confirma_alvo(
+                            texto_alvo, texto_grupo, limite_ratio=0.86,
+                        ):
                             continue
                         left = min(item["left"] for item in grupo)
                         top = min(item["top"] for item in grupo)
@@ -7983,6 +8547,16 @@ class ExecutorAutomacao:
                 )
                 if resultado_ampliado:
                     return resultado_ampliado
+            if not _tentativa_ampliada:
+                candidato_campo = self.localizar_texto_por_ocr_em_campos(
+                    captura,
+                    texto_alvo,
+                    confianca=confianca,
+                    base_left=base_left,
+                    base_top=base_top,
+                )
+                if candidato_campo:
+                    return [candidato_campo] if retornar_candidatos else candidato_campo
             if not retornar_candidatos and not bool(getattr(self, "modo_teste_reconhecimento", False)):
                 resultado_varredura = self.localizar_texto_por_ocr_em_regioes(
                     captura,
@@ -7993,6 +8567,10 @@ class ExecutorAutomacao:
                 )
                 if resultado_varredura:
                     return resultado_varredura
+            if _tentativa_ampliada:
+                # A chamada externa ainda pode encontrar o texto no recorte
+                # de um campo. So grave diagnostico depois dessa ultima chance.
+                return [] if retornar_candidatos else None
             chave_diag = f"{texto_alvo}|{int(base_left)}|{int(base_top)}|{getattr(captura, 'width', 0)}|{getattr(captura, 'height', 0)}"
             if chave_diag not in self._diagnosticos_ocr_salvos:
                 self._diagnosticos_ocr_salvos.add(chave_diag)
@@ -8067,7 +8645,9 @@ class ExecutorAutomacao:
             if score > melhor_score:
                 melhor_score = score
                 melhor_texto = texto_lido
-            if score >= float(confianca):
+            if score >= float(confianca) and self.texto_ocr_confirma_alvo(
+                texto_alvo, texto_lido, limite_ratio=0.86,
+            ):
                 return True, texto_lido, score
         return False, melhor_texto, melhor_score
 
@@ -8144,7 +8724,11 @@ class ExecutorAutomacao:
             for sub_x, sub_y, sub_w, sub_h in self.subdividir_regiao_ocr(largura, altura):
                 fila.append((x + sub_x, y + sub_y, sub_w, sub_h, nivel + 1))
 
-        if melhor and melhor_score >= max(0.70, float(confianca) + 0.08):
+        if (
+            melhor
+            and melhor_score >= max(0.70, float(confianca) + 0.08)
+            and self.texto_ocr_confirma_alvo(texto_alvo, melhor[4], limite_ratio=0.86)
+        ):
             x, y, largura, altura, texto_lido, score = melhor
             safe_print(
                 f"OCR encontrou texto por leitura regional ampla: '{texto_lido}' "
@@ -8165,7 +8749,17 @@ class ExecutorAutomacao:
     def clicar_resultado_texto(self, resultado, clicar=True, clicks=1, offset_x=0, offset_y=0):
         if not resultado:
             return None
-        self.marcar_area_reconhecida(resultado, duracao=0.45, bloqueante=True)
+        teste_ocr = bool(getattr(self, "modo_teste_reconhecimento", False))
+        marcador_exibido = self.marcar_area_reconhecida(
+            resultado,
+            duracao=1.8 if teste_ocr else 0.45,
+            bloqueante=True,
+            tema="ocr",
+            etiqueta="OCR encontrado" if teste_ocr else None,
+            margem=18 if teste_ocr else 16,
+        )
+        if teste_ocr and not marcador_exibido:
+            safe_print("Teste OCR: texto encontrado, mas o marcador visual nao abriu.", flush=True)
         destino_x = int(resultado["left"] + resultado["width"] / 2 + int(offset_x or 0))
         destino_y = int(resultado["top"] + resultado["height"] / 2 + int(offset_y or 0))
         if clicar:
@@ -8329,7 +8923,7 @@ class ExecutorAutomacao:
                         janela_alvo=None,
                         region=None,
                         retornar_candidatos=True,
-                        marcar_candidatos=True,
+                        marcar_candidatos=False,
                         limite_candidatos=1,
                     )
                     resultado = candidatos[0] if isinstance(candidatos, list) and candidatos else None
@@ -8341,7 +8935,7 @@ class ExecutorAutomacao:
                             confianca=confianca,
                             janela_alvo=janela_evento,
                             retornar_candidatos=True,
-                            marcar_candidatos=True,
+                            marcar_candidatos=False,
                             limite_candidatos=1,
                         )
                         resultado = candidatos[0] if isinstance(candidatos, list) and candidatos else None
@@ -8953,7 +9547,7 @@ class ExecutorAutomacao:
                         )
                     else:
                         safe_print(
-                            f"Hibrido OCR + imagem: etapa 1/2 procurando os OCRs de '{texto_ocr_ancora}'.",
+                            f"Hibrido imagem + OCR: procurando a imagem e validando '{texto_ocr_ancora}'.",
                             flush=True,
                         )
                     local_hibrido = self.localizar_referencia_hibrida_ocr_visual(
@@ -9377,6 +9971,14 @@ class ExecutorAutomacao:
             "_click_offset_y": offset_y,
             "_dimensoes_referencia": dimensoes_referencia,
         }
+        marcador_hibrido = bool(
+            isinstance(local, dict)
+            and local.get("visual_confirmed")
+            and local.get("search_stage") in {"visual_ocr_hybrid", "ocr_visual_hybrid"}
+            and texto_ocr_esperado
+        )
+        if marcador_hibrido:
+            self.marcar_confirmacao_hibrida(local, leitura_relativa, dimensoes_referencia)
         salvar_em = str(leitura.get("salvar_em", "") or "").strip()
         ocr_ja_confirmado = (
             isinstance(local, dict)
@@ -9409,7 +10011,7 @@ class ExecutorAutomacao:
                 flush=True,
             )
             ocr_bounds = local.get("ocr_bounds") if isinstance(local.get("ocr_bounds"), dict) else None
-            if ocr_bounds and local.get("search_stage") not in {"ocr_visual_hybrid", "ocr_text_fallback"}:
+            if ocr_bounds and not marcador_hibrido and local.get("search_stage") not in {"ocr_visual_hybrid", "ocr_text_fallback"}:
                 self.marcar_regiao_ocr(
                     (
                         int(ocr_bounds.get("left", 0) or 0),
@@ -9442,7 +10044,8 @@ class ExecutorAutomacao:
 
         # A borda verde continua informando a confirmacao, so que com uma
         # exibicao curta para nao atrasar cada proximo bloco da automacao.
-        self.marcar_area_reconhecida(local, duracao=0.28, bloqueante=True, etiqueta="Reconhecimento")
+        if not marcador_hibrido:
+            self.marcar_area_reconhecida(local, duracao=0.28, bloqueante=True, etiqueta="Reconhecimento")
         offset_click_x, offset_click_y = self.escalar_offset_referencia(
             local,
             offset_x=offset_x,
@@ -9606,6 +10209,21 @@ class ExecutorAutomacao:
             safe_print("Teste de reconhecimento: nenhuma correspondencia encontrada.", flush=True)
             return False
 
+        caminho_teste, _ = self.resolver_imagem(imagem)
+        dimensoes_teste = self.obter_dimensoes_imagem(caminho_teste) if caminho_teste.exists() else None
+        marcador_hibrido = bool(
+            mostrar_marcador
+            and isinstance(local, dict)
+            and not isinstance(local.get("ocr_validation"), dict)
+            and local.get("visual_confirmed")
+            and local.get("search_stage") in {"visual_ocr_hybrid", "ocr_visual_hybrid"}
+            and texto_ocr_esperado
+        )
+        if marcador_hibrido:
+            self.marcar_confirmacao_hibrida(
+                local, leitura_relativa, dimensoes_teste,
+                duracao_visual=self.duracao_confirmacao_visual(duracao_marcador),
+            )
         diagnostico = local.get("ocr_validation") if isinstance(local, dict) else None
         if isinstance(diagnostico, dict):
             # O modo individual ja leu os alvos na ordem e confirmou a imagem.
@@ -9616,6 +10234,26 @@ class ExecutorAutomacao:
                     local, duracao=self.duracao_confirmacao_visual(duracao_marcador),
                     bloqueante=bool(marcador_bloqueante), etiqueta="Reconhecimento",
                 )
+                regioes_ocr = self.regioes_alvos_ocr_por_layout(
+                    local, leitura_relativa, dimensoes_teste,
+                    quantidade=len(diagnostico.get("targets") or []),
+                )
+                for item in diagnostico.get("targets") or []:
+                    indice = int(item.get("index", -1))
+                    if not 0 <= indice < len(regioes_ocr):
+                        continue
+                    x, y, w, h = regioes_ocr[indice]
+                    if item.get("status") == "confirmed":
+                        self.marcar_area_reconhecida(
+                            {"left": x, "top": y, "width": w, "height": h},
+                            duracao=0.22, bloqueante=True, tema="ocr",
+                            etiqueta=f"OCR {indice + 1}", margem=18,
+                        )
+                    else:
+                        self.marcar_regiao_absoluta(
+                            x, y, w, h, duracao=0.28, bloqueante=True,
+                            tema="ocr_alvo_falha", etiqueta=f"Falha OCR {indice + 1}", margem=18,
+                        )
             sucesso = bool(diagnostico.get("success"))
             if sucesso:
                 safe_print("Teste concluido: todos os OCRs e a imagem confirmaram.", flush=True)
@@ -9640,7 +10278,7 @@ class ExecutorAutomacao:
                 flush=True,
             )
             ocr_bounds = local.get("ocr_bounds") if isinstance(local.get("ocr_bounds"), dict) else None
-            if mostrar_marcador and ocr_bounds and local.get("search_stage") not in {"ocr_visual_hybrid", "ocr_text_fallback"}:
+            if mostrar_marcador and ocr_bounds and not marcador_hibrido and local.get("search_stage") not in {"ocr_visual_hybrid", "ocr_text_fallback"}:
                 self.marcar_regiao_ocr(
                     (
                         int(ocr_bounds.get("left", 0) or 0),
@@ -9662,7 +10300,7 @@ class ExecutorAutomacao:
         ):
             safe_print("Teste de reconhecimento: imagem encontrada, mas o OCR nao confirmou o texto esperado.", flush=True)
             return False
-        if mostrar_marcador:
+        if mostrar_marcador and not marcador_hibrido:
             self.marcar_area_reconhecida(
                 local,
                 duracao=self.duracao_confirmacao_visual(duracao_marcador),
