@@ -15,6 +15,7 @@
           <div>
             <p class="brand-kicker">FlowDetect para Chrome</p>
             <h1>Automa&ccedil;&otilde;es</h1>
+            <span id="studioConnection" class="studio-connection" title="Aguardando conexao com o Studio">Studio desconectado</span>
           </div>
         </div>
         <div class="popup-tools">
@@ -22,6 +23,8 @@
           <button id="newButton" class="add-automation" type="button"><span>+</span> Adicionar</button>
         </div>
       </header>
+      <div class="studio-pair-bar"><span>C&oacute;digo para conectar ao Studio</span><strong id="studioPairCode">······</strong><button id="studioNewPairCode" type="button" title="Gerar novo codigo de conexao">Novo</button></div>
+      <span id="studioConnectionCompact" class="studio-connection studio-connection-compact" title="Aguardando conexao com o Studio">Studio desconectado</span>
       <div class="element-picker-toolbar">
         <button id="mapElementButton" class="map-element-button" type="button" title="Mapear elemento da página">Mapear elemento</button>
         <p id="mapElementStatus" class="map-element-status" role="status" aria-live="polite" hidden></p>
@@ -56,6 +59,12 @@
               <div class="screen-guard-actions"><button class="screen-guard-current" type="button">Usar aba atual</button><button type="submit">Salvar</button></div>
             </fieldset>
           </form>
+        </details>
+        <details class="ocr-edit-settings" hidden>
+          <summary>Textos OCR editaveis <span class="ocr-edit-count"></span></summary>
+          <div class="ocr-edit-fields"></div>
+          <p>Apenas o texto de validacao muda nesta execucao. O ponto de clique permanece. A imagem de referencia ainda mostra o texto original.</p>
+          <p class="ocr-edit-error" role="alert" hidden></p>
         </details>
         <p class="screen-guard-hint" aria-live="polite" hidden></p>
         <button class="play-button run-automation" type="button"><span class="play-icon" aria-hidden="true">&#9654;</span><span>Executar automa&ccedil;&atilde;o</span></button>

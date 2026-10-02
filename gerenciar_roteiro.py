@@ -840,6 +840,7 @@ def alvos_ocr_para_chrome(detalhes, passo):
         alvos.append({
             "index": indice,
             "text": texto,
+            "editable": bool(layout.get("editableChrome") or layout.get("editable_chrome")),
             "action": acao,
             "click": acao in {"clicar", "clicar_ir_para_bloco"},
             "clicks": max(1, int(layout.get("clicks", layout.get("cliques", passo.get("clicks", 1))) or 1)),
@@ -957,6 +958,9 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None, pasta_automacao
         preview, _ = recurso_imagem_para_chrome(detalhes.get("imagem_ocr") or detalhes.get("imagem"), pasta_automacao)
         if preview:
             passo["preview_image"] = preview
+        layouts = detalhes.get("ocr_target_layouts") or []
+        if layouts and isinstance(layouts[0], dict):
+            passo["editable_ocr"] = bool(layouts[0].get("editableChrome") or layouts[0].get("editable_chrome"))
         return aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes), None
 
     if tipo == "texto_livre":
@@ -1014,6 +1018,9 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None, pasta_automacao
             if alvos:
                 passo["ocr_targets"] = alvos
                 return passo, None
+            layouts = detalhes.get("ocr_target_layouts") or []
+            if layouts and isinstance(layouts[0], dict):
+                passo["editable_ocr"] = bool(layouts[0].get("editableChrome") or layouts[0].get("editable_chrome"))
             return aplicar_regra_ocr_individual_ao_passo_chrome(passo, detalhes), None
         imagem, erro = recurso_imagem_para_chrome(detalhes.get("imagem"), pasta_automacao)
         if not imagem:

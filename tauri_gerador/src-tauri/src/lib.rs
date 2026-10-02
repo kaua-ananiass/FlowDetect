@@ -2,6 +2,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde::Serialize;
 #[cfg(windows)]
 mod native_rdp;
+mod chrome_test_bridge;
 #[cfg(windows)]
 use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, ImageBuffer, Rgba};
 use serde_json::Value;
@@ -51,6 +52,7 @@ const BUNDLED_CAPTURAR_IMAGEM_TELA: &[u8] = include_bytes!("../../../capturar_im
 const BUNDLED_CHROME_WEB_BRIDGE: &[u8] = include_bytes!("../../../chrome_web_bridge.py");
 const BUNDLED_COMANDOS_TECLADO: &[u8] = include_bytes!("../installer_support/runtime_seed/comandos_teclado.py");
 const BUNDLED_EXECUTAR_AUTOMACAO: &[u8] = include_bytes!("../../../executar_automacao.py");
+const BUNDLED_MARCADOR_VISUAL: &[u8] = include_bytes!("../../../marcador_visual.py");
 const BUNDLED_GERENCIAR_DADOS_PLANILHA: &[u8] = include_bytes!("../../../gerenciar_dados_planilha.py");
 const BUNDLED_GERENCIAR_ROTEIRO: &[u8] = include_bytes!("../../../gerenciar_roteiro.py");
 const BUNDLED_LISTAR_JANELAS_ABERTAS: &[u8] = include_bytes!("../../../listar_janelas_abertas.py");
@@ -1954,6 +1956,7 @@ fn bundled_python_script_bytes(script_name: &str) -> Option<&'static [u8]> {
         "chrome_web_bridge.py" => Some(BUNDLED_CHROME_WEB_BRIDGE),
         "comandos_teclado.py" => Some(BUNDLED_COMANDOS_TECLADO),
         "executar_automacao.py" => Some(BUNDLED_EXECUTAR_AUTOMACAO),
+        "marcador_visual.py" => Some(BUNDLED_MARCADOR_VISUAL),
         "gerenciar_dados_planilha.py" => Some(BUNDLED_GERENCIAR_DADOS_PLANILHA),
         "gerenciar_roteiro.py" => Some(BUNDLED_GERENCIAR_ROTEIRO),
         "listar_janelas_abertas.py" => Some(BUNDLED_LISTAR_JANELAS_ABERTAS),
@@ -2452,6 +2455,44 @@ fn export_saved_automation_chrome(
         }
     }
     run_helper_json(&root, &args)
+}
+
+#[tauri::command]
+async fn send_saved_automation_chrome(app: AppHandle, id: String) -> Result<Value, String> {
+    let payload = tauri::async_runtime::spawn_blocking(move || {
+        let root = workspace_root(&app);
+        let stamp = SystemTime::now().duration_since(UNIX_EPOCH)
+            .unwrap_or_default().as_nanos();
+        let transfer_dir = std::env::temp_dir().join("FlowDetect").join("chrome-transfers");
+        fs::create_dir_all(&transfer_dir)
+            .map_err(|error| format!("Falha ao preparar transferencia: {error}"))?;
+        let requested_path = transfer_dir.join(format!("automation-{stamp}.json"));
+        let export = run_helper_json(&root, &[
+            "automation-export-chrome".into(), "--id".into(), id,
+            "--destino".into(), requested_path.to_string_lossy().to_string(),
+        ]);
+        let exported_path = export.as_ref().ok()
+            .and_then(|result| result.get("json_path"))
+            .and_then(Value::as_str).map(PathBuf::from)
+            .unwrap_or_else(|| requested_path.clone());
+        if !exported_path.starts_with(&transfer_dir) {
+            return Err("Caminho de transferencia invalido.".into());
+        }
+        let result = export.and_then(|_| {
+            let size = fs::metadata(&exported_path)
+                .map_err(|error| format!("Falha ao ler exportacao: {error}"))?.len();
+            if size > 30 * 1024 * 1024 {
+                return Err("Automacao maior que 30 MB. Use Exportar para Chrome e importe o JSON manualmente.".into());
+            }
+            let bytes = fs::read(&exported_path)
+                .map_err(|error| format!("Falha ao ler exportacao: {error}"))?;
+            serde_json::from_slice::<Value>(&bytes)
+                .map_err(|error| format!("Exportacao Chrome invalida: {error}"))
+        });
+        let _ = fs::remove_file(&exported_path);
+        result
+    }).await.map_err(|error| format!("Falha ao preparar automacao: {error}"))??;
+    chrome_test_bridge::send_automation(payload).await
 }
 
 #[tauri::command]
@@ -9861,6 +9902,7 @@ fn export_automation_bundle(
         "comandos_teclado.py",
         "db.xlsx",
         "executar_automacao.py",
+        "marcador_visual.py",
         "executar_automacao.bat",
         "gerenciar_dados_planilha.py",
         "requirements.txt",
@@ -10110,6 +10152,10 @@ pub fn run() {
                         thread::sleep(Duration::from_millis(90));
                     }
                 });
+            } else if let Err(error) = chrome_test_bridge::start(
+                app_handle.path().app_data_dir().ok().map(|path| path.join("chrome_pairing.json"))
+            ) {
+                eprintln!("{error}");
             }
             Ok(())
         })
@@ -10163,6 +10209,7 @@ pub fn run() {
             delete_saved_automation,
             export_saved_automation_zip,
             export_saved_automation_chrome,
+            send_saved_automation_chrome,
             import_saved_automation_zip,
             import_saved_automation_zip_from_path,
             import_saved_automation_zip_from_file_path,
@@ -10242,6 +10289,9 @@ pub fn run() {
             launch_legacy_capture,
             chrome_web_capture_element,
             chrome_web_test_element,
+            chrome_test_bridge::test_chrome_extension_recognition,
+            chrome_test_bridge::chrome_extension_connection_status,
+            chrome_test_bridge::pair_chrome_extension,
             chrome_web_open_site,
             test_image_recognition,
             test_ocr_recognition,

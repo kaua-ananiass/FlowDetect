@@ -92,8 +92,8 @@ class OcrDiagnosticsTests(unittest.TestCase):
         self.assertTrue(report["visual_confirmed"])
         self.assertEqual([item["status"] for item in report["targets"]],
                          ["confirmed", "confirmed", "not_found", "confirmed", "confirmed"])
-        self.assertEqual(self.markers, ["OCR 1", "OCR 2", "Falha OCR 3", "OCR 4", "OCR 5", "Reconhecimento"])
-        failed_marker = self.executor.marcar_regiao_absoluta.call_args_list[2]
+        self.assertEqual(self.markers, ["Reconhecimento", "OCR 1", "OCR 2", "Falha OCR 3", "OCR 4", "OCR 5"])
+        failed_marker = self.executor.marcar_regiao_absoluta.call_args_list[0]
         self.assertEqual(failed_marker.kwargs["tema"], "ocr_alvo_falha")
 
     def test_fifth_target_is_confirmed_in_its_crop_when_wide_scan_misses_it(self):
@@ -102,7 +102,7 @@ class OcrDiagnosticsTests(unittest.TestCase):
         success, report = self.run_search()
         self.assertTrue(success)
         self.assertEqual(report["targets"][4]["status"], "confirmed")
-        self.assertEqual(self.markers, ["OCR 1", "OCR 2", "OCR 3", "OCR 4", "OCR 5", "Reconhecimento"])
+        self.assertEqual(self.markers, ["Reconhecimento", "OCR 1", "OCR 2", "OCR 3", "OCR 4", "OCR 5"])
         self.executor.capturar_tela_pil.assert_called_once_with(region=(410, 290, 80, 20))
         self.executor.extrair_textos_ocr_rapido.assert_not_called()
 
@@ -132,9 +132,9 @@ class OcrDiagnosticsTests(unittest.TestCase):
         success, report = self.run_search()
         self.assertTrue(success)
         self.assertTrue(report["success"])
-        self.assertEqual(self.markers, ["OCR 1", "OCR 2", "OCR 3", "OCR 4", "OCR 5", "Reconhecimento"])
+        self.assertEqual(self.markers, ["Reconhecimento", "OCR 1", "OCR 2", "OCR 3", "OCR 4", "OCR 5"])
         self.assertGreaterEqual(
-            self.executor.marcar_area_reconhecida.call_args.kwargs["duracao"],
+            self.executor.marcar_area_reconhecida.call_args_list[0].kwargs["duracao"],
             0.72,
         )
 
@@ -143,7 +143,7 @@ class OcrDiagnosticsTests(unittest.TestCase):
         executor.bounds_reconhecimento = Mock(return_value=(12, 24, 80, 20))
         executor.feedback_visual_habilitado = Mock(return_value=True)
         executor.marcar_regiao_absoluta = Mock(side_effect=[False, True])
-        with patch.object(motor, "TK_DISPONIVEL", True), patch.object(motor.time, "sleep"):
+        with patch.object(motor.os, "name", "posix"), patch.object(motor, "TK_DISPONIVEL", True), patch.object(motor.time, "sleep"):
             shown = executor.marcar_area_reconhecida(
                 {"left": 12, "top": 24, "width": 80, "height": 20},
                 duracao=0.72,

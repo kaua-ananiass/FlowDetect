@@ -17,6 +17,7 @@ class OcrAnchorTests(unittest.TestCase):
         self.executor.localizar_texto_composto_por_ocr_screenshot = Mock(return_value=[])
         self.config = {
             "largura": 160, "altura": 30, "offset_x": -20, "offset_y": -15,
+            "_ocr_anchor_first": True,
             "ocr_target_layouts": [{}, {"width": 40, "height": 20, "offsetX": 55, "offsetY": 15}],
         }
         self.anchor = {"left": 2000, "top": -5, "width": 120, "height": 20, "texto": "Meu Perfil"}
@@ -36,6 +37,142 @@ class OcrAnchorTests(unittest.TestCase):
         return {**self.anchor, "text": "Meu Perfil | 135", "score": 0.98,
                 "ocr_related_bounds": [self.anchor, self.value] if bounds is None else bounds}
 
+    def test_configured_hybrid_finds_image_before_reading_text(self):
+        eventos = []
+        visual = {"left": 1980, "top": -10, "width": 240, "height": 100}
+        self.executor.procurar_imagem_por_template.side_effect = (
+            lambda *args, **kwargs: eventos.append("imagem") or visual
+        )
+        self.executor.confirmar_alvos_ocr_por_layout_visual = Mock(
+            side_effect=lambda *args, **kwargs: eventos.append("texto") or {
+                **visual, "ocr_anchor_confirmed": True,
+                "ocr_bounds": self.anchor,
+                "ocr_related_bounds": [self.anchor, self.value],
+                "ocr_text": "Meu Perfil | 135",
+            }
+        )
+        config = {chave: valor for chave, valor in self.config.items() if chave != "_ocr_anchor_first"}
+        with patch.object(motor, "OCR_DISPONIVEL", True):
+            local = self.executor.localizar_referencia_hibrida_ocr_visual(
+                "reference.png", "Meu Perfil => 135",
+                region=(1920, -100, 1920, 1080),
+                dimensoes_referencia=(240, 100), leitura_relativa=config,
+            )
+        self.assertEqual(eventos, ["imagem", "texto"])
+        self.assertEqual(local["search_stage"], "visual_ocr_hybrid")
+        self.executor.localizar_texto_composto_por_ocr_screenshot.assert_not_called()
+
+    def test_single_individual_ocr_uses_visual_first_without_losing_its_action(self):
+        eventos = []
+        visual = {"left": 410, "top": 210, "width": 160, "height": 50}
+        self.executor.procurar_imagem_por_template.side_effect = (
+            lambda *args, **kwargs: eventos.append("imagem") or visual
+        )
+        self.executor.confirmar_alvos_ocr_por_layout_visual = Mock(
+            side_effect=lambda *args, **kwargs: eventos.append("texto") or {
+                **visual, "ocr_anchor_confirmed": True, "ocr_text": "Meu Perfil",
+                "ocr_bounds": {"left": 430, "top": 220, "width": 80, "height": 22},
+            }
+        )
+        config = {
+            "largura": 80, "altura": 22,
+            "ocr_target_layouts": [{"texto": "Meu Perfil", "action": "continuar"}],
+        }
+        with patch.object(motor, "OCR_DISPONIVEL", True):
+            local = self.executor.localizar_referencia_hibrida_ocr_visual(
+                "reference.png", "Meu Perfil", region=(0, 0, 1200, 800),
+                dimensoes_referencia=(160, 50), leitura_relativa=config,
+            )
+        self.assertEqual(eventos, ["imagem", "texto"])
+        self.assertTrue(local["ocr_target_individual"])
+        self.assertEqual(local["ocr_target_action"]["action"], "continuar")
+
+    def test_visual_crop_accepts_one_matching_ocr_variant_without_image_substitution(self):
+        visual = {"left": 400, "top": 200, "width": 160, "height": 50}
+        self.executor.capturar_tela_pil = Mock(return_value=(motor.Image.new("RGB", (80, 22)), 0, 0))
+        self.executor.extrair_textos_ocr_rapido = Mock(return_value=["outra frase", "Meu Perfil"])
+        self.executor.comparar_recorte_alvo_ocr_visual = Mock(
+            side_effect=AssertionError("Imagem nao pode substituir a leitura do texto")
+        )
+        config = {"largura": 80, "altura": 22, "ocr_target_layouts": [{"texto": "Meu Perfil"}]}
+        confirmado = self.executor.confirmar_alvos_ocr_por_layout_visual(
+            visual, texto_esperado="Meu Perfil", leitura_relativa=config,
+            dimensoes_referencia=(160, 50), marcar=False,
+            permitir_equivalencia_visual=False,
+        )
+        self.assertEqual(confirmado["ocr_text"], "Meu Perfil")
+        self.assertTrue(self.executor.ocr_hibrido_tem_todos_alvos(confirmado, "Meu Perfil", config))
+
+    def test_meu_perfil_requires_meu_not_just_perfil_or_seu_perfil(self):
+        self.assertFalse(self.executor.texto_ocr_confirma_alvo("Meu Perfil", "Perfil", limite_ratio=.86))
+        self.assertFalse(self.executor.texto_ocr_confirma_alvo("Meu Perfil", "Trocar Perfil", limite_ratio=.86))
+        self.assertFalse(self.executor.texto_ocr_confirma_alvo("Meu Perfil", "Seu Perfil", limite_ratio=.86))
+        self.assertTrue(self.executor.texto_ocr_confirma_alvo("Meu Perfil", "Meu Perfi", limite_ratio=.86))
+        self.assertTrue(self.executor.texto_ocr_confirma_alvo("Meu Perfil", "qmeuperfil", limite_ratio=.86))
+
+    def test_screen_ocr_chooses_full_phrase_over_similar_heading(self):
+        items = [
+            {"text": "Trocar", "left": 20, "top": 30, "width": 55, "height": 20, "conf": .96},
+            {"text": "Perfil", "left": 80, "top": 30, "width": 55, "height": 20, "conf": .96},
+            {"text": "Meu", "left": 80, "top": 130, "width": 32, "height": 20, "conf": .96},
+            {"text": "Perfil", "left": 116, "top": 130, "width": 55, "height": 20, "conf": .96},
+        ]
+        self.executor.capturar_itens_ocr_screenshot = Mock(return_value=(
+            motor.Image.new("RGB", (300, 220)), 0, 0, items, (0, 0, 300, 220),
+        ))
+        with patch.object(motor, "OCR_DISPONIVEL", True):
+            candidatos = motor.ExecutorAutomacao.localizar_texto_por_ocr_screenshot(
+                self.executor, "Meu Perfil", retornar_candidatos=True,
+            )
+        self.assertTrue(candidatos)
+        self.assertEqual(candidatos[0]["text"], "Meu Perfil")
+        self.assertEqual(candidatos[0]["top"], 130)
+        self.assertFalse(any(item["text"] == "Perfil" for item in candidatos))
+
+    def test_screen_ocr_does_not_claim_meu_perfil_when_only_perfil_is_visible(self):
+        self.executor.capturar_itens_ocr_screenshot = Mock(return_value=(
+            motor.Image.new("RGB", (300, 220)), 0, 0,
+            [{"text": "Perfil", "left": 80, "top": 30, "width": 55, "height": 20, "conf": .96}],
+            (0, 0, 300, 220),
+        ))
+        self.executor.localizar_texto_por_ocr_em_controles_coloridos = Mock(return_value=None)
+        self.executor.salvar_captura_bruta_reconhecimento = Mock(return_value=None)
+        self.executor._diagnosticos_ocr_salvos = set()
+        self.executor._janela_contexto = ""
+        with patch.object(motor, "OCR_DISPONIVEL", True):
+            candidatos = motor.ExecutorAutomacao.localizar_texto_por_ocr_screenshot(
+                self.executor, "Meu Perfil", retornar_candidatos=True,
+                _tentativa_ampliada=True,
+            )
+        self.assertEqual(candidatos, [])
+
+    def test_image_cannot_replace_failed_screen_ocr(self):
+        visual = {"left": 400, "top": 200, "width": 145, "height": 58}
+        self.executor.construir_regiao_ocr_relativa = Mock(return_value=(405, 205, 130, 38))
+        self.executor.capturar_tela_pil = Mock(return_value=(motor.Image.new("RGB", (130, 38)), 0, 0))
+        self.executor.extrair_textos_ocr_rapido = Mock(return_value=["Perfil"])
+        self.executor.salvar_variavel_contexto = Mock()
+        self.executor.confirmar_ocr_visual_pela_referencia = Mock(
+            side_effect=AssertionError("A imagem nao pode confirmar uma palavra ausente")
+        )
+        with patch.object(motor, "OCR_DISPONIVEL", True):
+            confirmado = self.executor.confirmar_ocr_relativo(
+                visual, texto_esperado="Meu Perfil", leitura_relativa={"largura": 130, "altura": 38},
+                dimensoes_referencia=(145, 58), marcar_ocr=False,
+                caminho_referencia="reference.png",
+            )
+        self.assertFalse(confirmado)
+        self.executor.salvar_variavel_contexto.assert_not_called()
+
+    def test_hybrid_feedback_is_visual_then_ocr_once(self):
+        eventos = []
+        self.executor.marcar_area_reconhecida = Mock(side_effect=lambda *a, **k: eventos.append("imagem"))
+        self.executor.marcar_alvos_ocr_em_sequencia = Mock(side_effect=lambda *a, **k: eventos.append("ocr"))
+        local = {"visual_confirmed": True}
+        self.executor.marcar_confirmacao_hibrida(local, self.config, (240, 100))
+        self.executor.marcar_confirmacao_hibrida(local, self.config, (240, 100))
+        self.assertEqual(eventos, ["imagem", "ocr"])
+
     def test_all_targets_stay_pending_until_the_image_confirms(self):
         local = self.search(self.candidate())
         self.assertTrue(local["ocr_anchor_confirmed"])
@@ -45,7 +182,7 @@ class OcrAnchorTests(unittest.TestCase):
         self.assertAlmostEqual(local["ocr_layout_scale_x"], 1.0, places=2)
         self.assertAlmostEqual(local["ocr_layout_scale_y"], 0.92, places=2)
         self.assertEqual(len(local["ocr_related_bounds"]), 2)
-        self.executor.marcar_alvos_ocr_em_sequencia.assert_called_once()
+        self.executor.marcar_alvos_ocr_em_sequencia.assert_not_called()
         self.assertTrue(self.executor.ocr_hibrido_tem_todos_alvos(local, "Meu Perfil => 135", self.config))
 
     def test_wrong_second_target_blocks_even_with_matching_image(self):
@@ -261,7 +398,7 @@ class OcrAnchorTests(unittest.TestCase):
         )
         self.assertTrue(local["visual_confirmed"])
         self.assertEqual(self.executor.localizar_texto_composto_por_ocr_screenshot.call_count, chamadas_ocr)
-        self.executor.marcar_alvos_ocr_em_sequencia.assert_called_once()
+        self.executor.marcar_alvos_ocr_em_sequencia.assert_not_called()
 
     def test_four_ocr_targets_keep_the_same_layout_instead_of_using_first_matches(self):
         partes = ["Tipo da nota", "ISS Saida", "ISS Tomador", "Faturamento e Deducoes"]
@@ -430,7 +567,7 @@ class OcrAnchorTests(unittest.TestCase):
         executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
         executor.cancelamento_solicitado = Mock(return_value=False)
         executor.bounds_reconhecimento = Mock(return_value=(100, 120, 200, 90))
-        executor.marcar_regiao_absoluta = Mock()
+        executor.marcar_area_reconhecida = Mock()
 
         executor.marcar_alvos_ocr_em_sequencia(
             {"ocr_bounds": {"left": 140, "top": 146, "width": 44, "height": 18}},
@@ -445,8 +582,9 @@ class OcrAnchorTests(unittest.TestCase):
             dimensoes_referencia=(200, 90),
         )
 
-        self.assertEqual(executor.marcar_regiao_absoluta.call_args.kwargs["tema"], "ocr_busca_3")
-        self.assertEqual(executor.marcar_regiao_absoluta.call_args.kwargs["etiqueta"], "OCR 3")
+        self.assertEqual(executor.marcar_area_reconhecida.call_args.kwargs["tema"], "ocr")
+        self.assertEqual(executor.marcar_area_reconhecida.call_args.kwargs["etiqueta"], "OCR 3")
+        self.assertEqual(executor.marcar_area_reconhecida.call_args.kwargs["margem"], 18)
         self.assertEqual(executor.tema_alvo_ocr(4), "ocr_busca_5")
         self.assertEqual(executor.tema_alvo_ocr(5), "ocr_busca_6")
 
@@ -898,6 +1036,120 @@ class OcrAnchorTests(unittest.TestCase):
         self.assertEqual(executor.capturar_tela_pil.call_count, 1)
         self.assertEqual(len(candidatos), 1)
         self.assertEqual(len(candidatos[0]["ocr_related_bounds"]), 2)
+
+
+@unittest.skipUnless(motor.OPENCV_DISPONIVEL and motor.OCR_DISPONIVEL, "OCR/OpenCV indisponivel")
+class OcrFieldFallbackTests(unittest.TestCase):
+    def setUp(self):
+        self.executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        self.executor.modo_teste_reconhecimento = True
+        self.executor.cancelamento_solicitado = Mock(return_value=False)
+        self.executor.localizar_texto_por_ocr_em_controles_coloridos = Mock(return_value=None)
+        self.executor.salvar_captura_bruta_reconhecimento = Mock(return_value=None)
+        self.executor._diagnosticos_ocr_salvos = set()
+        self.executor._janela_contexto = ""
+        imagem = motor.Image.new("RGB", (640, 240), "white")
+        desenho = motor.ImageDraw.Draw(imagem)
+        desenho.rectangle((60, 30, 500, 72), outline="#888888")
+        desenho.rectangle((60, 115, 500, 157), outline="#888888")
+        self.executor.capturar_itens_ocr_screenshot = Mock(return_value=(
+            imagem, 100, 200, [], (100, 200, 640, 240),
+        ))
+
+    def test_screen_ocr_reads_the_field_after_full_screen_misses_placeholder(self):
+        with patch.object(motor.pytesseract, "image_to_string", side_effect=["Perfil", "Meu Perfil"]) as read:
+            candidatos = self.executor.localizar_texto_por_ocr_screenshot(
+                "Meu Perfil", confianca=0.8, retornar_candidatos=True,
+            )
+
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual(len(candidatos), 1)
+        self.assertEqual(candidatos[0]["text"], "Meu Perfil")
+        self.assertEqual(candidatos[0]["source"], "ocr_campo")
+        self.assertAlmostEqual(candidatos[0]["top"], 315, delta=5)
+        self.assertAlmostEqual(candidatos[0]["left"], 160, delta=5)
+
+    def test_field_fallback_never_accepts_a_similar_but_different_phrase(self):
+        with patch.object(motor.pytesseract, "image_to_string", return_value="Seu Perfil"):
+            candidatos = self.executor.localizar_texto_por_ocr_screenshot(
+                "Meu Perfil", confianca=0.8, retornar_candidatos=True,
+            )
+
+        self.assertEqual(candidatos, [])
+
+    def test_screen_ocr_reads_a_borderless_rounded_search_field(self):
+        imagem = motor.Image.new("RGB", (640, 240), "white")
+        desenho = motor.ImageDraw.Draw(imagem)
+        desenho.rounded_rectangle((120, 38, 380, 75), radius=18, fill=(246, 246, 247))
+        self.executor.capturar_itens_ocr_screenshot.return_value = (
+            imagem, 100, 200, [], (100, 200, 640, 240),
+        )
+
+        with patch.object(motor.pytesseract, "image_to_string", return_value="Digite o CNPJ da empresa"):
+            candidatos = self.executor.localizar_texto_por_ocr_screenshot(
+                "Digite o CNPJ da empresa", confianca=0.72, retornar_candidatos=True,
+            )
+
+        self.assertEqual(len(candidatos), 1)
+        self.assertEqual(candidatos[0]["source"], "ocr_campo")
+        self.assertAlmostEqual(candidatos[0]["left"], 220, delta=3)
+        self.assertAlmostEqual(candidatos[0]["top"], 238, delta=3)
+
+
+@unittest.skipUnless(motor.OPENCV_DISPONIVEL and motor.OCR_DISPONIVEL, "OCR/OpenCV indisponivel")
+class OcrGuidedVisualTests(unittest.TestCase):
+    def test_reference_edges_must_be_near_the_confirmed_ocr(self):
+        executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.limitar_regiao = Mock(side_effect=lambda region, **kwargs: region)
+        referencia = motor.Image.new("RGB", (180, 60), "white")
+        desenho = motor.ImageDraw.Draw(referencia)
+        desenho.rectangle((2, 2, 177, 57), outline="#777777")
+        desenho.line((53, 2, 53, 57), fill="#777777")
+        desenho.rectangle((19, 18, 36, 35), outline="#333333")
+        desenho.text((62, 18), "CNPJ fornecedor", fill="#333333")
+        tela = motor.Image.new("RGB", (650, 260), "white")
+        tela.paste(referencia, (190, 100))
+        executor.capturar_tela_pil = Mock(side_effect=lambda region=None: (
+            tela.crop((region[0], region[1], region[0] + region[2], region[1] + region[3])),
+            region[0], region[1],
+        ))
+
+        with patch.object(motor.Image, "open", return_value=referencia):
+            correto = executor.confirmar_visual_proximo_ocr(
+                {"left": 195, "top": 100, "width": 180, "height": 60}, "referencia.png",
+            )
+            distante = executor.confirmar_visual_proximo_ocr(
+                {"left": 410, "top": 100, "width": 180, "height": 60}, "referencia.png",
+            )
+
+        self.assertIsNotNone(correto)
+        self.assertEqual((correto["left"], correto["top"]), (190, 100))
+        self.assertGreater(correto["score"], 0.55)
+        self.assertIsNone(distante)
+
+    def test_hybrid_rechecks_wider_crop_when_saved_ocr_box_cuts_the_word(self):
+        executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.limitar_regiao = Mock(side_effect=lambda region, **kwargs: region)
+        executor.capturar_tela_pil = Mock(side_effect=lambda region=None: (
+            motor.Image.new("RGB", (region[2], region[3]), "white"), region[0], region[1],
+        ))
+        executor.extrair_textos_ocr_rapido = Mock(return_value=["CNPJ do forneced"])
+        executor.extrair_texto_ocr_imagem_pil = Mock(return_value="CNPJ do fornecedor")
+        leitura = {
+            "largura": 140, "altura": 40, "offset_x": 47, "offset_y": -2,
+            "ocr_target_layouts": [{"texto": "CNPJ do fornecedor"}],
+        }
+
+        resultado = executor.confirmar_alvos_ocr_por_layout_visual(
+            {"left": 100, "top": 100, "width": 317, "height": 70},
+            texto_esperado="CNPJ do fornecedor", leitura_relativa=leitura,
+            dimensoes_referencia=(317, 70), marcar=False,
+        )
+
+        self.assertIsNotNone(resultado)
+        self.assertEqual(resultado["ocr_text"], "CNPJ do fornecedor")
+        self.assertEqual(resultado["ocr_bounds"]["width"], 202)
+        self.assertEqual(executor.capturar_tela_pil.call_count, 2)
 
 
 if __name__ == "__main__":
