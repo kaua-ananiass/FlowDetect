@@ -56,3 +56,25 @@ test("mostra o valor da coluna escolhida para a linha atual do loop", () => {
   assert.equal(selectedColumn, "Cidade");
   assert.equal(value, "Anapolis");
 });
+
+test("retira CNPJs escolhidos sem desalinha-los das demais colunas nem mudar o mapa", () => {
+  const automation = { steps: [{ type: "data_source", name: "CNPJ",
+    values: ["11.111.111/0001-11", "22.222.222/0001-22", "33.333.333/0001-33"],
+    rows: [
+      { CNPJ: "11.111.111/0001-11", Empresa: "Primeira" },
+      { CNPJ: "22.222.222/0001-22", Empresa: "Ignorar" },
+      { CNPJ: "33.333.333/0001-33", Empresa: "Terceira" }
+    ] }] };
+  const loop = context.spreadsheetLoopInfo(automation);
+  const excluded = new Set([context.loopRowKey(loop, 1)]);
+  const selection = context.selectedLoopRows(loop, excluded);
+  assert.deepEqual(Array.from(selection.includedIndices), [0, 2]);
+  assert.equal(selection.excludedRows[0].company, "Ignorar");
+  const configured = context.automationWithSelectedLoopRows(automation, selection.includedIndices);
+  assert.deepEqual(Array.from(configured.steps[0].values), ["11.111.111/0001-11", "33.333.333/0001-33"]);
+  assert.deepEqual(Array.from(configured.steps[0].rows.map((row) => row.Empresa)), ["Primeira", "Terceira"]);
+  assert.equal(automation.steps[0].values.length, 3);
+  const live = context.loopInfoForRun(automation, { loopIncludedIndices: selection.includedIndices });
+  assert.equal(context.spreadsheetCompanyLabel(live, 1), "Terceira");
+  assert.throws(() => context.automationWithSelectedLoopRows(automation, []), /ao menos uma empresa/);
+});

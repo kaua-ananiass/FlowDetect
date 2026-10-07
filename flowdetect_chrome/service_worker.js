@@ -197,7 +197,7 @@ async function checkAutomationScreen(raw, tabId) {
     response?.ok ? `Aguardando o texto: ${guard.text}` : "Recarregue a pagina para a extensao identificar a tela." };
 }
 
-function createRun(automation, tabId, startRow = 1) {
+function createRun(automation, tabId, startRow = 1, loopIncludedIndices = null, loopExcludedRows = []) {
   return {
     id: crypto.randomUUID(),
     automationId: String(automation?.id || ""),
@@ -209,6 +209,8 @@ function createRun(automation, tabId, startRow = 1) {
     finishedAt: "",
     currentStep: 0,
     totalSteps: Array.isArray(automation?.steps) ? automation.steps.length : 0,
+    loopIncludedIndices: Array.isArray(loopIncludedIndices) ? loopIncludedIndices : null,
+    loopExcludedRows: Array.isArray(loopExcludedRows) ? loopExcludedRows : [],
     recentSteps: [],
     lastMessage: "",
     logs: [],
@@ -217,6 +219,7 @@ function createRun(automation, tabId, startRow = 1) {
       sourceName: "",
       rows: [],
       summary: {},
+      excludedRows: Array.isArray(loopExcludedRows) ? loopExcludedRows : [],
       requestedStartRow: Math.max(1, Math.trunc(Number(startRow) || 1))
     },
     requestedStartRow: Math.max(1, Math.trunc(Number(startRow) || 1))
@@ -1131,7 +1134,7 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
   }
 }
 
-async function executeAutomation(automation, tabId, startRow = 1) {
+async function executeAutomation(automation, tabId, startRow = 1, loopIncludedIndices = null, loopExcludedRows = []) {
   if (activeRuns.size) throw new Error("Ja existe uma automacao executando ou aguardando a tela. Pare essa execucao primeiro.");
   if (!automation || automation.schema !== "flowdetect_chrome_automation" || ![1, 2, 3].includes(Number(automation.version))) {
     throw new Error("Arquivo de automação Chrome inválido.");
@@ -1143,9 +1146,11 @@ async function executeAutomation(automation, tabId, startRow = 1) {
   const screen = await checkAutomationScreen(screenGuard, tabId);
   if (!screen.ready) throw new Error(screen.reason);
   if (activeRuns.size) throw new Error("Ja existe uma automacao executando.");
-  const run = createRun(automation, tabId, startRow);
+  const run = createRun(automation, tabId, startRow, loopIncludedIndices, loopExcludedRows);
   activeRuns.set(run.id, run);
   await addLog(run, `Iniciando ${run.automationName}.`);
+  if (run.loopExcludedRows.length) await addLog(run,
+    `${run.loopExcludedRows.length} linha(s) removida(s) deste loop antes da execução.`, "info");
   try {
     try {
       await startTabCapture(run);
@@ -1242,7 +1247,8 @@ async function handleMessage(message, sender) {
   if (message?.type === "flowdetect-start") {
     const tabId = Number(message.tabId || sender?.tab?.id);
     if (!Number.isInteger(tabId)) throw new Error("Não encontrei a aba que receberá a automação.");
-    const run = await executeAutomation(message.automation, tabId, message.startRow);
+    const run = await executeAutomation(message.automation, tabId, message.startRow,
+      message.loopIncludedIndices, message.loopExcludedRows);
     return { ok: run.status === "completed", run };
   }
   if (message?.type === "flowdetect-stop") {

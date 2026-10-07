@@ -40,6 +40,10 @@ test("Chrome popup keeps execution details inside the active automation card", (
   assert.match(html, /class="delete-automation"/);
   assert.match(html, /class="loop-start" hidden/);
   assert.match(html, /class="loop-start-choice"/);
+  assert.match(html, /class="loop-edit-settings" hidden/);
+  assert.match(html, /class="loop-edit-search"/);
+  assert.match(html, /class="loop-save-exclusions"/);
+  assert.match(css, /\.loop-edit-row\.is-excluded/);
   assert.doesNotMatch(html, /class="loop-start-copy"/);
   assert.match(html, /class="execution-column-choice"/);
   assert.match(source, /const ordered = \[\.\.\.automationsCache\]\.sort/);
