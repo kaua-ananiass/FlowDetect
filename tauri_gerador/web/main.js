@@ -218,8 +218,8 @@ const state = {
       order: 0,
     },
   },
-  commandMapZoom: 0.96,
-  commandMapRequestedZoom: 0.96,
+  commandMapZoom: 1,
+  commandMapRequestedZoom: 1,
   commandMapViewMode: "sequence",
   commandMapPageSequence: "principal",
   commandMapPageSequenceLock: null,
@@ -1390,7 +1390,7 @@ function autoFitCommandMapZoom() {
   if (!commandMapList || state.activeTab !== "commands") {
     return;
   }
-  state.commandMapRequestedZoom = normalizeCommandMapZoom(state.commandMapRequestedZoom, state.commandMapZoom || 0.96);
+  state.commandMapRequestedZoom = normalizeCommandMapZoom(state.commandMapRequestedZoom, state.commandMapZoom || 1);
   state.commandMapZoom = state.commandMapRequestedZoom;
   applyCommandMapZoom();
 }
@@ -9958,11 +9958,16 @@ function renderOcrTargetRows(fieldAttr, actionAttr, text = "", layouts = []) {
               <input ${fieldAttr}="ocrTargetSuccessDelay" data-ocr-target-success-delay type="hidden" value="${formatTransitionDelayValue(layouts?.[index]?.successDelay ?? layouts?.[index]?.success_delay ?? 0.3)}" />
               <input ${fieldAttr}="ocrTargetFailureDelay" data-ocr-target-failure-delay type="hidden" value="${formatTransitionDelayValue(layouts?.[index]?.failureDelay ?? layouts?.[index]?.failure_delay ?? 0.3)}" />
             </label>
-            <label class="ocr-target-editable" title="Permitir trocar somente este texto OCR na extensao antes de executar">
-              <input ${fieldAttr}="ocrTargetEditableChrome" data-ocr-target-editable type="checkbox" ${layouts?.[index]?.editableChrome || layouts?.[index]?.editable_chrome ? "checked" : ""} />
-              <span>Editavel na extensao</span>
-            </label>
-            <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo" ${targets.length <= 1 ? "disabled" : ""}>&times;</button>
+            <div class="ocr-target-actions">
+              <label class="ocr-target-editable" title="Permitir trocar somente este texto OCR na extensão antes de executar">
+                <span>Editável?</span>
+                <input ${fieldAttr}="ocrTargetEditableChrome" data-ocr-target-editable type="checkbox" aria-label="Editar o texto OCR ${index + 1} na extensão" ${layouts?.[index]?.editableChrome || layouts?.[index]?.editable_chrome ? "checked" : ""} />
+                <span class="ocr-target-editable-switch" aria-hidden="true"></span>
+              </label>
+              <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" aria-label="Excluir texto alvo ${index + 1}" title="Excluir texto alvo" ${targets.length <= 1 ? "disabled" : ""}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" /></svg>
+              </button>
+            </div>
           </div>
         `;
       }).join("")}
@@ -9979,7 +9984,11 @@ function refreshOcrTargetRows(container) {
     const input = row.querySelector("[data-ocr-target-field]");
     if (input) input.placeholder = index === 0 ? "Ex.: Lanc Cont. Valor Docum" : "Ex.: 135";
     const remove = row.querySelector(".ocr-target-remove");
-    if (remove) remove.disabled = rows.length <= 1;
+    if (remove) {
+      remove.disabled = rows.length <= 1;
+      remove.setAttribute("aria-label", `Excluir texto alvo ${index + 1}`);
+    }
+    row.querySelector("[data-ocr-target-editable]")?.setAttribute("aria-label", `Editar o texto OCR ${index + 1} na extensão`);
   });
 }
 
@@ -10010,11 +10019,16 @@ function addOcrTargetRow(container, fieldAttr, actionAttr, value = "") {
       <input ${fieldAttr}="ocrTargetSuccessDelay" data-ocr-target-success-delay type="hidden" value="0.3" />
       <input ${fieldAttr}="ocrTargetFailureDelay" data-ocr-target-failure-delay type="hidden" value="0.3" />
     </label>
-    <label class="ocr-target-editable" title="Permitir trocar somente este texto OCR na extensao antes de executar">
-      <input ${fieldAttr}="ocrTargetEditableChrome" data-ocr-target-editable type="checkbox" />
-      <span>Editavel na extensao</span>
-    </label>
-    <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" title="Remover texto alvo">&times;</button>
+    <div class="ocr-target-actions">
+      <label class="ocr-target-editable" title="Permitir trocar somente este texto OCR na extensão antes de executar">
+        <span>Editável?</span>
+        <input ${fieldAttr}="ocrTargetEditableChrome" data-ocr-target-editable type="checkbox" aria-label="Editar o texto OCR ${index + 1} na extensão" />
+        <span class="ocr-target-editable-switch" aria-hidden="true"></span>
+      </label>
+      <button class="ocr-target-remove" ${actionAttr}="remove-ocr-target" type="button" aria-label="Excluir texto alvo ${index + 1}" title="Excluir texto alvo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v6M14 11v6" /></svg>
+      </button>
+    </div>
   `;
   list.appendChild(row);
   refreshOcrTargetRows(container);
@@ -20557,6 +20571,17 @@ function commandMapBranchDelayLabel(value = 0) {
   return `${normalized || "0"}s`;
 }
 
+function hasChromeEditableOcrTargets(details = {}) {
+  return Array.isArray(details?.ocr_target_layouts)
+    && details.ocr_target_layouts.some((target) => Boolean(target?.editableChrome || target?.editable_chrome));
+}
+
+function chromeEditableOcrTargetColor(details = {}) {
+  const layouts = Array.isArray(details?.ocr_target_layouts) ? details.ocr_target_layouts : [];
+  const index = layouts.findIndex((target) => Boolean(target?.editableChrome || target?.editable_chrome));
+  return index >= 0 ? OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length] : "";
+}
+
 function renderCommandMapCardSegment(event, index = 0, events = [], options = {}) {
   const isFirstCard = index === 0;
   const isLastCard = index === events.length - 1;
@@ -20567,6 +20592,8 @@ function renderCommandMapCardSegment(event, index = 0, events = [], options = {}
   const isSpreadsheetCard = event.type === "sequencia_planilha" || event.type === "escrever_planilha" || event.type === "resultado_relatorio" || event.type === "comparar_planilha_tela";
   const isLoopMarker = isLoopMarkerType(event.type);
   const isRuntimeEditable = event.type === "texto_livre" && Boolean(event.details?.editavel_execucao);
+  const isChromeOcrEditable = (isRecognitionCard || isOcrTextCard) && hasChromeEditableOcrTargets(event.details);
+  const editableOcrColor = isChromeOcrEditable ? chromeEditableOcrTargetColor(event.details) : "";
   const isNewlyCreated = Number(state.createdBlockAnimationOrder) === Number(event.order);
   const isSelectedForMove = state.commandMapSelectedCardKeys?.has(commandMapCardClientKey(event));
   const primaryActionClass = isRecognitionCard
@@ -20597,8 +20624,8 @@ function renderCommandMapCardSegment(event, index = 0, events = [], options = {}
     options.extraSegmentClass || "",
   ].filter(Boolean).join(" ");
   return `
-    <div class="${escapeHtml(wrapperClass)}" data-order="${escapeHtml(event.order)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" ${options.treeNode ? 'data-tree-node-segment="true"' : ""}>
-      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isInlineExpanded ? "is-inline-expanded" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarker ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""} ${isNewlyCreated ? "is-newly-created" : ""} ${isSelectedForMove ? "is-selected-for-move" : ""}" data-order="${escapeHtml(event.order)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
+    <div class="${escapeHtml(wrapperClass)}" data-order="${escapeHtml(event.order)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" ${editableOcrColor ? `data-editable-ocr-color="${escapeHtml(editableOcrColor)}"` : ""} ${options.treeNode ? 'data-tree-node-segment="true"' : ""}>
+      <article class="command-tree-card ${isRecognitionCard ? "is-visual-recognition" : ""} ${isInlineExpanded ? "is-inline-expanded" : ""} ${isSpreadsheetCard ? "is-spreadsheet-card" : ""} ${isLoopMarker ? "is-loop-marker" : ""} ${isRuntimeEditable ? "is-runtime-editable" : ""} ${isChromeOcrEditable ? "is-chrome-ocr-editable" : ""} ${isNewlyCreated ? "is-newly-created" : ""} ${isSelectedForMove ? "is-selected-for-move" : ""}" data-order="${escapeHtml(event.order)}" data-client-key="${escapeHtml(event.clientKey || String(event.order))}" data-type="${escapeHtml(event.type)}" data-delay="${escapeHtml(event.delay)}">
         <div class="command-tree-top is-command-chip-top">
           <div class="command-tree-main">
             <span class="command-index">${String(event.order).padStart(2, "0")}</span>
@@ -21650,7 +21677,7 @@ function handleCommandMapTreeWheelZoom(event) {
 
   event.preventDefault();
   const listRect = commandMapList.getBoundingClientRect();
-  const currentZoom = normalizeCommandMapZoom(state.commandMapZoom, 0.96);
+  const currentZoom = normalizeCommandMapZoom(state.commandMapZoom, 1);
   // Cada entalhe do mouse altera poucos pontos percentuais. O limite evita
   // que um scroll muito longo de uma vez salte para uma escala distante.
   const zoomFactor = commandMapWheelZoomFactor(delta, event.deltaMode);
@@ -26270,6 +26297,16 @@ commandMapList.addEventListener("change", (event) => {
   const target = event.target;
   if (syncOcrTargetActionControlToSource(target)) {
     return;
+  }
+  if (target.matches("[data-ocr-target-editable]")) {
+    const card = target.closest(".command-tree-card");
+    const segment = card?.closest(".command-flow-segment");
+    const editableRow = card?.querySelector("[data-ocr-target-row]:has([data-ocr-target-editable]:checked)");
+    card?.classList.toggle("is-chrome-ocr-editable", Boolean(editableRow));
+    if (segment) {
+      if (editableRow) segment.dataset.editableOcrColor = editableRow.dataset.ocrTargetColor || "azul";
+      else delete segment.dataset.editableOcrColor;
+    }
   }
   if (target.matches('[data-tree-field="mouseTargetMode"], [data-field="mouseTargetMode"]')) {
     const card = target.closest(".command-tree-card, .flow-card");

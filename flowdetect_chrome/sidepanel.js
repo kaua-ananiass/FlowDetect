@@ -17,6 +17,7 @@ const screenGuardRefreshers = new Set();
 const carouselStates = new Map();
 const companyPreviewRows = new Map();
 const editableOcrDrafts = new Map();
+const loopExclusionDrafts = new Map();
 const expandedRunLogs = new Set();
 let managerViewRequested = false;
 
@@ -395,19 +396,63 @@ function spreadsheetLoopCellValue(row, column) {
 }
 
 function spreadsheetLoopInfo(automation) {
-  const source = (automation?.steps || []).find((step) => (
+  const sourceIndex = (automation?.steps || []).findIndex((step) => (
     step?.type === "data_source" && Array.isArray(step.values) && step.values.length
   ));
-  if (!source) return null;
+  if (sourceIndex < 0) return null;
+  const source = automation.steps[sourceIndex];
   const name = String(source.name || "valor").trim() || "valor";
   const rows = Array.isArray(source.rows) ? source.rows : [];
   return {
+    sourceIndex,
     name,
     total: source.values.length,
     values: source.values.map((value) => String(value ?? "")),
     rows,
     columns: spreadsheetLoopColumns(rows, name)
   };
+}
+
+function loopRowKey(loop, index) {
+  const row = loop?.rows?.[index];
+  const cnpjColumn = loop?.columns?.find((column) => normalizedSpreadsheetColumn(column) === "cnpj");
+  const candidate = spreadsheetLoopCellValue(row, cnpjColumn) || String(loop?.values?.[index] ?? "");
+  const digits = candidate.replace(/\D/g, "");
+  if (digits.length === 14) return `cnpj:${digits}`;
+  const value = String(loop?.values?.[index] ?? "").trim().toLocaleLowerCase();
+  return `linha:${index}:${value}`;
+}
+
+function selectedLoopRows(loop, excludedKeys) {
+  const excluded = excludedKeys instanceof Set ? excludedKeys : new Set(excludedKeys || []);
+  const includedIndices = [];
+  const excludedRows = [];
+  for (let index = 0; index < loop.total; index += 1) {
+    if (excluded.has(loopRowKey(loop, index))) {
+      excludedRows.push({ index: index + 1, value: loop.values[index], company: spreadsheetCompanyLabel(loop, index) });
+    } else includedIndices.push(index);
+  }
+  return { includedIndices, excludedRows };
+}
+
+function automationWithSelectedLoopRows(automation, includedIndices) {
+  const loop = spreadsheetLoopInfo(automation);
+  if (!loop || !includedIndices?.length) throw new Error("Selecione ao menos uma empresa para executar.");
+  const source = automation.steps[loop.sourceIndex];
+  const steps = automation.steps.slice();
+  steps[loop.sourceIndex] = { ...source,
+    values: includedIndices.map((index) => loop.values[index]),
+    ...(Array.isArray(source.rows) ? { rows: includedIndices.map((index) => source.rows[index] || {}) } : {}) };
+  return { ...automation, steps };
+}
+
+function loopInfoForRun(automation, run) {
+  const loop = spreadsheetLoopInfo(automation);
+  if (!loop || !Array.isArray(run?.loopIncludedIndices)) return loop;
+  const indices = run.loopIncludedIndices.filter((index) => Number.isInteger(index) && index >= 0 && index < loop.total);
+  if (!indices.length) return loop;
+  return { ...loop, total: indices.length,
+    values: indices.map((index) => loop.values[index]), rows: indices.map((index) => loop.rows[index] || {}) };
 }
 
 function spreadsheetCompanyLabel(loop, index) {
@@ -446,6 +491,15 @@ async function saveLoopDisplayColumn(automationId, column) {
       ? { ...automation, ui: { ...(automation.ui || {}), loopDisplayColumn: selected } }
       : automation
   ));
+  automationsCache = updated;
+  await setAutomations(updated);
+}
+
+async function saveLoopExclusions(automationId, excludedKeys) {
+  const stored = await getAutomations();
+  const updated = stored.map((automation) => String(automation.id) === String(automationId)
+    ? { ...automation, ui: { ...(automation.ui || {}), loopExcludedKeys: [...excludedKeys] } }
+    : automation);
   automationsCache = updated;
   await setAutomations(updated);
 }
@@ -512,7 +566,7 @@ function automationWithEditableOcr(automation, values) {
   return { ...automation, steps };
 }
 
-async function runAutomation(automation, startRow = 1) {
+async function runAutomation(automation, startRow = 1, loopIncludedIndices = null, loopExcludedRows = []) {
   if (!await ensureCurrentRuntime()) return;
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab?.id) throw new Error("Abra a pagina onde deseja executar a automacao.");
@@ -530,11 +584,16 @@ async function runAutomation(automation, startRow = 1) {
     status: "running",
     currentStep: 0,
     totalSteps: loop ? automation.steps.length * (loop.total - selectedStartRow + 1) : automation.steps.length,
+    loopIncludedIndices,
+    loopExcludedRows,
     recentSteps: [],
-    logs: [{ level: "info", message: loop ? `Iniciando na linha ${selectedStartRow} de ${loop.total}.` : "Iniciando automacao." }]
+    logs: [{ level: "info", message: loop
+      ? `Iniciando na linha ${selectedStartRow} de ${loop.total}; ${loopExcludedRows.length} linha(s) ignorada(s).`
+      : "Iniciando automacao." }]
   };
   renderAutomations();
-  const response = await chrome.runtime.sendMessage({ type: "flowdetect-start", automation, tabId: tab.id, startRow: selectedStartRow });
+  const response = await chrome.runtime.sendMessage({ type: "flowdetect-start", automation, tabId: tab.id,
+    startRow: selectedStartRow, loopIncludedIndices, loopExcludedRows });
   if (response?.run) {
     updateRun(response.run);
     return response.run;
@@ -549,6 +608,7 @@ function updateRun(run = {}) {
   if (hasFinishedRun(run?.status) && !hasFinishedRun(currentRun?.status)) {
     const state = carouselStates.get(String(run?.automationId || ""));
     if (state) state.following = true;
+    loopExclusionDrafts.delete(String(run?.automationId || ""));
   }
   currentRun = run || {};
   renderAutomations();
@@ -637,6 +697,12 @@ function renderAutomation(automation) {
     const version = ++checkVersion;
     if (invalidate) lastGuardKey = "";
     if (busy) { runButton.disabled = true; screenHint.hidden = true; return; }
+    if (loopSelection && !loopSelection.includedIndices.length) {
+      runButton.disabled = true;
+      screenHint.hidden = false;
+      screenHint.textContent = "Inclua ao menos uma empresa antes de executar.";
+      return;
+    }
     let configured;
     try { configured = screenGuardFromForm(guardForm); } catch (error) {
       runButton.disabled = true; screenHint.hidden = false; screenHint.textContent = error.message; return;
@@ -675,18 +741,103 @@ function renderAutomation(automation) {
   const loop = spreadsheetLoopInfo(automation);
   const loopStart = fragment.querySelector(".loop-start");
   const loopStartChoice = fragment.querySelector(".loop-start-choice");
+  const loopEdit = fragment.querySelector(".loop-edit-settings");
+  const loopFingerprint = loop ? JSON.stringify(loop.values.map((_, index) => loopRowKey(loop, index))) : "";
+  const loopDraftKey = String(automation.id);
+  const loopDraft = loopExclusionDrafts.get(loopDraftKey);
+  const storedExcludedKeys = Array.isArray(automation.ui?.loopExcludedKeys) ? automation.ui.loopExcludedKeys : [];
+  const loopExcludedKeys = new Set(loopDraft?.fingerprint === loopFingerprint ? loopDraft.excludedKeys : storedExcludedKeys);
+  let loopSelection = loop ? selectedLoopRows(loop, loopExcludedKeys) : null;
   if (loop) {
     loopStart.hidden = false;
-    loopStartChoice.replaceChildren(...loop.values.map((value, index) => {
-      const option = document.createElement("option");
-      option.value = String(index + 1);
-      option.textContent = `#${index + 1} - ${value || "(vazio)"}`;
-      return option;
-    }));
-    loopStartChoice.value = "1";
+    loopEdit.hidden = false;
+    const search = loopEdit.querySelector(".loop-edit-search");
+    const list = loopEdit.querySelector(".loop-edit-list");
+    const saveExclusions = loopEdit.querySelector(".loop-save-exclusions");
+    saveExclusions.checked = loopDraft?.fingerprint === loopFingerprint
+      ? loopDraft.save : Boolean(storedExcludedKeys.length);
+    const rememberLoopDraft = () => loopExclusionDrafts.set(loopDraftKey, {
+      fingerprint: loopFingerprint, excludedKeys: [...loopExcludedKeys], save: saveExclusions.checked });
+    saveExclusions.addEventListener("change", rememberLoopDraft);
+    for (const control of loopEdit.querySelectorAll("input,button")) control.disabled = busy;
+    loopStartChoice.disabled = busy;
+    const refreshLoopSelection = () => {
+      const previousIndex = loopSelection?.includedIndices?.[Number(loopStartChoice.value) - 1];
+      loopSelection = selectedLoopRows(loop, loopExcludedKeys);
+      const active = loopSelection.includedIndices;
+      loopStartChoice.replaceChildren(...active.map((originalIndex, index) => {
+        const value = loop.values[originalIndex];
+        const option = document.createElement("option");
+        option.value = String(index + 1);
+        option.textContent = `#${index + 1} - ${value || "(vazio)"}`;
+        return option;
+      }));
+      const next = active.indexOf(previousIndex);
+      loopStartChoice.value = String(next >= 0 ? next + 1 : 1);
+      const skipped = loopSelection.excludedRows.length;
+      loopEdit.querySelector(".loop-edit-count").textContent = `${active.length}/${loop.total} ativas`;
+      loopEdit.querySelector(".loop-edit-results").textContent = skipped
+        ? `${skipped} ${skipped === 1 ? "linha ignorada" : "linhas ignoradas"} nesta execução.`
+        : "Todas as linhas serão executadas.";
+      refreshGuard();
+    };
+    const renderLoopList = () => {
+      const query = search.value.trim().toLocaleLowerCase();
+      const cnpjColumn = loop.columns.find((column) => normalizedSpreadsheetColumn(column) === "cnpj");
+      const matches = loop.values.map((value, index) => ({ value, index,
+        company: spreadsheetCompanyLabel(loop, index),
+        cnpj: spreadsheetLoopCellValue(loop.rows[index], cnpjColumn), key: loopRowKey(loop, index) }))
+        .filter(({ value, company, cnpj }) => !query || `${value} ${company} ${cnpj}`.toLocaleLowerCase().includes(query));
+      const oldTop = list.scrollTop;
+      list.replaceChildren(...matches.slice(0, 100).map(({ value, index, company, cnpj, key }) => {
+        const label = document.createElement("label");
+        label.className = `loop-edit-row${loopExcludedKeys.has(key) ? " is-excluded" : ""}`;
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = !loopExcludedKeys.has(key);
+        checkbox.disabled = busy;
+        checkbox.setAttribute("aria-label", `Executar linha ${index + 1}: ${company}, ${value}`);
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) loopExcludedKeys.delete(key);
+          else loopExcludedKeys.add(key);
+          rememberLoopDraft();
+          refreshLoopSelection();
+          renderLoopList();
+        });
+        const copy = document.createElement("span");
+        const title = document.createElement("strong");
+        title.textContent = `#${index + 1} · ${company}`;
+        const subtitle = document.createElement("small");
+        subtitle.textContent = cnpj && cnpj !== value ? `${cnpj} · ${value || "sem valor"}` : value || "Sem valor";
+        copy.append(title, subtitle);
+        label.append(checkbox, copy);
+        return label;
+      }));
+      list.scrollTop = oldTop;
+      if (!matches.length) list.textContent = "Nenhuma empresa encontrada.";
+      else if (matches.length > 100) {
+        const hint = document.createElement("p");
+        hint.className = "loop-edit-results";
+        hint.textContent = `Mostrando 100 de ${matches.length}. Refine a busca para ver as demais.`;
+        list.append(hint);
+      }
+    };
+    search.addEventListener("input", renderLoopList);
+    loopEdit.querySelector(".loop-include-all").addEventListener("click", () => {
+      loopExcludedKeys.clear();
+      rememberLoopDraft();
+      refreshLoopSelection();
+      renderLoopList();
+    });
+    refreshLoopSelection();
+    renderLoopList();
   }
 
   const isCurrent = String(currentRun?.automationId || "") === String(automation.id);
+  const executionLoop = isCurrent ? loopInfoForRun(automation, currentRun) : loop;
+  const executionAutomation = isCurrent && Array.isArray(currentRun?.loopIncludedIndices)
+    && currentRun.loopIncludedIndices.length
+    ? automationWithSelectedLoopRows(automation, currentRun.loopIncludedIndices) : automation;
   const resumeButton = fragment.querySelector(".resume-run-button");
   if (isCurrent && managerViewRequested && ["running", "waiting_screen", "completed", "failed", "stopped"].includes(currentRun?.status)) {
     resumeButton.hidden = false;
@@ -705,34 +856,34 @@ function renderAutomation(automation) {
     statusElement.className = `execution-status ${status}`;
     fragment.querySelector(".execution-percent").textContent = `${progress.percent}%`;
     fragment.querySelector(".execution-progress").setAttribute("aria-valuenow", String(progress.percent));
-    if (loop?.total) {
+    if (executionLoop?.total) {
       const companyField = fragment.querySelector(".execution-company");
       const companyChoice = fragment.querySelector(".execution-company-choice");
       const companyPosition = fragment.querySelector(".execution-company-position");
       const liveRow = Number(currentRun.spreadsheetLoop?.row);
-      const hasLiveRow = currentRun.spreadsheetLoop && Number.isInteger(liveRow) && liveRow >= 0 && liveRow < loop.total;
-      const liveName = hasLiveRow ? spreadsheetCompanyLabel(loop, liveRow) : "Aguardando empresa";
+      const hasLiveRow = currentRun.spreadsheetLoop && Number.isInteger(liveRow) && liveRow >= 0 && liveRow < executionLoop.total;
+      const liveName = hasLiveRow ? spreadsheetCompanyLabel(executionLoop, liveRow) : "Aguardando empresa";
       const followOption = document.createElement("option");
       followOption.value = "";
       followOption.textContent = hasLiveRow ? `Atual · ${liveName}` : "Acompanhar empresa atual";
-      companyChoice.replaceChildren(followOption, ...loop.values.map((_, index) => {
+      companyChoice.replaceChildren(followOption, ...executionLoop.values.map((_, index) => {
         const option = document.createElement("option");
         option.value = String(index);
-        option.textContent = `#${index + 1} · ${spreadsheetCompanyLabel(loop, index)}`;
+        option.textContent = `#${index + 1} · ${spreadsheetCompanyLabel(executionLoop, index)}`;
         return option;
       }));
       const previewRow = companyPreviewRows.get(String(automation.id));
-      companyChoice.value = Number.isInteger(previewRow) && previewRow >= 0 && previewRow < loop.total ? String(previewRow) : "";
+      companyChoice.value = Number.isInteger(previewRow) && previewRow >= 0 && previewRow < executionLoop.total ? String(previewRow) : "";
       companyChoice.title = "A escolha altera somente a visualização; a automação continua na ordem normal.";
-      companyPosition.textContent = hasLiveRow ? `${liveRow + 1}/${loop.total}` : `${loop.total} no total`;
+      companyPosition.textContent = hasLiveRow ? `${liveRow + 1}/${executionLoop.total}` : `${executionLoop.total} no total`;
       companyChoice.addEventListener("change", () => {
         if (companyChoice.value === "") companyPreviewRows.delete(String(automation.id));
         else companyPreviewRows.set(String(automation.id), Number(companyChoice.value));
       });
       companyField.hidden = false;
     }
-    renderBlockCarousel(fragment.querySelector(".block-carousel"), automation, currentRun);
-    renderLiveSteps(fragment.querySelector(".live-steps"), automation, currentRun);
+    renderBlockCarousel(fragment.querySelector(".block-carousel"), executionAutomation, currentRun);
+    renderLiveSteps(fragment.querySelector(".live-steps"), executionAutomation, currentRun);
     const executionSummary = fragment.querySelector(".execution-summary");
     const executionColumnLabel = fragment.querySelector(".execution-column-label");
     const executionColumnChoice = fragment.querySelector(".execution-column-choice");
@@ -742,25 +893,25 @@ function renderAutomation(automation) {
         executionSummary.title = currentRun.waitingReason || "URL e texto esperado ainda nao foram confirmados.";
         return;
       }
-      if (!loop?.columns?.length) {
+      if (!executionLoop?.columns?.length) {
         executionSummary.textContent = "Preparando execucao";
         return;
       }
-      const selectedColumn = loopDisplayColumn(automation, loop);
+      const selectedColumn = loopDisplayColumn(automation, executionLoop);
       executionColumnChoice.value = selectedColumn;
       if (status === "completed") {
         executionSummary.textContent = "Todas as linhas processadas";
         executionSummary.title = "Automação concluída";
         return;
       }
-      const value = currentLoopDisplayValue(currentRun, loop, selectedColumn);
+      const value = currentLoopDisplayValue(currentRun, executionLoop, selectedColumn);
       executionSummary.textContent = value || "Aguardando a próxima linha";
       executionSummary.title = `${selectedColumn}: ${value || "Aguardando a próxima linha"}`;
     };
-    if (loop?.columns?.length) {
+    if (executionLoop?.columns?.length) {
       executionColumnLabel.hidden = false;
-      const selectedColumn = loopDisplayColumn(automation, loop);
-      executionColumnChoice.replaceChildren(...loop.columns.map((column) => {
+      const selectedColumn = loopDisplayColumn(automation, executionLoop);
+      executionColumnChoice.replaceChildren(...executionLoop.columns.map((column) => {
         const option = document.createElement("option");
         option.value = column;
         option.textContent = column;
@@ -802,17 +953,29 @@ function renderAutomation(automation) {
   }
 
   fragment.querySelector(".run-automation").addEventListener("click", () => {
-    const startRow = loop ? clampSpreadsheetStartRow(loopStartChoice.value, loop.total) : 1;
+    const startRow = loop ? clampSpreadsheetStartRow(loopStartChoice.value, loopSelection.includedIndices.length) : 1;
     let configuredOcr;
+    let execution;
     try {
       configuredOcr = automationWithEditableOcr(automation, drafts);
+      execution = loop ? automationWithSelectedLoopRows(configuredOcr, loopSelection.includedIndices) : configuredOcr;
     } catch (error) {
-      editSettings.open = true;
-      editError.textContent = String(error.message || error);
-      editError.hidden = false;
+      if (loop && !loopSelection.includedIndices.length) loopEdit.open = true;
+      else {
+        editSettings.open = true;
+        editError.textContent = String(error.message || error);
+        editError.hidden = false;
+      }
       return;
     }
-    return saveScreenGuard(automation, guardForm).then((configured) => runAutomation({ ...configuredOcr, screen_guard: configured.screen_guard }, startRow)).catch((error) => {
+    if (loopSelection?.excludedRows.length && !window.confirm(
+      `Executar ${loopSelection.includedIndices.length} de ${loop.total} linhas?\n${loopSelection.excludedRows.length} serão ignoradas.`)) return;
+    return saveScreenGuard(automation, guardForm).then(async (configured) => {
+      if (loop) await saveLoopExclusions(automation.id,
+        loopEdit.querySelector(".loop-save-exclusions").checked ? loopExcludedKeys : []);
+      return runAutomation({ ...execution, screen_guard: configured.screen_guard }, startRow,
+        loopSelection?.includedIndices || null, loopSelection?.excludedRows || []);
+    }).catch((error) => {
       if (!["running", "waiting_screen"].includes(currentRun?.status)) {
         screenHint.hidden = false;
         screenHint.textContent = String(error.message || error);

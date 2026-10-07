@@ -275,13 +275,14 @@
 
   function buildExecutionReportPdf(run) {
     const rows = reportRows(run);
+    const excludedRows = Array.isArray(run?.report?.excludedRows) ? run.report.excludedRows : [];
     const pages = [];
     let page = createPage();
     pages.push(page);
     drawHeader(page);
     page.text(MARGIN, page.y, truncate(run?.automationName || "Automacao", 440, 21, true), 21, COLORS.white, true);
     page.y += 28;
-    page.text(MARGIN, page.y, `${rows.length} linha(s) processada(s) | Planilha: ${run?.report?.sourceName || "-"}`, 8.5, COLORS.textSoft, false);
+    page.text(MARGIN, page.y, `${rows.length} processada(s) | ${excludedRows.length} ignorada(s) | Planilha: ${run?.report?.sourceName || "-"}`, 8.5, COLORS.textSoft, false);
     page.y += 23;
     drawTableHeader(page, run?.report?.sourceName || "item");
     rows.forEach((row, rowIndex) => {
@@ -294,6 +295,19 @@
       }
       drawRow(page, row, run?.report?.sourceName || "item", rowIndex + 1);
     });
+    if (excludedRows.length) {
+      if (page.y + 55 > PAGE_HEIGHT - 47) { page = createPage(); pages.push(page); drawHeader(page); }
+      page.rect(MARGIN, page.y, PAGE_WIDTH - MARGIN * 2, 24, COLORS.panelSoft);
+      page.text(MARGIN + 10, page.y + 8, "LINHAS IGNORADAS ANTES DA EXECUCAO", 7, COLORS.warning, true);
+      page.y += 30;
+      for (const item of excludedRows) {
+        if (page.y + 25 > PAGE_HEIGHT - 47) { page = createPage(); pages.push(page); drawHeader(page); }
+        page.text(MARGIN + 8, page.y + 3,
+          truncate(`#${item.index}  ${item.company || item.value || "(sem nome)"}  |  ${item.value || ""}`,
+            PAGE_WIDTH - MARGIN * 2 - 18, 7.5), 7.5, COLORS.textSoft, false);
+        page.y += 17;
+      }
+    }
     appendPageFooters(pages);
     return buildPdf(pages);
   }

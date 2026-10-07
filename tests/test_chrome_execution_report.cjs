@@ -77,3 +77,17 @@ test("the Chrome PDF keeps only the table header on following pages", () => {
   assert.ok((pdf.match(/\(LINHA\) Tj/g) || []).length > 1);
   assert.doesNotMatch(pdf, /RESUMO DA EXECUCAO|RESULTADOS POR LINHA|Resultados da execucao|Pagina [2-9]/);
 });
+
+test("the PDF lists companies skipped before the loop without counting them as processed", () => {
+  const context = vm.createContext({ Uint8Array });
+  vm.runInContext(source, context);
+  const bytes = context.FlowDetectExecutionReport.buildExecutionReportPdf({
+    automationName: "FGTS_GUIAS", status: "completed",
+    report: { sourceName: "CNPJ", rows: [{ index: 1, value: "Empresa A", status: "Concluida" }],
+      excludedRows: [{ index: 3, company: "Empresa ignorada", value: "33.333.333/0001-33" }] }
+  });
+  const pdf = Buffer.from(bytes).toString("latin1");
+  assert.ok(pdf.includes("1 processada\\(s\\) | 1 ignorada\\(s\\)"));
+  assert.match(pdf, /LINHAS IGNORADAS ANTES DA EXECUCAO/);
+  assert.match(pdf, /Empresa ignorada/);
+});

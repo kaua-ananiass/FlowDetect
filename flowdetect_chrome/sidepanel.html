@@ -48,6 +48,16 @@
         <div class="loop-start" hidden>
           <label class="loop-start-label"><span>Come&ccedil;ar em</span><select class="loop-start-choice" aria-label="Elemento inicial do loop"></select></label>
         </div>
+        <details class="loop-edit-settings" hidden>
+          <summary><span>Empresas do loop</span><strong class="loop-edit-count"></strong></summary>
+          <div class="loop-edit-body">
+            <p>Desmarque os CNPJs que n&atilde;o devem entrar nesta execu&ccedil;&atilde;o. CNPJs repetidos s&atilde;o ignorados juntos.</p>
+            <label class="loop-search-label">Buscar empresa ou CNPJ<input class="loop-edit-search" type="search" placeholder="Digite nome ou CNPJ" autocomplete="off"></label>
+            <div class="loop-edit-list" role="group" aria-label="Empresas inclu&iacute;das no loop"></div>
+            <p class="loop-edit-results"></p>
+            <div class="loop-edit-footer"><button class="loop-include-all" type="button">Incluir todas</button><label><input class="loop-save-exclusions" type="checkbox"> Salvar exclus&otilde;es nesta automa&ccedil;&atilde;o</label></div>
+          </div>
+        </details>
         <details class="screen-guard-settings">
           <summary>Tela da automa&ccedil;&atilde;o <span class="screen-guard-state"></span></summary>
           <form class="screen-guard-form">

@@ -124,6 +124,8 @@ O Studio e o Chrome precisam estar no mesmo computador. Se a extensão mostrar *
 
 Para ajustar um OCR ao iniciar uma automação, marque **Editável na extensão** no texto alvo do bloco, salve o mapa e envie/exporte novamente. A extensão mostrará **Textos OCR editáveis** no card da automação. A troca altera só a validação daquela execução; o clique e as rotas permanecem os mesmos.
 
+Para retirar empresas antes de rodar um loop de planilha, abra **Empresas do loop** no card da extensão. Busque pelo nome ou CNPJ e desmarque as linhas a ignorar; a contagem de empresas ativas e a opção **Começar em** se ajustam automaticamente. A extensão pede confirmação antes de executar com exclusões. Por padrão, a seleção vale só para a execução atual; marque **Salvar exclusões nesta automação** para reutilizá-la depois. O arquivo original e o mapa não são alterados. O PDF final lista as linhas ignoradas separadamente das processadas.
+
 Ela executa URL, texto, teclas, loops de planilha, OCR de texto ou elemento da página e reconhecimento visual por imagem. As referências visuais são incluídas no JSON exportado para a extensão funcionar sem depender da pasta de imagens do Studio.
 
 ## Observacao

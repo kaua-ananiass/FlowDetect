@@ -37,6 +37,14 @@ Abra **Textos OCR editaveis** no card da extensao e informe o novo texto. Apenas
 validacao dessa execucao muda; o ponto de clique e as rotas continuam configurados.
 A imagem de referencia permanece como previa do texto original.
 
+Para pular empresas antes de iniciar um loop de planilha, abra **Empresas do loop**,
+busque pelo nome ou CNPJ e desmarque as linhas desejadas. **Começar em** passa a
+mostrar apenas as linhas ativas. A seleção vale apenas para a execução atual,
+a menos que você marque **Salvar exclusões nesta automação**. O arquivo importado
+e a planilha original não são apagados; o relatório PDF registra as linhas
+ignoradas em uma seção separada. A lista não pode ser alterada enquanto uma
+execução estiver em andamento.
+
 ## Mapear um elemento da pagina
 
 Abra a pagina desejada e clique no icone da extensao. Selecione **Mapear elemento da pagina**,
