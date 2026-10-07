@@ -5,6 +5,18 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'flowdetect_chrome', 'service_worker.js'), 'utf8');
+const extensionDir = path.join(__dirname, '..', 'flowdetect_chrome');
+const studioBridge = fs.readFileSync(path.join(__dirname, '..', 'tauri_gerador', 'src-tauri', 'src', 'chrome_test_bridge.rs'), 'utf8');
+
+test('Studio and extension require the same bridge version', () => {
+  const manifestVersion = JSON.parse(fs.readFileSync(path.join(extensionDir, 'manifest.json'), 'utf8')).version;
+  const content = fs.readFileSync(path.join(extensionDir, 'content.js'), 'utf8');
+  const sidepanel = fs.readFileSync(path.join(extensionDir, 'sidepanel.js'), 'utf8');
+  assert.equal(source.match(/const RUNTIME_VERSION = "([^"]+)"/)[1], manifestVersion);
+  assert.equal(content.match(/const CONTENT_RUNTIME_VERSION = "([^"]+)"/)[1], manifestVersion);
+  assert.equal(sidepanel.match(/const REQUIRED_RUNTIME_VERSION = "([^"]+)"/)[1], manifestVersion);
+  assert.equal(studioBridge.match(/const EXTENSION_VERSION: &str = "([^"]+)"/)[1], manifestVersion);
+});
 const begin = source.indexOf('async function importStudioAutomation(job)');
 const end = source.indexOf('\nfunction startStudioTestBridge()', begin);
 assert.ok(begin >= 0 && end > begin, 'importador do Studio deve existir no service worker');
