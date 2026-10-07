@@ -6,13 +6,12 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 
 ROOT = Path(__file__).resolve().parent
+ICON_PATH = ROOT.parent / "icons" / "icon.ico"
 SIDEBAR_PATH = ROOT / "flowdetect_sidebar.bmp"
 HEADER_PATH = ROOT / "flowdetect_header.bmp"
 BRAND_CYAN = "#12B5CB"
 BRAND_MINT = "#5EEAD4"
-BRAND_GREEN = "#22C55E"
 BRAND_BG = "#07111F"
-BRAND_CARD = "#0E1B2E"
 
 
 def load_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
@@ -26,92 +25,70 @@ def load_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def draw_badge(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], label: str, *, active: bool = True) -> None:
-    fill = "#073447" if active else "#142236"
-    outline = BRAND_CYAN if active else "#24455F"
-    draw.rounded_rectangle(box, radius=9, outline=outline, width=1, fill=fill)
-    font = load_font(9, bold=True)
-    draw.text((box[0] + 8, box[1] + 5), label.upper(), font=font, fill=BRAND_MINT if active else "#BFD7E5")
-
-
-def draw_fd_icon(draw: ImageDraw.ImageDraw, x: int, y: int, size: int) -> None:
-    radius = max(10, size // 5)
-    draw.rounded_rectangle((x, y, x + size, y + size), radius=radius, outline=BRAND_CYAN, width=3, fill="#061426")
-    font_mark = load_font(max(18, size // 2), bold=True)
-    mark = "FD"
-    bbox = draw.textbbox((0, 0), mark, font=font_mark)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-    draw.text(
-        (x + (size - text_w) / 2, y + (size - text_h) / 2 - 2),
-        mark,
-        font=font_mark,
-        fill=BRAND_MINT,
-    )
-    draw.rounded_rectangle(
-        (x + size - 20, y + size - 20, x + size + 4, y + size + 4),
-        radius=12,
-        outline=BRAND_GREEN,
-        width=3,
-        fill="#062117",
-    )
+def paste_logo(image: Image.Image, x: int, y: int, size: int) -> None:
+    """Use the same icon as the installed executable, never a hand-drawn substitute."""
+    with Image.open(ICON_PATH) as source:
+        logo = source.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+    image.alpha_composite(logo, (x, y))
 
 
 def draw_sidebar(filename: str, product: str, subtitle: str, role: str) -> None:
     sidebar_path = ROOT / filename
-    image = Image.new("RGB", (164, 314), "#07111F")
+    image = Image.new("RGB", (164, 314), BRAND_BG)
     draw = ImageDraw.Draw(image)
 
     for y in range(image.height):
         ratio = y / max(image.height - 1, 1)
-        r = int(7 + (14 - 7) * ratio)
-        g = int(17 + (27 - 17) * ratio)
-        b = int(31 + (46 - 31) * ratio)
+        r = int(6 + 5 * ratio)
+        g = int(16 + 19 * ratio)
+        b = int(31 + 28 * ratio)
         draw.line((0, y, image.width, y), fill=(r, g, b))
 
     glow = Image.new("RGBA", image.size, (0, 0, 0, 0))
     glow_draw = ImageDraw.Draw(glow)
-    glow_draw.ellipse((-28, 18, 170, 210), fill=(18, 181, 203, 72))
-    glow_draw.ellipse((12, 168, 158, 318), fill=(94, 234, 212, 56))
-    glow = glow.filter(ImageFilter.GaussianBlur(18))
+    glow_draw.ellipse((-95, -65, 138, 157), fill=(18, 181, 203, 52))
+    glow_draw.ellipse((36, 176, 210, 390), fill=(34, 197, 94, 35))
+    glow = glow.filter(ImageFilter.GaussianBlur(22))
     image = Image.alpha_composite(image.convert("RGBA"), glow)
 
     draw = ImageDraw.Draw(image)
-    font_title = load_font(22, bold=True)
-    font_subtitle = load_font(12, bold=False)
-
-    draw_fd_icon(draw, 20, 20, 70)
+    draw.rectangle((0, 0, 2, 313), fill=BRAND_CYAN)
+    draw.line((18, 104, 145, 104), fill="#24566A", width=1)
+    paste_logo(image, 17, 15, 78)
 
     name_lines = product.split(" ", 1)
-    draw.text((20, 118), name_lines[0], font=font_title, fill=BRAND_CYAN)
-    draw.text((20, 145), name_lines[1] if len(name_lines) > 1 else "", font=font_title, fill="#E6F7FF")
-    draw.text((20, 180), subtitle, font=font_subtitle, fill=BRAND_MINT)
+    draw.text((18, 119), name_lines[0], font=load_font(19, bold=True), fill="#E6F7FF")
+    draw.text((18, 145), name_lines[1] if len(name_lines) > 1 else "", font=load_font(22, bold=True), fill=BRAND_MINT)
+    draw.text((18, 183), subtitle, font=load_font(11), fill="#B9D2E0")
 
-    draw.line((20, 214, 144, 214), fill="#1E3A52", width=1)
-    draw_badge(draw, (20, 232, 126, 252), role)
-    draw.text((20, 272), "Instalador", font=font_subtitle, fill="#9FDDE8")
+    draw.line((18, 222, 145, 222), fill="#24566A", width=1)
+    draw.rounded_rectangle((18, 239, 102, 260), radius=10, fill="#073447", outline=BRAND_CYAN, width=1)
+    draw.text((27, 244), role.upper(), font=load_font(9, bold=True), fill=BRAND_MINT)
+    draw.text((18, 280), "INSTALADOR", font=load_font(9, bold=True), fill="#8CB8C8")
+    draw.line((18, 300, 76, 300), fill=BRAND_CYAN, width=2)
 
     image.convert("RGB").save(sidebar_path)
 
 
 def draw_header(filename: str, product: str, role: str) -> None:
     header_path = ROOT / filename
-    image = Image.new("RGB", (150, 57), "#0E1B2E")
+    image = Image.new("RGB", (150, 57), BRAND_BG)
     draw = ImageDraw.Draw(image)
 
     for x in range(image.width):
         ratio = x / max(image.width - 1, 1)
-        r = int(14 + (7 - 14) * ratio)
-        g = int(27 + (17 - 27) * ratio)
-        b = int(46 + (31 - 46) * ratio)
+        r = int(7 + 7 * ratio)
+        g = int(18 + 14 * ratio)
+        b = int(34 + 22 * ratio)
         draw.line((x, 0, x, image.height), fill=(r, g, b))
 
-    draw_fd_icon(draw, 7, 8, 39)
-    font_title = load_font(16, bold=True)
-    font_role = load_font(9, bold=True)
-    draw.text((53, 10), "FlowDetect", font=font_title, fill="#E6F7FF")
-    draw.text((54, 32), role.upper(), font=font_role, fill=BRAND_MINT)
-    image.save(header_path)
+    image = image.convert("RGBA")
+    paste_logo(image, 5, 6, 43)
+    draw = ImageDraw.Draw(image)
+    draw.text((52, 10), "FlowDetect", font=load_font(15, bold=True), fill="#E6F7FF")
+    draw.text((53, 32), role.upper(), font=load_font(9, bold=True), fill=BRAND_MINT)
+    draw.rectangle((147, 0, 149, 56), fill=BRAND_CYAN)
+    image.convert("RGB").save(header_path)
 
 
 def main() -> None:
