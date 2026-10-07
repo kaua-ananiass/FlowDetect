@@ -9063,7 +9063,7 @@ label span {
 }
 
 .command-map-list {
-  --command-map-zoom: 0.96;
+  --command-map-zoom: 1;
   --command-map-stage-lift: clamp(-46px, -4vh, -28px);
   min-height: 0;
   min-width: 0;
@@ -9134,7 +9134,6 @@ label span {
   zoom: var(--command-map-zoom);
   transform: translateY(var(--command-map-stage-lift));
   transform-origin: top left;
-  perspective: 1200px;
 }
 
 .command-map-tree {
@@ -9159,10 +9158,9 @@ label span {
   padding: 32px clamp(42px, 6vw, 96px) 46px clamp(38px, 6vw, 90px);
   /* A arvore e um plano livre: o arrasto desloca o plano inteiro, sem
      depender de haver blocos suficientes para criar barras de rolagem. */
-  transform: translate3d(
+  transform: translate(
     var(--command-map-tree-pan-x),
-    calc(var(--command-map-stage-lift) + var(--command-map-tree-pan-y)),
-    0
+    calc(var(--command-map-stage-lift) + var(--command-map-tree-pan-y))
   ) scale(var(--command-map-zoom));
   transform-origin: top left;
   background:
@@ -10081,7 +10079,7 @@ label span {
 .command-flow-row.is-carousel-focus .command-flow-segment,
 .command-flow-row.is-carousel-focus .command-inline-connector,
 .command-flow-row.is-carousel-focus .command-flow-end {
-  opacity: 0.34;
+  opacity: 1;
   transition:
     opacity 160ms ease,
     transform 160ms var(--ease-smooth);
@@ -10171,13 +10169,13 @@ label span {
 .builder-shell.has-insert-panel .command-flow-row .command-flow-segment:not(.insert-preview-segment) {
   align-self: center;
   align-items: center;
-  opacity: 0.46;
-  filter: saturate(0.78) brightness(0.82);
+  opacity: 1;
+  filter: none;
 }
 
 .builder-shell.has-insert-panel .command-flow-row .command-flow-segment.is-focused,
 .builder-shell.has-insert-panel .command-flow-row .command-flow-segment.is-neighbor {
-  opacity: 0.56 !important;
+  opacity: 1 !important;
 }
 
 .builder-shell.has-insert-panel .command-flow-row .command-flow-segment.insert-preview-segment {
@@ -10205,7 +10203,7 @@ label span {
 }
 
 .command-flow-segment.is-neighbor {
-  opacity: 0.78 !important;
+  opacity: 1 !important;
 }
 
 .command-flow-segment.is-focused {
@@ -10221,7 +10219,7 @@ label span {
 .command-flow-row:has(.command-tree-card.is-inline-expanded) .command-flow-segment:not(:has(.command-tree-card.is-inline-expanded)),
 .command-flow-row:has(.command-tree-card.is-inline-expanded) .command-inline-connector,
 .command-flow-row:has(.command-tree-card.is-inline-expanded) .command-flow-end {
-  opacity: 0.34 !important;
+  opacity: 1 !important;
 }
 
 .command-flow-row:has(.command-tree-card.is-inline-expanded) .command-flow-segment:has(.command-tree-card.is-inline-expanded) {
@@ -10727,10 +10725,6 @@ label span {
     0 0 0 1px var(--command-page-accent-muted),
     0 0 34px var(--command-page-accent-glow);
   transform-origin: center center;
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-  transform-style: preserve-3d;
-  will-change: transform, opacity;
 }
 
 .command-tree-card.is-inline-expanded:hover {
@@ -10949,6 +10943,81 @@ label span {
   background:
     radial-gradient(circle at top right, var(--command-page-accent-surface-strong), transparent 26%),
     linear-gradient(180deg, rgba(12, 20, 32, 0.99), rgba(8, 12, 20, 0.99));
+}
+
+/* Substitui o brilho da pagina so neste bloco, sem misturar com o tema verde. */
+.command-flow-segment[data-editable-ocr-color] {
+  --editable-ocr-rgb: 56, 189, 248;
+  --command-page-accent-muted: rgba(var(--editable-ocr-rgb), 0.07);
+  --command-page-accent-surface: rgba(var(--editable-ocr-rgb), 0.035);
+  --command-page-accent-surface-strong: rgba(var(--editable-ocr-rgb), 0.06);
+  --command-page-accent-border: rgba(var(--editable-ocr-rgb), 0.18);
+  --command-page-accent-glow: rgba(var(--editable-ocr-rgb), 0.075);
+}
+.command-flow-segment[data-editable-ocr-color="roxo"] { --editable-ocr-rgb: 167, 139, 250; }
+.command-flow-segment[data-editable-ocr-color="verde"] { --editable-ocr-rgb: 134, 239, 172; }
+.command-flow-segment[data-editable-ocr-color="rosa"] { --editable-ocr-rgb: 240, 171, 252; }
+.command-flow-segment[data-editable-ocr-color="laranja"] { --editable-ocr-rgb: 253, 186, 116; }
+.command-flow-segment[data-editable-ocr-color="ciano"] { --editable-ocr-rgb: 103, 232, 249; }
+
+/* A luz fica atras do card: so ela recebe blur, nunca o texto do OCR. */
+.command-flow-segment:has(> .command-tree-card.is-chrome-ocr-editable):not(.has-insert-panel):not(.is-drag-source):not(.is-drop-before)::before {
+  content: "";
+  position: absolute;
+  inset: -7px -8px;
+  z-index: -1;
+  border-radius: 30px;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(var(--editable-ocr-rgb), 0.1), transparent 72%);
+  box-shadow: 0 0 14px 3px rgba(var(--editable-ocr-rgb), 0.04);
+  filter: blur(12px);
+  animation: chromeEditableAura 5s ease-in-out infinite alternate;
+}
+
+@keyframes chromeEditableAura {
+  from { opacity: 0.6; transform: scale(0.995); }
+  to { opacity: 0.78; transform: scale(1.005); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .command-flow-segment:has(> .command-tree-card.is-chrome-ocr-editable)::before {
+    animation: none;
+  }
+}
+
+.command-tree-card.is-chrome-ocr-editable {
+  border-color: rgba(var(--editable-ocr-rgb), 0.2);
+  box-shadow:
+    0 0 11px 3px rgba(var(--editable-ocr-rgb), 0.045),
+    0 0 26px 7px rgba(var(--editable-ocr-rgb), 0.025),
+    0 18px 44px rgba(0, 0, 0, 0.28);
+}
+
+.command-tree-card.is-chrome-ocr-editable:hover,
+.command-flow-segment.is-focused .command-tree-card.is-chrome-ocr-editable {
+  border-color: rgba(var(--editable-ocr-rgb), 0.3);
+  box-shadow:
+    0 0 14px 4px rgba(var(--editable-ocr-rgb), 0.065),
+    0 0 30px 9px rgba(var(--editable-ocr-rgb), 0.035),
+    0 20px 48px rgba(0, 0, 0, 0.3);
+}
+
+/* Na arvore, as regras de foco do tema tinham prioridade e apagavam a aura. */
+.command-map-list.is-tree-view .command-flow-segment[data-editable-ocr-color] .command-tree-card.is-chrome-ocr-editable {
+  border-color: rgba(var(--editable-ocr-rgb), 0.28);
+  box-shadow:
+    0 18px 44px rgba(0, 0, 0, 0.28),
+    0 0 0 1px rgba(var(--editable-ocr-rgb), 0.08),
+    0 0 20px 4px rgba(var(--editable-ocr-rgb), 0.105),
+    0 0 42px 10px rgba(var(--editable-ocr-rgb), 0.05);
+}
+
+.command-map-list.is-tree-view .command-flow-segment[data-editable-ocr-color]:is(.is-focused, :hover) .command-tree-card.is-chrome-ocr-editable {
+  box-shadow:
+    0 20px 48px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(var(--editable-ocr-rgb), 0.1),
+    0 0 23px 5px rgba(var(--editable-ocr-rgb), 0.13),
+    0 0 46px 11px rgba(var(--editable-ocr-rgb), 0.06);
 }
 
 .connector-time {
@@ -12894,7 +12963,7 @@ label span {
 .ocr-target-row {
   --ocr-row-color: #38bdf8;
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) 32px;
+  grid-template-columns: 12px minmax(0, 1fr) 52px;
   align-items: center;
   gap: 8px;
   padding: 8px 9px;
@@ -12911,6 +12980,15 @@ label span {
 .ocr-target-row[data-ocr-target-color="laranja"] { --ocr-row-color: #fdba74; }
 .ocr-target-row[data-ocr-target-color="ciano"] { --ocr-row-color: #67e8f9; }
 
+.ocr-target-row:has(.ocr-target-editable input:checked) {
+  border-color: color-mix(in srgb, var(--ocr-row-color) 46%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--ocr-row-color) 6%, transparent), rgba(8, 18, 32, 0.56));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--ocr-row-color) 10%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--ocr-row-color) 3%, transparent),
+    0 0 12px color-mix(in srgb, var(--ocr-row-color) 7%, transparent);
+}
+
 .ocr-target-color-dot {
   width: 9px;
   height: 9px;
@@ -12926,66 +13004,129 @@ label span {
 }
 
 .ocr-target-row .ocr-target-text-label { grid-column: 2; grid-row: 1; }
-.ocr-target-row .ocr-target-editable {
-  grid-column: 2;
-  grid-row: 2;
-  display: flex;
-  align-items: center;
+.ocr-target-row .ocr-target-actions {
+  grid-column: 3;
+  grid-row: 1;
+  display: grid;
+  justify-items: center;
+  align-content: center;
   gap: 6px;
-  width: max-content;
-  max-width: 100%;
-  color: #8fb8c5;
-  font-size: 0.68rem;
+  width: 52px;
+  padding-left: 6px;
+  border-left: 1px solid color-mix(in srgb, var(--ocr-row-color) 15%, transparent);
+}
+.ocr-target-row .ocr-target-editable {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 5px;
+  width: 44px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  color: #a8c0ce;
+  background: transparent;
+  box-shadow: none;
   cursor: pointer;
+  transition: color 180ms ease;
+}
+.ocr-target-row .ocr-target-editable > span:first-child {
+  font-size: 0.54rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1;
+  white-space: nowrap;
 }
 .ocr-target-row .ocr-target-editable input {
-  width: auto;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
   margin: 0;
-  accent-color: #20c9da;
+  opacity: 0;
+  pointer-events: none;
 }
-.ocr-target-row .ocr-target-remove { grid-column: 3; grid-row: 1 / span 2; }
-
+.ocr-target-row .ocr-target-editable-switch {
+  position: relative;
+  width: 26px;
+  height: 14px;
+  border: 0;
+  border-radius: 999px;
+  background: #304b5b;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: background 180ms ease, box-shadow 180ms ease;
+}
+.ocr-target-row .ocr-target-editable-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a3b9c7;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 180ms ease, background 180ms ease;
+}
+.ocr-target-row .ocr-target-editable:hover {
+  color: color-mix(in srgb, var(--ocr-row-color) 65%, white);
+}
+.ocr-target-row .ocr-target-editable:has(input:focus-visible) {
+  outline: none;
+}
+.ocr-target-row .ocr-target-editable:has(input:focus-visible) .ocr-target-editable-switch {
+  outline: 2px solid var(--ocr-row-color);
+  outline-offset: 2px;
+}
+.ocr-target-row:has(.ocr-target-editable input:checked) .ocr-target-editable {
+  color: color-mix(in srgb, var(--ocr-row-color) 58%, white);
+}
+.ocr-target-row:has(.ocr-target-editable input:checked) .ocr-target-editable-switch {
+  background: color-mix(in srgb, var(--ocr-row-color) 66%, #0b2030);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--ocr-row-color) 24%, transparent);
+}
+.ocr-target-row:has(.ocr-target-editable input:checked) .ocr-target-editable-switch::after {
+  transform: translateX(12px);
+  background: #fff;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ocr-target-row .ocr-target-editable,
+  .ocr-target-row .ocr-target-editable-switch,
+  .ocr-target-row .ocr-target-editable-switch::after { transition: none; }
+}
 .ocr-target-row input {
   width: 100%;
 }
 
 .ocr-target-remove {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 26px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   align-self: center;
   justify-self: center;
   padding: 0;
-  border: 1px solid color-mix(in srgb, var(--ocr-row-color) 24%, rgba(230, 247, 255, 0.08));
-  border-radius: 999px;
-  color: color-mix(in srgb, var(--ocr-row-color) 54%, rgba(230, 247, 255, 0.82));
-  background:
-    radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--ocr-row-color) 15%, transparent), transparent 62%),
-    rgba(12, 24, 42, 0.7);
-  font-size: 0;
-  font-weight: 900;
-  line-height: 0;
+  border: 0;
+  border-radius: 8px;
+  color: #ab7d8a;
+  background: rgba(174, 82, 106, 0.06);
   cursor: pointer;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
-  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+  box-shadow: none;
+  transition: transform 160ms ease, color 160ms ease, background 160ms ease;
 }
 
-.ocr-target-remove::before {
-  content: "Ã—";
+.ocr-target-remove svg {
   display: block;
-  transform: translateY(-1px);
-  font-size: 1.28rem;
-  line-height: 1;
+  width: 16px;
+  height: 16px;
 }
 
 .ocr-target-remove:hover:not(:disabled) {
-  transform: scale(1.04);
-  border-color: color-mix(in srgb, var(--ocr-row-color) 48%, transparent);
-  background:
-    radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--ocr-row-color) 24%, transparent), transparent 66%),
-    rgba(12, 24, 42, 0.82);
+  transform: translateY(-1px);
+  color: #ffd0d6;
+  background: rgba(92, 33, 48, 0.52);
 }
 
 .ocr-target-remove:disabled {

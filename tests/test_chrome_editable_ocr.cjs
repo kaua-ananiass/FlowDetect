@@ -65,3 +65,36 @@ test("Studio salva a marcacao editavel do alvo OCR escolhido", () => {
   assert.equal(layouts[0].editableChrome, false);
   assert.equal(layouts[1].editableChrome, true);
 });
+
+test("mapa destaca somente blocos com algum alvo OCR editavel", () => {
+  const studio = fs.readFileSync(path.join(__dirname, "../tauri_gerador/web/main.js"), "utf8");
+  const style = fs.readFileSync(path.join(__dirname, "../tauri_gerador/web/style.css"), "utf8");
+  const found = studio.match(/^function hasChromeEditableOcrTargets\(.*?^}/ms);
+  assert.ok(found);
+  const check = vm.runInNewContext(`${found[0]}\nhasChromeEditableOcrTargets`);
+  assert.equal(check({ ocr_target_layouts: [{ editableChrome: false }, { editableChrome: true }] }), true);
+  assert.equal(check({ ocr_target_layouts: [{ editable_chrome: true }] }), true);
+  assert.equal(check({ ocr_target_layouts: [{ editableChrome: false }] }), false);
+  assert.equal(check(null), false);
+  const colorFunction = studio.match(/^function chromeEditableOcrTargetColor\(.*?^}/ms);
+  assert.ok(colorFunction);
+  const color = vm.runInNewContext(`${colorFunction[0]}\nchromeEditableOcrTargetColor`, {
+    OCR_TARGET_COLORS: ["azul", "roxo", "verde", "rosa", "laranja", "ciano"]
+  });
+  assert.equal(color({ ocr_target_layouts: [{ editableChrome: false }, { editableChrome: true }] }), "roxo");
+  assert.equal(color({ ocr_target_layouts: [{ editableChrome: true }, { editableChrome: true }] }), "azul");
+  assert.equal(color({ ocr_target_layouts: [{ editableChrome: false }] }), "");
+  assert.match(studio, /isChromeOcrEditable \? "is-chrome-ocr-editable"/);
+  assert.match(studio, /data-editable-ocr-color=/);
+  assert.match(style, /\.command-tree-card\.is-chrome-ocr-editable\s*\{/);
+  assert.match(style, /\.command-flow-segment:has\(> \.command-tree-card\.is-chrome-ocr-editable\)[^\n]*::before\s*\{/);
+  assert.match(style, /\.command-flow-segment\[data-editable-ocr-color="roxo"\]/);
+  assert.match(style, /rgba\(var\(--editable-ocr-rgb\)/);
+  const colorScope = style.match(/\.command-flow-segment\[data-editable-ocr-color\]\s*\{[^}]*\}/s)?.[0] || "";
+  assert.match(colorScope, /--command-page-accent-glow:\s*rgba\(var\(--editable-ocr-rgb\)/);
+  assert.match(colorScope, /--command-page-accent-surface-strong:\s*rgba\(var\(--editable-ocr-rgb\)/);
+  assert.match(style, /\.command-map-list\.is-tree-view \.command-flow-segment\[data-editable-ocr-color\] \.command-tree-card\.is-chrome-ocr-editable\s*\{[^}]*0 0 42px 10px rgba\(var\(--editable-ocr-rgb\)/s);
+  assert.match(style, /@keyframes chromeEditableAura/);
+  assert.doesNotMatch(style.match(/\.command-tree-card\.is-chrome-ocr-editable\s*\{[^}]*\}/s)?.[0] || "", /outline/);
+  assert.match(style, /\.ocr-target-row:has\(\.ocr-target-editable input:checked\)/);
+});

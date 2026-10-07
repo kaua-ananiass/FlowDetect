@@ -59,6 +59,16 @@ test("zoom scales the existing map without rebuilding its connector layer", () =
   assert.doesNotMatch(styleSource.match(/\.command-map-tree\s*\{[^}]*\}/s)?.[0] || "", /\bzoom\s*:/);
 });
 
+test("map cards start sharp while free wheel zoom remains available", () => {
+  assert.match(source, /commandMapZoom:\s*1,\s*commandMapRequestedZoom:\s*1/);
+  assert.match(styleSource, /\.command-map-list\s*\{\s*--command-map-zoom:\s*1;/);
+  assert.doesNotMatch(styleSource.match(/\.command-map-tree\s*\{[\s\S]*?\n\}/)?.[0] || "", /translate3d/);
+  assert.doesNotMatch(styleSource.match(/\.command-tree-card\.is-inline-expanded\s*\{[\s\S]*?\n\}/)?.[0] || "", /preserve-3d|will-change/);
+  const wheelHandler = source.match(/^function handleCommandMapTreeWheelZoom\(.*?^}/ms)?.[0] || "";
+  assert.doesNotMatch(wheelHandler, /event\.ctrlKey/);
+  assert.match(wheelHandler, /setCommandMapZoom\(nextZoom/);
+});
+
 test("tree zoom holds the point under the cursor without scrolling the whole map", () => {
   const zoomFunction = source.match(/^function setCommandMapZoom\(.*?^}/ms);
   const state = { commandMapZoom: 1, commandMapTreePanOffset: { x: 20, y: 30 }, activeTab: "commands" };
