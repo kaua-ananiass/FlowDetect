@@ -1,9 +1,0 @@
-{
-  "name": "flowdetect-nibo-automatico",
-  "private": true,
-  "version": "0.1.0",
-  "description": "Execução local semanal do exportador de conversas do Nibo",
-  "dependencies": {
-    "playwright-core": "1.63.0"
-  }
-}
