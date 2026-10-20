@@ -1590,19 +1590,11 @@ function renderCommandJumpPaths() {
     path.setAttribute("class", `command-jump-path ${isBackward ? "is-backward" : "is-forward"} ${route.kind === "failure" ? "is-failure" : "is-success"}`);
     svg.appendChild(path);
 
-    const energy = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    energy.setAttribute("class", `command-jump-energy ${route.kind === "failure" ? "is-failure" : "is-success"}`);
-    energy.setAttribute("r", route.kind === "failure" ? "3.2" : "3");
-    const motion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
-    motion.setAttribute("dur", route.kind === "failure" ? "1.65s" : "1.45s");
-    motion.setAttribute("repeatCount", "indefinite");
-    motion.setAttribute("rotate", "auto");
-    const mpath = document.createElementNS("http://www.w3.org/2000/svg", "mpath");
-    mpath.setAttribute("href", `#${pathId}`);
-    mpath.setAttributeNS("http://www.w3.org/1999/xlink", "href", `#${pathId}`);
-    motion.appendChild(mpath);
-    energy.appendChild(motion);
-    svg.appendChild(energy);
+    const energy = createCommandMapTreeLinkEnergy(path.getAttribute("d"), route.kind);
+    if (energy) {
+      energy.classList.add("command-jump-energy");
+      svg.appendChild(energy);
+    }
 
     const midpointX = (sourceCenterX + targetCenterX) / 2;
     const label = document.createElement("label");
@@ -1640,21 +1632,93 @@ function commandMapTreeEnergyAnimationDelay(duration = 1.55) {
   return `-${(phaseMs / 1000).toFixed(3)}s`;
 }
 
-function createCommandMapTreeLinkEnergy(pathData, kind = "success", duration = 1.55) {
+function commandMapElectricGeometry(pathData) {
+  const guide = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  guide.setAttribute("d", pathData);
+  const length = guide.getTotalLength();
+  if (!Number.isFinite(length) || length < 2) {
+    return { trace: pathData, branches: "", length: Number.isFinite(length) ? length : 0 };
+  }
+  // O desenho e deterministico para nao saltar quando a camada e reconstruida.
+  let seed = 2166136261;
+  for (const char of pathData) seed = Math.imul(seed ^ char.charCodeAt(0), 16777619) >>> 0;
+  const random = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  const segments = Math.max(2, Math.min(160, Math.ceil(length / 18)));
+  const samples = Array.from({ length: segments + 1 }, (_, index) => {
+    const fraction = index === 0 ? 0 : index === segments ? 1 : (index + (random() - 0.5) * 0.4) / segments;
+    return { point: guide.getPointAtLength(length * fraction), distance: length * fraction };
+  });
+  const vertices = samples.map(({ point, distance }, index) => {
+    const before = samples[Math.max(0, index - 1)].point;
+    const after = samples[Math.min(segments, index + 1)].point;
+    const magnitude = Math.hypot(after.x - before.x, after.y - before.y) || 1;
+    const tangent = { x: (after.x - before.x) / magnitude, y: (after.y - before.y) / magnitude };
+    // O arco oscila perto da curva original; os contatos dos blocos ficam fixos.
+    const taper = Math.min(1, distance / 28, (length - distance) / 28);
+    const displacement = (index % 2 ? 1 : -1) * (1.4 + random() * 4.2) * taper;
+    return {
+      x: point.x - tangent.y * displacement,
+      y: point.y + tangent.x * displacement,
+      tangent,
+      side: Math.sign(displacement) || 1,
+    };
+  });
+  const coordinates = (point) => `${point.x.toFixed(2)} ${point.y.toFixed(2)}`;
+  const trace = vertices.map((point, index) => `${index ? "L" : "M"} ${coordinates(point)}`).join(" ");
+  const branches = [];
+  const branchCount = Math.min(3, Math.floor(length / 180));
+  for (let index = 1; index <= branchCount; index += 1) {
+    const origin = vertices[Math.round(segments * index / (branchCount + 1))];
+    const { tangent, side } = origin;
+    const reach = 9 + random() * 7;
+    const point = (forward, outward) => ({
+      x: origin.x + tangent.x * forward - tangent.y * outward * side,
+      y: origin.y + tangent.y * forward + tangent.x * outward * side,
+    });
+    branches.push(`M ${coordinates(origin)} L ${coordinates(point(5, reach * 0.5))} L ${coordinates(point(13, reach * 0.4))} L ${coordinates(point(18, reach))}`);
+  }
+  const traceLength = vertices.reduce((total, point, index) => index
+    ? total + Math.hypot(point.x - vertices[index - 1].x, point.y - vertices[index - 1].y)
+    : total, 0);
+  return { trace, branches: branches.join(" "), length: traceLength };
+}
+
+function createCommandMapTreeLinkEnergy(pathData, kind = "success") {
   const normalizedKind = String(kind || "success").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "success";
   const normalizedPath = String(pathData || "").trim();
   if (!normalizedPath) {
     return null;
   }
-  const energy = document.createElement("span");
-  energy.className = `command-map-tree-link-energy is-${normalizedKind}`;
+  const geometry = commandMapElectricGeometry(normalizedPath);
+  // A conexao simples padrao (~400 px com os zigue-zagues) avanca a ~200 px/s.
+  // O ciclo percorre 144 unidades de pathLength=100, incluindo a saida da cauda.
+  // Usar distancia, e nao tipo de rota, iguala a velocidade de OCR e desvios.
+  const duration = Math.max(0.1, geometry.length * 1.44 / 200);
+  const energy = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  energy.setAttribute("class", `command-map-tree-link-energy is-${normalizedKind}`);
   energy.setAttribute("aria-hidden", "true");
   energy.style.setProperty("--tree-energy-duration", `${duration}s`);
   // As conexoes sao recalculadas quando o mapa muda. Atrasar a animacao pela
-  // fase atual impede que o ponto volte ao inicio a cada nova camada.
+  // fase atual impede que o feixe volte ao inicio a cada nova camada.
   energy.style.setProperty("--tree-energy-delay", commandMapTreeEnergyAnimationDelay(duration));
-  energy.style.offsetPath = `path("${normalizedPath.replace(/"/g, "'")}")`;
-  energy.style.offsetRotate = "0deg";
+  for (const [part, data] of [["trace", geometry.trace], ["branches", geometry.branches]]) {
+    if (!data) continue;
+    const stroke = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    stroke.setAttribute("class", `command-link-electric-${part}`);
+    stroke.setAttribute("d", data);
+    energy.appendChild(stroke);
+  }
+  // A carga luminosa percorre o proprio arco eletrico, de contato a contato.
+  for (const layer of ["halo", "tail", "wake", "body", "core"]) {
+    const stroke = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    stroke.setAttribute("class", `command-link-energy-stroke is-${layer}`);
+    stroke.setAttribute("d", geometry.trace);
+    stroke.setAttribute("pathLength", "100");
+    energy.appendChild(stroke);
+  }
   return energy;
 }
 
@@ -1683,7 +1747,7 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
     svg.setAttribute("class", "command-map-tree-link-svg");
     svg.setAttribute("viewBox", `0 0 ${Math.ceil(stageWidth)} ${Math.ceil(stageHeight)}`);
     svg.setAttribute("aria-hidden", "true");
-    const energyDots = [];
+    const energyLayers = [];
 
     const toStageRect = (element) => {
       const rect = element.getBoundingClientRect();
@@ -1954,10 +2018,10 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
 
       path.setAttribute("class", `command-map-tree-link-path is-${kind} ${ocrColor ? `is-ocr-${ocrColor}` : ""} ${isPrimaryNext ? "is-primary-next" : "is-branch-route"} is-${branchSide}`);
       svg.appendChild(path);
-      const energy = createCommandMapTreeLinkEnergy(path.getAttribute("d"), kind, kind === "failure" ? 1.8 : 1.55);
+      const energy = createCommandMapTreeLinkEnergy(path.getAttribute("d"), kind);
       if (energy) {
         if (ocrColor) energy.classList.add(`is-ocr-${ocrColor}`);
-        energyDots.push(energy);
+        energyLayers.push(energy);
       }
     });
 
@@ -1965,8 +2029,8 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
     stage.style.height = `${finalStageHeight}px`;
     layer.style.height = `${finalStageHeight}px`;
     svg.setAttribute("viewBox", `0 0 ${Math.ceil(stageWidth)} ${finalStageHeight}`);
+    energyLayers.forEach((energy) => svg.appendChild(energy));
     layer.appendChild(svg);
-    energyDots.forEach((energy) => layer.appendChild(energy));
     stage.prepend(layer);
     return;
   }
@@ -1988,7 +2052,7 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
   svg.setAttribute("class", "command-map-tree-link-svg");
   svg.setAttribute("viewBox", `0 0 ${Math.ceil(treeWidth)} ${Math.ceil(treeHeight)}`);
   svg.setAttribute("aria-hidden", "true");
-  const energyDots = [];
+  const energyLayers = [];
 
   references.forEach((reference, index) => {
     const targetOrder = Number(reference.dataset.treeReferenceTargetOrder || 0);
@@ -2035,14 +2099,14 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
     }
     path.setAttribute("class", `command-map-tree-link-path is-${escapeHtml(kind || "success")} ${goesBack ? "is-back-reference" : "is-forward-reference"}`);
     svg.appendChild(path);
-    const energy = createCommandMapTreeLinkEnergy(path.getAttribute("d"), kind, kind === "failure" ? 1.75 : 1.55);
+    const energy = createCommandMapTreeLinkEnergy(path.getAttribute("d"), kind);
     if (energy) {
-      energyDots.push(energy);
+      energyLayers.push(energy);
     }
   });
 
+  energyLayers.forEach((energy) => svg.appendChild(energy));
   layer.appendChild(svg);
-  energyDots.forEach((energy) => layer.appendChild(energy));
   tree.prepend(layer);
 }
 

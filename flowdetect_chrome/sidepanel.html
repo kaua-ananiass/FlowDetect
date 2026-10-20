@@ -29,6 +29,7 @@
         <button id="mapElementButton" class="map-element-button" type="button" title="Mapear elemento da página">Mapear elemento</button>
         <p id="mapElementStatus" class="map-element-status" role="status" aria-live="polite" hidden></p>
       </div>
+      <p id="downloadActivity" class="download-activity" role="status" hidden></p>
       <section id="automationList" class="automation-list" aria-live="polite"></section>
     </main>
 
@@ -46,14 +47,15 @@
         </div>
         <button class="resume-run-button" type="button" hidden>Ver última execução</button>
         <div class="loop-start" hidden>
-          <label class="loop-start-label"><span>Come&ccedil;ar em</span><select class="loop-start-choice" aria-label="Elemento inicial do loop"></select></label>
+          <label class="loop-start-label"><span>Come&ccedil;ar em</span><select class="loop-start-choice" aria-label="Empresa inicial do loop"></select></label>
         </div>
         <details class="loop-edit-settings" hidden>
           <summary><span>Empresas do loop</span><strong class="loop-edit-count"></strong></summary>
           <div class="loop-edit-body">
-            <p>Desmarque os CNPJs que n&atilde;o devem entrar nesta execu&ccedil;&atilde;o. CNPJs repetidos s&atilde;o ignorados juntos.</p>
+            <p>Escolha as empresas pelo nome. O loop continua usando o CNPJ da mesma linha da planilha; CNPJs repetidos s&atilde;o selecionados juntos.</p>
             <label class="loop-search-label">Buscar empresa ou CNPJ<input class="loop-edit-search" type="search" placeholder="Digite nome ou CNPJ" autocomplete="off"></label>
             <div class="loop-edit-list" role="group" aria-label="Empresas inclu&iacute;das no loop"></div>
+            <div class="loop-edit-bulk-actions"><button class="loop-include-filtered" type="button">Marcar resultados</button><button class="loop-exclude-filtered" type="button">Desmarcar resultados</button></div>
             <p class="loop-edit-results"></p>
             <div class="loop-edit-footer"><button class="loop-include-all" type="button">Incluir todas</button><label><input class="loop-save-exclusions" type="checkbox"> Salvar exclus&otilde;es nesta automa&ccedil;&atilde;o</label></div>
           </div>
@@ -78,6 +80,13 @@
         </details>
         <p class="screen-guard-hint" aria-live="polite" hidden></p>
         <button class="play-button run-automation" type="button"><span class="play-icon" aria-hidden="true">&#9654;</span><span>Executar automa&ccedil;&atilde;o</span></button>
+        <details class="download-settings">
+          <summary>Destino dos downloads <span>opcional</span></summary>
+          <div class="download-settings-body">
+            <p>Abra a escolha de pasta da extens&atilde;o para esta execu&ccedil;&atilde;o. O Studio n&atilde;o precisa estar aberto.</p>
+            <button class="download-run-with-folder" type="button">Executar escolhendo pasta</button>
+          </div>
+        </details>
         <section class="execution" hidden>
           <div class="execution-heading"><p class="execution-kicker">Execu&ccedil;&atilde;o</p><span class="execution-status"></span></div>
           <div class="execution-overview">

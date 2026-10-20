@@ -138,8 +138,59 @@ test("OCR waits for a delayed static banner instead of failing on the first chec
   assert.equal(checks, 2);
 });
 
+test("OCR confirms the selected competence in a month input or accessible combobox", () => {
+  class HTMLInputElement {
+    constructor(value) { this.value = value; this.placeholder = ""; }
+    getAttribute() { return null; }
+    getBoundingClientRect() { return { left: 98, top: 455, width: 340, height: 40 }; }
+  }
+  class HTMLTextAreaElement {}
+  const combo = {
+    innerText: "",
+    textContent: "",
+    getAttribute(name) { return name === "aria-valuetext" ? "09 / 2026" : null; },
+    getBoundingClientRect() { return { left: 98, top: 455, width: 340, height: 40 }; },
+  };
+  let candidates = [new HTMLInputElement("2026-09")];
+  const context = vm.createContext({
+    HTMLInputElement, HTMLTextAreaElement, String, RegExp, NodeFilter: { SHOW_TEXT: 4 },
+    document: { body: {}, querySelectorAll: () => candidates, createTreeWalker: () => ({ nextNode: () => null }) },
+    normalize: (value) => String(value || "").trim().toLowerCase(),
+    isVisible: () => true,
+    textRectWithinElement: () => null,
+    findStaticTextTarget: () => null,
+    findRenderedTextTarget: () => null,
+  });
+  vm.runInContext(["elementText", "normalizeMonthYear", "textMatches", "findTextTarget"]
+    .map(productionFunction).join("\n"), context);
+
+  assert.equal(context.findTextTarget("09/2026")?.element, candidates[0]);
+  assert.equal(context.findTextTarget("08/2026"), null);
+  candidates = [combo];
+  assert.equal(context.findTextTarget("09/2026")?.element, combo);
+  assert.equal(context.findTextTarget("09/2025"), null);
+});
+
+test("confirmation OCR does not validate a click marker it will not use", async () => {
+  const target = {
+    element: { scrollIntoView() {}, getBoundingClientRect: () => ({ left: 98, top: 455, width: 340, height: 40 }) },
+    rect: { left: 98, top: 455, width: 340, height: 40 },
+  };
+  const context = vm.createContext({
+    Boolean, String,
+    waitForTextTarget: async () => target,
+    findTextTarget: () => target,
+    sleep: async () => {},
+    highlightRect: () => {},
+  });
+  vm.runInContext(productionFunction("executeOcrText"), context);
+  const result = await context.executeOcrText({ text: "09/2026", action: "confirmar_ir_para_bloco",
+    click: false, click_anchor: { from_text_left: 9999, from_text_top: 9999 } });
+  assert.match(result, /OCR encontrou.*09\/2026/);
+});
+
 test("OCR anchors the click to the matched text instead of the whole row", () => {
-  const node = { nodeValue: "50.317.977/0001-05 - SCRITA SOLUCOES LTDA" };
+  const node = { nodeValue: "00.000.801/0000-00 - EMPRESA EXEMPLO LTDA" };
   const spans = [];
   const context = vm.createContext({
     String, RegExp, NodeFilter: { SHOW_TEXT: 4 },
@@ -153,10 +204,10 @@ test("OCR anchors the click to the matched text instead of the whole row", () =>
     },
   });
   vm.runInContext(productionFunction("textRectWithinElement"), context);
-  const rect = context.textRectWithinElement({}, "50.317.977/0001-05 - SCRITA  SOLU");
+  const rect = context.textRectWithinElement({}, "00.000.801/0000-00 - EMPRESA  EXEM");
   assert.equal(rect.left, 120);
   assert.equal(spans[0], 0);
-  assert.equal(node.nodeValue.slice(...spans), "50.317.977/0001-05 - SCRITA SOLU");
+  assert.equal(node.nodeValue.slice(...spans), "00.000.801/0000-00 - EMPRESA EXEM");
 });
 
 test("a marker near a small icon clicks the icon instead of the wide field", () => {

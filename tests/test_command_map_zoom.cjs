@@ -45,10 +45,23 @@ test("tree pan has no map-size boundary", () => {
   assert.equal(context.commandMapTreePanCoordinate("invalid", 24), 24);
 });
 
-test("recreated route dots resume at the current animation phase", () => {
+test("recreated route highlights resume at the current animation phase", () => {
   assert.equal(context.commandMapTreeEnergyAnimationDelay(1.55), "-0.150s");
   assert.equal(context.commandMapTreeEnergyAnimationDelay(1.8), "-1.450s");
   assert.match(styleSource, /animation-delay:\s*var\(--tree-energy-delay, 0s\)/);
+});
+
+test("panning the map does not pause or disable connection animations", () => {
+  const panRules = styleSource.match(/[^{}]*\.is-tree-panning[^{}]*\{[^{}]*\}/g) || [];
+  assert.ok(panRules.length, "Panning retains its cursor and selection styles");
+  for (const rule of panRules) {
+    assert.doesNotMatch(rule, /animation(?:-play-state)?\s*:\s*(?:paused|none)/);
+  }
+  for (const name of ["startCommandMapTreePan", "updateCommandMapTreePan", "stopCommandMapTreePan"]) {
+    const handler = source.match(new RegExp(`^function ${name}\\(.*?^}`, "ms"));
+    assert.ok(handler, `Production function ${name}`);
+    assert.doesNotMatch(handler[0], /pauseAnimations|animationPlayState|\.pause\(/);
+  }
 });
 
 test("zoom scales the existing map without rebuilding its connector layer", () => {

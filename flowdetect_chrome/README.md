@@ -1,6 +1,12 @@
 # FlowDetect para Chrome
 
-Versao 0.2.58: pareamento com o Studio, teste de reconhecimento na aba ativa e
+Versao 0.2.60: quando a competencia exibida difere da esperada, o OCR 2 segue
+sua propria rota de falha sem repetir o clique do OCR 1. O painel Ao vivo mostra
+qual alvo foi testado, o resultado e o bloco de destino.
+
+Versao 0.2.59: confirmacao da competencia ja selecionada sem clique desnecessario,
+validacao dos dois alvos OCR do bloco e aviso quando a aba ainda usa o script antigo.
+Pareamento com o Studio, teste de reconhecimento na aba ativa e
 edicao opcional de textos OCR por execucao.
 
 Extensão que executa automações web exportadas pelo FlowDetect Studio na aba atual do Chrome.
@@ -44,6 +50,23 @@ a menos que você marque **Salvar exclusões nesta automação**. O arquivo impo
 e a planilha original não são apagados; o relatório PDF registra as linhas
 ignoradas em uma seção separada. A lista não pode ser alterada enquanto uma
 execução estiver em andamento.
+
+## Escolher o destino dos downloads em cada execucao
+
+Abra **Destino dos downloads** no card da automacao e clique em **Executar
+escolhendo pasta**. Uma pagina da propria extensao abre para escolher o destino.
+Na primeira utilizacao, o botao unico pede autorizacao para a pasta
+`FlowDetect-Temporario` dentro de Downloads. Depois disso, o mesmo botao
+abre a escolha do destino. Nas execucoes seguintes, basta escolher o destino:
+a automacao inicia automaticamente, sem outro clique. O Studio nao precisa estar aberto. A extensao
+acompanha apenas os downloads iniciados pela aba da automacao, salva-os primeiro
+na pasta temporaria (inclusive os iniciados ate um minuto depois do fim do fluxo)
+e, quando terminam, copia-os para o destino escolhido. Uma nova execucao normal
+encerra esse direcionamento para nao afetar seus proximos downloads. Nomes
+repetidos recebem um numero; o arquivo temporario so e removido depois que a
+copia e conferida. Se a pasta de destino estiver indisponivel, o original fica
+em `Downloads/FlowDetect-Temporario/<id da execucao>` e a extensao mostra o erro.
+O botao **Executar automacao** continua funcionando sem redirecionar downloads.
 
 ## Mapear um elemento da pagina
 

@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="description" content="Simulação local e fictícia do Painel do Contador para gravação de automações.">
+  <title>Painel do Contador — Simulação local</title>
+  <style>
+    :root { font-family: Arial, "Segoe UI", sans-serif; font-size: clamp(16px, .94vw, 18px); color: #505158; background: #303033; }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; min-width: 320px; }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #ff9b6f; outline-offset: 2px; }
+    .page { width: 100%; min-height: 100vh; background: #ededee; }
+    .topbar { min-height: 64px; padding: 0 25px; display: flex; align-items: center; gap: 17px; background: #fff; border-bottom: 1px solid #e4e5e7; }
+    .icon-button { width: 40px; height: 40px; flex: none; display: inline-grid; place-items: center; border: 0; border-radius: 10px; color: #515258; background: transparent; }
+    .icon-button:hover, .nav-button:hover { background: #f4f5f7; }
+    .icon { width: 21px; height: 21px; stroke: currentColor; stroke-width: 1.8; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .account-context { display: flex; min-width: 0; flex: 1; align-items: center; gap: 9px; margin-left: 30px; }
+    .context-pill, .period-pill { min-height: 34px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 20px; background: #f6f6f7; color: #515159; padding: 7px 12px; font-size: .79rem; white-space: nowrap; }
+    .context-pill { max-width: 245px; }
+    .context-pill span { overflow: hidden; text-overflow: ellipsis; }
+    .context-pill.secondary { max-width: 250px; }
+    .pill-icon { color: #67686e; font-size: 1rem; line-height: 1; }
+    .pill-chevron { color: #a2a3a7; font-size: .7rem; }
+    .period-pill { margin-left: 3px; }
+    .period-pill select { width: 85px; padding: 0; border: 0; background: transparent; color: inherit; font-size: .79rem; cursor: pointer; }
+    .primary-nav { display: flex; gap: 11px; align-items: stretch; }
+    .nav-button { position: relative; width: 60px; min-height: 63px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 0; border-radius: 0; background: transparent; color: #74757a; font-size: .75rem; }
+    .nav-button .icon { color: #4d4e55; }
+    .task-badge { position: absolute; top: 5px; right: 6px; min-width: 16px; height: 16px; border-radius: 9px; display: grid; place-items: center; background: #414248; color: #fff; font-size: .64rem; }
+    .avatar { width: 47px; height: 47px; display: grid; place-items: center; flex: none; border-radius: 50%; background: #fbe2d8; color: #93472e; font-size: 1.3rem; }
+    .content { padding: 16px 10px 34px; }
+    .top-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .top-card { height: 92px; border-radius: 16px; overflow: hidden; }
+    .audit-card { position: relative; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #fff; background: linear-gradient(112deg, #ff6830 0%, #ff6a32 55%, #fc622c 100%); }
+    .audit-card::before { content: "A"; position: absolute; left: 17%; top: -68px; color: #ffffff14; font-size: 11rem; line-height: 1; font-weight: 900; transform: rotate(-25deg); pointer-events: none; }
+    .audit-card::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(125deg, transparent 0 76px, #ffffff12 77px 83px, transparent 84px 148px); pointer-events: none; }
+    .audit-card span, .audit-card strong { position: relative; z-index: 1; }
+    .audit-card span { font-weight: 800; font-size: .97rem; }
+    .audit-card strong { margin-top: 7px; font-size: 1.32rem; }
+    .summary-card { display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; padding: 10px 14px; background: #fff; box-shadow: 0 4px 15px #26334708; }
+    .summary-stat { min-width: 0; text-align: center; }
+    .summary-stat strong { display: block; font-size: 1.05rem; color: #54555c; }
+    .summary-stat:nth-child(2) strong { color: #00a65b; }
+    .summary-stat:nth-child(3) strong { color: #d29b00; }
+    .summary-stat:nth-child(4) strong { color: #c51f30; }
+    .summary-stat span { display: block; margin-top: 6px; font-size: .74rem; white-space: nowrap; }
+    .promo-card { position: relative; display: flex; align-items: center; justify-content: center; color: #fff; background: radial-gradient(ellipse at 30% 100%, #5b5c5f 0%, #242528 45%, #121316 100%); }
+    .promo-card::before { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(75deg, transparent 0 52px, #ffffff0a 53px 57px, transparent 58px 91px); }
+    .promo-card span { position: relative; z-index: 1; max-width: 230px; padding-left: 10px; border-left: 2px solid #ffffff80; font-size: .79rem; line-height: 1.32; font-weight: 800; }
+    .heading-row { min-height: 87px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    h1 { margin: 0; color: #4d4e54; font-size: 2rem; font-weight: 450; letter-spacing: -.035em; }
+    .status-tabs { display: flex; gap: 0; border: 1px solid #ff7139; border-radius: 25px; padding: 2px; background: #fff; }
+    .status-tab { min-height: 34px; padding: 7px 16px; border: 0; border-radius: 19px; background: transparent; color: #777981; font-size: .87rem; white-space: nowrap; }
+    .status-tab.selected { background: #ff7139; color: #fff; font-weight: 700; }
+    .panel { min-height: 585px; padding: 16px 16px 0; border-radius: 16px 16px 0 0; background: #fff; }
+    .panel-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 13px; padding-bottom: 16px; }
+    .search { width: min(100%, 323px); }
+    .search input { width: 100%; height: 41px; padding: 0 13px; border: 1px solid #c7cfe2; border-radius: 8px; background: #fff; color: #4f5058; font-size: .88rem; }
+    .search input::placeholder { color: #bfc0c5; }
+    .toolbar-right { display: flex; align-items: center; gap: 20px; }
+    .batch-wrap, .filter-wrap { position: relative; }
+    .soft-control { min-height: 38px; display: inline-flex; align-items: center; gap: 10px; padding: 7px 11px; border: 0; border-radius: 19px; background: #f5f6f9; color: #5b5c63; font-size: .83rem; white-space: nowrap; }
+    .soft-control:hover { background: #eceef4; }
+    .orange-chevron { color: #ff7139; font-size: 1rem; }
+    .transmitter-control select { min-width: 138px; border: 0; background: transparent; color: inherit; font-size: .83rem; cursor: pointer; }
+    .filter-trigger { width: 41px; height: 41px; display: grid; place-items: center; border: 1px solid #e3e9f6; border-radius: 50%; background: #fff; color: #ff7139; }
+    .filter-trigger:hover { background: #fff5f0; }
+    .filter-panel { position: absolute; z-index: 11; right: 0; top: 47px; width: 235px; padding: 14px; border: 1px solid #e3e7ef; border-radius: 11px; background: #fff; box-shadow: 0 14px 30px #242a4029; }
+    .filter-panel label { display: block; margin-bottom: 12px; color: #6d6e75; font-size: .8rem; }
+    .filter-panel select { width: 100%; margin-top: 5px; padding: 7px; border: 1px solid #d8dfeb; border-radius: 6px; background: #fff; color: #51525a; }
+    .filter-panel button { padding: 0; border: 0; background: transparent; color: #e56830; font-size: .8rem; }
+    .table-frame { border: 1px solid #e2e8f4; border-radius: 18px 18px 0 0; overflow: hidden; }
+    .issue-strip { min-width: 1050px; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); background: #f5f6fa; border-bottom: 1px solid #e0e6f2; }
+    .issue-tab { min-height: 39px; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 5px; border: 0; border-right: 1px solid #eef1f6; background: transparent; color: #687487; font-size: .73rem; line-height: 1.06; text-align: center; }
+    .issue-tab:last-child { border-right: 0; }
+    .issue-tab:hover, .issue-tab.selected { color: #e56b32; background: #fff1e9; }
+    .issue-tab b { min-width: 21px; height: 21px; display: grid; place-items: center; border-radius: 7px; background: #dfe5f2; color: #475575; font-size: .73rem; }
+    .issue-tab.selected b { background: #ffd7c1; color: #9d4018; }
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; min-width: 1050px; border-collapse: collapse; table-layout: fixed; }
+    th, td { border-right: 1px solid #e2e8f4; border-bottom: 1px solid #e2e8f4; }
+    th:last-child, td:last-child { border-right: 0; }
+    th { height: 63px; padding: 10px 12px; background: #f5f6fa; color: #565961; font-weight: 500; font-size: .9rem; text-align: center; }
+    th:nth-child(1) { width: 50px; }
+    th:nth-child(2) { width: 201px; text-align: left; }
+    th:nth-child(7) { width: 119px; }
+    td { height: 64px; padding: 8px 12px; background: #fff; color: #585a61; font-size: .9rem; }
+    tbody tr:hover td { background: #fffaf7; }
+    .expand-cell { text-align: center; }
+    .expand-button { width: 27px; height: 27px; border: 0; background: transparent; color: #9ea3aa; font-size: 1.6rem; line-height: 1; }
+    .expand-button[aria-expanded="true"] { transform: rotate(90deg); }
+    .company-header { display: flex; align-items: center; gap: 9px; }
+    input[type="checkbox"] { width: 16px; height: 16px; flex: none; margin: 0; accent-color: #ff7139; }
+    .company-cell { display: flex; align-items: center; gap: 9px; min-width: 0; }
+    .company-copy { min-width: 0; }
+    .company-cnpj { display: block; margin-bottom: 3px; color: #62646b; font-size: .68rem; }
+    .company-name { display: block; overflow: hidden; color: #56575d; text-overflow: ellipsis; white-space: nowrap; }
+    .money { text-align: right; font-variant-numeric: tabular-nums; }
+    .tax-rate { display: block; color: #9fa1a9; font-size: .68rem; }
+    .action-cell { text-align: center; }
+    .action-wrap { display: inline-block; }
+    .row-actions { min-height: 31px; padding: 5px 10px; border: 0; border-radius: 18px; background: #f4f5f8; color: #676970; font-size: .78rem; white-space: nowrap; }
+    .row-actions:hover { background: #eceef3; }
+    .row-actions span { color: #ff7139; font-size: 1rem; margin-left: 6px; }
+    .detail-row td { height: auto; padding: 13px 20px 15px; background: #fafbfe; color: #6b7180; }
+    .detail-grid { display: flex; flex-wrap: wrap; gap: 15px 30px; font-size: .81rem; }
+    .detail-grid strong { color: #4e5666; }
+    .menu { position: absolute; z-index: 12; right: 0; top: calc(100% + 5px); width: 238px; padding: 6px; border: 1px solid #e2e6ee; border-radius: 10px; background: #fff; box-shadow: 0 15px 34px #22293d29; }
+    .row-menu { position: fixed; right: auto; max-height: min(355px, calc(100vh - 20px)); overflow-y: auto; }
+    .menu button { display: block; width: 100%; padding: 9px 10px; border: 0; border-radius: 5px; background: transparent; color: #52555f; font-size: .81rem; text-align: left; }
+    .menu button:hover { background: #fff1e9; color: #bf5625; }
+    .menu hr { margin: 5px 3px; border: 0; border-top: 1px solid #e8ebf0; }
+    .empty { padding: 38px 10px; color: #818695; text-align: center; }
+    .panel-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 15px 4px; color: #8a8e98; font-size: .8rem; }
+    .pager { display: flex; align-items: center; gap: 8px; }
+    .pager button { width: 27px; height: 27px; border: 1px solid #dfe4ee; border-radius: 5px; background: #fff; color: #697181; }
+    .pager button:disabled { opacity: .4; cursor: default; }
+    .demo-badge { position: fixed; z-index: 5; bottom: 16px; left: 17px; padding: 7px 10px; border-radius: 15px; background: #fff; border: 1px solid #ffd1ba; color: #c45b2a; box-shadow: 0 4px 13px #3b332321; font-size: .73rem; font-weight: 750; }
+    .help { position: fixed; right: 18px; bottom: 16px; width: 47px; height: 47px; display: grid; place-items: center; border: 5px solid #ff7139; border-radius: 50%; background: #fff; color: #ff7139; font-size: 1.45rem; font-weight: 700; box-shadow: 0 4px 13px #37333523; }
+    .toast { position: fixed; z-index: 30; right: 20px; bottom: 76px; max-width: min(400px, calc(100vw - 40px)); padding: 12px 15px; border-radius: 9px; background: #353840; color: #fff; box-shadow: 0 12px 29px #1118; font-size: .87rem; }
+    @media (max-width: 1100px) { .account-context { margin-left: 0; } .context-pill.secondary { display: none; } .top-cards { gap: 10px; } }
+    @media (max-width: 780px) { .topbar { padding: 5px 10px; flex-wrap: wrap; gap: 6px; } .account-context { order: 3; width: 100%; flex: auto; } .primary-nav { margin-left: auto; gap: 0; } .nav-button { width: 48px; min-height: 48px; font-size: .65rem; } .nav-button .icon { width: 18px; height: 18px; } .avatar { width: 36px; height: 36px; } .top-cards { grid-template-columns: repeat(2, minmax(0,1fr)); } .promo-card { display: none; } .heading-row { align-items: flex-start; flex-direction: column; padding: 19px 0; } .panel-toolbar { align-items: stretch; flex-wrap: wrap; } .search { width: 100%; } .toolbar-right { width: 100%; justify-content: space-between; gap: 6px; } .summary-stat span { font-size: .67rem; } }
+    @media (max-width: 480px) { .context-pill { max-width: 49%; } .period-pill { margin-left: auto; } .top-cards { grid-template-columns: 1fr; } .top-card { height: 82px; } h1 { font-size: 1.65rem; } .status-tab { padding: 7px 10px; font-size: .79rem; } .panel { padding: 10px 8px 0; } .soft-control { font-size: .72rem; padding: 7px; } .transmitter-control select { min-width: 100px; font-size: .72rem; } }
+  </style>
+  <link rel="stylesheet" href="company-modal.css">
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="icon-calc" viewBox="0 0 24 24"><rect x="5" y="2.5" width="14" height="19" rx="1"/><path d="M8 7h8M8 11h2m4 0h2M8 15h2m4 0h2M8 19h2m4 0h2"/></symbol>
+    <symbol id="icon-tag" viewBox="0 0 24 24"><path d="M12 2l3 2 3.5.5.5 3.5 2 3-2 3-.5 3.5-3.5.5-3 2-3-2-3.5-.5L5 14l-2-3 2-3 .5-3.5L9 4z"/><circle cx="12" cy="11" r="2"/></symbol>
+    <symbol id="icon-upload" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 17V7m-4 4 4-4 4 4"/></symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 6v6h5"/></symbol>
+    <symbol id="icon-filter" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v5l-4 2v-7z"/></symbol>
+  </svg>
+  <div class="page">
+    <header class="topbar">
+      <button class="icon-button" type="button" data-nav="Menu" aria-label="Abrir menu"><svg class="icon"><use href="#icon-menu"></use></svg></button>
+      <div class="account-context">
+        <button class="context-pill" type="button" data-nav="Carteira de treino"><span class="pill-icon">♧</span><span>00.000.101/0000-00 - AURORA PAPELARIA...</span></button>
+        <div class="company-picker" id="company-picker">
+          <span class="pill-icon" aria-hidden="true">▤</span>
+          <input id="company-picker-input" type="search" aria-label="Pesquisar empresa por nome ou CNPJ" autocomplete="off" placeholder="Digite o CNPJ da empresa">
+          <button id="clear-company-picker" type="button" aria-label="Limpar empresa" title="Limpar campo da empresa"><svg class="company-clear-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15"></path></svg></button>
+        </div>
+        <button class="company-search-button" id="open-company-details" type="button">Pesquisar</button>
+        <label class="period-pill" for="competence"><span class="pill-icon">▣</span><select id="competence" aria-label="Competência"><option>ago/2026</option><option>jul/2026</option><option>jun/2026</option></select></label>
+      </div>
+      <nav class="primary-nav" aria-label="Atalhos do painel">
+        <button class="nav-button" type="button" data-nav="Apurar"><svg class="icon"><use href="#icon-calc"></use></svg><span>Apurar</span></button>
+        <button class="nav-button" type="button" data-nav="DIFAL"><svg class="icon"><use href="#icon-tag"></use></svg><span>DIFAL</span></button>
+        <button class="nav-button" type="button" data-nav="Importar"><svg class="icon"><use href="#icon-upload"></use></svg><span>Importar</span></button>
+        <button class="nav-button" type="button" data-nav="Tarefas"><span class="task-badge">0</span><svg class="icon"><use href="#icon-clock"></use></svg><span>Tarefas</span></button>
+      </nav>
+      <div class="avatar" aria-label="Usuário de treino">T</div>
+    </header>
+    <main class="content">
+      <section class="top-cards" aria-label="Resumo da carteira">
+        <div class="top-card audit-card"><span>Auditoria</span><strong>R$ 3.875,50</strong></div>
+        <div class="top-card summary-card">
+          <div class="summary-stat"><strong id="summary-total">40</strong><span>Empresas</span></div>
+          <div class="summary-stat"><strong id="summary-transmitted">75%</strong><span>Transmitido</span></div>
+          <div class="summary-stat"><strong id="summary-pending">25%</strong><span>Pendente</span></div>
+          <div class="summary-stat"><strong id="summary-alerts">10%</strong><span>Com Alerta</span></div>
+        </div>
+        <div class="top-card promo-card"><span>TRANSFORME CRÉDITOS TRIBUTÁRIOS EM LUCRO IMEDIATO.</span></div>
+      </section>
+      <div class="heading-row">
+        <h1>Painel do Contador</h1>
+        <div class="status-tabs" aria-label="Situação da transmissão">
+          <button class="status-tab selected" type="button" data-filter="transmitida" aria-pressed="true">Transmitidas (<span id="tab-transmitted-count">30</span>)</button>
+          <button class="status-tab" type="button" data-filter="pendente" aria-pressed="false">Não transmitidas (<span id="tab-pending-count">10</span>)</button>
+        </div>
+      </div>
+      <section class="panel" aria-label="Empresas cadastradas">
+        <div class="panel-toolbar">
+          <label class="search" for="company-search"><input id="company-search" type="search" autocomplete="off" placeholder="Digite um termo para buscar" aria-label="Buscar empresa ou CNPJ"></label>
+          <div class="toolbar-right">
+            <div class="batch-wrap"><button class="soft-control" id="batch-actions" type="button" aria-expanded="false" aria-controls="batch-menu">Ações em lote <span class="orange-chevron">⌄</span></button>
+              <div class="menu" id="batch-menu" hidden><button type="button" data-batch="recalcular">Calcular apuração</button><button type="button" data-batch="transmitir">Transmitir</button><button type="button" data-batch="relatorio">Baixar relatórios de conferência</button></div>
+            </div>
+            <label class="soft-control transmitter-control" for="transmitter-filter">Transmitido por: <select id="transmitter-filter" aria-label="Transmitido por"><option value="Todos">Todos</option><option value="Automação">Automação</option><option value="Manual">Manual</option></select></label>
+            <div class="filter-wrap">
+              <button class="filter-trigger" id="filter-trigger" type="button" aria-expanded="false" aria-controls="filter-panel" aria-label="Filtros adicionais"><svg class="icon" style="width:17px;height:17px"><use href="#icon-filter"></use></svg></button>
+              <div class="filter-panel" id="filter-panel" hidden>
+                <label for="regime-filter">Regime<select id="regime-filter"><option value="todos">Todos</option><option value="Simples">Simples Nacional</option><option value="MEI">MEI</option></select></label>
+                <label for="sort-order">Ordenar<select id="sort-order"><option value="original">Cadastro</option><option value="name">Nome A–Z</option><option value="revenue">Maior receita</option></select></label>
+                <button id="reset-demo" type="button">Restaurar dados de treino</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <div class="table-frame">
+            <div class="issue-strip" id="issue-strip" aria-label="Filtros de auditoria"></div>
+            <table aria-label="Empresas fictícias no ambiente de treino">
+              <thead><tr><th aria-label="Detalhes"></th><th><label class="company-header"><input id="select-all" type="checkbox" aria-label="Selecionar empresas visíveis">Empresa</label></th><th>Produtos</th><th>Serviços</th><th>Receita líquida</th><th>Imposto</th><th>Ações</th></tr></thead>
+              <tbody id="company-rows"></tbody>
+            </table>
+            <div class="empty" id="empty-state" hidden>Nenhuma empresa corresponde aos filtros.</div>
+          </div>
+        </div>
+        <footer class="panel-footer"><span id="result-summary">0 empresas</span><div class="pager"><button id="previous-page" type="button" aria-label="Página anterior">‹</button><span id="page-number">1 / 1</span><button id="next-page" type="button" aria-label="Próxima página">›</button></div></footer>
+      </section>
+    </main>
+  </div>
+  <span class="demo-badge">SIMULAÇÃO LOCAL · DADOS FICTÍCIOS</span>
+  <button class="help" type="button" id="help-button" aria-label="Ajuda da simulação">?</button>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <dialog class="company-modal" id="company-modal" aria-labelledby="company-modal-title">
+    <div class="company-modal-header"><h2 id="company-modal-title">Dados da Empresa</h2><button id="close-company-modal" type="button" aria-label="Fechar dados da empresa">Fechar</button></div>
+    <nav class="company-tabs" aria-label="Áreas dos dados da empresa">
+      <button type="button" data-company-tab="dados">Dados da Empresa</button>
+      <button type="button" data-company-tab="certificados">Certificados</button>
+      <button type="button" data-company-tab="ecac">Dados do E-CAC</button>
+      <button type="button" data-company-tab="faturamento">Faturamento</button>
+      <button type="button" data-company-tab="mensagens">Mensagens</button>
+      <button type="button" data-company-tab="locacao">Locação/Outras</button>
+      <button type="button" data-company-tab="sugestoes">Sugestão Tipo Nota</button>
+      <button type="button" data-company-tab="anexo">Configuração de Anexo</button>
+      <button type="button" data-company-tab="servicos">Códigos de Serviço</button>
+    </nav>
+    <div class="company-modal-content" id="company-modal-content"></div>
+    <span class="modal-demo-label">SIMULAÇÃO LOCAL · INFORMAÇÕES FICTÍCIAS</span>
+  </dialog>
+  <dialog class="save-confirmation" id="save-confirmation" aria-labelledby="save-confirmation-title">
+    <h3 id="save-confirmation-title">Confirmar salvamento</h3>
+    <p id="save-confirmation-message"></p>
+    <div class="confirm-actions"><button id="cancel-save" type="button">Cancelar</button><button id="confirm-save" type="button">Confirmar e salvar</button></div>
+  </dialog>
+  <script>
+    // CNPJs com filial 0000 e dígitos finais 00 são apenas identificadores de demonstração.
+    const NAMES = [
+      "Aurora Papelaria Criativa Ltda", "Horizonte Serviços Digitais Ltda", "Jardim Solar Comércio Ltda",
+      "Maré Clara Café ME", "Ponto Norte Consultoria Ltda", "Flor de Cedro Ateliê",
+      "Estação Azul Tecnologia Ltda", "Raiz do Vale Mercado Ltda", "Brisa Urbana Design ME",
+      "Lume Educação Corporativa Ltda", "Cedro Vivo Ferragens Ltda", "Nuvem Serena Produções ME",
+      "Alameda Verde Livraria Ltda", "Vértice do Sul Projetos Ltda", "Terra Nova Empório Ltda",
+      "Porto Claro Logística Ltda", "Duna Oficina Criativa ME", "Ipê Roxo Jardinagem Ltda",
+      "Farol Criativo Publicidade Ltda", "Serra Alta Alimentos Ltda", "Oliva e Cia Cosméticos Ltda",
+      "Âncora Consultoria Ambiental Ltda", "Lumiar Artigos Esportivos Ltda", "Vale do Sol Papelaria Ltda",
+      "Navega Soluções Educacionais Ltda", "Prisma do Campo Comércio Ltda", "Vila Bela Cafeteria ME",
+      "Pérola Azul Eventos Ltda", "Aquarela Urbana Moda Ltda", "Monte Verde Ferramentas Ltda",
+      "Campo Azul Tecnologia Ltda", "Girassol Oficina Floral ME", "Caminho Claro Serviços Ltda",
+      "Vento Norte Equipamentos Ltda", "Mar Aberto Cursos Ltda", "Alecrim do Vale Mercado ME",
+      "Canário Digital Produções Ltda", "Rota Serena Papelaria Ltda", "Canto Novo Arquitetura Ltda",
+      "Brilho da Serra Comércio Ltda"
+    ];
+    const ISSUE_TYPES = [
+      { id: "faturamento", label: "Faturamento" }, { id: "cnae", label: "CNAE" },
+      { id: "icms", label: "Exceção ICMS" }, { id: "cfop", label: "Erros de CFOP" },
+      { id: "inconsistencias", label: "Inconsistências" }, { id: "certificados", label: "Certificados" },
+      { id: "pis", label: "Exceção PIS/COFINS" }, { id: "aliquotas", label: "Distorção de Alíquotas" }
+    ];
+    const SEED = NAMES.map((company, index) => {
+      const products = index === 0 || index % 3 === 0 ? 0 : index % 3 === 1 ? +(21731.83 + index * 1310.51).toFixed(2) : +(12650.70 + index * 1117.35).toFixed(2);
+      const services = index === 0 || products ? 0 : +(6066.21 + index * 899.40).toFixed(2);
+      const issues = [];
+      if (index < 9) issues.push("cfop");
+      if (index >= 5 && index < 14) issues.push("inconsistencias");
+      if (index === 2 || index === 3) issues.push("certificados");
+      return {
+        id: "empresa-" + (index + 101), company,
+        cnpj: "00.000." + String(index + 101).padStart(3, "0") + "/0000-00",
+        products, services, tax: +((products + services) * (0.04 + index % 5 * 0.0131)).toFixed(2),
+        annex: index % 10 === 0 ? "MEI" : index % 4 === 0 ? "Anexo III" : "Anexo I",
+        regime: index % 10 === 0 ? "MEI" : "Simples",
+        status: index < 30 ? "transmitida" : "pendente",
+        transmitter: index % 3 === 0 ? "Manual" : "Automação",
+        alert: index < 4, issues
+      };
+    });
+    const companies = SEED.map(company => ({ ...company, issues: [...company.issues] }));
+    const selected = new Set();
+    const expanded = new Set();
+    const pageSize = 8;
+    let page = 1;
+    let filter = "transmitida";
+    let issueFilter = "";
+    let openMenu = "";
+    let toastTimer;
+    const $ = selector => document.querySelector(selector);
+    const money = value => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value);
+    const escapeHtml = value => String(value).replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+    const cleanName = value => String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    function notify(message) {
+      const toast = $("#toast");
+      toast.textContent = message;
+      toast.hidden = false;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { toast.hidden = true; }, 3900);
+    }
+    function filteredCompanies() {
+      const query = cleanName($("#company-search").value.trim());
+      const digits = query.replace(/\D/g, "");
+      const regime = $("#regime-filter").value;
+      const transmitter = $("#transmitter-filter").value;
+      const items = companies.filter(company =>
+        (filter === "todas" || company.status === filter)
+        && (!issueFilter || company.issues.includes(issueFilter))
+        && (regime === "todos" || company.regime === regime)
+        && (transmitter === "Todos" || company.transmitter === transmitter)
+        && (!query || cleanName(company.company).includes(query) || (digits && company.cnpj.replace(/\D/g, "").includes(digits))));
+      if ($("#sort-order").value === "name") items.sort((a, b) => a.company.localeCompare(b.company, "pt-BR"));
+      if ($("#sort-order").value === "revenue") items.sort((a, b) => (b.products + b.services) - (a.products + a.services));
+      return items;
+    }
+    function closeMenus() {
+      openMenu = "";
+      $("#batch-menu").hidden = true;
+      $("#batch-actions").setAttribute("aria-expanded", "false");
+      $("#filter-panel").hidden = true;
+      $("#filter-trigger").setAttribute("aria-expanded", "false");
+      document.querySelectorAll(".row-menu").forEach(menu => { menu.hidden = true; });
+      document.querySelectorAll(".row-actions").forEach(button => button.setAttribute("aria-expanded", "false"));
+    }
+    function showFilter(nextFilter) {
+      filter = nextFilter;
+      page = 1;
+      document.querySelectorAll(".status-tab").forEach(button => {
+        const active = button.dataset.filter === filter;
+        button.classList.toggle("selected", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+      render();
+    }
+    function render() {
+      const total = companies.length;
+      const transmitted = companies.filter(company => company.status === "transmitida").length;
+      const pending = companies.filter(company => company.status === "pendente").length;
+      const alerts = companies.filter(company => company.alert).length;
+      $("#summary-total").textContent = total;
+      $("#summary-transmitted").textContent = Math.round(transmitted / total * 100) + "%";
+      $("#summary-pending").textContent = Math.round(pending / total * 100) + "%";
+      $("#summary-alerts").textContent = Math.round(alerts / total * 100) + "%";
+      $("#tab-transmitted-count").textContent = transmitted;
+      $("#tab-pending-count").textContent = pending;
+      $("#issue-strip").innerHTML = ISSUE_TYPES.map(issue => {
+        const count = companies.filter(company => company.issues.includes(issue.id)).length;
+        return '<button class="issue-tab' + (issueFilter === issue.id ? ' selected' : '') + '" type="button" data-issue="' + issue.id + '" aria-pressed="' + (issueFilter === issue.id) + '">' + issue.label + '<b>' + count + '</b></button>';
+      }).join("");
+      const all = filteredCompanies();
+      const pages = Math.max(1, Math.ceil(all.length / pageSize));
+      page = Math.min(page, pages);
+      const visible = all.slice((page - 1) * pageSize, page * pageSize);
+      $("#company-rows").innerHTML = visible.map(company => {
+        const revenue = company.products + company.services;
+        const rate = revenue ? (company.tax / revenue * 100).toFixed(2).replace(".", ",") : "0,00";
+        const row = '<tr data-company-id="' + company.id + '" data-status="' + company.status + '">' +
+          '<td class="expand-cell"><button class="expand-button" type="button" data-expand="' + company.id + '" aria-expanded="' + expanded.has(company.id) + '" aria-label="Detalhes de ' + escapeHtml(company.company) + '">›</button></td>' +
+          '<td><div class="company-cell"><input class="select-company" type="checkbox" data-company-id="' + company.id + '" aria-label="Selecionar ' + escapeHtml(company.company) + '" ' + (selected.has(company.id) ? 'checked' : '') + '><div class="company-copy"><span class="company-cnpj">' + company.cnpj + '</span><span class="company-name" title="' + escapeHtml(company.company) + '">' + escapeHtml(company.company) + '</span></div></div></td>' +
+          '<td class="money">' + money(company.products) + '</td><td class="money">' + money(company.services) + '</td>' +
+          '<td class="money">' + money(revenue) + '</td><td class="money"><span class="tax-rate">' + rate + '%</span>' + money(company.tax) + '</td>' +
+          '<td class="action-cell"><div class="action-wrap"><button class="row-actions" type="button" data-action-menu="' + company.id + '" aria-controls="menu-' + company.id + '" aria-expanded="false" aria-label="Ações para ' + escapeHtml(company.company) + '">Ações <span>⌄</span></button>' +
+          '<div class="menu row-menu" id="menu-' + company.id + '" data-menu-for="' + company.id + '" hidden>' +
+          '<button type="button" data-row-action="company-details" data-company-id="' + company.id + '">Dados da empresa</button><hr>' +
+          '<button type="button" data-row-action="recalcular" data-company-id="' + company.id + '">Recalcular apuração</button>' +
+          '<button type="button" data-row-action="retransmitir" data-company-id="' + company.id + '">Retransmitir</button><hr>' +
+          '<button type="button" data-row-action="das" data-company-id="' + company.id + '">Download DAS</button>' +
+          '<button type="button" data-row-action="declaracao" data-company-id="' + company.id + '">Download da declaração</button>' +
+          '<button type="button" data-row-action="relatorio" data-company-id="' + company.id + '">Download do relatório de conferência</button>' +
+          '<button type="button" data-row-action="recibo" data-company-id="' + company.id + '">Download do recibo</button><hr>' +
+          '<button type="button" data-row-action="email" data-company-id="' + company.id + '">Enviar e-mail da apuração</button>' +
+          '<button type="button" data-row-action="email-status" data-company-id="' + company.id + '">Status do e-mail</button></div></div></td></tr>';
+        const detail = expanded.has(company.id) ? '<tr class="detail-row"><td colspan="7"><div class="detail-grid"><span><strong>CNPJ:</strong> ' + company.cnpj + '</span><span><strong>Regime:</strong> ' + company.regime + '</span><span><strong>Anexo:</strong> ' + company.annex + '</span><span><strong>Transmitido por:</strong> ' + company.transmitter + '</span><span><strong>Situação:</strong> ' + (company.status === "transmitida" ? "Transmitida" : "Não transmitida") + '</span></div></td></tr>' : '';
+        return row + detail;
+      }).join("");
+      $("#empty-state").hidden = all.length !== 0;
+      $("#result-summary").textContent = all.length + " empresa" + (all.length === 1 ? "" : "s") + " · " + selected.size + " selecionada" + (selected.size === 1 ? "" : "s");
+      $("#page-number").textContent = page + " / " + pages;
+      $("#previous-page").disabled = page === 1;
+      $("#next-page").disabled = page === pages;
+      $("#select-all").checked = visible.length > 0 && visible.every(company => selected.has(company.id));
+      $("#select-all").indeterminate = !$("#select-all").checked && visible.some(company => selected.has(company.id));
+      closeMenus();
+    }
+    function pdfBytes(company, type) {
+      const ascii = value => String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7e]/g, " ").replace(/[\\()]/g, "\\$&");
+      const lines = ["PAINEL DO CONTADOR - DOCUMENTO DE TREINO", type.toUpperCase(), company.company, company.cnpj,
+        "Competencia: " + $("#competence").value, "SEM VALIDADE FISCAL - DADOS FICTICIOS"];
+      const stream = "BT /F1 16 Tf 55 770 Td (" + ascii(lines[0]) + ") Tj /F1 12 Tf " + lines.slice(1).map(line => "0 -36 Td (" + ascii(line) + ") Tj").join(" ") + " ET";
+      const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", "<< /Length " + stream.length + " >>\nstream\n" + stream + "\nendstream"];
+      let pdf = "%PDF-1.4\n";
+      const offsets = [0];
+      objects.forEach((object, index) => { offsets.push(pdf.length); pdf += (index + 1) + " 0 obj\n" + object + "\nendobj\n"; });
+      const start = pdf.length;
+      pdf += "xref\n0 " + (objects.length + 1) + "\n0000000000 65535 f \n";
+      offsets.slice(1).forEach(offset => { pdf += String(offset).padStart(10, "0") + " 00000 n \n"; });
+      pdf += "trailer\n<< /Size " + (objects.length + 1) + " /Root 1 0 R >>\nstartxref\n" + start + "\n%%EOF";
+      return new TextEncoder().encode(pdf);
+    }
+    function downloadDemo(company, type) {
+      const blob = new Blob([pdfBytes(company, type)], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = type.toUpperCase() + "_TREINO_" + company.id + ".pdf";
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      notify("PDF de treino gerado para " + company.company + ". Sem validade fiscal.");
+    }
+    function act(company, action) {
+      if (action === "company-details") return window.openCompanyTraining?.(company);
+      if (["das", "declaracao", "relatorio", "recibo"].includes(action)) return downloadDemo(company, action);
+      if (action === "recalcular") return notify("Apuração de treino recalculada para " + company.company + ".");
+      if (action === "retransmitir") { company.status = "transmitida"; render(); return notify("Transmissão de treino concluída para " + company.company + "."); }
+      if (action === "email") return notify("E-mail simulado para " + company.company + ". Nenhuma mensagem foi enviada.");
+      if (action === "email-status") return notify("E-mail de treino: nenhum envio real registrado para " + company.company + ".");
+    }
+    function resetDemo() {
+      window.resetCompanyTraining?.();
+      companies.splice(0, companies.length, ...SEED.map(company => ({ ...company, issues: [...company.issues] })));
+      selected.clear(); expanded.clear(); issueFilter = "";
+      $("#company-search").value = "";
+      $("#regime-filter").value = "todos";
+      $("#sort-order").value = "original";
+      $("#transmitter-filter").value = "Todos";
+      showFilter("transmitida");
+      notify("Dados de treino restaurados.");
+    }
+    document.addEventListener("click", event => {
+      const statusTab = event.target.closest(".status-tab");
+      if (statusTab) { showFilter(statusTab.dataset.filter); return; }
+      const issueTab = event.target.closest("[data-issue]");
+      if (issueTab) { issueFilter = issueFilter === issueTab.dataset.issue ? "" : issueTab.dataset.issue; page = 1; render(); return; }
+      const action = event.target.closest("[data-row-action]");
+      if (action) { const company = companies.find(item => item.id === action.dataset.companyId); if (company) act(company, action.dataset.rowAction); closeMenus(); return; }
+      const expander = event.target.closest("[data-expand]");
+      if (expander) { expanded.has(expander.dataset.expand) ? expanded.delete(expander.dataset.expand) : expanded.add(expander.dataset.expand); render(); return; }
+      const menuButton = event.target.closest("[data-action-menu]");
+      if (menuButton) {
+        const shouldOpen = openMenu !== menuButton.dataset.actionMenu;
+        closeMenus();
+        if (shouldOpen) {
+          openMenu = menuButton.dataset.actionMenu;
+          const menu = document.querySelector('[data-menu-for="' + openMenu + '"]');
+          if (menu) {
+            menu.hidden = false;
+            const buttonRect = menuButton.getBoundingClientRect();
+            const menuHeight = menu.offsetHeight;
+            const below = buttonRect.bottom + 4 + menuHeight <= window.innerHeight;
+            menu.style.top = Math.max(8, below ? buttonRect.bottom + 4 : buttonRect.top - menuHeight - 4) + "px";
+            menu.style.left = Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, buttonRect.right - menu.offsetWidth)) + "px";
+            menuButton.setAttribute("aria-expanded", "true");
+          }
+        }
+        return;
+      }
+      if (event.target.closest("#batch-actions")) {
+        const shouldOpen = $("#batch-menu").hidden;
+        closeMenus(); $("#batch-menu").hidden = !shouldOpen; $("#batch-actions").setAttribute("aria-expanded", String(shouldOpen)); return;
+      }
+      const bulk = event.target.closest("[data-batch]");
+      if (bulk) {
+        if (!selected.size) { notify("Selecione ao menos uma empresa para a ação em lote."); closeMenus(); return; }
+        const chosen = companies.filter(company => selected.has(company.id));
+        if (bulk.dataset.batch === "transmitir") { chosen.forEach(company => { company.status = "transmitida"; }); notify(chosen.length + " transmissão(ões) de treino concluída(s)."); }
+        if (bulk.dataset.batch === "recalcular") notify("Apuração de treino calculada para " + chosen.length + " empresa(s).");
+        if (bulk.dataset.batch === "relatorio") chosen.forEach(company => downloadDemo(company, "relatorio"));
+        selected.clear(); render(); return;
+      }
+      if (event.target.closest("#filter-trigger")) {
+        const shouldOpen = $("#filter-panel").hidden;
+        closeMenus(); $("#filter-panel").hidden = !shouldOpen; $("#filter-trigger").setAttribute("aria-expanded", String(shouldOpen)); return;
+      }
+      if (event.target.closest("#help-button")) { notify("Ambiente local de treino. Nenhum dado é enviado ao Sittax."); return; }
+      if (event.target.closest("[data-nav]")) { notify("Esta simulação cobre apenas o Painel do Contador."); closeMenus(); return; }
+      if (!event.target.closest(".menu, .filter-panel")) closeMenus();
+    });
+    document.addEventListener("change", event => {
+      if (event.target.matches(".select-company")) { event.target.checked ? selected.add(event.target.dataset.companyId) : selected.delete(event.target.dataset.companyId); render(); }
+      if (event.target.id === "select-all") {
+        filteredCompanies().slice((page - 1) * pageSize, page * pageSize).forEach(company => { event.target.checked ? selected.add(company.id) : selected.delete(company.id); });
+        render();
+      }
+      if (["sort-order", "regime-filter", "transmitter-filter"].includes(event.target.id)) { page = 1; render(); }
+    });
+    $("#company-search").addEventListener("input", () => { page = 1; render(); });
+    $("#previous-page").addEventListener("click", () => { page = Math.max(1, page - 1); render(); });
+    $("#next-page").addEventListener("click", () => { page += 1; render(); });
+    $("#reset-demo").addEventListener("click", resetDemo);
+    document.addEventListener("keydown", event => { if (event.key === "Escape") closeMenus(); });
+    $(".table-scroll").addEventListener("scroll", closeMenus);
+    window.addEventListener("resize", closeMenus);
+    render();
+    // Os comandos opcionais abaixo compartilham o mesmo estado dos controles visíveis.
+    if (document.modelContext?.registerTool) {
+      const lifecycle = new AbortController();
+      window.addEventListener("pagehide", () => lifecycle.abort(), { once: true });
+      const register = tool => {
+        try { Promise.resolve(document.modelContext.registerTool(tool, { signal: lifecycle.signal })).catch(() => {}); }
+        catch (_) { /* A página continua funcionando em navegadores sem suporte. */ }
+      };
+      register({
+        name: "filter_training_companies", title: "Filtrar empresas de treino",
+        description: "Filtra a lista visível da simulação local por nome/CNPJ, situação e regime.",
+        inputSchema: { type: "object", properties: {
+          query: { type: "string" },
+          status: { type: "string", enum: ["todas", "transmitida", "pendente"] },
+          regime: { type: "string", enum: ["todos", "Simples", "MEI"] }
+        }, additionalProperties: false },
+        annotations: { readOnlyHint: false, untrustedContentHint: false },
+        execute(input) {
+          if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Filtros inválidos.");
+          const { query = "", status = "transmitida", regime = "todos", ...extra } = input;
+          if (Object.keys(extra).length || typeof query !== "string"
+            || !["todas", "transmitida", "pendente"].includes(status)
+            || !["todos", "Simples", "MEI"].includes(regime)) throw new Error("Filtros inválidos.");
+          $("#company-search").value = query;
+          $("#regime-filter").value = regime;
+          $("#transmitter-filter").value = "Todos";
+          issueFilter = "";
+          showFilter(status);
+          const found = filteredCompanies();
+          return { count: found.length, companyIds: found.map(company => company.id) };
+        }
+      });
+      register({
+        name: "restore_training_companies", title: "Restaurar dados de treino",
+        description: "Restaura os dados fictícios e os filtros do Painel do Contador local.",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+        annotations: { readOnlyHint: false, untrustedContentHint: false },
+        execute(input) {
+          if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length) throw new Error("Entrada inválida.");
+          resetDemo();
+          return { count: companies.length };
+        }
+      });
+    }
+  </script>
+  <script src="company-modal.js"></script>
+</body>
+</html>

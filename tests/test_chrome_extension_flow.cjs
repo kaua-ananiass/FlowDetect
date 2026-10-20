@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
-const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "spreadsheetRowData", "spreadsheetColumnValue", "reportColumnValue", "reportStepForRow", "recordReportResult", "replaceVariables", "setSpreadsheetRowVariables", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "updateSpreadsheetProgress", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
+const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "spreadsheetRowData", "spreadsheetColumnValue", "reportColumnValue", "reportStepForRow", "recordReportResult", "replaceVariables", "setSpreadsheetRowVariables", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "updateOcrLive", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "updateSpreadsheetProgress", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
 names.push("waitForRouteDelay");
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
@@ -47,7 +47,7 @@ test("a manually stopped row is reported as interrupted instead of failed", () =
   const context = runner();
   const run = { cancelled: false, report: { sourceName: "CNPJ", rows: [], summary: {} } };
 
-  context.beginReportRow(run, { index: 2, value: "12.345.678/0001-90", sourceName: "CNPJ", total: 5 });
+  context.beginReportRow(run, { index: 2, value: "00.000.802/0000-00", sourceName: "CNPJ", total: 5 });
   context.finalizeReportRow(run, false, "Execucao interrompida pelo usuario.");
 
   assert.equal(run.report.rows[0].status, "Interrompida");
@@ -59,7 +59,7 @@ test("the report-result block records only its configured status and message", (
   const context = runner();
   const run = { report: { sourceName: "CNPJ", rows: [], summary: {} } };
 
-  context.beginReportRow(run, { index: 1, value: "03.943.209/0001-87", sourceName: "CNPJ", total: 1 });
+  context.beginReportRow(run, { index: 1, value: "00.000.803/0000-00", sourceName: "CNPJ", total: 1 });
   context.recordReportResult(run, {
     status: "Sem debitos",
     tone: "info",
@@ -84,7 +84,7 @@ test("report result keeps its custom message while the selected company comes fr
     confirmation_column: "Empresa",
     result: "Mensagem guardada para {{empresa}}.",
     confirmation: "Evidencia antiga.",
-  }, { CNPJ: "03943209000187" }, { Empresa: "Empresa Modelo", Cidade: "Sao Paulo" });
+  }, { CNPJ: "00000803000000" }, { Empresa: "Empresa Modelo", Cidade: "Sao Paulo" });
 
   assert.equal(step.result, "Mensagem guardada para Empresa Modelo.");
   assert.equal(Object.hasOwn(step, "confirmation"), false);
@@ -96,8 +96,8 @@ test("the selected report column identifies the row and replaces the report alia
   const run = { variables: {}, report: { sourceName: "CNPJ", rows: [], summary: {} } };
   const source = {
     name: "CNPJ",
-    values: ["03943209000187"],
-    rows: [{ Empresa: "Empresa Modelo", CNPJ: "03943209000187" }],
+    values: ["00000803000000"],
+    rows: [{ Empresa: "Empresa Modelo", CNPJ: "00000803000000" }],
   };
 
   context.setSpreadsheetRowVariables(run, source, 0);
@@ -120,10 +120,10 @@ test("spreadsheet aliases replace the default report message with the current it
   const context = runner();
   const run = { variables: {} };
 
-  context.setSpreadsheetRowVariables(run, { name: "CNPJ", values: ["03943209000187"] }, 0);
+  context.setSpreadsheetRowVariables(run, { name: "CNPJ", values: ["00000803000000"] }, 0);
   const message = context.replaceVariables("Automacao concluida para {{empresa}} na linha {{linha_atual}}: {{CNPJ}}.", run.variables);
 
-  assert.equal(message, "Automacao concluida para 03943209000187 na linha 1: 03943209000187.");
+  assert.equal(message, "Automacao concluida para 00000803000000 na linha 1: 00000803000000.");
 });
 
 test("Chrome runner keeps pages separate and resolves a block route on another page", () => {
@@ -318,6 +318,148 @@ test("Chrome runner follows the failure route of each OCR target", async () => {
   assert.equal(result.flow.action, "ir_para_bloco");
   assert.equal(result.flow.block, "15");
   assert.match(logs[0].message, /Procurando OCR 2/);
+});
+
+test("a month already displayed is confirmed before clicking its field", async () => {
+  const calls = [];
+  const context = runner({
+    executePageStep: async (_run, target) => {
+      calls.push({ text: target.text, click: target.click });
+      return `OCR encontrou ${target.text}.`;
+    },
+  });
+  const result = await context.executeOcrTargets({}, {
+    ocr_targets: [
+      { text: "Competência de Apuração", action: "clicar", click: true,
+        on_success: { action: "continuar" } },
+      { text: "09/2026", action: "confirmar_ir_para_bloco", click: false,
+        on_success: { action: "ir_para_bloco", block: "16" } },
+    ],
+  });
+
+  assert.deepEqual(calls, [
+    { text: "Competência de Apuração", click: false },
+    { text: "09/2026", click: false },
+  ]);
+  assert.equal(result.flow.block, "16");
+});
+
+test("a different month follows OCR 2 failure route without clicking OCR 1", async () => {
+  const calls = [];
+  const context = runner({
+    addLog: async () => {},
+    executePageStep: async (_run, target) => {
+      calls.push({ text: target.text, click: target.click });
+      if (target.text === "09/2026") {
+        throw new Error("OCR nao encontrou o texto: 09/2026.");
+      }
+      return `OCR encontrou ${target.text}.`;
+    },
+  });
+  const result = await context.executeOcrTargets({}, {
+    ocr_targets: [
+      { text: "Competência de Apuração", action: "clicar", click: true,
+        on_success: { action: "continuar" } },
+      { text: "09/2026", action: "confirmar_ir_para_bloco", click: false,
+        on_success: { action: "ir_para_bloco", block: "16" },
+        on_failure: { action: "ir_para_bloco", block: "10" } },
+    ],
+  });
+
+  assert.deepEqual(calls, [
+    { text: "Competência de Apuração", click: false },
+    { text: "09/2026", click: false },
+  ]);
+  assert.equal(result.flow.block, "10");
+  assert.equal(result.level, "warning");
+});
+
+test("B08 routes to the configured block when OCR 2 is absent", async () => {
+  const visited = [];
+  const context = runner({
+    persistRun: async () => {},
+    addLog: async () => {},
+    executePageStep: async (_run, step) => {
+      if (step.type === "ocr_text" && step.text === "09/2026") {
+        throw new Error("OCR nao encontrou o texto: 09/2026.");
+      }
+      if (step.type === "key_sequence") visited.push(step.source_order);
+      return "Concluido.";
+    },
+  });
+  const executeStep = source.match(/^async function executeStep\(.*?^}/ms);
+  assert.ok(executeStep);
+  vm.runInContext(executeStep[0], context);
+  const steps = [
+    { source_order: 8, sequence: "pagina_3", type: "ocr_text", text: "Competência de Apuração\n09/2026",
+      on_failure: { action: "parar" }, ocr_targets: [
+        { text: "Competência de Apuração", action: "clicar", click: true,
+          on_success: { action: "continuar" } },
+        { text: "09/2026", action: "confirmar_ir_para_bloco", click: false,
+          on_success: { action: "ir_para_bloco", block: "16" },
+          on_failure: { action: "ir_para_bloco", block: "10" } },
+      ] },
+    { source_order: 9, sequence: "pagina_3", type: "key_sequence", keys: ["ESC"] },
+    { source_order: 10, sequence: "pagina_3", type: "key_sequence", keys: ["ENTER"] },
+  ];
+  const run = { currentStep: 0, recentSteps: [], variables: {} };
+
+  await context.executeRange(run, steps, 0, steps.length, new Map(), context.buildFlowIndexes(steps));
+
+  assert.deepEqual(visited, [10]);
+  assert.equal(run.blockFailure.nextIndex, 2);
+  assert.equal(run.recentSteps[0].state, "routed");
+  assert.equal(run.recentSteps[0].route, "Indo para B10");
+  assert.equal(run.recentSteps[0].ocrChecks[1].state, "not_found");
+});
+
+test("an OCR click failure keeps its real cause instead of claiming missing text", async () => {
+  const context = runner({
+    executePageStep: async () => { throw new Error("O marcador Clique ficou fora da area visivel."); },
+  });
+  await assert.rejects(context.executeOcrTargets({}, {
+    ocr_targets: [{ text: "Competência de Apuração", action: "clicar", click: true,
+      on_failure: { action: "parar" } }],
+  }), /marcador Clique ficou fora da area visivel/);
+});
+
+test("page commands reject an old content script after the extension is updated", async () => {
+  const sendToPage = source.match(/^async function sendToPage\(.*?^}/ms);
+  assert.ok(sendToPage);
+  const context = vm.createContext({
+    Date, Math, Number, String, Error,
+    CONTENT_RUNTIME_VERSION: "0.2.59",
+    timeoutDaPagina: () => 1000,
+    esperarAbaPronta: async () => {},
+    sleep: async () => {},
+    chrome: { tabs: { sendMessage: async () => ({ version: "0.2.58" }) } },
+  });
+  vm.runInContext(sendToPage[0], context);
+
+  await assert.rejects(context.sendToPage(1, { type: "flowdetect-execute-step" }),
+    /versao antiga do FlowDetect.*Recarregue a pagina/);
+});
+
+test("page commands run when the active content script has the current version", async () => {
+  const sendToPage = source.match(/^async function sendToPage\(.*?^}/ms);
+  const messages = [];
+  const context = vm.createContext({
+    Date, Math, Number, String, Error,
+    CONTENT_RUNTIME_VERSION: "0.2.59",
+    timeoutDaPagina: () => 1000,
+    esperarAbaPronta: async () => {},
+    sleep: async () => {},
+    chrome: { tabs: { sendMessage: async (_tabId, message) => {
+      messages.push(message.type);
+      return message.type === "flowdetect-content-runtime-v2"
+        ? { ok: true, version: "0.2.59" } : { ok: true, message: "Concluido" };
+    } } },
+  });
+  vm.runInContext(sendToPage[0], context);
+
+  const result = await context.sendToPage(1, { type: "flowdetect-execute-step" });
+  assert.equal(result.message, "Concluido");
+  assert.deepEqual(messages, ["flowdetect-content-runtime-v2", "flowdetect-execute-step-v2"]);
 });
 
 test("an OCR failure takes its configured route even when an image looks similar", async () => {

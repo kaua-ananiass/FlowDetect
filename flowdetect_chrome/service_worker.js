@@ -1,5 +1,9 @@
+import { routeAvailable, activateDownloadRoute, deactivateDownloadRoute, clearDownloadRouteForTab }
+  from "./download-routing.js";
+
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
 const RUNTIME_VERSION = "0.2.58";
+const CONTENT_RUNTIME_VERSION = "0.2.59";
 const STUDIO_TEST_BRIDGE = "http://127.0.0.1:18453";
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const PAIR_CODE_KEY = "flowdetectStudioPairCode";
@@ -429,15 +433,31 @@ async function sendToPage(tabId, message) {
   while (Date.now() < limite) {
     try {
       await esperarAbaPronta(tabId, Math.min(1200, Math.max(250, limite - Date.now())));
+      const contentRuntime = await chrome.tabs.sendMessage(tabId, {
+        type: "flowdetect-content-runtime-v2"
+      }).catch(() => null);
+      if (!contentRuntime) {
+        ultimoErro = new Error("Recarregue a pagina do site apos atualizar a extensao FlowDetect.");
+        await sleep(180);
+        continue;
+      }
+      if (contentRuntime.version !== CONTENT_RUNTIME_VERSION) {
+        const error = new Error("A aba ainda usa uma versao antiga do FlowDetect. Recarregue a pagina do site apos atualizar a extensao e inicie a automacao novamente.");
+        error.flowdetectContentRuntimeMismatch = true;
+        throw error;
+      }
       const resposta = await chrome.tabs.sendMessage(tabId, versionedMessage);
       if (resposta) return resposta;
       ultimoErro = new Error("A página ainda está inicializando.");
     } catch (error) {
+      if (error?.flowdetectContentRuntimeMismatch) throw error;
       ultimoErro = error;
     }
     await sleep(180);
   }
-  throw new Error(`A página ainda não respondeu após recarregar. ${String(ultimoErro?.message || "Tente executar novamente.")}`);
+  const error = new Error(`A página ainda não respondeu após recarregar. ${String(ultimoErro?.message || "Tente executar novamente.")}`);
+  error.flowdetectContentRuntimeMismatch = /Recarregue a pagina do site/.test(String(ultimoErro?.message || ""));
+  throw error;
 }
 
 async function aguardarTransicaoDaPagina(tabId, timeoutMs) {
@@ -774,13 +794,49 @@ function normalizedOcrTargetAction(value) {
   return action || "continuar";
 }
 
+async function updateOcrLive(run, targets, targetIndex, state, detail, flow = null) {
+  const entry = run.recentSteps?.at(-1);
+  if (!entry || entry.index !== run.currentIndex) return;
+  if (!Array.isArray(entry.ocrChecks)) {
+    entry.ocrChecks = targets.map((target) => ({ text: String(target.text || ""), state: "pending" }));
+  }
+  entry.ocrChecks[targetIndex] = { text: String(targets[targetIndex].text || ""), state };
+  entry.message = detail;
+  if (flow) entry.route = flowContinues(flow) ? flowLabel(flow) : "Regra: parar automacao.";
+  await persistRun(run);
+}
+
 async function executeOcrTargets(run, step) {
   const targets = Array.isArray(step.ocr_targets)
     ? step.ocr_targets.filter((target) => String(target?.text || "").trim())
     : [];
   if (!targets.length) return null;
 
-  for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
+  // Neste padrao o primeiro OCR e o rotulo do campo; o segundo decide a rota.
+  // Se o rotulo esta visivel, nao clique nele: verifique diretamente o mes/ano
+  // e respeite a rota de falha do OCR 2 caso o valor seja diferente.
+  const finalTarget = targets.at(-1);
+  const finalAction = normalizedOcrTargetAction(finalTarget.action);
+  let startTargetIndex = 0;
+  if (targets.length === 2 && normalizedOcrTargetAction(targets[0].action) === "clicar"
+      && String(targets[0].on_success?.action || "continuar").toLowerCase() === "continuar"
+      && finalAction === "confirmar_ir_para_bloco" && !finalTarget.click
+      && /^(0?[1-9]|1[0-2])\s*[/.-]\s*20\d{2}$/.test(String(finalTarget.text).trim())) {
+    try {
+      await updateOcrLive(run, targets, 0, "checking", `Validando OCR 1/${targets.length}: ${targets[0].text}`);
+      await executePageStep(run, {
+        ...step, ...targets[0], type: "ocr_text", text: String(targets[0].text).trim(),
+        action: "confirmar", click: false, timeout_ms: 800, ocr_targets: undefined
+      });
+      await updateOcrLive(run, targets, 0, "found", `OCR 1/${targets.length} encontrado. Validando a competencia.`);
+      startTargetIndex = 1;
+    } catch (error) {
+      if (run.cancelled || !/OCR nao encontrou o texto/i.test(String(error?.message || ""))) throw error;
+      await updateOcrLive(run, targets, 0, "not_found", `OCR 1/${targets.length} nao encontrado; seguindo a regra configurada.`);
+    }
+  }
+
+  for (let targetIndex = startTargetIndex; targetIndex < targets.length; targetIndex += 1) {
     const target = targets[targetIndex];
     const isLastTarget = targetIndex === targets.length - 1;
     const action = normalizedOcrTargetAction(target.action);
@@ -795,14 +851,17 @@ async function executeOcrTargets(run, step) {
     };
 
     try {
+      await updateOcrLive(run, targets, targetIndex, "checking", `Procurando OCR ${targetIndex + 1}/${targets.length}: ${targetStep.text}`);
       const message = await executePageStep(run, targetStep);
-      if (action === "continuar" && !isLastTarget) {
+      await updateOcrLive(run, targets, targetIndex, "found", `OCR ${targetIndex + 1}/${targets.length} encontrado: ${targetStep.text}`);
+      if ((action === "continuar" || (action === "clicar" &&
+          String(target.on_success?.action || "continuar").toLowerCase() === "continuar")) && !isLastTarget) {
         await addLog(run, `OCR ${targetIndex + 1} confirmado; procurando OCR ${targetIndex + 2} conforme a regra do bloco.`, "info");
         continue;
       }
       return { message, flow: target.on_success || step.on_success };
     } catch (error) {
-      if (run.cancelled || error?.flowdetectCaptureUnavailable) throw error;
+      if (run.cancelled || error?.flowdetectCaptureUnavailable || error?.flowdetectContentRuntimeMismatch) throw error;
       const reason = String(error?.message || error || "");
       if (reason.includes("desativado") && reason.includes("clique")) {
         error.message = `OCR ${targetIndex + 1} encontrou o texto, mas o alvo ficou desativado. ${reason}`;
@@ -810,7 +869,10 @@ async function executeOcrTargets(run, step) {
         throw error;
       }
       const flow = target.on_failure || step.on_failure;
-      const detail = `OCR ${targetIndex + 1} nao encontrou o texto: ${targetStep.text}.`;
+      const detail = /OCR nao encontrou o texto/i.test(reason)
+        ? `OCR ${targetIndex + 1} nao encontrou o texto: ${targetStep.text}.`
+        : `OCR ${targetIndex + 1} falhou em "${targetStep.text}": ${reason}`;
+      await updateOcrLive(run, targets, targetIndex, "not_found", detail, flow);
       if (String(flow?.action || "continuar").toLowerCase() === "continuar" && !isLastTarget) {
         await addLog(run, `${detail} Procurando OCR ${targetIndex + 2} conforme a regra do bloco.`, "warning");
         continue;
@@ -1101,7 +1163,12 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
         run.blockSuccess = { serial: Number(run.blockSuccess?.serial || 0) + 1,
           index, at: Date.now() };
       }
-      run.recentSteps.at(-1).state = typeof output === "object" && output.level === "warning" ? "failed" : "done";
+      const routed = typeof output === "object" && output.level === "warning";
+      run.recentSteps.at(-1).state = routed && Number.isInteger(nextIndex) ? "routed" : routed ? "failed" : "done";
+      run.recentSteps.at(-1).message = String(message || "");
+      if (routed) run.recentSteps.at(-1).route = Number.isInteger(nextIndex)
+        ? `Indo para B${String(steps[nextIndex]?.source_order || nextIndex + 1).padStart(2, "0")}`
+        : flowLabel(flow);
       await addLog(run, message, typeof output === "object" ? output.level || "success" : "success");
       if (mustAdvanceSpreadsheetRow(run, index, nextIndex)) {
         await addLog(run, `Linha ${run.spreadsheetLoop.row + 1}/${run.spreadsheetLoop.total} concluida; avancando para o proximo valor.`);
@@ -1114,9 +1181,10 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
     } catch (error) {
       if (run.recentSteps?.at(-1)?.index === index) {
         run.recentSteps.at(-1).state = run.cancelled ? "stopped" : "failed";
+        run.recentSteps.at(-1).message = String(error?.message || error);
       }
       if (run.cancelled) throw error;
-      const canRoute = !error?.flowdetectCaptureUnavailable
+      const canRoute = !error?.flowdetectCaptureUnavailable && !error?.flowdetectContentRuntimeMismatch
         && !error?.flowdetectOcrTargetFailure && flowContinues(step.on_failure);
       const nextIndex = canRoute ? actionToIndex(step.on_failure, indexes, indexes.nextByIndex.get(index)) : null;
       run.blockFailure = { serial: Number(run.blockFailure?.serial || 0) + 1,
@@ -1134,7 +1202,7 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
   }
 }
 
-async function executeAutomation(automation, tabId, startRow = 1, loopIncludedIndices = null, loopExcludedRows = []) {
+async function executeAutomation(automation, tabId, startRow = 1, loopIncludedIndices = null, loopExcludedRows = [], downloadRouteId = null) {
   if (activeRuns.size) throw new Error("Ja existe uma automacao executando ou aguardando a tela. Pare essa execucao primeiro.");
   if (!automation || automation.schema !== "flowdetect_chrome_automation" || ![1, 2, 3].includes(Number(automation.version))) {
     throw new Error("Arquivo de automação Chrome inválido.");
@@ -1145,13 +1213,20 @@ async function executeAutomation(automation, tabId, startRow = 1, loopIncludedIn
   const screenGuard = normalizeScreenGuard(automation.screen_guard);
   const screen = await checkAutomationScreen(screenGuard, tabId);
   if (!screen.ready) throw new Error(screen.reason);
+  if (downloadRouteId) await routeAvailable(downloadRouteId);
+  else await clearDownloadRouteForTab(tabId);
   if (activeRuns.size) throw new Error("Ja existe uma automacao executando.");
   const run = createRun(automation, tabId, startRow, loopIncludedIndices, loopExcludedRows);
+  if (downloadRouteId) run.downloadRouteId = downloadRouteId;
   activeRuns.set(run.id, run);
   await addLog(run, `Iniciando ${run.automationName}.`);
   if (run.loopExcludedRows.length) await addLog(run,
     `${run.loopExcludedRows.length} linha(s) removida(s) deste loop antes da execução.`, "info");
   try {
+    if (downloadRouteId) {
+      await activateDownloadRoute(downloadRouteId, tabId, run.id);
+      await addLog(run, "Downloads desta execucao serao enviados a pasta escolhida na extensao.");
+    }
     try {
       await startTabCapture(run);
       await addLog(run, "Captura vinculada a aba da automacao iniciada; voce pode usar outras abas.", "info");
@@ -1209,6 +1284,7 @@ async function executeAutomation(automation, tabId, startRow = 1, loopIncludedIn
     }
     await addLog(run, String(error?.message || error), "error");
   } finally {
+    if (downloadRouteId) await deactivateDownloadRoute(run.id).catch(() => {});
     await stopTabCapture(run);
     run.finishedAt = new Date().toISOString();
     if (run.report) run.report.finishedAt = run.finishedAt;
@@ -1241,14 +1317,14 @@ async function handleMessage(message, sender) {
       ok: true,
       version: RUNTIME_VERSION,
       activeRunIds: [...activeRuns.keys()],
-      capabilities: ["ocr_text", "visual_match", "visual_state", "focused_text", "data_source", "key_sequence"]
+      capabilities: ["ocr_text", "visual_match", "visual_state", "focused_text", "data_source", "key_sequence", "download_destination"]
     };
   }
   if (message?.type === "flowdetect-start") {
     const tabId = Number(message.tabId || sender?.tab?.id);
     if (!Number.isInteger(tabId)) throw new Error("Não encontrei a aba que receberá a automação.");
     const run = await executeAutomation(message.automation, tabId, message.startRow,
-      message.loopIncludedIndices, message.loopExcludedRows);
+      message.loopIncludedIndices, message.loopExcludedRows, message.downloadRouteId);
     return { ok: run.status === "completed", run };
   }
   if (message?.type === "flowdetect-stop") {
