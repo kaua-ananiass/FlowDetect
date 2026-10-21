@@ -708,11 +708,13 @@ $ready=($vm.State.ToString() -eq 'Running') -and ($stableHeartbeat -or $networkR
     ))
 }
 
+#[cfg(windows)]
 #[tauri::command]
 fn probe_native_hyperv_rdp() -> Result<Value, String> {
     native_rdp::probe()
 }
 
+#[cfg(windows)]
 #[tauri::command]
 async fn open_native_hyperv_rdp(
     app: AppHandle,
@@ -779,6 +781,7 @@ async fn open_native_hyperv_rdp(
     .map_err(|error| format!("A thread nativa do RDP falhou: {error}"))?
 }
 
+#[cfg(windows)]
 #[tauri::command]
 fn resize_native_hyperv_rdp(
     x: i32,
@@ -790,6 +793,7 @@ fn resize_native_hyperv_rdp(
     native_rdp::resize(x, y, width, height, visible)
 }
 
+#[cfg(windows)]
 #[tauri::command]
 fn activate_native_hyperv_rdp(
     vm_name: String,
@@ -808,15 +812,40 @@ fn activate_native_hyperv_rdp(
     native_rdp::activate(vm_id, x, y, width, height, visible)
 }
 
+#[cfg(windows)]
 #[tauri::command]
 fn close_native_hyperv_rdp() -> Result<Value, String> {
     native_rdp::close()
 }
 
+#[cfg(windows)]
 #[tauri::command]
 fn set_native_hyperv_rdp_input_enabled(enabled: bool) -> Result<Value, String> {
     native_rdp::set_input_enabled(enabled)
 }
+
+#[cfg(not(windows))]
+fn native_rdp_unavailable() -> Result<Value, String> {
+    Err("RDP nativo e exclusivo do Windows. Use um Agent Windows remoto no Mac.".to_string())
+}
+#[cfg(not(windows))]
+#[tauri::command]
+fn probe_native_hyperv_rdp() -> Result<Value, String> { native_rdp_unavailable() }
+#[cfg(not(windows))]
+#[tauri::command]
+async fn open_native_hyperv_rdp(_app: AppHandle, _vm_name: String, _x: i32, _y: i32, _width: i32, _height: i32) -> Result<Value, String> { native_rdp_unavailable() }
+#[cfg(not(windows))]
+#[tauri::command]
+fn resize_native_hyperv_rdp(_x: i32, _y: i32, _width: i32, _height: i32, _visible: bool) -> Result<Value, String> { native_rdp_unavailable() }
+#[cfg(not(windows))]
+#[tauri::command]
+fn activate_native_hyperv_rdp(_vm_name: String, _x: i32, _y: i32, _width: i32, _height: i32, _visible: bool) -> Result<Value, String> { native_rdp_unavailable() }
+#[cfg(not(windows))]
+#[tauri::command]
+fn close_native_hyperv_rdp() -> Result<Value, String> { native_rdp_unavailable() }
+#[cfg(not(windows))]
+#[tauri::command]
+fn set_native_hyperv_rdp_input_enabled(_enabled: bool) -> Result<Value, String> { native_rdp_unavailable() }
 
 #[tauri::command]
 fn open_hyperv_vm_console(vm_name: String) -> Result<Value, String> {
