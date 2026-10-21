@@ -1,0 +1,58 @@
+name: macOS ARM64 DMG diagnostic
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - port/macos-arm64-dmg-2026-10-21
+permissions:
+  contents: read
+jobs:
+  dmg:
+    runs-on: macos-15
+    timeout-minutes: 55
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tauri_gerador/package-lock.json
+      - name: Rust Apple Silicon
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Environment
+        run: |
+          uname -m
+          sw_vers
+          xcrun --sdk macosx --show-sdk-path
+          rustup target list --installed
+      - name: Install frontend tooling
+        working-directory: tauri_gerador
+        run: npm ci
+      - name: Create native macOS icon
+        working-directory: tauri_gerador
+        run: npx tauri icon web/assets/logo-design.png --output src-tauri/icons
+      - name: Set macOS-only bundle resources in ephemeral runner
+        run: node scripts/macos/prepare-ci.cjs
+      - name: Build and package DMG (diagnostic; unsigned)
+        working-directory: tauri_gerador
+        run: |
+          set -o pipefail
+          npx tauri build --target aarch64-apple-darwin --bundles dmg 2>&1 | tee "$RUNNER_TEMP/flowdetect-mac-build.log"
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-build-log
+          path: ${{ runner.temp }}/flowdetect-mac-build.log
+          if-no-files-found: warn
+      - name: Upload diagnostic DMG if built
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flowdetect-macos-arm64-dmg-unsigned
+          path: tauri_gerador/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error

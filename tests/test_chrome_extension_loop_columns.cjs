@@ -20,10 +20,10 @@ test("lista as colunas da planilha e prioriza Empresa no painel da execucao", ()
     steps: [{
       type: "data_source",
       name: "CNPJ",
-      values: ["51708970000187", "03943209000187"],
+      values: ["00000804000000", "00000803000000"],
       rows: [
-        { CNPJ: "51708970000187", Empresa: "Abraco Comercio", Cidade: "Goiania" },
-        { cnpj: "03943209000187", EMPRESA: "Nova Era", Cidade: "Anapolis" }
+        { CNPJ: "00000804000000", Empresa: "Abraco Comercio", Cidade: "Goiania" },
+        { cnpj: "00000803000000", EMPRESA: "Nova Era", Cidade: "Anapolis" }
       ]
     }]
   };
@@ -33,16 +33,30 @@ test("lista as colunas da planilha e prioriza Empresa no painel da execucao", ()
   assert.equal(context.loopDisplayColumn(automation, loop), "Empresa");
 });
 
+test("reconhece outros cabecalhos de empresa sem alterar o CNPJ usado no loop", () => {
+  for (const heading of ["Razão Social", "Nome da Empresa", "NOME_FANTASIA", "Cliente"]) {
+    const cnpj = "00.000.804/0000-00";
+    const automation = { steps: [{ type: "data_source", name: "CNPJ",
+      values: [cnpj], rows: [{ CNPJ: cnpj, [heading]: "Empresa Exemplo" }] }] };
+    const loop = context.spreadsheetLoopInfo(automation);
+    assert.equal(context.spreadsheetCompanyLabel(loop, 0), "Empresa Exemplo", heading);
+    assert.equal(context.loopDisplayColumn(automation, loop), heading);
+    const configured = context.automationWithSelectedLoopRows(automation, [0]);
+    assert.equal(configured.steps[0].values[0], cnpj);
+    assert.equal(configured.steps[0].rows[0][heading], "Empresa Exemplo");
+  }
+});
+
 test("mostra o valor da coluna escolhida para a linha atual do loop", () => {
   const automation = {
     ui: { loopDisplayColumn: "Cidade" },
     steps: [{
       type: "data_source",
       name: "CNPJ",
-      values: ["51708970000187", "03943209000187"],
+      values: ["00000804000000", "00000803000000"],
       rows: [
-        { CNPJ: "51708970000187", Empresa: "Abraco Comercio", Cidade: "Goiania" },
-        { CNPJ: "03943209000187", Empresa: "Nova Era", Cidade: "Anapolis" }
+        { CNPJ: "00000804000000", Empresa: "Abraco Comercio", Cidade: "Goiania" },
+        { CNPJ: "00000803000000", Empresa: "Nova Era", Cidade: "Anapolis" }
       ]
     }]
   };
@@ -59,11 +73,11 @@ test("mostra o valor da coluna escolhida para a linha atual do loop", () => {
 
 test("retira CNPJs escolhidos sem desalinha-los das demais colunas nem mudar o mapa", () => {
   const automation = { steps: [{ type: "data_source", name: "CNPJ",
-    values: ["11.111.111/0001-11", "22.222.222/0001-22", "33.333.333/0001-33"],
+    values: ["00.000.805/0000-00", "00.000.806/0000-00", "00.000.807/0000-00"],
     rows: [
-      { CNPJ: "11.111.111/0001-11", Empresa: "Primeira" },
-      { CNPJ: "22.222.222/0001-22", Empresa: "Ignorar" },
-      { CNPJ: "33.333.333/0001-33", Empresa: "Terceira" }
+      { CNPJ: "00.000.805/0000-00", Empresa: "Primeira" },
+      { CNPJ: "00.000.806/0000-00", Empresa: "Ignorar" },
+      { CNPJ: "00.000.807/0000-00", Empresa: "Terceira" }
     ] }] };
   const loop = context.spreadsheetLoopInfo(automation);
   const excluded = new Set([context.loopRowKey(loop, 1)]);
@@ -71,7 +85,7 @@ test("retira CNPJs escolhidos sem desalinha-los das demais colunas nem mudar o m
   assert.deepEqual(Array.from(selection.includedIndices), [0, 2]);
   assert.equal(selection.excludedRows[0].company, "Ignorar");
   const configured = context.automationWithSelectedLoopRows(automation, selection.includedIndices);
-  assert.deepEqual(Array.from(configured.steps[0].values), ["11.111.111/0001-11", "33.333.333/0001-33"]);
+  assert.deepEqual(Array.from(configured.steps[0].values), ["00.000.805/0000-00", "00.000.807/0000-00"]);
   assert.deepEqual(Array.from(configured.steps[0].rows.map((row) => row.Empresa)), ["Primeira", "Terceira"]);
   assert.equal(automation.steps[0].values.length, 3);
   const live = context.loopInfoForRun(automation, { loopIncludedIndices: selection.includedIndices });

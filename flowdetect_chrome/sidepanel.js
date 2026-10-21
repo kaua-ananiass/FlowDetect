@@ -7,12 +7,14 @@ const importInput = document.querySelector("#importInput");
 const newButton = document.querySelector("#newButton");
 const mapElementButton = document.querySelector("#mapElementButton");
 const mapElementStatus = document.querySelector("#mapElementStatus");
+const downloadActivity = document.querySelector("#downloadActivity");
 const studioConnection = document.querySelector("#studioConnection");
 const studioConnectionCompact = document.querySelector("#studioConnectionCompact");
 const studioPairCode = document.querySelector("#studioPairCode");
 const studioNewPairCode = document.querySelector("#studioNewPairCode");
 let automationsCache = [];
 let currentRun = {};
+let lastDownloadStatus = null;
 const screenGuardRefreshers = new Set();
 const carouselStates = new Map();
 const companyPreviewRows = new Map();
@@ -186,6 +188,23 @@ function renderBlockActivityPreview(container, preview) {
   activity.querySelector(".block-carousel-activity-message").textContent = preview.message;
 }
 
+function liveStepLines(entry) {
+  const checks = Array.isArray(entry.ocrChecks) ? entry.ocrChecks : [];
+  const total = checks.length;
+  const lines = checks.flatMap((check, index) => {
+    if (!check || check.state === "pending") return [];
+    const state = check.state === "found" ? "Encontrado" : check.state === "not_found"
+      ? "Não encontrado" : "Procurando";
+    return [{ text: `OCR ${index + 1}/${total} · ${state}: ${check.text}`, tone: check.state }];
+  });
+  if (entry.route) lines.push({ text: entry.route,
+    tone: entry.route.startsWith("Regra: parar") ? "error" : "route" });
+  if (entry.message && (!checks.length || entry.state === "failed" && !lines.some((line) => line.text.includes(entry.message)))) {
+    lines.push({ text: entry.message, tone: entry.state === "failed" ? "error" : "info" });
+  }
+  return lines;
+}
+
 function renderLiveSteps(container, automation, run) {
   const list = container.querySelector(".live-steps-list");
   const saved = Array.isArray(run.recentSteps) ? run.recentSteps.slice(-3).reverse() : [];
@@ -193,9 +212,11 @@ function renderLiveSteps(container, automation, run) {
   const entries = saved.length ? saved : Number(run.currentStep || 0) > 0 && Number.isInteger(fallbackIndex)
     ? [{ index: fallbackIndex, state: run.status === "running" ? "running"
       : run.status === "failed" ? "failed" : run.status === "stopped" ? "stopped" : "done" }] : [];
-  const states = { running: "Executando", done: "Concluído", failed: "Falhou", stopped: "Parado" };
-  container.querySelector(".live-steps-count").textContent = ["running", "waiting_screen"].includes(run.status)
-    ? "Atualizando" : "Últimas etapas";
+  const states = { running: "Executando", done: "Concluído", routed: "Redirecionado", failed: "Falhou", stopped: "Parado" };
+  const activeCheck = entries[0]?.ocrChecks?.findIndex((check) => check.state === "checking") ?? -1;
+  container.querySelector(".live-steps-count").textContent = activeCheck >= 0
+    ? `OCR ${activeCheck + 1}/${entries[0].ocrChecks.length}`
+    : ["running", "waiting_screen"].includes(run.status) ? "Acompanhando" : "Últimas etapas";
   if (!entries.length) {
     const empty = document.createElement("li");
     empty.className = "live-step-empty";
@@ -206,6 +227,8 @@ function renderLiveSteps(container, automation, run) {
   list.replaceChildren(...entries.map((entry) => {
     const item = document.createElement("li");
     item.className = `live-step ${states[entry.state] ? entry.state : "running"}`;
+    const top = document.createElement("div");
+    top.className = "live-step-top";
     const number = document.createElement("span");
     number.className = "live-step-number";
     const order = automation.steps?.[entry.index]?.source_order || Number(entry.index || 0) + 1;
@@ -216,7 +239,21 @@ function renderLiveSteps(container, automation, run) {
     const status = document.createElement("span");
     status.className = "live-step-state";
     status.textContent = states[entry.state] || states.running;
-    item.append(number, title, status);
+    top.append(number, title, status);
+    item.append(top);
+    const details = liveStepLines(entry);
+    if (details.length) {
+      const detailList = document.createElement("div");
+      detailList.className = "live-step-details";
+      for (const detail of details) {
+        const line = document.createElement("span");
+        line.className = `live-step-detail ${detail.tone}`;
+        line.textContent = detail.text;
+        line.title = detail.text;
+        detailList.append(line);
+      }
+      item.append(detailList);
+    }
     return item;
   }));
 }
@@ -278,7 +315,7 @@ function renderBlockCarousel(container, automation, run) {
     const image = blockPreviewImage(step);
     const changed = state.lastRenderedIndex !== null && state.lastRenderedIndex !== state.index;
     if (changed) state.flipStartedAt = performance.now();
-    slide.classList.remove("flip-in", "failure-shake", "terminal-failure", "success-shake");
+    slide.classList.remove("flip-in", "failure-shake", "route-shake", "terminal-failure", "success-shake");
     slide.style.animationDelay = "";
     state.lastRenderedIndex = state.index;
     const automationName = container.querySelector(".block-carousel-automation");
@@ -289,24 +326,27 @@ function renderBlockCarousel(container, automation, run) {
     const feedbackElapsed = performance.now() - Number(state.feedback?.startedAt || 0);
     const feedback = state.following && feedbackElapsed < feedbackMs ? state.feedback : null;
     const showingFailure = feedback?.type === "failure" && feedback.index === state.index;
+    const showingRoute = showingFailure && Number.isInteger(failure?.nextIndex);
     const showingSuccess = feedback?.type === "success" && feedback.index === state.index;
     const feedbackElement = container.querySelector(".block-carousel-feedback");
     feedbackElement.hidden = !feedback;
     if (feedback) {
       const feedbackStep = steps[feedback.index];
       const blockNumber = String(feedbackStep?.source_order || feedback.index + 1).padStart(2, "0");
+      const routed = feedback.type === "failure" && Number.isInteger(failure?.nextIndex);
+      const destination = routed ? steps[failure.nextIndex] : null;
       const result = feedback.type === "success" ? "Encontrado"
-        : feedbackStep?.type === "ocr_text" ? "Não encontrado" : "Falhou";
-      feedbackElement.textContent = `B${blockNumber} · ${result}`;
-      feedbackElement.dataset.tone = feedback.type === "success" ? "success" : "failed";
+        : feedbackStep?.type === "ocr_text" ? "OCR não encontrado" : "Falhou";
+      feedbackElement.textContent = `B${blockNumber} · ${result}${routed ? ` → B${String(destination?.source_order || failure.nextIndex + 1).padStart(2, "0")}` : ""}`;
+      feedbackElement.dataset.tone = feedback.type === "success" ? "success" : routed ? "routed" : "failed";
     }
-    const status = showingFailure ? (step.type === "ocr_text" ? "Não encontrado" : "Falhou · redirecionando")
+    const status = showingFailure ? (showingRoute ? "Redirecionando" : "Falhou")
       : showingSuccess ? "Encontrado" : state.index !== activeIndex ? "No fluxo" :
       run.status === "running" ? "Executando" : run.status === "completed" ? "Concluído" :
       run.status === "failed" ? "Falhou" : run.status === "stopped" ? "Parado" : "Aguardando";
     const statusElement = container.querySelector(".block-carousel-state");
     statusElement.textContent = status;
-    statusElement.dataset.status = showingFailure ? "failed" : showingSuccess ? "completed"
+    statusElement.dataset.status = showingFailure ? showingRoute ? "routed" : "failed" : showingSuccess ? "completed"
       : state.index === activeIndex ? run.status || "ready" : "history";
     container.querySelector(".block-carousel-title").textContent = details.title;
     container.querySelector(".block-carousel-description").textContent = details.description;
@@ -332,12 +372,16 @@ function renderBlockCarousel(container, automation, run) {
     const ocrRunning = step.type === "ocr_text" && state.index === activeIndex && run.status === "running";
     ocrProgress.hidden = step.type !== "ocr_text" || !(ocrRunning || showingFailure || showingSuccess);
     if (!ocrProgress.hidden) {
-      const progressState = showingFailure ? "failed" : showingSuccess ? "success"
+      const progressState = showingFailure ? showingRoute ? "routed" : "failed" : showingSuccess ? "success"
         : currentOcrStep?.state === "failed" ? "failed"
           : currentOcrStep?.state === "done" ? "success" : "searching";
       ocrProgress.dataset.state = progressState;
-      ocrProgress.querySelector(".block-carousel-ocr-label").textContent = progressState === "failed"
-        ? "Texto não encontrado" : progressState === "success" ? "Texto encontrado" : "Procurando e analisando OCR…";
+      const currentCheck = currentOcrStep?.ocrChecks?.findIndex((check) => check.state === "checking") ?? -1;
+      ocrProgress.querySelector(".block-carousel-ocr-label").textContent = progressState === "routed"
+        ? "OCR não encontrado · seguindo a rota" : progressState === "failed" ? "OCR não encontrado"
+        : progressState === "success" ? "Texto encontrado"
+          : currentCheck >= 0 ? `Procurando OCR ${currentCheck + 1}/${currentOcrStep.ocrChecks.length}…`
+            : "Procurando e analisando OCR…";
     }
     container.querySelector(".block-carousel-page").textContent = `Página: ${step.sequence || "principal"}`;
     previous.disabled = state.index === 0;
@@ -350,7 +394,7 @@ function renderBlockCarousel(container, automation, run) {
       slide.style.animationDelay = `-${Math.round(flipElapsed)}ms`;
     }
     if (showingFailure && !slide.classList.contains("flip-in")) {
-      slide.classList.add("failure-shake");
+      slide.classList.add(showingRoute ? "route-shake" : "failure-shake");
       slide.style.animationDelay = `-${Math.round(feedbackElapsed)}ms`;
     } else if (showingSuccess && !slide.classList.contains("flip-in")) {
       slide.classList.add("success-shake");
@@ -366,7 +410,8 @@ function renderBlockCarousel(container, automation, run) {
 }
 
 function normalizedSpreadsheetColumn(value) {
-  return String(value || "").trim().toLocaleLowerCase();
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim().toLocaleLowerCase();
 }
 
 function spreadsheetLoopColumns(rows = [], sourceName = "valor") {
@@ -455,12 +500,20 @@ function loopInfoForRun(automation, run) {
     values: indices.map((index) => loop.values[index]), rows: indices.map((index) => loop.rows[index] || {}) };
 }
 
+function spreadsheetCompanyColumn(loop) {
+  const columns = Array.isArray(loop?.columns) ? loop.columns : [];
+  const names = ["empresa", "razao social", "nome empresarial", "nome da empresa", "nome fantasia", "fantasia", "cliente"];
+  return names.map((name) => columns.find((column) => normalizedSpreadsheetColumn(column) === name))
+    .find(Boolean) || columns.find((column) => {
+      const name = normalizedSpreadsheetColumn(column);
+      return /^(empresa|razao social|nome empresarial|nome da empresa|nome fantasia|fantasia|cliente)\b/.test(name)
+        && !/\b(cnpj|codigo|id)\b/.test(name);
+    }) || "";
+}
+
 function spreadsheetCompanyLabel(loop, index) {
   const row = loop?.rows?.[index];
-  const companyColumn = loop?.columns?.find((column) => normalizedSpreadsheetColumn(column) === "empresa")
-    || loop?.columns?.find((column) => normalizedSpreadsheetColumn(column) === "razao social")
-    || loop?.columns?.find((column) => normalizedSpreadsheetColumn(column) === "razão social");
-  return spreadsheetLoopCellValue(row, companyColumn)
+  return spreadsheetLoopCellValue(row, spreadsheetCompanyColumn(loop))
     || String(loop?.values?.[index] ?? "").trim()
     || "(sem nome)";
 }
@@ -469,7 +522,7 @@ function loopDisplayColumn(automation, loop) {
   const columns = Array.isArray(loop?.columns) ? loop.columns : [];
   const requested = String(automation?.ui?.loopDisplayColumn || "").trim();
   const find = (value) => columns.find((column) => normalizedSpreadsheetColumn(column) === normalizedSpreadsheetColumn(value));
-  return find(requested) || find("Empresa") || find(loop?.name) || columns[0] || "";
+  return find(requested) || spreadsheetCompanyColumn(loop) || find(loop?.name) || columns[0] || "";
 }
 
 function currentLoopDisplayValue(run, loop, column) {
@@ -566,7 +619,7 @@ function automationWithEditableOcr(automation, values) {
   return { ...automation, steps };
 }
 
-async function runAutomation(automation, startRow = 1, loopIncludedIndices = null, loopExcludedRows = []) {
+async function runAutomation(automation, startRow = 1, loopIncludedIndices = null, loopExcludedRows = [], downloadRouteId = null) {
   if (!await ensureCurrentRuntime()) return;
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab?.id) throw new Error("Abra a pagina onde deseja executar a automacao.");
@@ -581,6 +634,7 @@ async function runAutomation(automation, startRow = 1, loopIncludedIndices = nul
   currentRun = {
     automationId: automation.id,
     automationName: automation.automation?.nome,
+    downloadRouteId,
     status: "running",
     currentStep: 0,
     totalSteps: loop ? automation.steps.length * (loop.total - selectedStartRow + 1) : automation.steps.length,
@@ -593,7 +647,7 @@ async function runAutomation(automation, startRow = 1, loopIncludedIndices = nul
   };
   renderAutomations();
   const response = await chrome.runtime.sendMessage({ type: "flowdetect-start", automation, tabId: tab.id,
-    startRow: selectedStartRow, loopIncludedIndices, loopExcludedRows });
+    startRow: selectedStartRow, loopIncludedIndices, loopExcludedRows, downloadRouteId });
   if (response?.run) {
     updateRun(response.run);
     return response.run;
@@ -611,7 +665,25 @@ function updateRun(run = {}) {
     loopExclusionDrafts.delete(String(run?.automationId || ""));
   }
   currentRun = run || {};
+  refreshDownloadActivity();
   renderAutomations();
+}
+
+function refreshDownloadActivity() {
+  if (!downloadActivity) return;
+  const status = lastDownloadStatus;
+  if (!status?.routeId || status.routeId !== currentRun?.downloadRouteId) {
+    downloadActivity.hidden = true;
+    return;
+  }
+  downloadActivity.hidden = false;
+  downloadActivity.classList.toggle("is-error", status.status === "error");
+  downloadActivity.textContent = status.status === "saved"
+    ? `Guia ${status.filename} salva em ${status.detail}.`
+    : status.status === "saved_with_temp" ? `Guia ${status.filename}: ${status.detail}`
+    : status.status === "waiting" ? `Destino desta execucao: ${status.detail}. Aguardando downloads.`
+    : status.status === "downloading" ? `${status.filename}: ${status.detail}`
+    : `Falha ao salvar ${status.filename || "guia"}: ${status.detail}`;
 }
 
 function hasFinishedRun(status) {
@@ -663,6 +735,7 @@ function renderAutomation(automation) {
   fragment.querySelector(".screen-guard-state").textContent = guard.enabled ? "Ativa" : "Desativada";
   guardForm.querySelector("fieldset").disabled = busy;
   const runButton = fragment.querySelector(".run-automation");
+  const folderRunButton = fragment.querySelector(".download-run-with-folder");
   const screenHint = fragment.querySelector(".screen-guard-hint");
   const editableEntries = editableOcrEntries(automation);
   const editSettings = fragment.querySelector(".ocr-edit-settings");
@@ -696,25 +769,25 @@ function renderAutomation(automation) {
   const refreshGuard = async (invalidate = false) => {
     const version = ++checkVersion;
     if (invalidate) lastGuardKey = "";
-    if (busy) { runButton.disabled = true; screenHint.hidden = true; return; }
+    if (busy) { runButton.disabled = folderRunButton.disabled = true; screenHint.hidden = true; return; }
     if (loopSelection && !loopSelection.includedIndices.length) {
-      runButton.disabled = true;
+      runButton.disabled = folderRunButton.disabled = true;
       screenHint.hidden = false;
       screenHint.textContent = "Inclua ao menos uma empresa antes de executar.";
       return;
     }
     let configured;
     try { configured = screenGuardFromForm(guardForm); } catch (error) {
-      runButton.disabled = true; screenHint.hidden = false; screenHint.textContent = error.message; return;
+      runButton.disabled = folderRunButton.disabled = true; screenHint.hidden = false; screenHint.textContent = error.message; return;
     }
     screenHint.hidden = !configured.enabled;
-    if (!configured.enabled) { runButton.disabled = false; runButton.title = ""; return; }
+    if (!configured.enabled) { runButton.disabled = folderRunButton.disabled = false; runButton.title = ""; return; }
     const key = JSON.stringify(configured);
-    if (key !== lastGuardKey) { runButton.disabled = true; screenHint.textContent = "Identificando a tela da automacao..."; }
+    if (key !== lastGuardKey) { runButton.disabled = folderRunButton.disabled = true; screenHint.textContent = "Identificando a tela da automacao..."; }
     lastGuardKey = key;
     const screen = await chrome.runtime.sendMessage({ type: "flowdetect-screen-ready", screenGuard: configured }).catch(() => null);
     if (version !== checkVersion || !runButton.isConnected) return;
-    runButton.disabled = !screen?.ready;
+    runButton.disabled = folderRunButton.disabled = !screen?.ready;
     runButton.title = screen?.reason || "Aguardando tela da automacao.";
     screenHint.textContent = screen?.reason || "Aguardando tela da automacao.";
     screenHint.classList.toggle("ready", Boolean(screen?.ready));
@@ -722,7 +795,7 @@ function renderAutomation(automation) {
   const invalidateGuard = () => { lastGuardKey = ""; refreshGuard(); };
   screenGuardRefreshers.add(refreshGuard);
   guardForm.addEventListener("input", invalidateGuard);
-  runButton.disabled = busy || Boolean(guard.enabled);
+  runButton.disabled = folderRunButton.disabled = busy || Boolean(guard.enabled);
   guardForm.addEventListener("submit", (event) => {
     event.preventDefault();
     saveScreenGuard(automation, guardForm).catch((error) => window.alert(error.message));
@@ -753,6 +826,8 @@ function renderAutomation(automation) {
     loopEdit.hidden = false;
     const search = loopEdit.querySelector(".loop-edit-search");
     const list = loopEdit.querySelector(".loop-edit-list");
+    const includeFiltered = loopEdit.querySelector(".loop-include-filtered");
+    const excludeFiltered = loopEdit.querySelector(".loop-exclude-filtered");
     const saveExclusions = loopEdit.querySelector(".loop-save-exclusions");
     saveExclusions.checked = loopDraft?.fingerprint === loopFingerprint
       ? loopDraft.save : Boolean(storedExcludedKeys.length);
@@ -767,13 +842,16 @@ function renderAutomation(automation) {
       const active = loopSelection.includedIndices;
       loopStartChoice.replaceChildren(...active.map((originalIndex, index) => {
         const value = loop.values[originalIndex];
+        const company = spreadsheetCompanyLabel(loop, originalIndex);
         const option = document.createElement("option");
         option.value = String(index + 1);
-        option.textContent = `#${index + 1} - ${value || "(vazio)"}`;
+        option.textContent = `#${index + 1} · ${company}`;
+        option.title = `${company} · ${loop.name}: ${value || "(vazio)"}`;
         return option;
       }));
       const next = active.indexOf(previousIndex);
       loopStartChoice.value = String(next >= 0 ? next + 1 : 1);
+      loopStartChoice.title = loopStartChoice.selectedOptions[0]?.title || "Selecione uma empresa para iniciar.";
       const skipped = loopSelection.excludedRows.length;
       loopEdit.querySelector(".loop-edit-count").textContent = `${active.length}/${loop.total} ativas`;
       loopEdit.querySelector(".loop-edit-results").textContent = skipped
@@ -781,13 +859,25 @@ function renderAutomation(automation) {
         : "Todas as linhas serão executadas.";
       refreshGuard();
     };
-    const renderLoopList = () => {
-      const query = search.value.trim().toLocaleLowerCase();
+    loopStartChoice.addEventListener("change", () => {
+      loopStartChoice.title = loopStartChoice.selectedOptions[0]?.title || "Selecione uma empresa para iniciar.";
+    });
+    const matchingLoopRows = () => {
+      const query = normalizedSpreadsheetColumn(search.value);
       const cnpjColumn = loop.columns.find((column) => normalizedSpreadsheetColumn(column) === "cnpj");
-      const matches = loop.values.map((value, index) => ({ value, index,
+      return loop.values.map((value, index) => ({ value, index,
         company: spreadsheetCompanyLabel(loop, index),
-        cnpj: spreadsheetLoopCellValue(loop.rows[index], cnpjColumn), key: loopRowKey(loop, index) }))
-        .filter(({ value, company, cnpj }) => !query || `${value} ${company} ${cnpj}`.toLocaleLowerCase().includes(query));
+        cnpj: spreadsheetLoopCellValue(loop.rows[index], cnpjColumn)
+          || (value.replace(/\D/g, "").length === 14 ? value : ""), key: loopRowKey(loop, index) }))
+        .filter(({ value, company, cnpj }) => !query || normalizedSpreadsheetColumn(`${value} ${company} ${cnpj}`).includes(query));
+    };
+    const renderLoopList = () => {
+      const matches = matchingLoopRows();
+      const filtered = Boolean(search.value.trim());
+      includeFiltered.textContent = filtered ? `Marcar encontradas (${matches.length})` : `Marcar todas (${loop.total})`;
+      excludeFiltered.textContent = filtered ? `Desmarcar encontradas (${matches.length})` : `Desmarcar todas (${loop.total})`;
+      includeFiltered.disabled = busy || !matches.length;
+      excludeFiltered.disabled = busy || !matches.length;
       const oldTop = list.scrollTop;
       list.replaceChildren(...matches.slice(0, 100).map(({ value, index, company, cnpj, key }) => {
         const label = document.createElement("label");
@@ -796,7 +886,7 @@ function renderAutomation(automation) {
         checkbox.type = "checkbox";
         checkbox.checked = !loopExcludedKeys.has(key);
         checkbox.disabled = busy;
-        checkbox.setAttribute("aria-label", `Executar linha ${index + 1}: ${company}, ${value}`);
+        checkbox.setAttribute("aria-label", `Executar empresa ${company}, linha ${index + 1}, ${loop.name}: ${value}`);
         checkbox.addEventListener("change", () => {
           if (checkbox.checked) loopExcludedKeys.delete(key);
           else loopExcludedKeys.add(key);
@@ -806,9 +896,11 @@ function renderAutomation(automation) {
         });
         const copy = document.createElement("span");
         const title = document.createElement("strong");
-        title.textContent = `#${index + 1} · ${company}`;
+        title.textContent = company;
+        title.title = company;
         const subtitle = document.createElement("small");
-        subtitle.textContent = cnpj && cnpj !== value ? `${cnpj} · ${value || "sem valor"}` : value || "Sem valor";
+        subtitle.textContent = `#${index + 1} · ${cnpj ? `CNPJ ${cnpj}` : `${loop.name}: ${value || "(vazio)"}`}`
+          + (cnpj && cnpj !== value ? ` · ${loop.name}: ${value || "(vazio)"}` : "");
         copy.append(title, subtitle);
         label.append(checkbox, copy);
         return label;
@@ -823,6 +915,17 @@ function renderAutomation(automation) {
       }
     };
     search.addEventListener("input", renderLoopList);
+    const setFilteredInclusion = (include) => {
+      for (const { key } of matchingLoopRows()) {
+        if (include) loopExcludedKeys.delete(key);
+        else loopExcludedKeys.add(key);
+      }
+      rememberLoopDraft();
+      refreshLoopSelection();
+      renderLoopList();
+    };
+    includeFiltered.addEventListener("click", () => setFilteredInclusion(true));
+    excludeFiltered.addEventListener("click", () => setFilteredInclusion(false));
     loopEdit.querySelector(".loop-include-all").addEventListener("click", () => {
       loopExcludedKeys.clear();
       rememberLoopDraft();
@@ -952,7 +1055,7 @@ function renderAutomation(automation) {
     appendLogs(fragment.querySelector(".run-log"), currentRun.logs);
   }
 
-  fragment.querySelector(".run-automation").addEventListener("click", () => {
+  const startConfiguredAutomation = async (withFolder) => {
     const startRow = loop ? clampSpreadsheetStartRow(loopStartChoice.value, loopSelection.includedIndices.length) : 1;
     let configuredOcr;
     let execution;
@@ -973,6 +1076,18 @@ function renderAutomation(automation) {
     return saveScreenGuard(automation, guardForm).then(async (configured) => {
       if (loop) await saveLoopExclusions(automation.id,
         loopEdit.querySelector(".loop-save-exclusions").checked ? loopExcludedKeys : []);
+      if (withFolder) {
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        if (!tab?.id) throw new Error("Abra a aba da automacao antes de escolher o destino.");
+        const pendingId = crypto.randomUUID();
+        await chrome.storage.local.set({ [`flowdetectPendingFolderRun:${pendingId}`]: {
+          automation: { ...execution, screen_guard: configured.screen_guard }, tabId: tab.id,
+          startRow, loopIncludedIndices: loopSelection?.includedIndices || null,
+          loopExcludedRows: loopSelection?.excludedRows || [],
+        } });
+        await chrome.tabs.create({ url: chrome.runtime.getURL(`download-launch.html?id=${pendingId}`) });
+        return;
+      }
       return runAutomation({ ...execution, screen_guard: configured.screen_guard }, startRow,
         loopSelection?.includedIndices || null, loopSelection?.excludedRows || []);
     }).catch((error) => {
@@ -991,7 +1106,9 @@ function renderAutomation(automation) {
         logs: [{ level: "error", message: String(error.message || error) }]
       });
     });
-  });
+  };
+  fragment.querySelector(".run-automation").addEventListener("click", () => startConfiguredAutomation(false));
+  folderRunButton.addEventListener("click", () => startConfiguredAutomation(true));
   fragment.querySelector(".delete-automation").addEventListener("click", () => deleteAutomation(automation).catch((error) => {
     window.alert(`Nao foi possivel excluir a automacao: ${String(error.message || error)}`);
   }));
@@ -1075,6 +1192,10 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes[RUN_STORAGE_KEY]) updateRun(changes[RUN_STORAGE_KEY].newValue || {});
   if (changes[AUTOMATIONS_KEY]) renderAutomations(changes[AUTOMATIONS_KEY].newValue || []);
+  if (changes.flowdetectDownloadStatus) {
+    lastDownloadStatus = changes.flowdetectDownloadStatus.newValue || null;
+    refreshDownloadActivity();
+  }
 });
 
 function reconcileStoredRun(run, runtime) {
@@ -1089,6 +1210,10 @@ Promise.all([getAutomations(), chrome.storage.local.get(RUN_STORAGE_KEY),
     automationsCache = automations;
     const storedRun = storage[RUN_STORAGE_KEY] || {};
     currentRun = reconcileStoredRun(storedRun, runtime);
+    chrome.storage.local.get("flowdetectDownloadStatus").then((state) => {
+      lastDownloadStatus = state.flowdetectDownloadStatus || null;
+      refreshDownloadActivity();
+    }).catch(() => {});
     if (currentRun !== storedRun) await chrome.storage.local.set({ [RUN_STORAGE_KEY]: currentRun });
     renderAutomations();
   });

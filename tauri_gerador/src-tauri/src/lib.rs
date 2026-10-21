@@ -3,6 +3,7 @@ use serde::Serialize;
 #[cfg(windows)]
 mod native_rdp;
 mod chrome_test_bridge;
+mod desktop_platform;
 #[cfg(windows)]
 use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, ImageBuffer, Rgba};
 use serde_json::Value;
@@ -707,11 +708,13 @@ $ready=($vm.State.ToString() -eq 'Running') -and ($stableHeartbeat -or $networkR
     ))
 }
 
+#[cfg(windows)]
 #[tauri::command]
 fn probe_native_hyperv_rdp() -> Result<Value, String> {
     native_rdp::probe()
 }
 
+#[cfg(windows)]
 #[tauri::command]
 async fn open_native_hyperv_rdp(
     app: AppHandle,
@@ -778,6 +781,7 @@ async fn open_native_hyperv_rdp(
     .map_err(|error| format!("A thread nativa do RDP falhou: {error}"))?
 }
 
+#[cfg(windows)]
 #[tauri::command]
 fn resize_native_hyperv_rdp(
     x: i32,
@@ -789,6 +793,7 @@ fn resize_native_hyperv_rdp(
     native_rdp::resize(x, y, width, height, visible)
 }
 
+#[cfg(windows)]
 #[tauri::command]
 fn activate_native_hyperv_rdp(
     vm_name: String,
@@ -807,15 +812,40 @@ fn activate_native_hyperv_rdp(
     native_rdp::activate(vm_id, x, y, width, height, visible)
 }
 
+#[cfg(windows)]
 #[tauri::command]
 fn close_native_hyperv_rdp() -> Result<Value, String> {
     native_rdp::close()
 }
 
+#[cfg(windows)]
 #[tauri::command]
 fn set_native_hyperv_rdp_input_enabled(enabled: bool) -> Result<Value, String> {
     native_rdp::set_input_enabled(enabled)
 }
+
+#[cfg(not(windows))]
+fn native_rdp_unavailable() -> Result<Value, String> {
+    Err("RDP nativo e exclusivo do Windows. Use um Agent Windows remoto no Mac.".to_string())
+}
+#[cfg(not(windows))]
+#[tauri::command]
+fn probe_native_hyperv_rdp() -> Result<Value, String> { native_rdp_unavailable() }
+#[cfg(not(windows))]
+#[tauri::command]
+async fn open_native_hyperv_rdp(_app: AppHandle, _vm_name: String, _x: i32, _y: i32, _width: i32, _height: i32) -> Result<Value, String> { native_rdp_unavailable() }
+#[cfg(not(windows))]
+#[tauri::command]
+fn resize_native_hyperv_rdp(_x: i32, _y: i32, _width: i32, _height: i32, _visible: bool) -> Result<Value, String> { native_rdp_unavailable() }
+#[cfg(not(windows))]
+#[tauri::command]
+fn activate_native_hyperv_rdp(_vm_name: String, _x: i32, _y: i32, _width: i32, _height: i32, _visible: bool) -> Result<Value, String> { native_rdp_unavailable() }
+#[cfg(not(windows))]
+#[tauri::command]
+fn close_native_hyperv_rdp() -> Result<Value, String> { native_rdp_unavailable() }
+#[cfg(not(windows))]
+#[tauri::command]
+fn set_native_hyperv_rdp_input_enabled(_enabled: bool) -> Result<Value, String> { native_rdp_unavailable() }
 
 #[tauri::command]
 fn open_hyperv_vm_console(vm_name: String) -> Result<Value, String> {
@@ -2703,10 +2733,7 @@ fn open_images_folder(app: AppHandle) -> Result<String, String> {
     let root = workspace_root(&app);
     let path = root.join("Imagens");
     fs::create_dir_all(&path).map_err(|err| format!("Falha ao criar pasta de imagens: {err}"))?;
-    Command::new("explorer")
-        .arg(&path)
-        .spawn()
-        .map_err(|err| format!("Falha ao abrir pasta: {err}"))?;
+    desktop_platform::open_path(&path)?;
     Ok(path.display().to_string())
 }
 
@@ -2716,10 +2743,7 @@ fn open_recognition_diagnostics_folder(app: AppHandle) -> Result<String, String>
     let path = root.join("diagnosticos_reconhecimento");
     fs::create_dir_all(&path)
         .map_err(|err| format!("Falha ao criar pasta de diagnosticos: {err}"))?;
-    Command::new("explorer")
-        .arg(&path)
-        .spawn()
-        .map_err(|err| format!("Falha ao abrir pasta: {err}"))?;
+    desktop_platform::open_path(&path)?;
     Ok(path.display().to_string())
 }
 
@@ -5856,10 +5880,7 @@ fn resolve_safe_workbook_path(root: &PathBuf, workbook: &str) -> Result<PathBuf,
 fn open_workbook(app: AppHandle, workbook: String) -> Result<String, String> {
     let root = workspace_root(&app);
     let workbook_path = resolve_safe_workbook_path(&root, &workbook)?;
-    Command::new("explorer")
-        .arg(&workbook_path)
-        .spawn()
-        .map_err(|err| format!("Falha ao abrir planilha: {err}"))?;
+    desktop_platform::open_path(&workbook_path)?;
     Ok(workbook_path.display().to_string())
 }
 
@@ -10135,23 +10156,26 @@ pub fn run() {
                 let root = workspace_root(&app_handle);
                 start_agent_http_server(app_handle.clone(), root);
                 set_agent_service_window_hidden(&app_handle, true);
-                let hotkey_app = app_handle.clone();
-                thread::spawn(move || {
-                    let mut pressed = false;
-                    loop {
-                        let active = unsafe {
-                            GetAsyncKeyState(VK_CONTROL.0 as i32) < 0
-                                && GetAsyncKeyState(VK_SHIFT.0 as i32) < 0
-                                && GetAsyncKeyState(VK_F12.0 as i32) < 0
-                        };
-                        if active && !pressed {
-                            toggle_agent_service_window(&hotkey_app);
-                            let _ = hotkey_app.emit("agent-overlay-toggle-request", ());
+                #[cfg(windows)]
+                {
+                    let hotkey_app = app_handle.clone();
+                    thread::spawn(move || {
+                        let mut pressed = false;
+                        loop {
+                            let active = unsafe {
+                                GetAsyncKeyState(VK_CONTROL.0 as i32) < 0
+                                    && GetAsyncKeyState(VK_SHIFT.0 as i32) < 0
+                                    && GetAsyncKeyState(VK_F12.0 as i32) < 0
+                            };
+                            if active && !pressed {
+                                toggle_agent_service_window(&hotkey_app);
+                                let _ = hotkey_app.emit("agent-overlay-toggle-request", ());
+                            }
+                            pressed = active;
+                            thread::sleep(Duration::from_millis(90));
                         }
-                        pressed = active;
-                        thread::sleep(Duration::from_millis(90));
-                    }
-                });
+                    });
+                }
             } else if let Err(error) = chrome_test_bridge::start(
                 app_handle.path().app_data_dir().ok().map(|path| path.join("chrome_pairing.json"))
             ) {

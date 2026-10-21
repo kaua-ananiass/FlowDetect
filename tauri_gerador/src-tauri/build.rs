@@ -1,4 +1,9 @@
 fn main() {
+    // Cargo build scripts run on the host: use the target, not cfg!(windows).
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        tauri_build::build();
+        return;
+    }
     let manifest = r#"
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">

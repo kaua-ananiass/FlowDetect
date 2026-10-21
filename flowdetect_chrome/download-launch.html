@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Destino das guias · FlowDetect</title>
+  <link rel="stylesheet" href="download-launch.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="heading">
+      <img src="icons/icon-48.png" alt="" width="42" height="42">
+      <div><span>FLOWDETECT PARA CHROME</span><h1>Destino das guias</h1></div>
+    </header>
+    <p class="intro">Escolha onde salvar as guias desta execução. A automação começará assim que você selecionar a pasta.</p>
+    <p id="automationName" class="automation-name"></p>
+    <section class="card">
+      <h2>Onde salvar os downloads?</h2>
+      <p id="runStatus" class="status" role="status">Preparando...</p>
+      <div class="actions">
+        <button id="chooseFolder" class="primary" type="button" disabled>Escolher pasta e iniciar</button>
+        <button id="backToSite" class="quiet" type="button">Voltar à aba</button>
+      </div>
+      <p id="downloadStatus" class="status download-status" role="status" hidden></p>
+    </section>
+  </main>
+  <script src="download-folders.js"></script>
+  <script src="download-launch.js"></script>
+</body>
+</html>

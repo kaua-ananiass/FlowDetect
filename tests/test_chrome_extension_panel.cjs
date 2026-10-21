@@ -24,6 +24,27 @@ test("a completed branched automation displays full progress", () => {
   assert.equal(context.runProgress({ currentStep: 73, totalSteps: 100, progressPercent: 99, status: "running" }).percent, 99);
 });
 
+test("live execution explains OCR checks and the destination of a failure route", () => {
+  const declaration = source.match(/^function liveStepLines\(.*?^}/ms);
+  assert.ok(declaration);
+  const context = vm.createContext({ Array, String });
+  vm.runInContext(declaration[0], context);
+  const lines = context.liveStepLines({
+    state: "routed",
+    ocrChecks: [
+      { text: "Competência de Apuração", state: "found" },
+      { text: "09/2026", state: "not_found" },
+    ],
+    route: "Indo para B10",
+    message: "OCR 2 nao encontrou o texto: 09/2026.",
+  });
+  assert.deepEqual(lines.map((line) => line.text), [
+    "OCR 1/2 · Encontrado: Competência de Apuração",
+    "OCR 2/2 · Não encontrado: 09/2026",
+    "Indo para B10",
+  ]);
+});
+
 test("Chrome popup keeps execution details inside the active automation card", () => {
   assert.equal(manifest.action.default_popup, "sidepanel.html");
   assert.equal(manifest.permissions.includes("sidePanel"), false);
@@ -42,6 +63,13 @@ test("Chrome popup keeps execution details inside the active automation card", (
   assert.match(html, /class="loop-start-choice"/);
   assert.match(html, /class="loop-edit-settings" hidden/);
   assert.match(html, /class="loop-edit-search"/);
+  assert.match(html, /class="loop-include-filtered"/);
+  assert.match(html, /class="loop-exclude-filtered"/);
+  assert.match(html, /class="download-run-with-folder"/);
+  assert.match(fs.readFileSync(path.join(root, "download-launch.html"), "utf8"), /id="chooseFolder"/);
+  assert.ok(manifest.permissions.includes("downloads"));
+  assert.match(source, /download-launch\.html\?id=/);
+  assert.match(source, /downloadRouteId\s*\}/);
   assert.match(html, /class="loop-save-exclusions"/);
   assert.match(css, /\.loop-edit-row\.is-excluded/);
   assert.doesNotMatch(html, /class="loop-start-copy"/);
@@ -56,7 +84,7 @@ test("Chrome popup keeps execution details inside the active automation card", (
   assert.match(source, /function loopDisplayColumn/);
   assert.match(source, /async function saveLoopDisplayColumn/);
   assert.match(source, /loopStartChoice\.replaceChildren/);
-  assert.match(source, /#\$\{index \+ 1\} - \$\{value/);
+  assert.match(source, /option\.textContent = `#\$\{index \+ 1\} · \$\{company\}`/);
   assert.match(source, /startRow: selectedStartRow/);
 });
 
@@ -70,7 +98,7 @@ test("the compact progress shows a selectable company without changing the run",
 });
 
 test("company choices prefer the company column and fall back to the loop value", () => {
-  const declarations = ["normalizedSpreadsheetColumn", "spreadsheetLoopCellValue", "spreadsheetCompanyLabel"]
+  const declarations = ["normalizedSpreadsheetColumn", "spreadsheetLoopCellValue", "spreadsheetCompanyColumn", "spreadsheetCompanyLabel"]
     .map((name) => {
       const match = source.match(new RegExp(`^function ${name}\\(.*?^}`, "ms"));
       assert.ok(match, name);

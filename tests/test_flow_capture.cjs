@@ -149,7 +149,7 @@ test("Original flow capture preserves the actual cards, curves and manual layout
     })()`);
     await evaluate("new Promise(resolve=>setTimeout(resolve,800))");
     const initialViewportState=await evaluate("({zoom:window.__functionalQA.state.commandMapZoom,pan:window.__functionalQA.state.commandMapTreePanOffset,layouts:window.__functionalQA.state.commandMapTreeLayouts})");
-    for (const [width,height] of [[1600,1000],[1360,800],[1280,1000],[1100,1000],[1100,700],[900,700],[700,700]]) {
+    for (const [width,height] of [[1600,1000],[1360,800],[1280,1000],[1100,1000],[1100,700],[1280,560],[900,700],[700,700]]) {
       await cdp("Emulation.setDeviceMetricsOverride", {width,height,deviceScaleFactor:1,mobile:false});
       await evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
       const spacing=await evaluate(`(() => {
@@ -174,6 +174,18 @@ test("Original flow capture preserves the actual cards, curves and manual layout
       assert.ok(layout.list.height>=200&&layout.copy.left>=layout.header.left-1&&
         layout.copy.right<=layout.header.right+1&&layout.side.right<=layout.header.right+1,
         `Map controls must remain inside the window at ${width}x${height}px: ${JSON.stringify(layout)}`);
+      const saveLabels=await evaluate(`(() => {
+        const rect=selector=>document.querySelector(selector).getBoundingClientRect();
+        const meta=document.querySelector('#commandMapMeta'),status=document.querySelector('#mapSaveStatus');
+        const button=rect('#mapSaveButton'),percent=rect('#mapSavePercent'),bar=rect('.command-map-save-bar');
+        return {metaVisible:getComputedStyle(meta).display!=='none'&&rect('#commandMapMeta').height>0,
+          statusVisible:getComputedStyle(status).display!=='none'&&rect('#mapSaveStatus').height>0,
+          buttonRight:button.right,percentLeft:percent.left,percentRight:percent.right,barRight:bar.right,barWidth:bar.width};
+      })()`);
+      assert.ok(saveLabels.metaVisible&&saveLabels.statusVisible&&saveLabels.barWidth>=200&&
+        saveLabels.percentLeft>=saveLabels.buttonRight&&saveLabels.percentLeft-saveLabels.buttonRight<=24&&
+        saveLabels.percentRight<=saveLabels.barRight+1,
+        `Map description, save status and percentage must stay together at ${width}x${height}px: ${JSON.stringify(saveLabels)}`);
       if (width>980) {
         assert.ok(Math.abs(layout.copy.top-layout.utility.top)<=1&&Math.abs(layout.copy.top-layout.side.top)<=1,
           `Map buttons should share the title row in window mode at ${width}x${height}px: ${JSON.stringify(layout)}`);

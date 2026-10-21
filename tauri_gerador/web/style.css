@@ -756,7 +756,7 @@ button:disabled {
   padding: 14px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
 }
 
@@ -852,6 +852,8 @@ button:disabled {
 
 .builder-shell.is-commands-active .workspace-panel.is-active {
   height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .builder-shell.is-assist-active .workspace-panel.is-active {
@@ -2783,7 +2785,7 @@ label span {
   gap: 10px;
   padding: 10px 12px 12px;
   border-radius: 22px;
-  min-height: 0;
+  min-height: 520px;
 }
 
 .command-map-shell[data-page-theme="principal"] {
@@ -8233,11 +8235,12 @@ label span {
 
 .command-map-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 640px) minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 1fr) minmax(260px, 420px) minmax(280px, 1fr);
+  grid-template-rows: 36px auto;
   grid-template-areas:
     "utility copy side"
     "save copy side";
-  gap: 8px 22px;
+  gap: 8px 20px;
   align-items: start;
   position: relative;
   z-index: 2;
@@ -8263,7 +8266,7 @@ label span {
   justify-self: center;
   min-width: 0;
   width: 100%;
-  max-width: min(100%, 640px);
+  max-width: 420px;
   padding-top: 0;
   pointer-events: auto;
 }
@@ -8503,8 +8506,8 @@ label span {
   align-self: start;
   justify-self: start;
   justify-items: start;
-  width: min(320px, 100%);
-  max-width: min(320px, 100%);
+  width: min(260px, 100%);
+  max-width: 100%;
   min-width: 0;
   padding-top: 2px;
 }
@@ -8646,10 +8649,11 @@ label span {
 }
 
 .command-map-save-top {
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content max-content;
   align-items: center;
   gap: 12px;
-  justify-content: space-between;
+  justify-content: start;
 }
 
 .command-map-save-button {
@@ -8676,8 +8680,8 @@ label span {
 }
 
 .command-map-save-percent {
-  min-width: 42px;
-  text-align: right;
+  min-width: 3ch;
+  text-align: left;
   color: var(--white);
   font-size: 0.76rem;
   font-weight: 800;
@@ -9951,35 +9955,77 @@ label span {
 }
 
 .command-map-tree-link-energy {
-  position: absolute;
-  left: 0;
-  top: 0;
-  z-index: 2;
-  width: 6px;
-  height: 6px;
-  margin: -3px 0 0 -3px;
-  border-radius: 999px;
-  background: var(--command-page-accent-soft);
-  box-shadow: 0 0 9px var(--command-page-accent-glow);
-  offset-distance: 0%;
+  --tree-energy-color: var(--command-page-accent-soft);
+  fill: none;
   pointer-events: none;
-  will-change: offset-distance;
-  animation: command-map-tree-energy-flow var(--tree-energy-duration, 1.55s) linear infinite;
+}
+
+.command-link-electric-trace,
+.command-link-electric-branches {
+  stroke: var(--tree-energy-color);
+  stroke-width: 1;
+  stroke-linejoin: miter;
+  stroke-linecap: round;
+}
+
+.command-link-electric-trace {
+  opacity: 0.32;
+}
+
+.command-link-electric-branches {
+  stroke-width: 0.9;
+  opacity: 0.3;
+  animation: command-map-electric-shimmer 2.9s ease-in-out infinite;
   animation-delay: var(--tree-energy-delay, 0s);
 }
 
-.command-map-list.is-tree-view.is-tree-panning .command-map-tree-link-energy {
-  animation-play-state: paused;
+.command-link-energy-stroke {
+  stroke: var(--tree-energy-color);
+  stroke-width: 2.3;
+  stroke-linecap: round;
+  stroke-linejoin: miter;
+  stroke-dasharray: var(--energy-span) 200;
+  stroke-dashoffset: var(--energy-span);
+  animation: command-map-tree-energy-flow var(--tree-energy-duration, 2.9s) linear infinite;
+  animation-delay: var(--tree-energy-delay, 0s);
+}
+
+.command-link-energy-stroke.is-halo {
+  --energy-span: 44px;
+  stroke-width: 6;
+  opacity: 0.26;
+  filter: blur(2.5px);
+}
+
+.command-link-energy-stroke.is-tail {
+  --energy-span: 44px;
+  opacity: 0.18;
+}
+
+.command-link-energy-stroke.is-wake {
+  --energy-span: 30px;
+  opacity: 0.32;
+}
+
+.command-link-energy-stroke.is-body {
+  --energy-span: 17px;
+  stroke: color-mix(in srgb, var(--tree-energy-color) 78%, white);
+  opacity: 0.62;
+}
+
+.command-link-energy-stroke.is-core {
+  --energy-span: 5px;
+  stroke: color-mix(in srgb, var(--tree-energy-color) 30%, white);
+  stroke-width: 1.6;
+  opacity: 0.95;
 }
 
 .command-map-tree-link-energy.is-failure {
-  background: rgba(254, 202, 202, 0.94);
-  box-shadow: 0 0 9px rgba(248, 113, 113, 0.28);
+  --tree-energy-color: #fecaca;
 }
 
 .command-map-tree-link-energy.is-diverge {
-  background: rgba(221, 214, 254, 0.95);
-  box-shadow: 0 0 9px rgba(167, 139, 250, 0.28);
+  --tree-energy-color: #ddd6fe;
 }
 
 .command-map-tree-link-path[class*="is-ocr-"] {
@@ -9991,19 +10037,39 @@ label span {
 }
 
 .command-map-tree-link-energy[class*="is-ocr-"] {
-  width: 7px;
-  height: 7px;
-  background: var(--ocr-route-color);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--ocr-route-color) 62%, transparent);
+  --tree-energy-color: var(--ocr-route-color);
 }
 
 @keyframes command-map-tree-energy-flow {
   from {
-    offset-distance: 0%;
+    stroke-dashoffset: var(--energy-span);
   }
 
   to {
-    offset-distance: 100%;
+    stroke-dashoffset: calc(var(--energy-span) - 144px);
+  }
+}
+
+@keyframes command-map-electric-shimmer {
+  0%, 100% { opacity: 0.15; }
+  35% { opacity: 0.46; }
+  65% { opacity: 0.24; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .command-link-energy-stroke {
+    animation: none !important;
+    stroke-dasharray: none;
+    opacity: 0;
+  }
+
+  .command-link-energy-stroke.is-tail {
+    opacity: 0.22;
+  }
+
+  .command-link-electric-branches {
+    animation: none !important;
+    opacity: 0.2;
   }
 }
 
@@ -10523,21 +10589,6 @@ label span {
 
 .command-jump-path.is-failure.is-backward {
   stroke: color-mix(in srgb, #fb7185 70%, var(--command-page-accent-soft) 30%);
-}
-
-.command-jump-energy {
-  fill: var(--command-page-accent-soft);
-  filter:
-    drop-shadow(0 0 7px var(--command-page-accent-glow))
-    drop-shadow(0 0 3px rgba(230, 247, 255, 0.34));
-  opacity: 0.96;
-}
-
-.command-jump-energy.is-failure {
-  fill: color-mix(in srgb, #fecaca 72%, var(--command-page-accent-soft) 28%);
-  filter:
-    drop-shadow(0 0 7px rgba(239, 68, 68, 0.3))
-    drop-shadow(0 0 5px var(--command-page-accent-glow));
 }
 
 .command-jump-time {
@@ -13820,18 +13871,7 @@ label span {
 
 @media (max-width: 1480px) {
   .command-map-header {
-    grid-template-columns: minmax(220px, 1fr) minmax(240px, 420px) minmax(390px, 1fr);
-    grid-template-areas:
-      "utility copy side"
-      "save copy side";
-    gap: 8px 12px;
-  }
-
-  .command-map-copy {
-    justify-self: center;
-    max-width: 420px;
-    justify-items: center;
-    text-align: center;
+    gap: 8px 14px;
   }
 
   .builder-shell.is-commands-active .command-map-copy .timeline-meta {
@@ -13844,17 +13884,19 @@ label span {
 
   .command-map-save-stack,
   .command-map-side-stack {
-    width: 100%;
-    max-width: 100%;
     padding-top: 0;
   }
 
   .command-map-save-stack {
     justify-self: start;
+    width: min(260px, 100%);
+    max-width: 100%;
   }
 
   .command-map-side-stack {
     justify-self: end;
+    width: 100%;
+    max-width: 100%;
   }
 
   .map-zoom-controls {
@@ -13868,20 +13910,34 @@ label span {
 
 @media (max-width: 980px) {
   .command-map-header {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
     grid-template-areas:
-      "copy copy"
-      "utility side"
-      "save side";
+      "copy"
+      "utility"
+      "save"
+      "side";
   }
 
   .command-map-copy {
     justify-self: stretch;
+    justify-items: start;
+    text-align: left;
     max-width: none;
+  }
+
+  .command-map-side-stack {
+    justify-self: stretch;
+    justify-items: start;
+  }
+
+  .map-zoom-controls,
+  .command-map-side-actions {
+    justify-content: flex-start;
   }
 }
 
-@media (max-width: 1120px) {
+@media (min-width: 981px) and (max-width: 1120px) {
   .command-map-save-stack,
   .command-map-side-stack {
     justify-self: stretch;
@@ -13932,11 +13988,6 @@ label span {
     padding: 8px 10px 10px;
   }
 
-  .builder-shell.is-commands-active .command-map-copy .timeline-meta,
-  .command-map-save-status {
-    display: none;
-  }
-
   .command-map-header h2 {
     font-size: 1.22rem;
   }
@@ -13951,16 +14002,6 @@ label span {
 
   .command-map-save-panel {
     gap: 3px;
-  }
-
-  .command-map-save-bar {
-    max-width: 148px;
-  }
-
-  .map-zoom-controls,
-  .map-nav-controls {
-    transform: scale(0.96);
-    transform-origin: right top;
   }
 
   .command-tree-card {

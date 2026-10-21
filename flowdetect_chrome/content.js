@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_RUNTIME_VERSION = "0.2.58";
+const CONTENT_RUNTIME_VERSION = "0.2.59";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
@@ -215,13 +215,21 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   }
 
   function elementText(element) {
-    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) return element.value || element.placeholder || element.getAttribute("aria-label") || "";
-    return element.innerText || element.textContent || element.getAttribute("aria-label") || element.getAttribute("alt") || element.getAttribute("title") || "";
+    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) return element.value || element.getAttribute("aria-valuetext") || element.placeholder || element.getAttribute("aria-label") || "";
+    return element.getAttribute("aria-valuetext") || element.innerText || element.textContent || element.getAttribute("aria-label") || element.getAttribute("alt") || element.getAttribute("title") || "";
+  }
+
+  function normalizeMonthYear(value) {
+    return String(value).replace(/\b(20\d{2})\s*[/\.\-\u2044\u2215]\s*(0?[1-9]|1[0-2])\b/g,
+      (_match, year, month) => `${month.padStart(2, "0")}/${year}`)
+      .replace(/\b(0?[1-9]|1[0-2])\s*[/\.\-\u2044\u2215]\s*(20\d{2})\b/g,
+        (_match, month, year) => `${month.padStart(2, "0")}/${year}`);
   }
 
   function textMatches(value, expected) {
-    const text = normalize(value);
-    if (text === expected || text.includes(expected)) return true;
+    const text = normalizeMonthYear(normalize(value));
+    const wanted = normalizeMonthYear(normalize(expected));
+    if (text === wanted || text.includes(wanted)) return true;
     if (!expected.includes("?")) return false;
     const meaningfulTerms = expected.split(/[^\p{L}\p{N}]+/u).filter((term) => term.length >= 4);
     return meaningfulTerms.length > 0 && meaningfulTerms.every((term) => text.includes(term));
@@ -290,7 +298,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   function findTextTarget(text, options = {}) {
     const expected = normalize(text);
     if (!expected) return null;
-    const selectors = "button, a, input, textarea, select, label, [role='button'], [role='link'], [role='option'], [role='menuitem'], [role='tab'], [role='treeitem'], [role='gridcell'], [contenteditable='true'], [aria-label], [title], img[alt]";
+    const selectors = "button, a, input, textarea, select, label, [role='button'], [role='link'], [role='combobox'], [role='textbox'], [role='option'], [role='menuitem'], [role='tab'], [role='treeitem'], [role='gridcell'], [contenteditable='true'], [aria-label], [aria-valuetext], [title], img[alt]";
     const candidates = [...document.querySelectorAll(selectors)].filter(isVisible);
     const direct = candidates.find((element) => normalize(elementText(element)) === expected)
       || candidates.find((element) => textMatches(elementText(element), expected));
@@ -749,25 +757,22 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     await sleep(180);
     const refreshedTarget = findTextTarget(step.text, { allowDocumentText: !shouldClick }) || target;
     const rect = refreshedTarget.rect || refreshedTarget.element.getBoundingClientRect();
-    const anchor = step.click_anchor;
-    const useMarkedArea = anchor
-      && Number.isFinite(Number(anchor.from_text_left))
-      && Number.isFinite(Number(anchor.from_text_top));
-    const rawX = useMarkedArea
-      ? rect.left + Number(anchor.from_text_left)
-      : rect.left + rect.width / 2 + Number(step.offset_x || 0);
-    const rawY = useMarkedArea
-      ? rect.top + Number(anchor.from_text_top)
-      : rect.top + rect.height / 2 + Number(step.offset_y || 0);
-    if (rawX < 0 || rawY < 0 || rawX >= innerWidth || rawY >= innerHeight) {
-      throw new Error("O marcador Clique ficou fora da area visivel da pagina. Ajuste sua posicao no bloco OCR.");
-    }
-    const clickPoint = {
-      x: rawX,
-      y: rawY
-    };
     highlightRect(rect, { color: "#44b9ff", label: "OCR" });
     if (shouldClick) {
+      const anchor = step.click_anchor;
+      const useMarkedArea = anchor
+        && Number.isFinite(Number(anchor.from_text_left))
+        && Number.isFinite(Number(anchor.from_text_top));
+      const rawX = useMarkedArea
+        ? rect.left + Number(anchor.from_text_left)
+        : rect.left + rect.width / 2 + Number(step.offset_x || 0);
+      const rawY = useMarkedArea
+        ? rect.top + Number(anchor.from_text_top)
+        : rect.top + rect.height / 2 + Number(step.offset_y || 0);
+      if (rawX < 0 || rawY < 0 || rawX >= innerWidth || rawY >= innerHeight) {
+        throw new Error("O marcador Clique ficou fora da area visivel da pagina. Ajuste sua posicao no bloco OCR.");
+      }
+      const clickPoint = { x: rawX, y: rawY };
       const precise = preciseClickTarget(clickPoint);
       const finalPoint = precise?.point || clickPoint;
       const clickable = await waitForClickableTarget(precise?.element || refreshedTarget.element, finalPoint, step.timeout_ms, Boolean(precise));
@@ -793,6 +798,10 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   }
 
   const flowDetectMessageListener = (request, _sender, sendResponse) => {
+    if (request?.type === "flowdetect-content-runtime-v2") {
+      sendResponse({ ok: true, version: CONTENT_RUNTIME_VERSION });
+      return;
+    }
     if (request?.type === "flowdetect-test-recognition-v1") {
       try {
         const selector = String(request.selector || "").trim();

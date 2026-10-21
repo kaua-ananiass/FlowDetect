@@ -1,0 +1,26 @@
+:root { color-scheme: dark; font-family: Inter, "Segoe UI", system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; color: #e6f7ff; background: radial-gradient(circle at 82% 3%, #103044 0, transparent 31%), #080f1b; }
+.shell { width: min(620px, calc(100% - 32px)); margin: clamp(28px, 9vh, 80px) auto 64px; display: grid; gap: 16px; }
+.heading { display: flex; align-items: center; gap: 12px; }
+.heading img { border-radius: 12px; filter: drop-shadow(0 5px 15px #12b5cb45); }
+.heading span { color: #5eead4; font-size: 11px; letter-spacing: .12em; font-weight: 800; }
+h1 { margin: 3px 0 0; font-size: clamp(23px, 4vw, 31px); line-height: 1.15; }
+.intro { margin: 0; color: #9eb5c6; font-size: 13px; line-height: 1.55; }
+.automation-name { margin: 0; padding: 9px 13px; border: 1px solid #234354; border-radius: 9px; background: #0c1d2b; font-size: 12px; color: #b6f4eb; }
+.card { padding: 24px; border: 1px solid #285566; border-radius: 16px; background: linear-gradient(145deg, #102236, #0a1626); box-shadow: 0 18px 42px #0003; }
+h2 { margin: 0; font-size: 18px; }
+.card p { margin: 0; color: #a3b9c8; font-size: 12px; line-height: 1.55; }
+.card .status { margin: 10px 0 18px; overflow-wrap: anywhere; }
+.card .status.ready { color: #a4f4dd; }
+.card .status.error { color: #ffbd98; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+button { min-height: 42px; padding: 9px 17px; border: 1px solid #315565; border-radius: 10px; background: #162d3c; color: #e8f9ff; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+button:hover:not(:disabled) { border-color: #5eead4; background: #1a3d49; }
+button:focus-visible { outline: 2px solid #5eead4; outline-offset: 2px; }
+button:disabled { opacity: .46; cursor: not-allowed; }
+button.primary { border-color: #21a891; background: linear-gradient(135deg, #16a765, #128986); color: white; }
+button.quiet { border: 0; background: transparent; color: #aac5d1; }
+button.quiet:hover:not(:disabled) { background: #ffffff0b; }
+.card .download-status { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid #234454; }
+@media (max-width: 560px) { .card { padding: 18px; } .actions button { flex: 1 1 100%; } }
