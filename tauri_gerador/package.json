@@ -4,6 +4,7 @@
   "version": "3.0.2",
   "type": "module",
   "scripts": {
+    "mac:check": "node ../scripts/macos/check-environment.cjs",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
   },

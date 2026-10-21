@@ -3,6 +3,7 @@ use serde::Serialize;
 #[cfg(windows)]
 mod native_rdp;
 mod chrome_test_bridge;
+mod desktop_platform;
 #[cfg(windows)]
 use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, ImageBuffer, Rgba};
 use serde_json::Value;
@@ -2703,10 +2704,7 @@ fn open_images_folder(app: AppHandle) -> Result<String, String> {
     let root = workspace_root(&app);
     let path = root.join("Imagens");
     fs::create_dir_all(&path).map_err(|err| format!("Falha ao criar pasta de imagens: {err}"))?;
-    Command::new("explorer")
-        .arg(&path)
-        .spawn()
-        .map_err(|err| format!("Falha ao abrir pasta: {err}"))?;
+    desktop_platform::open_path(&path)?;
     Ok(path.display().to_string())
 }
 
@@ -2716,10 +2714,7 @@ fn open_recognition_diagnostics_folder(app: AppHandle) -> Result<String, String>
     let path = root.join("diagnosticos_reconhecimento");
     fs::create_dir_all(&path)
         .map_err(|err| format!("Falha ao criar pasta de diagnosticos: {err}"))?;
-    Command::new("explorer")
-        .arg(&path)
-        .spawn()
-        .map_err(|err| format!("Falha ao abrir pasta: {err}"))?;
+    desktop_platform::open_path(&path)?;
     Ok(path.display().to_string())
 }
 
@@ -5856,10 +5851,7 @@ fn resolve_safe_workbook_path(root: &PathBuf, workbook: &str) -> Result<PathBuf,
 fn open_workbook(app: AppHandle, workbook: String) -> Result<String, String> {
     let root = workspace_root(&app);
     let workbook_path = resolve_safe_workbook_path(&root, &workbook)?;
-    Command::new("explorer")
-        .arg(&workbook_path)
-        .spawn()
-        .map_err(|err| format!("Falha ao abrir planilha: {err}"))?;
+    desktop_platform::open_path(&workbook_path)?;
     Ok(workbook_path.display().to_string())
 }
 
@@ -10135,23 +10127,26 @@ pub fn run() {
                 let root = workspace_root(&app_handle);
                 start_agent_http_server(app_handle.clone(), root);
                 set_agent_service_window_hidden(&app_handle, true);
-                let hotkey_app = app_handle.clone();
-                thread::spawn(move || {
-                    let mut pressed = false;
-                    loop {
-                        let active = unsafe {
-                            GetAsyncKeyState(VK_CONTROL.0 as i32) < 0
-                                && GetAsyncKeyState(VK_SHIFT.0 as i32) < 0
-                                && GetAsyncKeyState(VK_F12.0 as i32) < 0
-                        };
-                        if active && !pressed {
-                            toggle_agent_service_window(&hotkey_app);
-                            let _ = hotkey_app.emit("agent-overlay-toggle-request", ());
+                #[cfg(windows)]
+                {
+                    let hotkey_app = app_handle.clone();
+                    thread::spawn(move || {
+                        let mut pressed = false;
+                        loop {
+                            let active = unsafe {
+                                GetAsyncKeyState(VK_CONTROL.0 as i32) < 0
+                                    && GetAsyncKeyState(VK_SHIFT.0 as i32) < 0
+                                    && GetAsyncKeyState(VK_F12.0 as i32) < 0
+                            };
+                            if active && !pressed {
+                                toggle_agent_service_window(&hotkey_app);
+                                let _ = hotkey_app.emit("agent-overlay-toggle-request", ());
+                            }
+                            pressed = active;
+                            thread::sleep(Duration::from_millis(90));
                         }
-                        pressed = active;
-                        thread::sleep(Duration::from_millis(90));
-                    }
-                });
+                    });
+                }
             } else if let Err(error) = chrome_test_bridge::start(
                 app_handle.path().app_data_dir().ok().map(|path| path.join("chrome_pairing.json"))
             ) {

@@ -1,0 +1,54 @@
+FlowDetect Studio - port para MacBook Pro M1 Pro
+Decisao de arquitetura: 21/10/2026
+
+ALVO CONFIRMADO
+MacBook Pro 14, M1 Pro (aarch64-apple-darwin), macOS Tahoe.
+Nao inclui iOS/iPadOS. A versao exata do macOS deve ser registrada no teste.
+Studio no Mac; execucao das automacoes desktop no FlowDetect Agent Windows.
+O PC executor precisa estar ligado, acessivel e com uma sessao interativa adequada.
+
+ESTADO DESTA ETAPA
+Preparacao inicial de codigo; NAO e uma release e NAO existe DMG validado.
+- Dependencias Win32 do Studio isoladas em cfg(windows).
+- Manifesto de elevacao do Windows nao e aplicado a outros alvos.
+- Hotkey nativa do Agent isolada no Windows.
+- Abertura de pastas e planilhas usa o programa nativo de cada sistema.
+- Preflight somente leitura disponivel, sem instalacao automatica de ferramentas.
+
+PREFLIGHT NO MAC
+Com uma copia do projeto e Node instalado, entrar na pasta tauri_gerador e executar:
+  npm run mac:check
+O comando informa macOS, arquitetura, SDK e alvo Rust. Nao compila nem gera DMG.
+Sucesso no preflight NAO significa que o port esta concluido.
+
+TRABALHO AINDA NECESSARIO
+1. Compilar e corrigir no Mac com SDK Apple e alvo aarch64-apple-darwin.
+2. Empacotar runtime ARM64 do editor/planilhas sem exigir Python/pip no computador final.
+   O editor atual ainda usa helpers Python; mover a execucao ao Agent nao elimina isso.
+3. Separar recursos Windows do bundle Mac, criar icone e configuracao DMG.
+   A tauri.conf.json atual continua sendo a configuracao Windows; nao foi substituida.
+4. Guardar dados mutaveis em Application Support, nunca dentro do .app assinado.
+5. Adaptar UX para distinguir acoes locais do Mac e acoes executadas no Agent.
+6. Validar tela remota, controle, envio/importacao, execucao, parada, progresso e reconexao.
+7. Validar como capturas e mapeamento feitos no Windows ficam disponiveis ao editor Mac.
+8. Assinar app e binarios auxiliares, notarizar e testar o DMG numa instalacao limpa.
+
+CRITERIOS DE ACEITE
+- Abre pelo Finder sem Python, Homebrew ou ferramentas de desenvolvimento instalados.
+- Cria/reabre mapas e planilhas; preserva todos os tipos de blocos e caminhos de falha.
+- Conecta ao Agent Windows e valida a identidade da maquina antes de executar.
+- Transfere automacao, acompanha resultado, para e trata desconexao sem duplicar execucoes.
+- Captura/OCR/teclado/UIA e programas Windows executam no Windows, nao no Mac.
+- Logs identificam maquina executora e pasta onde o resultado foi salvo.
+- Tela remota funciona no WKWebView do macOS, incluindo Retina e teclas modificadoras.
+- Hyper-V e console RDP nativo Windows nao sao executados localmente no Mac.
+
+REDE
+Nao expor a porta do Agent diretamente na internet. Usar rede confiavel ou VPN.
+Auditar autenticacao e transporte antes de disponibilizar acesso fora da rede local.
+Nenhuma porta, firewall ou credencial foi modificada nesta preparacao.
+
+REFERENCIAS
+https://v2.tauri.app/distribute/dmg/
+https://v2.tauri.app/distribute/sign/macos/
+https://v2.tauri.app/start/prerequisites/
