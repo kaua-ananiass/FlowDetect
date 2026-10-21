@@ -1,41 +1,103 @@
-## Downloads e releases
-
-As versoes e instaladores agora ficam neste repositorio, na aba Releases.
-
-- [Baixar a versao mais recente](https://github.com/kaua-ananiass/FlowDetect/releases/latest)
-- [Todas as releases](https://github.com/kaua-ananiass/FlowDetect/releases)
-- Windows: Studio e Agent (instaladores NSIS).
-- Chrome: extensao em ZIP.
-- macOS: DMG de teste no GitHub Actions ate validacao e assinatura.
-
-<p align="center">
-  <img src="tauri_gerador/web/assets/flowdetect-welcome.png" alt="FlowDetect" width="620">
-</p>
+<div align="center">
+<img src="docs/readme-media/flowdetect-banner.png" alt="FlowDetect — automação visual para desktop e web" width="100%">
 
 # FlowDetect
+**AUTOMAÇÃO VISUAL · DESKTOP & WEB · STUDIO + AGENT + CHROME**
 
-FlowDetect e uma plataforma visual para criar, testar e executar automacoes desktop em blocos, sem depender de API do sistema automatizado.
+Crie, teste e execute automações em blocos em sistemas Windows e páginas web — mesmo sem API.
 
-Ele foi pensado para automatizar tarefas em programas Windows, ERPs, portais web, sistemas fiscais e telas repetitivas usando teclado, mouse, reconhecimento visual, planilhas e fluxos condicionais.
+[**⬇️ Baixar última versão**](https://github.com/kaua-ananiass/FlowDetect/releases/latest) · [**Todas as releases**](https://github.com/kaua-ananiass/FlowDetect/releases) · [**Recursos**](#recursos-em-destaque) · [**Galeria**](#galeria)
 
-## Principais Funcoes
+<img src="https://img.shields.io/github/v/release/kaua-ananiass/FlowDetect?label=release&color=orange" alt="Release"> <img src="https://img.shields.io/badge/Studio-Tauri%20%2B%20Rust-1b3557" alt="Studio"> <img src="https://img.shields.io/badge/Agent-Windows-1b3557" alt="Agent"> <img src="https://img.shields.io/badge/Chrome-Extens%C3%A3o-1b3557" alt="Chrome">
+</div>
 
-- Criar automacoes por blocos em um mapa visual.
-- Testar a automacao com execucao assistida em tempo real.
-- Usar planilhas para executar loops por linha.
-- Reconhecer imagens na tela e tomar decisoes de sucesso ou falha.
-- Definir janela alvo para evitar cliques fora do sistema correto.
-- Pular entre blocos ou paginas conforme o resultado de cada etapa.
-- Criar blocos rapidamente com preview no proprio mapa de comandos.
-- Gravar cliques e teclas com o Gravador Inteligente.
-- Automatizar elementos do Chrome sem o usuario precisar entender HTML.
-- Escrever resultados de volta na planilha durante o loop.
-- Mover e renomear downloads automaticamente depois que o arquivo baixar.
-- Exportar automacoes em `.zip` para rodar em outro computador.
-- Controlar execucoes remotamente com FlowDetect Agent.
-- Assistir a tela do Agent pelo Studio com transmissao remota integrada.
+---
 
-## Blocos Disponiveis
+## Visão geral
+O **FlowDetect** transforma tarefas repetitivas em fluxos visuais reutilizáveis. Combina **teclado, mouse, OCR, reconhecimento por imagem, planilhas, interação com o navegador e decisões condicionais** para automatizar rotinas em ERPs, portais web, sistemas administrativos e aplicações desktop.
+
+## Um ecossistema, três componentes
+<table><tr><td width="33%" valign="top"><h3>🧩 FlowDetect Studio</h3><p><b>Crie e acompanhe.</b> Editor visual de blocos, sequências, loops, gravador inteligente e testes assistidos.</p></td><td width="33%" valign="top"><h3>🖥️ FlowDetect Agent</h3><p><b>Execute remotamente.</b> Agente Windows para receber automações e enviar andamento ao Studio.</p></td><td width="33%" valign="top"><h3>🌐 FlowDetect para Chrome</h3><p><b>Automatize páginas web.</b> Extensão com pareamento por código, reconhecimento de elementos e execução na aba do navegador.</p></td></tr></table>
+
+## Recursos em destaque
+| Criação e controle | Reconhecimento e dados | Execução e resultados |
+|---|---|---|
+| Editor visual em blocos | OCR e reconhecimento por imagem | Testes assistidos |
+| Loops, rotas e condições | Captura de elementos no Chrome | Execução via Agent remoto |
+| Gravador inteligente | Leitura e escrita em planilhas | Relatórios PDF e exportação |
+| Janela alvo | Tratamento de downloads | Acompanhamento de progresso |
+
+## Galeria
+> Imagens oficiais de releases anteriores. A interface atual pode apresentar alterações.
+
+### Mapa visual de automações
+<p align="center"><img src="docs/readme-media/Mapa-de-arvores-2.0.1.png" width="92%" alt="Mapa de árvores no Studio"></p>
+
+### Reconhecimento visual e OCR
+<p align="center"><img src="docs/readme-media/OCR-Visual-2.0.1.png" width="48%" alt="OCR visual"> <img src="docs/readme-media/OCR-multiplos-textos-2.0.1.png" width="48%" alt="OCR de múltiplos textos"></p>
+
+### Extensão do Chrome
+<p align="center"><img src="docs/readme-media/FlowDetect-para-Chrome-2.0.1.png" width="80%" alt="Extensão FlowDetect para Chrome"></p>
+
+## Downloads
+**As releases oficiais estão neste repositório.**
+
+| Componente | Plataforma | Onde baixar |
+|---|---|---|
+| **FlowDetect Studio** — instalador NSIS | Windows | [Última release](https://github.com/kaua-ananiass/FlowDetect/releases/latest) |
+| **FlowDetect Agent** — instalador | Windows | [Última release](https://github.com/kaua-ananiass/FlowDetect/releases/latest) |
+| **FlowDetect para Chrome** — pacote ZIP | Chrome | [Última release](https://github.com/kaua-ananiass/FlowDetect/releases/latest) |
+| **Studio DMG experimental** | Mac com Apple Silicon | [Artefatos do GitHub Actions](https://github.com/kaua-ananiass/FlowDetect/actions/workflows/macos-arm64-dmg.yml) |
+
+> O DMG de macOS ainda é experimental: a instalação e funcionalidades precisam ser testadas em Mac real, e assinatura/notarização estão pendentes.
+
+## Como funciona
+1. **Monte** a automação no Studio, com blocos de ação, verificação, planilha e condição.
+2. **Teste** os blocos e o fluxo com acompanhamento visual.
+3. **Execute** no ambiente adequado: Windows, Agent remoto ou Chrome.
+4. **Acompanhe** os resultados, caminhos de falha e relatórios.
+
+## Tecnologias
+**Tauri · Rust · Python · JavaScript · HTML/CSS · OpenCV · OCR · OpenPyXL · Playwright**
+
+## Para desenvolvedores
+<details><summary><b>Estrutura do código, preparação do ambiente e referências técnicas</b></summary>
+
+| Pasta | Conteúdo |
+|---|---|
+| `tauri_gerador/` | Studio e backend Tauri |
+| `flowdetect_agent/` | Aplicativo do Agent |
+| `flowdetect_chrome/` | Extensão Chrome |
+| `flowdetect_runner/` | Runner desktop |
+| `scripts/` | Compilação e ferramentas |
+| `docs/` | Documentação |
+| `tests/` | Testes automatizados |
+
+**Desenvolvimento do Studio (Windows):**
+```powershell
+cd tauri_gerador
+npm.cmd install
+npm.cmd run tauri:dev
+```
+**Dependências Python:**
+```powershell
+python -m pip install -r requirements.txt
+python -m playwright install
+```
+**Compilação Windows:**
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\compilar_gerador_exe.ps1
+```
+[Compilação](docs/COMPILACAO.md) · [Agent](docs/README_AGENTE.md) · [Hyper-V](docs/HYPERV_AGENTES.md)
+</details>
+
+---
+
+<div align="center"><strong>FlowDetect</strong> — do mapa visual à execução acompanhada.<p><a href="https://github.com/kaua-ananiass/FlowDetect/releases/latest">Baixar versão estável</a> · <a href="https://github.com/kaua-ananiass/FlowDetect/releases">Histórico de versões</a></p></div>
+
+<details><summary><b>Documentação técnica detalhada e recursos anteriores</b></summary>
+
+## Referência técnica: blocos disponíveis
 
 - **Texto livre:** digita textos fixos ou dinamicos.
 - **Tecla/Atalho:** executa teclas, atalhos e repeticoes.
@@ -141,3 +203,6 @@ Ela executa URL, texto, teclas, loops de planilha, OCR de texto ou elemento da p
 ## Observacao
 
 Automacoes desktop dependem da tela real do computador. Para melhor estabilidade, use janela alvo, imagens bem recortadas e tempos de espera adequados ao sistema automatizado.
+
+
+</details>
