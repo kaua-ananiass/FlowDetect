@@ -1,3 +1,13 @@
+## Downloads e releases
+
+As versoes e instaladores agora ficam neste repositorio, na aba Releases.
+
+- [Baixar a versao mais recente](https://github.com/kaua-ananiass/FlowDetect/releases/latest)
+- [Todas as releases](https://github.com/kaua-ananiass/FlowDetect/releases)
+- Windows: Studio e Agent (instaladores NSIS).
+- Chrome: extensao em ZIP.
+- macOS: DMG de teste no GitHub Actions ate validacao e assinatura.
+
 <p align="center">
   <img src="tauri_gerador/web/assets/flowdetect-welcome.png" alt="FlowDetect" width="620">
 </p>
