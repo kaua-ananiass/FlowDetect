@@ -54,5 +54,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flowdetect-macos-arm64-dmg-unsigned
-          path: tauri_gerador/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          path: tauri_gerador/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
