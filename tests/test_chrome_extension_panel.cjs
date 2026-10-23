@@ -74,12 +74,13 @@ test("Chrome popup keeps execution details inside the active automation card", (
   assert.match(css, /\.loop-edit-row\.is-excluded/);
   assert.doesNotMatch(html, /class="loop-start-copy"/);
   assert.match(html, /class="execution-column-choice"/);
-  assert.match(source, /const ordered = \[\.\.\.automationsCache\]\.sort/);
+  assert.match(source, /const ordered = displayAutomations\.sort/);
   assert.match(source, /execution-percent/);
   assert.match(source, /async function deleteAutomation/);
   assert.match(source, /window\.confirm/);
   assert.match(source, /filter\(\(item\) => String\(item\.id\) !== String\(automation\.id\)\)/);
-  assert.match(source, /chrome\.storage\.local\.remove\(RUN_STORAGE_KEY\)/);
+  assert.match(source, /currentRun\.automationSnapshot/);
+  assert.match(html, /id="executionPageTabs"/);
   assert.match(source, /function spreadsheetLoopColumns/);
   assert.match(source, /function loopDisplayColumn/);
   assert.match(source, /async function saveLoopDisplayColumn/);

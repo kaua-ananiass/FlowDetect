@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlowDetect — Histórico da execução</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #07111f; color: #dbeaf4; }
+    body { max-width: 900px; margin: 40px auto; padding: 0 24px; }
+    h1 { font-size: 24px; } h2 { font-size: 16px; margin-top: 30px; color: #8cd6e3; }
+    p, li { line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+    #status { color: #91b0c4; } ol { padding-left: 24px; }
+    li { padding: 10px; border-bottom: 1px solid #ffffff10; font-size: 14px; }
+    .error { color: #ffb0bc; } .warning { color: #edc67b; } .success { color: #8ad8b0; }
+    .step { padding: 12px; border: 1px solid #ffffff12; border-radius: 12px; margin: 10px 0; }
+    .step h3 { font-size: 14px; margin: 0; } .step p { margin: 5px 0; }
+  </style>
+</head>
+<body>
+  <h1 id="title">Histórico da execução</h1>
+  <p id="status" role="status">Carregando…</p>
+  <h2>Últimas etapas</h2><section id="steps"></section>
+  <h2>Registros salvos</h2><ol id="logs"></ol>
+  <script src="run-details.js"></script>
+</body>
+</html>

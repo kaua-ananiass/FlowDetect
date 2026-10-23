@@ -4,11 +4,12 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FlowDetect para Chrome</title>
-    <link rel="stylesheet" href="sidepanel.css">
+    <link rel="stylesheet" href="sidepanel.css?v=0.2.65">
   </head>
   <body>
     <main class="app-shell">
-      <input id="importInput" type="file" accept="application/json,.json" hidden>
+      <input id="importInput" type="file" accept="application/json,.json" multiple hidden>
+      <div class="popup-fixed-header">
       <header class="popup-toolbar">
         <div class="popup-brand">
           <img class="popup-brand-icon" src="icons/icon-48.png" alt="">
@@ -30,7 +31,40 @@
         <p id="mapElementStatus" class="map-element-status" role="status" aria-live="polite" hidden></p>
       </div>
       <p id="downloadActivity" class="download-activity" role="status" hidden></p>
+      <nav id="workspaceTabs" class="workspace-tabs" role="tablist" aria-label="Áreas do FlowDetect">
+        <button id="workspaceAutomations" class="workspace-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="automationList">▦ Automações</button>
+        <button id="workspaceAssisted" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="assistedView">◉ Execuções assistidas <span id="assistedLiveCount" class="workspace-live-count" hidden></span></button>
+      </nav>
+      </div>
+      <section class="execution-pages" aria-labelledby="executionPagesHeading">
+        <div class="execution-pages-heading">
+          <h2 id="executionPagesHeading">Páginas</h2>
+          <button id="addExecutionPage" class="execution-page-add" type="button" title="Criar outra página de execução" aria-label="Criar página">+</button>
+        </div>
+        <nav id="executionPageTabs" aria-label="Selecionar página de execução"></nav>
+        <div class="execution-page-target">
+          <strong id="executionPageTarget">Selecione uma página.</strong>
+          <div class="execution-page-actions">
+            <button id="bindExecutionPage" class="execution-page-bind" type="button" title="Vincular ou trocar a aba desta página">Vincular</button>
+            <button id="openExecutionPage" class="execution-page-open" type="button" title="Abrir a aba vinculada">Ver aba</button>
+          </div>
+        </div>
+        <p id="executionPageFeedback" role="alert" aria-live="polite" hidden></p>
+      </section>
       <section id="automationList" class="automation-list" aria-live="polite"></section>
+      <section id="assistedView" class="assisted-view" aria-label="Execuções assistidas" hidden>
+        <div class="assisted-heading">
+          <div class="assisted-heading-copy">
+            <strong>Execução assistida</strong>
+            <span>Imagens, etapas e progresso ao vivo</span>
+          </div>
+          <label class="assisted-page-choice">Página
+            <select id="assistedPageSelect" aria-label="Escolher página para assistir"></select>
+          </label>
+        </div>
+        <div id="assistedContent" class="assisted-content" role="region" aria-label="Acompanhamento da página escolhida"></div>
+      </section>
+
     </main>
 
     <template id="automationTemplate">

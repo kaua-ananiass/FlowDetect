@@ -619,10 +619,18 @@ async function loadAgentConnectionInfo() {
   try {
     const info = await invoke("get_agent_connection_info");
     const address = String(info?.address || info?.local || "127.0.0.1:18452").trim();
-    elements.agentConnectionAddress.textContent = `Aguardando Studio: ${address}`;
+    const code = String(info?.pairing?.code || "").trim();
+    const codeBox = document.getElementById("agentPairCode");
+    if (codeBox) codeBox.textContent = code || "Sem código";
+    const footerCode = document.querySelector(".agent-observer-footer-address strong");
+    if (footerCode) footerCode.textContent = code || "Sem código";
+    if (codeBox && info?.pairing?.expires_at) codeBox.title = "Válido até " + new Date(Number(info.pairing.expires_at) * 1000).toLocaleTimeString("pt-BR");
+    elements.agentConnectionAddress.textContent = info?.remote_server_ok === false
+      ? "Falha no servidor local TCP 18452. Reinicie o Agent."
+      : `Aguardando Studio: ${address}`;
     setElementText(elements.observerConnectionAddress, address);
     setElementText(elements.observerAgentName, info?.agent_name || info?.agentName || "AGENTE PRINCIPAL");
-    elements.agentConnectionAddress.title = `Use este endereco no FlowDetect Control: ${address}`;
+    elements.agentConnectionAddress.title = info?.remote_server_ok === false ? "A porta TCP 18452 pode estar ocupada." : `Endereço local para diagnóstico: ${address}`;
     elements.agentConnectionAddress.classList.remove("is-online");
   } catch (error) {
     elements.agentConnectionAddress.textContent = "Aguardando conexao: 127.0.0.1:18452";
@@ -1724,6 +1732,14 @@ function handleAssistMapKeydown(event) {
 async function boot() {
   document.body.classList.add("agent-service-mode", "agent-lite-mode");
   await loadAgentConnectionInfo();
+  window.setInterval(() => { void loadAgentConnectionInfo().catch(() => {}); }, 30000);
+  document.getElementById("agentRenewPairCode")?.addEventListener("click", async () => {
+    try {
+      await invoke("agent_pairing_renew");
+      await loadAgentConnectionInfo();
+      pushLog("Novo código de pareamento criado. O código anterior deixou de funcionar.", "info", "Pareamento");
+    } catch (error) { pushLog("Não foi possível renovar o código: " + String(error), "error", "Pareamento"); }
+  });
   await loadMouseControlState();
   renderLogs();
   renderSelection();
@@ -1736,12 +1752,19 @@ async function boot() {
   updateButtons();
 
   const toggleOverlayMode = async () => {
+    // The Agent starts hidden as a background service. Whenever it is opened,
+    // restore the complete, resizable and maximized window (not the 86px strip).
+    document.body.classList.remove("agent-service-mode", "agent-compact-mode");
     const currentWindow = tauriWindow?.getCurrentWindow?.();
-    await currentWindow?.show?.().catch(() => {});
-    await currentWindow?.setFocus?.().catch(() => {});
-    document.body.classList.remove("agent-service-mode");
-    document.body.classList.toggle("agent-compact-mode", false);
-    elements.toggleAgentPanelButton.textContent = "Ocultar";
+    try {
+      await invoke("set_agent_compact_mode", { compact: false });
+    } catch (error) {
+      console.warn("Nao foi possivel restaurar a janela no backend:", error);
+      await currentWindow?.show?.().catch(() => {});
+      await currentWindow?.maximize?.().catch(() => {});
+      await currentWindow?.setFocus?.().catch(() => {});
+    }
+    if (elements.toggleAgentPanelButton) elements.toggleAgentPanelButton.textContent = "Ocultar";
   };
   await safeListen("agent-overlay-toggle-request", () => { void toggleOverlayMode(); });
   await safeListen("agent-identity-updated", (event) => {

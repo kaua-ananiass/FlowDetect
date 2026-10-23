@@ -104,7 +104,7 @@ test('worker rejects the wrong screen before creating or capturing an execution'
   });
   // Override the concrete checker to isolate execution ordering.
   ctx.checkAutomationScreen=async()=>({ready:false,reason:'Tela errada'});
-  vm.runInContext(fn('executeAutomation'),ctx);
-  await assert.rejects(ctx.executeAutomation({schema:'flowdetect_chrome_automation',version:3,steps:[{type:'ocr_text'}],screen_guard:guard},42),/Tela errada/);
+  vm.runInContext(fn('executeAutomationOnPage'),ctx);
+  await assert.rejects(ctx.executeAutomationOnPage({schema:'flowdetect_chrome_automation',version:3,steps:[{type:'ocr_text'}],screen_guard:guard},42,1,null,[],null,{id:'page-1'}),/Tela errada/);
   assert.equal(created,0);
 });

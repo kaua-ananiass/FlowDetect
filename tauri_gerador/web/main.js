@@ -1,6 +1,7 @@
-﻿const tauriCore = window.__TAURI__?.core ?? null;
+const tauriCore = window.__TAURI__?.core ?? null;
 const tauriEvent = window.__TAURI__?.event ?? null;
 import { validateRoadmap } from "./map-validator.js";
+import { initIntegrations } from "./integrations.js";
 const tauriDialog = window.__TAURI__?.dialog ?? null;
 window.__GENERATOR_MAIN_READY = true;
 
@@ -137,6 +138,12 @@ const state = {
   },
   activeTab: "launcher",
   remoteControl: {
+    physicalAgentId: "",
+    physicalConnecting: false,
+    physicalHeldInputs: new Map(),
+    screenGeneration: 0,
+    screenError: "",
+    webrtcCancel: null,
     address: "127.0.0.1:18452",
     meshUrl: "",
     meshFrameUrl: "",
@@ -169,6 +176,13 @@ const state = {
     screenStreaming: false,
     screenStreamTimer: null,
     screenSnapshotUrl: "",
+    screenSnapshotHash: "",
+    screenFramesInWindow: 0,
+    screenStatsSince: 0,
+    screenLastCaptureMs: 0,
+    screenLastRttMs: 0,
+    screenFps: 0,
+    httpPointerSending: false,
     screenSnapshotAt: 0,
     screenSnapshotLoading: false,
     webrtcPeer: null,
@@ -511,6 +525,8 @@ const workbookTabButton = document.getElementById("workbookTabButton");
 const launcherTabButton = document.getElementById("launcherTabButton");
 const remoteControlTabButton = document.getElementById("remoteControlTabButton");
 const agentsTabButton = document.getElementById("agentsTabButton");
+const integrationsTabButton = document.getElementById("integrationsTabButton");
+const integrationsPanel = document.getElementById("integrationsPanel");
 const agentScreenTabButton = document.getElementById("agentScreenTabButton");
 const smartRecorderTabButton = document.getElementById("smartRecorderTabButton");
 const sessionChip = document.getElementById("sessionChip");
@@ -564,6 +580,7 @@ const saveAgentCardButton = document.getElementById("saveAgentCardButton");
 const cancelAgentCardButton = document.getElementById("cancelAgentCardButton");
 const agentsList = document.getElementById("agentsList");
 const agentsMachinesTabButton = document.getElementById("agentsMachinesTabButton");
+const agentsPhysicalTabButton = document.getElementById("agentsPhysicalTabButton");
 const agentsAutomationsTabButton = document.getElementById("agentsAutomationsTabButton");
 const agentsMachineActions = document.getElementById("agentsMachineActions");
 const agentsMachinesView = document.getElementById("agentsMachinesView");
@@ -1087,6 +1104,7 @@ function setWorkspaceTab(tabName) {
   }
   const previousTab = state.activeTab;
   if (previousTab === "agent-screen" && tabName !== "agent-screen") {
+    releasePhysicalRemoteInput();
     hideNativeHypervSurface(true);
   }
   state.activeTab = tabName;
@@ -1097,6 +1115,7 @@ function setWorkspaceTab(tabName) {
   const workbookActive = tabName === "workbook";
   const remoteControlActive = tabName === "remote-control";
   const agentsActive = tabName === "agents";
+  const integrationsActive = tabName === "integrations";
   const agentScreenActive = tabName === "agent-screen";
   const smartRecorderActive = tabName === "smart-recorder";
   launcherTabButton.classList.toggle("is-active", launcherActive);
@@ -1106,6 +1125,7 @@ function setWorkspaceTab(tabName) {
   workbookTabButton.classList.toggle("is-active", workbookActive);
   remoteControlTabButton?.classList.toggle("is-active", remoteControlActive);
   agentsTabButton?.classList.toggle("is-active", agentsActive);
+  integrationsTabButton?.classList.toggle("is-active", integrationsActive);
   agentScreenTabButton?.classList.toggle("is-active", agentScreenActive);
   smartRecorderTabButton?.classList.toggle("is-active", smartRecorderActive);
   launcherPanel.classList.toggle("is-active", launcherActive);
@@ -1116,6 +1136,7 @@ function setWorkspaceTab(tabName) {
   workbookPanel.classList.toggle("is-active", workbookActive);
   remoteControlPanel?.classList.toggle("is-active", remoteControlActive);
   agentsPanel?.classList.toggle("is-active", agentsActive);
+  integrationsPanel?.classList.toggle("is-active", integrationsActive);
   agentScreenPanel?.classList.toggle("is-active", agentScreenActive);
   smartRecorderPanel?.classList.toggle("is-active", smartRecorderActive);
   builderShell?.classList.toggle("is-launcher-active", launcherActive);
@@ -14490,13 +14511,14 @@ async function syncNativeHypervInputLock() {
 }
 
 async function setStudioRemoteMouseEnabled(enabled, { notify = true } = {}) {
+  if (!enabled) releasePhysicalRemoteInput();
   state.remoteControl.remoteInputEnabled = Boolean(enabled);
   renderStudioControlScreenOnly();
   await syncNativeHypervInputLock();
   if (notify) {
     setMessage(
       state.remoteControl.remoteInputEnabled
-        ? "Mouse remoto ligado: movimentos e cliques podem entrar na tela da VM."
+        ? "Controle remoto ligado: clique na tela para usar mouse e teclado."
         : "Mouse remoto desligado: a tela fica somente para assistir.",
       "success"
     );
@@ -14609,6 +14631,10 @@ function scheduleNativeHypervRdpSync(liveResize = false) {
 async function openNativeHypervRdp(vmName = "") {
   const name = String(vmName || "").trim();
   if (!name || state.remoteControl.nativeRdpOpening) return false;
+  if (state.remoteControl.physicalAgentId) {
+    stopStudioControlScreenStream({ clear: true });
+    state.remoteControl.physicalAgentId = "";
+  }
   state.remoteControl.nativeRdpOpening = true;
   state.remoteControl.nativeRdpLastError = "";
   try {
@@ -14759,6 +14785,10 @@ function scheduleEmbeddedHypervConsoleSync() {
 }
 
 async function openEmbeddedHypervConsole(vmName = "") {
+  if (state.remoteControl.physicalAgentId) {
+    stopStudioControlScreenStream({ clear: true });
+    state.remoteControl.physicalAgentId = "";
+  }
   const name = String(vmName || "").trim();
   if (!name || state.remoteControl.hypervConsoleOpening) {
     return false;
@@ -15054,7 +15084,29 @@ async function closeEmbeddedHypervConsole() {
 
 function renderStudioControlScreen() {
   const remote = state.remoteControl;
+  if (remote.physicalAgentId && remote.screenAddress && remote.screenAddress !== remote.address) {
+    releasePhysicalRemoteInput();
+    remote.screenAddress = "";
+    stopStudioControlScreenStream({ clear: true });
+    return;
+  }
+  const physical = Boolean(remote.physicalAgentId) && !remote.nativeRdpActive && !remote.hypervConsoleActive;
+  const physicalAgent = state.agents.items.find((agent) => agent.id === remote.physicalAgentId);
   const hasNativeScreen = Boolean(remote.nativeRdpActive || remote.hypervConsoleActive);
+  const hasScreen = hasNativeScreen || Boolean(physical && (remote.webrtcActive || remote.screenSnapshotUrl));
+  document.getElementById("agentScreenKicker").textContent = physical ? "Computador físico · conexão pela rede" : "Console nativo Hyper-V";
+  document.getElementById("agentScreenTitle").textContent = physical ? physicalAgent?.name || "Tela do Agent" : "Tela da máquina virtual";
+  document.getElementById("agentPhysicalScreenActions").hidden = !physical;
+  document.getElementById("agentPhysicalReconnectButton").disabled = Boolean(remote.physicalConnecting);
+  if (agentScreenVmSelect) agentScreenVmSelect.closest("label").hidden = physical;
+  if (agentScreenPrepareButton) agentScreenPrepareButton.hidden = physical;
+  if (agentScreenOpenVmButton) agentScreenOpenVmButton.hidden = physical;
+  document.querySelector("[data-vm-screen-control]").hidden = physical;
+  const placeholder = studioControlScreenFrameWrap?.querySelector(".studio-control-screen-placeholder");
+  if (placeholder) {
+    placeholder.querySelector("strong").textContent = physical ? remote.screenError ? "Tela indisponível" : remote.screenStreaming ? "Conectando à tela…" : "Tela desconectada" : "Nenhuma VM selecionada";
+    placeholder.querySelector("span").textContent = physical ? remote.screenError || "Mantenha o Agent aberto e a sessão Windows disponível no computador de destino." : "Abra a aba Agentes e selecione uma máquina virtual.";
+  }
   const boot = remote.vmScreenBoot || {};
   const bootActive = Boolean(boot.active);
   const mouseEnabled = Boolean(remote.remoteInputEnabled);
@@ -15064,11 +15116,11 @@ function renderStudioControlScreen() {
     studioControlRemoteInputToggle.closest(".studio-control-input-toggle")?.classList.toggle("is-disabled", !mouseEnabled);
   }
   if (studioControlRemoteInputLabel) {
-    studioControlRemoteInputLabel.textContent = mouseEnabled ? "Mouse ON" : "Mouse OFF";
+    studioControlRemoteInputLabel.textContent = physical ? mouseEnabled ? "Mouse e teclado ON" : "Somente assistir" : mouseEnabled ? "Mouse ON" : "Mouse OFF";
   }
-  studioControlScreenFrameWrap?.classList.toggle("has-screen", hasNativeScreen);
-  studioControlScreenFrameWrap?.classList.toggle("is-input-locked", hasNativeScreen && !mouseEnabled);
-  studioControlScreenFrameWrap?.classList.toggle("is-input-ready", hasNativeScreen && mouseEnabled);
+  studioControlScreenFrameWrap?.classList.toggle("has-screen", hasScreen);
+  studioControlScreenFrameWrap?.classList.toggle("is-input-locked", hasScreen && !mouseEnabled);
+  studioControlScreenFrameWrap?.classList.toggle("is-input-ready", hasScreen && mouseEnabled);
   studioControlScreenFrameWrap?.classList.toggle("is-booting-vm", bootActive);
   if (studioControlScreenBootOverlay) {
     studioControlScreenBootOverlay.hidden = !bootActive;
@@ -15085,7 +15137,9 @@ function renderStudioControlScreen() {
     studioControlScreenBootFill.parentElement?.setAttribute("aria-valuenow", String(Math.round(bootPercent)));
   }
   if (studioControlScreenStatus) {
-    if (bootActive) {
+    if (physical) {
+      studioControlScreenStatus.textContent = remote.screenError || `${remote.address} · ${remote.webrtcActive ? "Vídeo ao vivo" : remote.screenSnapshotUrl ? "Modo compatível · atualização por imagens" : remote.screenStreaming ? "Preparando transmissão" : "Tela fechada"} · Clique na tela para controlar; Esc libera o teclado.`;
+    } else if (bootActive) {
       const bootPercent = Math.round(Math.max(0, Math.min(100, Number(boot.percent || 0))));
       studioControlScreenStatus.textContent = `${boot.label || "Inicializando VM"}... ${bootPercent}%`;
     } else if (remote.nativeRdpActive) {
@@ -15097,7 +15151,7 @@ function renderStudioControlScreen() {
     }
   }
   if (studioControlHypervCloseButton) {
-    studioControlHypervCloseButton.hidden = !remote.hypervConsoleActive && !remote.nativeRdpActive;
+    studioControlHypervCloseButton.hidden = !hasNativeScreen && !(physical && remote.screenStreaming);
     studioControlHypervCloseButton.textContent = "Fechar tela";
   }
 }
@@ -16005,6 +16059,8 @@ function normalizeAgent(agent = {}) {
     id: String(agent.id || createAgentId(name)),
     name,
     address,
+    kind: agent.kind === "physical" || (!agent.kind && !agent.vmName && !agent.baseVmName) ? "physical" : "vm",
+    deviceId: String(agent.deviceId || "").trim(),
     vmName: String(agent.vmName || "").trim(),
     baseVmName: String(agent.baseVmName || "").trim(),
     storagePath: String(agent.storagePath || "").trim(),
@@ -16019,6 +16075,99 @@ function normalizeAgent(agent = {}) {
     createdAt: Number(agent.createdAt || Date.now()),
     lastSeenAt: Number(agent.lastSeenAt || 0),
   };
+}
+
+function validatePhysicalAgentAddress(value) {
+  const address = normalizeAgentAddress(value);
+  const match = /^([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::(\d+))?$/i.exec(address);
+  if (!match) throw new Error("Informe o IP ou nome do computador e a porta. Ex.: 192.168.1.150:18452");
+  const port = Number(match[2] || 18452);
+  if (port < 1 || port > 65535) throw new Error("A porta precisa estar entre 1 e 65535.");
+  if (/^\d+(?:\.\d+){3}$/.test(match[1]) && match[1].split(".").some((part) => Number(part) > 255)) throw new Error("O endereço IP não é válido.");
+  if (/^(localhost|127\..*|0\.0\.0\.0)$/i.test(match[1])) throw new Error("Use o IP do outro computador, não o endereço local deste Studio.");
+  return `${match[1].toLowerCase()}:${port}`;
+}
+
+function physicalAgentFormMarkup() {
+  const draft = state.agents.createDraft || {};
+  return `<article class="agent-create-card physical-agent-form">
+    <div class="agent-create-card-head"><span>${state.agents.editingId ? "Editar computador" : "Novo computador físico"}</span><button class="micro-button" type="button" data-agent-action="create-cancel">Cancelar</button></div>
+    <label><span>Nome</span><input id="agentNameInput" type="text" placeholder="Ex.: PC de automações" value="${escapeHtml(draft.name || "")}" /></label>
+    <label><span>Código de pareamento</span><input id="agentPairCodeInput" type="text" placeholder="ABCD-EFGH-JKLM" maxlength="14" autocomplete="off" spellcheck="false" autocapitalize="characters" /></label>
+    <p class="agent-pairing-inline-error" data-agent-pairing-error role="alert" hidden></p>
+    <label><span>Perfil</span><select id="agentProfileSelect">${Object.entries({fiscal:"Fiscal", dp:"Departamento Pessoal", contabil:"Contábil", ti:"TI"}).map(([value, label]) => `<option value="${value}" ${draft.profile === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+    <p>Abra o FlowDetect Agent no outro PC e informe o código exibido nele. Os computadores precisam estar na mesma rede. Para ver o Agent use Ctrl + Shift + F12.</p>
+    <details class="agent-pairing-advanced"><summary>Não encontrou o Agent? Configuração avançada</summary>
+      <label><span>IP local (opcional)</span><input id="agentAddressHintInput" type="text" placeholder="192.168.1.150" spellcheck="false" /></label>
+      <small>Use somente se a descoberta automática estiver bloqueada. O código continua obrigatório para autorizar a conexão.</small>
+    </details>
+    <div class="agent-create-card-actions"><button class="primary-button" type="button" data-agent-action="create-save">Salvar computador</button></div>
+  </article>`;
+}
+
+function physicalAgentCardMarkup(agent) {
+  const connected = agentConnected(agent);
+  const connecting = state.agents.startingIds.has(String(agent.id));
+  return `<article class="physical-agent-card ${connected ? "is-connected" : agent.status === "error" ? "has-error" : ""}" data-agent-id="${escapeHtml(agent.id)}">
+    <div class="agent-card-top"><span class="agent-card-status ${connected ? "is-online" : ""}">${connecting ? "Conectando…" : connected ? "Conectado" : agent.status === "error" ? "Falha na conexão" : "Não conectado"}</span><span class="agent-card-chip">PC físico</span></div>
+    <div class="physical-agent-icon" aria-hidden="true"><svg viewBox="0 0 64 54" fill="none"><rect x="6" y="4" width="52" height="34" rx="6"/><path d="M24 48h16M32 38v10M14 29h36"/></svg></div>
+    <h3>${escapeHtml(agent.name)}</h3><p class="physical-agent-address" title="${escapeHtml(agent.address)}">Vinculado por código · rede local</p>
+    <p class="physical-agent-last-seen">Última conexão: ${escapeHtml(formatAgentLastSeen(agent.lastSeenAt))}</p>
+    ${agent.status === "error" ? `<p class="physical-agent-error" role="alert">${escapeHtml(agent.connectionStage || "Não foi possível conectar. Confira o Agent e a rede privada.")}</p>` : ""}
+    <div class="agent-card-actions"><button class="primary-button" type="button" data-agent-action="connect" data-agent-id="${escapeHtml(agent.id)}" ${connecting || state.remoteControl.physicalConnecting ? "disabled" : ""}>${connecting ? "Conectando…" : "Conectar e abrir tela"}</button><button class="ghost-button" type="button" data-agent-action="edit" data-agent-id="${escapeHtml(agent.id)}" ${connecting ? "disabled" : ""}>Editar</button><button class="danger-button" type="button" data-agent-action="delete" data-agent-id="${escapeHtml(agent.id)}" ${connecting ? "disabled" : ""}>Remover</button></div>
+  </article>`;
+}
+
+async function connectPhysicalAgent(agent) {
+  const remote = state.remoteControl;
+  if (remote.physicalConnecting) return;
+  remote.physicalConnecting = true;
+  state.agents.startingIds.add(String(agent.id));
+  renderAgents();
+  try {
+    releasePhysicalRemoteInput();
+    stopStudioControlScreenStream({ clear: true });
+    if (remote.nativeRdpActive) await closeNativeHypervRdp();
+    if (remote.hypervConsoleActive) await closeEmbeddedHypervConsole();
+    remote.connected = false;
+    remote.physicalAgentId = agent.id;
+    remote.screenError = "";
+    remote.library = [];
+    remote.selectedId = "";
+    remote.roadmap = null;
+    remote.logs = [];
+    remote.running = false;
+    remote.lastStatusSignature = "";
+    let connectedAgent = agent;
+    let compatibility;
+    try {
+      compatibility = await invoke("remote_agent_ping", { address: agent.address });
+    } catch (error) {
+      if (!agent.deviceId) throw error;
+      const found = await invoke("remote_agent_resolve_device", { deviceId: agent.deviceId });
+      connectedAgent = updateAgentRuntime(agent.id, { address: found.address }) || agent;
+      compatibility = await invoke("remote_agent_ping", { address: connectedAgent.address });
+    }
+    if (Number(compatibility?.pairing_protocol || 0) !== 1) {
+      throw new Error("Agent incompatível: instale o FlowDetect Agent com suporte ao pareamento por código.");
+    }
+    if (!await connectAgentFromCard(connectedAgent)) throw new Error(state.agents.lastConnectionError || "Agent indisponível.");
+    updateAgentRuntime(agent.id, { status: "online", connectionStage: "", lastSeenAt: Date.now() });
+    setWorkspaceTab("agent-screen");
+    await setStudioRemoteMouseEnabled(true, { notify: false });
+    startStudioControlScreenStream();
+  } catch (error) {
+    remote.connected = false;
+    remote.remoteInputEnabled = false;
+    remote.screenError = String(error);
+    updateAgentRuntime(agent.id, { status: "error", connectionStage: String(error).replace(/^(?:Error:\s*)+/, "") });
+    renderStudioControl();
+    throw error;
+  } finally {
+    remote.physicalConnecting = false;
+    state.agents.startingIds.delete(String(agent.id));
+    renderAgents();
+  }
 }
 
 function formatAgentLastSeen(timestamp = 0) {
@@ -16118,6 +16267,7 @@ function hypervVmLauncherMarkup(vm = {}) {
 }
 
 function agentCreateLauncherMarkup() {
+  if (state.agents.activeView === "physical") return physicalAgentFormMarkup();
   const draft = state.agents.createDraft || {};
   const progress = state.agents.createProgress || {};
   const creating = Boolean(progress.active);
@@ -16201,6 +16351,7 @@ function agentCreateLauncherMarkup() {
 }
 
 function agentAddLauncherMarkup() {
+  if (state.agents.activeView === "physical") return `<button class="agent-launcher-add" type="button" data-agent-action="new"><span class="agent-launcher-add-icon">+</span><strong>Adicionar computador</strong><small>Conecte pelo IP do FlowDetect Agent, sem VM.</small></button>`;
   return `
     <button class="agent-launcher-add" type="button" data-agent-action="new">
       <span class="agent-launcher-add-icon">+</span>
@@ -16407,7 +16558,14 @@ function setAgentCreateProgress(update = {}) {
     }
   });
   const saveButton = card.querySelector("[data-agent-action='create-save']");
-  if (saveButton) saveButton.textContent = next.active ? "Criando..." : "Criar maquina";
+  if (saveButton) saveButton.textContent = state.agents.activeView === "physical"
+    ? (next.active ? "Vinculando..." : "Vincular computador")
+    : (next.active ? "Criando..." : "Criar maquina");
+  const inlineError = card.querySelector("[data-agent-pairing-error]");
+  if (inlineError) {
+    inlineError.hidden = !next.error;
+    inlineError.textContent = next.error || "";
+  }
 }
 
 function startAgentCreateProgressTicker(maxPercent = 88, label = "Clonando VM-base", detail = "") {
@@ -16447,11 +16605,23 @@ async function saveAgentFromForm() {
   if (state.agents.createProgress?.active) {
     return;
   }
-  setBusy("Criando maquina");
+  setBusy(state.agents.activeView === "physical" ? "Pareando computador" : "Criando maquina");
   const readValue = (id) => String(document.getElementById(id)?.value || "").trim();
   const name = readValue("agentNameInput") || "FlowDetect Agent";
   const profile = readValue("agentProfileSelect") || "fiscal";
-  const address = normalizeAgentAddress(readValue("agentAddressInput"));
+  const physical = state.agents.activeView === "physical";
+  let address = physical
+    ? normalizeAgentAddress(state.agents.items.find((agent) => String(agent.id) === String(state.agents.editingId || ""))?.address || "")
+    : normalizeAgentAddress(readValue("agentAddressInput"));
+  const pairingCode = physical ? readValue("agentPairCodeInput") : "";
+  const addressHint = physical ? readValue("agentAddressHintInput") : "";
+  if (physical && !address && !pairingCode) {
+    setBusy("Erro");
+    const error = "Informe o código de pareamento de 12 caracteres exibido no FlowDetect Agent.";
+    setAgentCreateProgress({active:false,percent:0,error,label:"Código obrigatório"});
+    setMessage(error,"error");
+    return;
+  }
   let vmName = readValue("agentVmNameInput");
   const baseVmName = readValue("agentBaseVmSelect");
   const storagePath = readValue("agentStoragePathInput");
@@ -16466,7 +16636,7 @@ async function saveAgentFromForm() {
     const vmNameInput = document.getElementById("agentVmNameInput");
     if (vmNameInput) vmNameInput.value = vmName;
   }
-  if (!vmName && !address) {
+  if (!physical && !vmName && !address) {
     setBusy("Erro");
     setMessage("Informe o nome da VM ou selecione uma VM-base para clonar.", "error");
     document.getElementById("agentVmNameInput")?.focus();
@@ -16485,10 +16655,23 @@ async function saveAgentFromForm() {
   try {
   const editingId = String(state.agents.editingId || "");
   const previousAgent = state.agents.items.find((agent) => String(agent.id) === editingId);
+  let deviceId = String(previousAgent?.deviceId || "");
+  if (physical && pairingCode) {
+    setAgentCreateProgress({active:true,percent:30,label:"Localizando Agent",detail:"Buscando o computador na rede e validando o código...",error:""});
+    const paired = await invoke("remote_agent_pair_by_code", { code: pairingCode, address: addressHint || null });
+    if (Number(paired?.pairing_protocol) !== 1) throw new Error("Agent incompatível. Atualize o FlowDetect Agent.");
+    address = validatePhysicalAgentAddress(paired.address);
+    deviceId = String(paired.agent_id || "");
+  }
+  if (physical && state.agents.items.some((agent) => String(agent.id) !== editingId && normalizeAgentAddress(agent.address) === address)) {
+    throw new Error("Este computador já está cadastrado. Edite o registro existente.");
+  }
   let nextAgent = normalizeAgent({
     ...previousAgent,
     id: editingId || createAgentId(name),
     name,
+    kind: physical ? "physical" : "vm",
+    deviceId,
     profile,
     address,
     vmName,
@@ -16570,7 +16753,19 @@ async function saveAgentFromForm() {
   resetAgentForm();
   renderAgents();
   setMessage(nextAgent.vmName ? `Maquina criada: ${nextAgent.vmName}` : `Agente salvo: ${name}`, "success");
-  if (nextAgent.vmName && !editingId) {
+  if (physical && pairingCode) {
+    setBusy("Verificando conexão");
+    try {
+      await connectPhysicalAgent(nextAgent);
+      setBusy("Pronto");
+      setMessage(`Agent vinculado e conectado: ${name}.`, "success");
+    } catch (connectionError) {
+      const detail = String(connectionError?.message || connectionError || "Falha de comunicação com o Agent.");
+      setBusy("Erro");
+      setMessage(`Código aceito, mas não foi possível abrir a conexão: ${detail}`, "error");
+      // The persisted card now shows the error and offers a new connection attempt.
+    }
+  } else if (nextAgent.vmName && !editingId) {
     await startAndWatchAgent(nextAgent);
   } else {
     setBusy("Pronto");
@@ -16815,6 +17010,9 @@ async function startAndWatchAgent(agent) {
   if (!agent) {
     return;
   }
+  if (normalizeAgent(agent).kind === "physical") return connectPhysicalAgent(agent);
+  if (state.remoteControl.physicalAgentId) stopStudioControlScreenStream({ clear: true });
+  state.remoteControl.physicalAgentId = "";
   if (state.agents.startingIds.has(String(agent.id))) {
     return;
   }
@@ -17061,6 +17259,7 @@ function automationStepCount(item = {}) {
 
 function renderAgentAutomationViews() {
   const automationActive = state.agents.activeView === "automations";
+  const physicalActive = state.agents.activeView === "physical";
   const selectedTransferAddress = normalizeAgentAddress(
     state.agents.transferTargetAddress
     || agentAutomationTargetSelect?.value
@@ -17072,9 +17271,12 @@ function renderAgentAutomationViews() {
     && selectedTransferAddress
     && normalizeAgentAddress(state.remoteControl.address || "") === selectedTransferAddress
   );
-  agentsMachinesTabButton?.classList.toggle("is-active", !automationActive);
+  agentsMachinesTabButton?.classList.toggle("is-active", !automationActive && !physicalActive);
+  agentsPhysicalTabButton?.classList.toggle("is-active", physicalActive);
   agentsAutomationsTabButton?.classList.toggle("is-active", automationActive);
-  if (agentsMachineActions) agentsMachineActions.hidden = automationActive;
+  if (agentsMachineActions) agentsMachineActions.hidden = automationActive || physicalActive;
+  document.getElementById("agentsPhysicalHint").hidden = !physicalActive;
+  if (physicalActive && hypervBasePanel) hypervBasePanel.hidden = true;
   if (agentsMachinesView) agentsMachinesView.hidden = automationActive;
   if (agentsAutomationsView) agentsAutomationsView.hidden = !automationActive;
 
@@ -17155,6 +17357,11 @@ function renderAgents() {
     saveAgentCardButton.textContent = state.agents.editingId ? "Salvar alteracoes" : "Salvar agente";
   }
   if (!agentsList) {
+    return;
+  }
+  if (state.agents.activeView === "physical") {
+    const physicalAgents = state.agents.items.filter((agent) => normalizeAgent(agent).kind === "physical");
+    agentsList.innerHTML = [state.agents.createOpen ? physicalAgentFormMarkup() : agentAddLauncherMarkup(), ...physicalAgents.map(physicalAgentCardMarkup)].join("");
     return;
   }
   const hypervVms = state.agents.vms || [];
@@ -17573,7 +17780,9 @@ async function refreshStudioControlLibrary(options = {}) {
     renderStudioControl();
     return;
   }
-  const result = await invoke("remote_agent_list_automations", { address: state.remoteControl.address });
+  const address = state.remoteControl.address;
+  const result = await invoke("remote_agent_list_automations", { address });
+  if (address !== state.remoteControl.address || !state.remoteControl.connected) return;
   state.remoteControl.library = Array.isArray(result?.items) ? result.items : [];
   const visibleLibrary = studioControlVisibleLibrary();
   if (options.preferredId) {
@@ -17639,8 +17848,10 @@ async function refreshStudioControlStatus(options = {}) {
     return;
   }
   state.remoteControl.statusRefreshing = true;
+  const address = state.remoteControl.address;
   try {
-    const result = await invoke("remote_agent_status", { address: state.remoteControl.address });
+    const result = await invoke("remote_agent_status", { address });
+    if (address !== state.remoteControl.address) return;
     applyStudioControlStatus(result);
   } catch (error) {
     if (!options.silent) {
@@ -17783,7 +17994,11 @@ async function refreshStudioControlScreenSnapshot({ silent = false } = {}) {
   }
   remote.screenSnapshotLoading = true;
   try {
-    const result = await invoke("remote_agent_screen_snapshot", { address: remote.address });
+    const result = await invoke("remote_agent_screen_snapshot", {
+      address: remote.address,
+      width: 1280,
+      quality: 55,
+    });
     const imageData = String(result?.data || "");
     if (!imageData) {
       throw new Error("O Agent nao retornou imagem da tela.");
@@ -17834,13 +18049,18 @@ function waitForIceGatheringComplete(peer, timeoutMs = 2200) {
 
 function stopStudioControlWebRtc({ clearRemote = false } = {}) {
   const remote = state.remoteControl;
+  if (remote.webrtcCancel) {
+    remote.webrtcCancel(new Error("Transmissão encerrada."));
+    remote.webrtcCancel = null;
+  }
   if (remote.webrtcAnswerTimer) {
     window.clearInterval(remote.webrtcAnswerTimer);
     remote.webrtcAnswerTimer = null;
   }
   if (remote.webrtcPeer) {
-    remote.webrtcPeer.close();
+    const peer = remote.webrtcPeer;
     remote.webrtcPeer = null;
+    peer.close();
   }
   remote.webrtcControlChannel = null;
   remote.webrtcPointerChannel = null;
@@ -17857,7 +18077,7 @@ function stopStudioControlWebRtc({ clearRemote = false } = {}) {
     studioControlScreenVideo.closest(".studio-control-screen-frame-wrap")?.classList.remove("has-webrtc");
   }
   if (clearRemote && remote.connected) {
-    invoke("remote_agent_webrtc_clear", { address: remote.address }).catch(() => null);
+    invoke("remote_agent_webrtc_clear", { address: remote.webrtcAddress || remote.address }).catch(() => null);
   }
   if (remote.connected) {
     startStudioControlPolling();
@@ -17872,7 +18092,7 @@ async function startStudioControlWebRtc() {
   if (!window.RTCPeerConnection) {
     throw new Error("WebRTC nao esta disponivel neste WebView.");
   }
-  stopStudioControlWebRtc({ clearRemote: true });
+  stopStudioControlWebRtc();
   if (remote.screenStreamTimer) {
     window.clearInterval(remote.screenStreamTimer);
     remote.screenStreamTimer = null;
@@ -17883,11 +18103,13 @@ async function startStudioControlWebRtc() {
     studioControlScreenImage.hidden = true;
   }
   const peer = new RTCPeerConnection({ iceServers: [] });
+  remote.webrtcAddress = remote.address;
   remote.webrtcPeer = peer;
   remote.webrtcControlChannel = peer.createDataChannel("flowdetect-control", { ordered: true });
   remote.webrtcPointerChannel = peer.createDataChannel("flowdetect-pointer", { ordered: false, maxRetransmits: 0 });
   peer.addTransceiver("video", { direction: "recvonly" });
   peer.ontrack = (event) => {
+    if (remote.webrtcPeer !== peer) return;
     const stream = event.streams?.[0];
     if (stream && studioControlScreenVideo) {
       studioControlScreenVideo.srcObject = stream;
@@ -17904,8 +18126,14 @@ async function startStudioControlWebRtc() {
     }
   };
   peer.onconnectionstatechange = () => {
+    if (remote.webrtcPeer !== peer) return;
     if (["failed", "closed", "disconnected"].includes(peer.connectionState)) {
       remote.webrtcActive = false;
+      if (remote.physicalAgentId && remote.screenStreaming) {
+        releasePhysicalRemoteInput();
+        stopStudioControlWebRtc({ clearRemote: true });
+        startPhysicalSnapshotStream(remote.screenGeneration);
+      }
       startStudioControlPolling();
       renderStudioControlScreenOnly();
     }
@@ -17913,6 +18141,7 @@ async function startStudioControlWebRtc() {
   const offer = await peer.createOffer();
   await peer.setLocalDescription(offer);
   await waitForIceGatheringComplete(peer);
+  if (remote.webrtcPeer !== peer) throw new Error("Transmissão cancelada.");
   const session = await invoke("remote_agent_webrtc_offer", {
     address: remote.address,
     offer: {
@@ -17920,6 +18149,7 @@ async function startStudioControlWebRtc() {
       sdp: peer.localDescription.sdp,
     },
   });
+  if (remote.webrtcPeer !== peer) throw new Error("Transmissão cancelada.");
   remote.webrtcSessionId = String(session?.session_id || "");
   if (!remote.webrtcSessionId) {
     throw new Error("O Agent nao aceitou a sessao WebRTC.");
@@ -17929,20 +18159,29 @@ async function startStudioControlWebRtc() {
   }
   let attempts = 0;
   return new Promise((resolve, reject) => {
+    remote.webrtcCancel = reject;
+    let polling = false;
+    let answerApplied = false;
     remote.webrtcAnswerTimer = window.setInterval(async () => {
+      if (polling || remote.webrtcPeer !== peer) return;
+      polling = true;
       attempts += 1;
       try {
+        if (remote.webrtcActive) {
+          window.clearInterval(remote.webrtcAnswerTimer);
+          remote.webrtcAnswerTimer = null;
+          remote.webrtcCancel = null;
+          resolve(true);
+          return;
+        }
+        if (attempts > 60) throw new Error("O Agent não iniciou o vídeo dentro do prazo.");
+        if (answerApplied) return;
         const answerPayload = await invoke("remote_agent_webrtc_answer", { address: remote.address });
+        if (remote.webrtcPeer !== peer) return;
         const answer = answerPayload?.answer || null;
         if (answer && String(answerPayload?.session_id || "") === remote.webrtcSessionId) {
-          window.clearInterval(remote.webrtcAnswerTimer);
-          remote.webrtcAnswerTimer = null;
           await peer.setRemoteDescription(answer);
-          resolve(true);
-        } else if (attempts > 60) {
-          window.clearInterval(remote.webrtcAnswerTimer);
-          remote.webrtcAnswerTimer = null;
-          reject(new Error("O Agent nao respondeu ao WebRTC. Vou usar a visualizacao leve."));
+          answerApplied = true;
         }
       } catch (error) {
         if (attempts > 60) {
@@ -17950,6 +18189,8 @@ async function startStudioControlWebRtc() {
           remote.webrtcAnswerTimer = null;
           reject(error);
         }
+      } finally {
+        polling = false;
       }
     }, 200);
   });
@@ -17987,9 +18228,41 @@ function remoteVideoPointFromEvent(event) {
   return remoteScreenPointFromEvent(event, studioControlScreenVideo);
 }
 
+function scheduleHttpRemotePointerMove() {
+  const remote = state.remoteControl;
+  if (remote.httpPointerSending || remote.remotePointerMoveFrame || !remote.pendingRemotePointerMove) return;
+  remote.remotePointerMoveFrame = window.requestAnimationFrame(() => {
+    remote.remotePointerMoveFrame = null;
+    if (remote.httpPointerSending || !remote.connected || !remote.screenStreaming) return;
+    const nextPayload = remote.pendingRemotePointerMove;
+    remote.pendingRemotePointerMove = null;
+    if (!nextPayload) return;
+    remote.httpPointerSending = true;
+    invoke("remote_agent_control_event", {
+      address: remote.address,
+      event: nextPayload,
+    }).catch((error) => console.warn("Mouse remoto indisponível:", error))
+      .finally(() => {
+        remote.httpPointerSending = false;
+        if (remote.pendingRemotePointerMove && remote.connected && remote.screenStreaming) {
+          scheduleHttpRemotePointerMove();
+        }
+      });
+  });
+}
+
 function sendStudioRemoteControlEvent(payload) {
   if (!state.remoteControl.remoteInputEnabled) {
     return;
+  }
+  const remote = state.remoteControl;
+  if (remote.physicalAgentId) {
+    if (!remote.connected || !remote.screenStreaming || remote.screenAddress !== remote.address || state.activeTab !== "agent-screen" || !(remote.webrtcActive || remote.screenSnapshotUrl)) return;
+    remote.physicalHeldInputs ||= new Map();
+    const key = payload.kind === "key" ? `key:${payload.code || payload.key}` : `mouse:${payload.button}`;
+    if (payload.event === "down") remote.physicalHeldInputs.set(key, payload);
+    if (payload.event === "up") remote.physicalHeldInputs.delete(key);
+    if (payload.kind === "mouse") remote.physicalLastPoint = { x: payload.x, y: payload.y };
   }
   const isMouseMove = payload?.kind === "mouse" && payload?.event === "move";
   const channel = isMouseMove
@@ -17997,18 +18270,10 @@ function sendStudioRemoteControlEvent(payload) {
     : state.remoteControl.webrtcControlChannel;
   if (!channel || channel.readyState !== "open") {
     if (isMouseMove) {
-      state.remoteControl.pendingRemotePointerMove = payload;
-      if (state.remoteControl.remotePointerMoveFrame) return;
-      state.remoteControl.remotePointerMoveFrame = window.requestAnimationFrame(() => {
-        state.remoteControl.remotePointerMoveFrame = null;
-        const nextPayload = state.remoteControl.pendingRemotePointerMove;
-        state.remoteControl.pendingRemotePointerMove = null;
-        if (!nextPayload) return;
-        invoke("remote_agent_control_event", {
-          address: state.remoteControl.address,
-          event: nextPayload,
-        }).catch(() => null);
-      });
+      // A frame of mouse input must never create another HTTP request while
+      // the previous request is pending. Keep only the latest pointer location.
+      remote.pendingRemotePointerMove = payload;
+      scheduleHttpRemotePointerMove();
       return;
     }
     invoke("remote_agent_control_event", {
@@ -18039,8 +18304,112 @@ function sendStudioRemoteControlEvent(payload) {
   channel.send(JSON.stringify(payload));
 }
 
+function releasePhysicalRemoteInput() {
+  const remote = state.remoteControl;
+  if (!remote.physicalAgentId) return;
+  for (const payload of remote.physicalHeldInputs?.values() || []) {
+    const event = { ...payload, ...(payload.kind === "mouse" ? remote.physicalLastPoint : {}), event: "up" };
+    const channel = remote.webrtcControlChannel;
+    if (channel?.readyState === "open") channel.send(JSON.stringify(event));
+    else if (remote.connected) invoke("remote_agent_control_event", { address: remote.screenAddress || remote.address, event }).catch(() => null);
+  }
+  remote.physicalHeldInputs?.clear();
+  remote.pendingRemotePointerMove = null;
+  if (remote.remotePointerMoveFrame) {
+    window.cancelAnimationFrame(remote.remotePointerMoveFrame);
+    remote.remotePointerMoveFrame = null;
+  }
+  remote.remotePointerInside = false;
+}
+
+function physicalKeyboardFocused() {
+  const remote = state.remoteControl;
+  if (!remote.physicalAgentId) return remote.remotePointerInside;
+  return state.activeTab === "agent-screen" && [studioControlScreenVideo, studioControlScreenImage].includes(document.activeElement);
+}
+
+function physicalRemoteScreenProfile() {
+  const selected = document.getElementById("agentPhysicalQualitySelect")?.value || "fast";
+  const profiles = {
+    fast: { width: 960, quality: 43, interval: 100, label: "Fluidez" },
+    balanced: { width: 1280, quality: 53, interval: 160, label: "Equilibrado" },
+    sharp: { width: 1600, quality: 68, interval: 260, label: "Nitidez" },
+  };
+  return profiles[selected] || profiles.fast;
+}
+
+function startPhysicalSnapshotStream(generation) {
+  const remote = state.remoteControl;
+  if (!remote.physicalAgentId || !remote.screenStreaming || generation !== remote.screenGeneration || remote.screenStreamTimer) return;
+  const address = remote.address;
+  remote.screenSnapshotHash = "";
+  remote.screenFramesInWindow = 0;
+  remote.screenStatsSince = Date.now();
+  remote.screenLastCaptureMs = 0;
+  remote.screenLastRttMs = 0;
+  remote.screenFps = 0;
+  const tick = async () => {
+    if (!remote.screenStreaming || generation !== remote.screenGeneration || address !== remote.address) return;
+    remote.screenStreamTimer = -1;
+    const started = performance.now();
+    const profile = physicalRemoteScreenProfile();
+    try {
+      const frame = await invoke("remote_agent_screen_snapshot", {
+        address,
+        width: profile.width,
+        quality: profile.quality,
+        previousHash: remote.screenSnapshotHash || null,
+      });
+      if (generation !== remote.screenGeneration || address !== remote.address || !remote.screenStreaming) return;
+      if (!frame?.unchanged && !frame?.data) throw new Error("O Agent não retornou uma imagem da tela.");
+      const firstFrame = !remote.screenSnapshotUrl;
+      remote.screenError = "";
+      remote.screenLastCaptureMs = Number(frame.capture_ms || 0);
+      remote.screenLastRttMs = Math.round(performance.now() - started);
+      if (frame.frame_hash) remote.screenSnapshotHash = String(frame.frame_hash);
+      if (!frame.unchanged) {
+        remote.screenSnapshotUrl = `data:${frame.mime || "image/jpeg"};base64,${frame.data}`;
+        studioControlScreenImage.src = remote.screenSnapshotUrl;
+        studioControlScreenImage.hidden = false;
+        studioControlScreenVideo.hidden = true;
+        remote.screenFramesInWindow += 1;
+        // Re-render the controls only once. Re-rendering the entire panel for
+        // every JPEG wastes time on the same UI thread that decodes the image.
+        if (firstFrame) renderStudioControlScreenOnly();
+      }
+      const now = Date.now();
+      const elapsed = now - remote.screenStatsSince;
+      if (elapsed >= 1000) {
+        remote.screenFps = Math.round(remote.screenFramesInWindow * 10000 / elapsed) / 10;
+        remote.screenFramesInWindow = 0;
+        remote.screenStatsSince = now;
+        if (studioControlScreenStatus) {
+          studioControlScreenStatus.textContent =
+            `${profile.label} · ${remote.screenFps} quadros/s · captura ${remote.screenLastCaptureMs} ms · resposta total ${remote.screenLastRttMs} ms. Mouse e teclado ativos quando habilitados.`;
+        }
+      }
+    } catch (error) {
+      if (generation !== remote.screenGeneration) return;
+      releasePhysicalRemoteInput();
+      remote.screenError = `Falha na transmissão: ${String(error)}. Tentando novamente; use Reconectar tela se persistir.`;
+      // Keep the last good frame displayed instead of flashing a black screen.
+      renderStudioControlScreenOnly();
+    } finally {
+      if (generation === remote.screenGeneration && remote.screenStreaming && address === remote.address) {
+        const elapsed = performance.now() - started;
+        const delay = remote.screenError ? 1000 : Math.max(25, Math.round(profile.interval - elapsed));
+        remote.screenStreamTimer = window.setTimeout(tick, delay);
+      }
+    }
+  };
+  remote.screenStreamTimer = -1;
+  void tick();
+}
+
 function stopStudioControlScreenStream({ clear = false } = {}) {
   const remote = state.remoteControl;
+  releasePhysicalRemoteInput();
+  remote.screenGeneration = (remote.screenGeneration || 0) + 1;
   remote.screenStreaming = false;
   if (remote.screenStreamTimer) {
     window.clearInterval(remote.screenStreamTimer);
@@ -18049,6 +18418,7 @@ function stopStudioControlScreenStream({ clear = false } = {}) {
   if (clear) {
     stopStudioControlWebRtc({ clearRemote: true });
     remote.screenSnapshotUrl = "";
+    remote.screenSnapshotHash = "";
     remote.screenSnapshotAt = 0;
     if (studioControlScreenImage) {
       studioControlScreenImage.removeAttribute("src");
@@ -18071,18 +18441,36 @@ function startStudioControlScreenStream() {
     return;
   }
   remote.screenStreaming = true;
+  remote.screenAddress = remote.address;
+  remote.screenError = "";
+  const generation = remote.screenGeneration = (remote.screenGeneration || 0) + 1;
   remote.meshFrameUrl = "";
   if (studioControlMeshFrame) {
     studioControlMeshFrame.setAttribute("src", "about:blank");
   }
   renderStudioControl();
-  runSelectedAutomationWithScreenStart().catch(() => null);
+  if (!remote.physicalAgentId) runSelectedAutomationWithScreenStart().catch(() => null);
+  if (remote.physicalAgentId) {
+    // The Agent currently exposes WebRTC signaling but has no video sender.
+    // Starting the handshake first adds a 12s timeout before JPEG fallback.
+    // Use the optimized snapshot transport immediately.
+    startPhysicalSnapshotStream(generation);
+    setMessage("Transmissão otimizada iniciada. Ajuste Fluidez / Nitidez acima da tela.", "info");
+    return;
+  }
   startStudioControlWebRtc()
     .then(() => {
+      if (generation !== remote.screenGeneration) return;
       setMessage("WebRTC nativo conectado ao Agent.", "success");
     })
     .catch((error) => {
+      if (generation !== remote.screenGeneration) return;
       stopStudioControlWebRtc({ clearRemote: true });
+      if (remote.physicalAgentId) {
+        startPhysicalSnapshotStream(generation);
+        setMessage("Vídeo indisponível. Usando modo compatível por imagens, com mouse e teclado.", "info");
+        return;
+      }
       remote.screenStreaming = false;
       if (studioControlScreenStatus) {
         studioControlScreenStatus.textContent = `Transmissao H.264 nativa indisponivel: ${String(error)}`;
@@ -24182,26 +24570,54 @@ composerWorkbookSelect.addEventListener("change", () => {
 });
 
 editorTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
+initIntegrations();
+integrationsTabButton?.addEventListener("click", () => setWorkspaceTab("integrations"));
 assistTabButton.addEventListener("click", () => setWorkspaceTab("assist"));
 commandTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
 workbookTabButton.addEventListener("click", () => setWorkspaceTab("workbook"));
 launcherTabButton.addEventListener("click", () => setWorkspaceTab("launcher"));
 agentsTabButton?.addEventListener("click", () => {
   setWorkspaceTab("agents");
-  refreshAgentVmList({ silent: true }).catch(() => null);
+  if (state.agents.activeView === "machines") refreshAgentVmList({ silent: true }).catch(() => null);
 });
 agentScreenTabButton?.addEventListener("click", () => {
   setWorkspaceTab("agent-screen");
-  refreshAgentVmList({ silent: true }).catch(() => null);
+  if (!state.remoteControl.physicalAgentId) refreshAgentVmList({ silent: true }).catch(() => null);
   if (state.remoteControl.connected) refreshStudioControlLibrary({ silent: true }).catch(() => null);
 });
 studioControlHypervCloseButton?.addEventListener("click", () => {
+  if (state.remoteControl.physicalAgentId && !state.remoteControl.nativeRdpActive && !state.remoteControl.hypervConsoleActive) {
+    stopStudioControlScreenStream({ clear: true });
+    state.remoteControl.remoteInputEnabled = false;
+    renderStudioControlScreen();
+    return;
+  }
   if (state.remoteControl.nativeRdpActive) {
     closeNativeHypervRdp().catch((error) => setMessage(String(error), "error"));
   } else {
     closeEmbeddedHypervConsole().catch((error) => setMessage(String(error), "error"));
   }
 });
+document.getElementById("agentPhysicalQualitySelect")?.addEventListener("change", () => {
+  // Request one full frame on a quality change even if the desktop is static.
+  state.remoteControl.screenSnapshotHash = "";
+  state.remoteControl.screenStatsSince = Date.now();
+  state.remoteControl.screenFramesInWindow = 0;
+  if (state.remoteControl.physicalAgentId && state.remoteControl.screenStreaming) {
+    setMessage("Qualidade de transmissão alterada. A próxima imagem usará o novo perfil.", "info");
+  }
+});
+document.getElementById("agentPhysicalReconnectButton")?.addEventListener("click", () => {
+  const agent = state.agents.items.find((item) => item.id === state.remoteControl.physicalAgentId);
+  if (agent) connectPhysicalAgent(agent).catch((error) => setMessage(String(error), "error"));
+});
+window.addEventListener("blur", releasePhysicalRemoteInput);
+window.addEventListener("mouseup", () => {
+  if ([...state.remoteControl.physicalHeldInputs.values()].some((event) => event.kind === "mouse")) releasePhysicalRemoteInput();
+});
+for (const element of [studioControlScreenVideo, studioControlScreenImage]) {
+  element?.addEventListener("blur", releasePhysicalRemoteInput);
+}
 window.addEventListener("resize", () => {
   if (state.remoteControl.hypervConsoleActive) scheduleEmbeddedHypervConsoleSync();
   if (state.remoteControl.nativeRdpActive) scheduleNativeHypervRdpSync(true);
@@ -24401,7 +24817,8 @@ agentsList?.addEventListener("click", (event) => {
     return;
   }
   if (action === "connect") {
-    connectAgentFromCard(agent);
+    if (normalizeAgent(agent).kind === "physical") connectPhysicalAgent(agent).catch((error) => setMessage(String(error), "error"));
+    else connectAgentFromCard(agent);
   } else if (action === "watch") {
     startAndWatchAgent(agent);
   } else if (action === "start-vm") {
@@ -24411,7 +24828,8 @@ agentsList?.addEventListener("click", (event) => {
   } else if (action === "console") {
     startAndWatchAgent(agent).catch((error) => setMessage(String(error), "error"));
   } else if (action === "edit") {
-    editAgentCard(id);
+    if (normalizeAgent(agent).kind === "physical") openAgentForm(agent);
+    else editAgentCard(id);
   } else if (action === "cancel-edit") {
     cancelAgentCardEdit();
   } else if (action === "save-edit") {
@@ -24436,10 +24854,20 @@ agentsList?.addEventListener("input", (event) => {
   state.agents.createDraft[key] = String(field.value || "").trim();
 });
 agentsMachinesTabButton?.addEventListener("click", () => {
+  if (state.agents.createProgress?.active) return;
+  resetAgentForm();
   state.agents.activeView = "machines";
-  renderAgentAutomationViews();
+  renderAgents();
+});
+agentsPhysicalTabButton?.addEventListener("click", () => {
+  if (state.agents.createProgress?.active) return;
+  resetAgentForm();
+  state.agents.activeView = "physical";
+  renderAgents();
 });
 agentsAutomationsTabButton?.addEventListener("click", async () => {
+  if (state.agents.createProgress?.active) return;
+  resetAgentForm();
   state.agents.activeView = "automations";
   renderAgentAutomationViews();
   try {
@@ -25491,22 +25919,30 @@ studioControlScreenImage?.addEventListener("wheel", (event) => {
 }, { passive: false });
 
 window.addEventListener("keydown", (event) => {
-  if (!state.remoteControl.remoteInputEnabled || !state.remoteControl.remotePointerInside) {
+  if (!state.remoteControl.remoteInputEnabled || !physicalKeyboardFocused()) {
+    return;
+  }
+  if (state.remoteControl.physicalAgentId) event.stopImmediatePropagation();
+  if (state.remoteControl.physicalAgentId && event.key === "Escape") {
+    event.preventDefault();
+    releasePhysicalRemoteInput();
+    document.activeElement?.blur();
     return;
   }
   event.preventDefault();
   if (!event.repeat) {
     sendStudioRemoteControlEvent({ kind: "key", event: "down", key: event.key, code: event.code });
   }
-});
+}, true);
 
 window.addEventListener("keyup", (event) => {
-  if (!state.remoteControl.remoteInputEnabled || !state.remoteControl.remotePointerInside) {
+  if (!state.remoteControl.remoteInputEnabled || !physicalKeyboardFocused()) {
     return;
   }
+  if (state.remoteControl.physicalAgentId) event.stopImmediatePropagation();
   event.preventDefault();
   sendStudioRemoteControlEvent({ kind: "key", event: "up", key: event.key, code: event.code });
-});
+}, true);
 
 studioControlSheetRefreshButton?.addEventListener("click", () => {
   refreshStudioControlSpreadsheet({ force: true }).catch((error) => setMessage(String(error), "error"));

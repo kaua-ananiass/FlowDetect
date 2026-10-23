@@ -867,3 +867,15 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   globalThis.__flowDetectChromeRunnerListener = flowDetectMessageListener;
 }
 })();
+
+
+// Associate a user-triggered download anchor with the actual tab.
+if (typeof document !== "undefined" && !globalThis.__flowdetectDownloadHintInstalled) {
+globalThis.__flowdetectDownloadHintInstalled = true;
+document.addEventListener("click", (event) => {
+  const anchor = event.target instanceof Element ? event.target.closest("a[download][href]") : null;
+  if (!anchor || !/^(https?:|blob:)/i.test(anchor.href)) return;
+  chrome.runtime.sendMessage({ type: "flowdetect-download-source", url: anchor.href }).catch(() => {});
+}, true);
+
+}
