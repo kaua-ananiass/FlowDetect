@@ -1713,7 +1713,7 @@ function renderAssistedView() {
   copy.title = copy.textContent;
   note.dataset.status = run?.status || "ready";
   note.classList.toggle("is-live", active);
-  title.append(copy, note);
+  title.append(copy, note, choice);
   content.append(title);
 
   if (!run?.id) {
@@ -1768,6 +1768,9 @@ function renderAssistedView() {
   // One title/status row and one action row leave room for recent events.
   const count = monitor.querySelector(".block-carousel-count");
   monitor.querySelector(".block-carousel-top").append(count);
+  // Keep block identity on one line so its visual reference owns the stage.
+  const blockTop = monitor.querySelector(".block-carousel-top");
+  blockTop.insertBefore(monitor.querySelector(".block-carousel-title"), blockTop.querySelector(".block-carousel-state"));
   const report = monitor.querySelector(".report-button");
   report.title = report.textContent;
   report.setAttribute("aria-label", report.textContent);
@@ -1776,14 +1779,7 @@ function renderAssistedView() {
   const history = monitor.querySelector(".run-log-details");
   history.insertBefore(monitor.querySelector(".execution-loop-summary"), history.querySelector(".run-log"));
   history.open = false;
-  const historyLink = history.querySelector("summary");
-  historyLink.textContent = "Histórico e detalhes ↗";
-  historyLink.title = "Abrir o histórico completo em outra aba";
-  historyLink.addEventListener("click", (event) => {
-    event.preventDefault();
-    chrome.tabs.create({ url: chrome.runtime.getURL(`run-details.html?page=${encodeURIComponent(run.pageId)}`) })
-      .catch((error) => window.alert(`Não foi possível abrir o histórico: ${error.message}`));
-  });
+  history.hidden = true;
   const legacyManager = monitor.querySelector(".block-carousel-manager");
   if (legacyManager) legacyManager.hidden = true;
   content.append(monitor);

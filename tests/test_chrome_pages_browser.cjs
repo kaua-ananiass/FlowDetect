@@ -188,9 +188,9 @@ test('execution pages: distinct tabs, independent runs, deletion and responsive 
       await fs.mkdir(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR,{recursive:true});
       await page.screenshot({path:path.join(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR,'assisted-page-two.png')});
     }
-    await page.locator('#assistedPageSelect').selectOption('p1');
+    await page.locator('#assistedPageSelect').selectOption('p1', { force: true });
     assert.match(await page.locator('.assisted-run-title strong').textContent(),/Automação de teste/);
-    await page.locator('#assistedPageSelect').selectOption(pageTwoId);
+    await page.locator('#assistedPageSelect').selectOption(pageTwoId, { force: true });
     assert.equal(await page.locator('#assistedContent .execution-percent').textContent(),'47%');
     await page.locator('#workspaceAutomations').click();
     assert.equal(await page.locator('.automation-tile-percent').first().textContent(),'47%');
@@ -211,6 +211,36 @@ test('execution pages: distinct tabs, independent runs, deletion and responsive 
     assert.equal(await page.locator('#assistedPageSelect').inputValue(),'p1');
     assert.equal(await page.locator('#assistedContent .block-carousel').count(),1);
     await page.locator('#assistedContent .block-carousel-image').waitFor({state:'visible'});
+    // A real OCR crop must fit inside the preview, including its bottom edge.
+    // A 1x1 fixture cannot reveal intrinsic image sizing overflowing the grid.
+    const referenceImage = await page.evaluate(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 520; canvas.height = 290;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 520, 290);
+      ctx.fillStyle = '#1763b9'; ctx.fillRect(45, 90, 430, 135);
+      ctx.fillStyle = '#fff'; ctx.font = '44px sans-serif';
+      ctx.fillText('Selecionar', 145, 175);
+      return canvas.toDataURL();
+    });
+    await page.locator('#assistedContent .block-carousel-image').evaluate((el, src) => { el.src = src; }, referenceImage);
+    await page.waitForTimeout(100);
+    const previewGeometry = await page.evaluate(() => {
+      const preview = document.querySelector('#assistedContent .block-carousel-preview').getBoundingClientRect();
+      const image = document.querySelector('#assistedContent .block-carousel-image');
+      const rect = image.getBoundingClientRect();
+      const controls = document.querySelector('#assistedContent .block-carousel-controls').getBoundingClientRect();
+      return { previewHeight: preview.height, imageTop: rect.top, imageBottom: rect.bottom,
+        previewTop: preview.top, previewBottom: preview.bottom, controlsTop: controls.top,
+        fit: getComputedStyle(image).objectFit };
+    });
+    if(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR) {
+      await page.screenshot({path:path.join(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR,'assisted-reference-fit.png')});
+    }
+    assert.ok(previewGeometry.previewHeight >= 100, JSON.stringify(previewGeometry));
+    assert.ok(previewGeometry.imageTop >= previewGeometry.previewTop && previewGeometry.imageBottom <= previewGeometry.previewBottom + 1, JSON.stringify(previewGeometry));
+    assert.ok(previewGeometry.previewBottom <= previewGeometry.controlsTop, JSON.stringify(previewGeometry));
+    assert.equal(previewGeometry.fit, 'contain');
     // Regression: failed OCR + 33-company selector must leave live rows visible at 390x600.
     await page.evaluate(() => {
       window.compactOriginalRun = pageRuns.get('p1');
@@ -247,17 +277,18 @@ test('execution pages: distinct tabs, independent runs, deletion and responsive 
           '#assistedContent .block-carousel-stage', '#assistedContent .live-steps-list'];
         const overflow = nodes.map(s => document.querySelector(s)).filter(el => el.scrollHeight > el.clientHeight + 1)
           .map(el => ({ name: el.className, height: el.clientHeight, scroll: el.scrollHeight }));
-        const history = document.querySelector('#assistedContent summary').getBoundingClientRect();
+        const panel = document.querySelector('#assistedContent').getBoundingClientRect();
         const live = [...document.querySelectorAll('#assistedContent .live-step')].map(el => el.getBoundingClientRect().bottom);
-        return { overflow, historyBottom: history.bottom, lastLiveBottom: Math.max(...live), historyTop: history.top };
+        return { overflow, lastLiveBottom: Math.max(...live), panelBottom: panel.bottom };
       });
       assert.deepEqual(layout.overflow, [], JSON.stringify(layout));
-      assert.ok(layout.historyBottom <= 600 && layout.lastLiveBottom <= layout.historyTop, JSON.stringify(layout));
+      assert.ok(layout.panelBottom <= 600 && layout.lastLiveBottom <= layout.panelBottom, JSON.stringify(layout));
     };
     await assertNoMonitorScroll();
-    await page.locator('#assistedContent summary').click();
+    assert.equal(await page.locator('.assisted-run-title').isVisible(), false);
+    assert.equal(await page.locator('#assistedPageSelect').isVisible(), false);
+    assert.equal(await page.locator('#assistedContent summary').isVisible(), false);
     assert.equal(await page.locator('#assistedContent details').evaluate(el => el.open), false);
-    assert.match(await page.evaluate(() => createdTab.url), /run-details\.html\?page=p1$/);
     const detailsPage = await browser.newPage();
     detailsPage.on('pageerror', error => errors.push(error.message));
     const savedRun = await page.evaluate(() => structuredClone(pageRuns.get('p1')));
@@ -265,7 +296,7 @@ test('execution pages: distinct tabs, independent runs, deletion and responsive 
     await detailsPage.addInitScript(run => {
       window.chrome = { storage: { local: { get: async key => ({ [key]: key.endsWith(':p1') ? run : undefined }) } } };
     }, savedRun);
-    await detailsPage.goto(await page.evaluate(() => createdTab.url));
+    await detailsPage.goto(`http://127.0.0.1:${server.address().port}/run-details.html?page=p1`);
     await detailsPage.waitForFunction(() => document.querySelector('#steps .step'));
     assert.match(await detailsPage.locator('#steps').textContent(), /Mensagem longa para verificar o resumo/);
     assert.match(await detailsPage.locator('#logs').textContent(), /<img src=x/);
@@ -331,7 +362,7 @@ test('execution pages: distinct tabs, independent runs, deletion and responsive 
     await page.reload();
     await page.waitForFunction(() => document.querySelector('.app-shell').dataset.workspace === 'assisted');
     assert.deepEqual(await page.locator('.popup-fixed-header').boundingBox(), sharedHeaderBefore);
-    for (const selector of ['.popup-tools', '.studio-pair-bar', '.element-picker-toolbar', '#workspaceTabs']) {
+    for (const selector of ['.popup-tools', '.studio-pair-bar', '#mapElementButton', '#workspaceTabs']) {
       assert.equal(await page.locator(selector).isVisible(), true, `Shared control hidden after reopening: ${selector}`);
     }
     await page.locator('#workspaceAutomations').click();

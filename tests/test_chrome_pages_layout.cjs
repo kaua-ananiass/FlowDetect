@@ -64,7 +64,7 @@ test('compact popup keeps pages legible and never clips action buttons',async()=
     assert.match(pageLayout.selectedLabel, /Página 1, Pronta/);
     assert.equal(await page.locator('.execution-page-state').first().isVisible(), false);
     const switching = await page.evaluate(() => {
-      const sharedLayout = () => ['.popup-toolbar','.popup-tools','.studio-pair-bar','.element-picker-toolbar','#workspaceTabs']
+      const sharedLayout = () => ['.popup-toolbar','.popup-tools','.studio-pair-bar','#mapElementButton','#workspaceTabs']
         .map(selector => {
           const el = document.querySelector(selector), rect = el.getBoundingClientRect();
           return { selector, top: rect.top, left: rect.left, width: rect.width, height: rect.height, display: getComputedStyle(el).display };
@@ -309,7 +309,7 @@ test('compact popup keeps pages legible and never clips action buttons',async()=
     const fixedHeader = await page.evaluate(() => ({
       before: window.headerBeforeReopen,
       after: document.querySelector('.popup-fixed-header').getBoundingClientRect().toJSON(),
-      visible: ['.popup-tools','.studio-pair-bar','.element-picker-toolbar'].every(selector => getComputedStyle(document.querySelector(selector)).display !== 'none'),
+      visible: ['.popup-tools','.studio-pair-bar','#mapElementButton'].every(selector => getComputedStyle(document.querySelector(selector)).display !== 'none'),
       animated: document.querySelector('.popup-fixed-header').getAnimations().length,
     }));
     assert.deepEqual(fixedHeader.after, fixedHeader.before);

@@ -168,6 +168,18 @@ h1, h2, p { margin: 0; }
 .studio-pair-bar button:hover { background: rgba(18,181,203,.16); }
 
 .popup-tools { flex: 0 0 auto; gap: 6px; }
+body:not(.run-focused) .popup-tools .map-element-button {
+  width: auto;
+  min-height: 28px;
+  padding: 5px 7px;
+  border: 1px solid rgba(94,234,212,.28);
+  border-radius: 8px;
+  background: rgba(18,181,203,.1);
+  color: #c6eaf2;
+  font-size: 9px;
+  font-weight: 650;
+  white-space: nowrap;
+}
 
 .element-picker-toolbar { display: grid; gap: 5px; }
 .map-element-button { width: 100%; min-height: 32px; border: 1px solid rgba(94,234,212,.35); border-radius: 9px; color: #d8fffa; background: rgba(18,181,203,.12); font-size: 11px; font-weight: 750; cursor: pointer; }
@@ -2556,6 +2568,85 @@ body:not(.run-focused) .automation-flip-detail > .automation-card-top {
 .assisted-content .live-step-detail { font-size: 9px; line-height: 1.3; }
 .assisted-content .run-log-details { overflow: visible; max-height: none; align-self: end; }
 .assisted-content .run-log-details summary { padding: 3px 0; }
+
+/* Visual references are the primary cue during an assisted run.  A wide OCR
+   crop must be readable instead of being reduced to a thin strip. */
+.app-shell > .assisted-view {
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+}
+.assisted-content { grid-template-rows: minmax(0, 1fr); }
+.assisted-content > .assisted-run-title { display: none; }
+.assisted-content .run-log-details[hidden] { display: none !important; }
+.assisted-run-title { min-height: 27px; padding: 0 1px 4px; }
+.assisted-run-title small { display: none; }
+.assisted-run-title #assistedPageSelect {
+  width: 126px;
+  flex: 0 0 126px;
+  height: 24px;
+  min-height: 24px;
+  font-size: 9px;
+}
+.assisted-content > .assisted-execution {
+  grid-template-rows: auto minmax(0, 1fr) 64px;
+  gap: 6px;
+  padding: 9px;
+}
+.assisted-content .block-carousel {
+  grid-template-rows: minmax(0, 1fr) 26px;
+  gap: 6px;
+}
+.assisted-content .block-carousel-slide { gap: 2px; }
+.assisted-content .block-carousel-top .block-carousel-title {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.assisted-content .block-carousel-page { display: none; }
+.assisted-content .block-carousel-title {
+  margin-top: 4px;
+  font-size: 12px;
+}
+.assisted-content .block-carousel-description {
+  max-height: 1.35em;
+  font-size: 9px;
+}
+.assisted-content .block-carousel-preview {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  height: 0;
+  max-height: none;
+  margin-top: 6px;
+  border-color: rgba(72, 213, 230, .28);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(53, 203, 218, .14), transparent 60%),
+    #06131f;
+  box-shadow: inset 0 1px 0 rgba(231, 255, 255, .06), 0 9px 20px rgba(0, 0, 0, .16);
+}
+.assisted-content .block-carousel-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  object-position: center;
+}
+.assisted-content .block-carousel-ocr-progress { margin-top: 2px; }
+.assisted-content .live-steps { padding-top: 5px; }
+.assisted-content .live-steps-list {
+  max-height: none;
+  margin-top: 2px;
+  overflow: hidden;
+}
+.assisted-content .live-step { min-height: 12px; padding: 1px 0; }
+.assisted-content .live-step-details { display: none !important; }
 
 /* The expanded library card is a quick-action surface, not the full editor. */
 .automation-list:has(> .is-expanded) { overflow: hidden; align-content: start; padding-bottom: 0; }

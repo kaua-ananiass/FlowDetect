@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FlowDetect para Chrome</title>
-    <link rel="stylesheet" href="sidepanel.css?v=0.2.66">
+    <link rel="stylesheet" href="sidepanel.css?v=0.2.67">
   </head>
   <body>
     <main class="app-shell">
@@ -21,15 +21,13 @@
         </div>
         <div class="popup-tools">
           <label class="import-automation" for="importInput">Importar</label>
+          <button id="mapElementButton" class="map-element-button" type="button" title="Mapear elemento da página" aria-label="Mapear elemento da página">Mapear</button>
           <button id="newButton" class="add-automation" type="button"><span>+</span> Adicionar</button>
         </div>
       </header>
       <div class="studio-pair-bar"><span>C&oacute;digo para conectar ao Studio</span><strong id="studioPairCode">······</strong><button id="studioNewPairCode" type="button" title="Gerar novo codigo de conexao">Novo</button></div>
       <span id="studioConnectionCompact" class="studio-connection studio-connection-compact" title="Aguardando conexao com o Studio">Studio desconectado</span>
-      <div class="element-picker-toolbar">
-        <button id="mapElementButton" class="map-element-button" type="button" title="Mapear elemento da página">Mapear elemento</button>
-        <p id="mapElementStatus" class="map-element-status" role="status" aria-live="polite" hidden></p>
-      </div>
+      <p id="mapElementStatus" class="map-element-status" role="status" aria-live="polite" hidden></p>
       <p id="downloadActivity" class="download-activity" role="status" hidden></p>
       <nav id="workspaceTabs" class="workspace-tabs" role="tablist" aria-label="Áreas do FlowDetect">
         <button id="workspaceAutomations" class="workspace-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="automationList">▦ Automações</button>
@@ -53,15 +51,7 @@
       </section>
       <section id="automationList" class="automation-list" aria-live="polite"></section>
       <section id="assistedView" class="assisted-view" aria-label="Execuções assistidas" hidden>
-        <div class="assisted-heading">
-          <div class="assisted-heading-copy">
-            <strong>Execução assistida</strong>
-            <span>Imagens, etapas e progresso ao vivo</span>
-          </div>
-          <label class="assisted-page-choice">Página
-            <select id="assistedPageSelect" aria-label="Escolher página para assistir"></select>
-          </label>
-        </div>
+        <select id="assistedPageSelect" aria-label="Escolher página para assistir"></select>
         <div id="assistedContent" class="assisted-content" role="region" aria-label="Acompanhamento da página escolhida"></div>
       </section>
 
