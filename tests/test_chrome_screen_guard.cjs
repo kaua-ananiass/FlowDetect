@@ -8,22 +8,19 @@ const fn = name => source.match(new RegExp(`^(?:async )?function ${name}\\(.*?^}
 const panelSource = fs.readFileSync(path.join(__dirname, '../flowdetect_chrome/sidepanel.js'), 'utf8');
 const panelFn = name => panelSource.match(new RegExp(`^(?:async )?function ${name}\\(.*?^}`, 'ms'))[0];
 
-test('screen settings are saved per automation and preserve other automations', async () => {
-  const automation = { id: 'first', steps: [{ type: 'ocr_text' }] };
-  let stored = [automation, { id: 'other' }];
-  const ctx = vm.createContext({ URL, Error, String, getAutomations: async () => stored,
-    setAutomations: async items => { stored = items; } });
-  vm.runInContext(['screenGuardFromForm', 'saveScreenGuard'].map(panelFn).join('\n'), ctx);
-  const fields = { '.screen-guard-enabled': { checked: true }, '.screen-guard-url': { value: 'https://site.test/page?id=2' },
-    '.screen-guard-text': { value: ' Empresa ' } };
-  await ctx.saveScreenGuard(automation, { querySelector: key => fields[key] });
-  assert.equal(stored[0].screen_guard.url, 'https://site.test/page');
-  assert.equal(stored[0].screen_guard.text, 'Empresa');
-  assert.equal(stored[0].steps, automation.steps);
-  assert.equal(stored[1].id, 'other');
-  fields['.screen-guard-text'].value = '';
-  await assert.rejects(ctx.saveScreenGuard(automation, { querySelector: key => fields[key] }), /texto/);
-  assert.equal(stored[0].screen_guard.text, 'Empresa');
+test('panel starts legacy automations without checking or rewriting the retired initial-screen setting', async () => {
+  const automation = {id:'legacy',screen_guard:{enabled:true,url:'invalid',text:''},steps:[{type:'ocr_text'}]};
+  const messages = [];
+  const ctx = vm.createContext({ ensureCurrentRuntime:async()=>true,getExecutionTargetTab:async()=>({id:42}),
+    spreadsheetLoopInfo:()=>null,selectedPageId:'p1',startingPages:new Set(),companyPreviewRows:new Map(),
+    renderExecutionPages:()=>{},renderAutomations:()=>{},
+    chrome:{runtime:{sendMessage:async message=>{messages.push(message);return {ok:true};}}} });
+  vm.runInContext(panelFn('runAutomation'),ctx);
+  await ctx.runAutomation(automation);
+  assert.equal(messages.length,1);
+  assert.equal(messages[0].type,'flowdetect-start');
+  assert.equal(messages[0].tabId,42);
+  assert.equal(automation.screen_guard.enabled,true,'Do not rewrite user data to disable the removed feature');
 });
 
 test('extension restart releases stale waiting states without interrupting live executions', () => {
@@ -96,15 +93,16 @@ test('switching tabs during validation cannot authorize the old tab',async()=>{
   const stable=readyContext().ctx;
   assert.equal((await stable.checkAutomationScreen(guard,99)).ready,false);
 });
-test('worker rejects the wrong screen before creating or capturing an execution',async()=>{
+test('worker ignores retired initial-screen metadata and reaches normal run creation',async()=>{
   let created=0;
   const ctx=context({activeRuns:new Map(),Number,
     checkAutomationScreen:async()=>({ready:false,reason:'Tela errada'}),
-    createRun:()=>{created++;throw Error('must not create')},
+    clearDownloadRouteForTab:async()=>{},
+    createRun:()=>{created++;throw Error('run creation reached')},
   });
   // Override the concrete checker to isolate execution ordering.
-  ctx.checkAutomationScreen=async()=>({ready:false,reason:'Tela errada'});
+  ctx.checkAutomationScreen=async()=>{throw Error('Retired gate must not be called')};
   vm.runInContext(fn('executeAutomationOnPage'),ctx);
-  await assert.rejects(ctx.executeAutomationOnPage({schema:'flowdetect_chrome_automation',version:3,steps:[{type:'ocr_text'}],screen_guard:guard},42,1,null,[],null,{id:'page-1'}),/Tela errada/);
-  assert.equal(created,0);
+  await assert.rejects(ctx.executeAutomationOnPage({schema:'flowdetect_chrome_automation',version:3,steps:[{type:'ocr_text'}],screen_guard:{enabled:true,url:'invalid'}},42,1,null,[],null,{id:'page-1'}),/run creation reached/);
+  assert.equal(created,1);
 });
