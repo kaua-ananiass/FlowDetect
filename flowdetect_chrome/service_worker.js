@@ -1271,9 +1271,8 @@ async function executeAutomationOnPage(automation, tabId, startRow, loopIncluded
   if (!Array.isArray(automation.steps) || !automation.steps.length) {
     throw new Error("Essa automação não possui blocos compatíveis com a extensão.");
   }
-  const screenGuard = normalizeScreenGuard(automation.screen_guard);
-  const screen = await checkAutomationScreen(screenGuard, tabId);
-  if (!screen.ready) throw new Error(screen.reason);
+  // Legacy screen_guard metadata no longer gates execution. The page/tab binding
+  // and the checks configured in the actual automation blocks still apply.
   if (downloadRouteId) await routeAvailable(downloadRouteId);
   else await clearDownloadRouteForTab(tabId);
   const run = createRun(automation, tabId, startRow, loopIncludedIndices, loopExcludedRows);
