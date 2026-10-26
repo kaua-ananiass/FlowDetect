@@ -22,7 +22,6 @@ const studioNewPairCode = document.querySelector("#studioNewPairCode");
 let automationsCache = [];
 let currentRun = {};
 let lastDownloadStatus = null;
-const screenGuardRefreshers = new Set();
 const carouselStates = new Map();
 const companyPreviewRows = new Map();
 const editableOcrDrafts = new Map();
@@ -222,9 +221,6 @@ document.querySelector("#openExecutionPage").addEventListener("click", async () 
   } catch (error) { pageFeedback(error); }
 });
 
-function refreshScreenGuards() {
-  for (const refresh of screenGuardRefreshers) refresh(true);
-}
 
 const getAutomations = async () => (await chrome.storage.local.get(AUTOMATIONS_KEY))[AUTOMATIONS_KEY] || [];
 const setAutomations = async (automations) => chrome.storage.local.set({ [AUTOMATIONS_KEY]: automations });
@@ -758,28 +754,6 @@ async function saveLoopExclusions(automationId, excludedKeys) {
   await setAutomations(updated);
 }
 
-function screenGuardFromForm(form) {
-  const enabled = form.querySelector(".screen-guard-enabled").checked;
-  const text = form.querySelector(".screen-guard-text").value.trim();
-  let url = form.querySelector(".screen-guard-url").value.trim();
-  if (enabled) {
-    let parsed;
-    try { parsed = new URL(url); } catch (_) { throw new Error("Informe uma URL valida para a tela da automacao."); }
-    if (!["http:", "https:"].includes(parsed.protocol) || !text) throw new Error("Informe a URL HTTP/HTTPS e o texto esperado na tela.");
-    parsed.search = "";
-    url = parsed.href;
-  }
-  return { enabled, url, text };
-}
-
-async function saveScreenGuard(automation, form) {
-  const guard = screenGuardFromForm(form);
-  const updated = { ...automation, screen_guard: guard };
-  const stored = await getAutomations();
-  await setAutomations(stored.map((item) => String(item.id) === String(automation.id) ? updated : item));
-  automation.screen_guard = guard;
-  return updated;
-}
 
 function clampSpreadsheetStartRow(value, total) {
   const parsed = Math.trunc(Number(value));
@@ -823,10 +797,6 @@ function automationWithEditableOcr(automation, values) {
 async function runAutomation(automation, startRow = 1, loopIncludedIndices = null, loopExcludedRows = [], downloadRouteId = null, pageId = selectedPageId) {
   if (!await ensureCurrentRuntime()) return;
   const tab = await getExecutionTargetTab(pageId);
-  if (automation.screen_guard?.enabled) {
-    const screen = await chrome.runtime.sendMessage({ type: "flowdetect-screen-ready", screenGuard: automation.screen_guard, tabId: tab.id });
-    if (!screen?.ready) throw new Error(screen?.reason || "Aguardando tela da automacao.");
-  }
   const loop = spreadsheetLoopInfo(automation);
   const selectedStartRow = loop ? clampSpreadsheetStartRow(startRow, loop.total) : 1;
   if (startingPages.has(pageId)) throw new Error("Esta página já está iniciando uma execução.");
@@ -932,16 +902,8 @@ function renderAutomation(automation, compact = false) {
   const pageIdForCard = selectedPageId;
   const runForCard = currentRun;
   const busy = startingPages.has(pageIdForCard) || ["running", "waiting_screen"].includes(currentRun?.status);
-  const guardForm = fragment.querySelector(".screen-guard-form");
-  const guard = automation.screen_guard || {};
-  guardForm.querySelector(".screen-guard-enabled").checked = Boolean(guard.enabled);
-  guardForm.querySelector(".screen-guard-url").value = guard.url || "";
-  guardForm.querySelector(".screen-guard-text").value = guard.text || "";
-  fragment.querySelector(".screen-guard-state").textContent = guard.enabled ? "Ativa" : "Desativada";
-  guardForm.querySelector("fieldset").disabled = busy;
   const runButton = fragment.querySelector(".run-automation");
-  const folderRunButton = fragment.querySelector(".download-run-with-folder");
-  const screenHint = fragment.querySelector(".screen-guard-hint");
+  const runHint = fragment.querySelector(".run-availability-hint");
   const editableEntries = editableOcrEntries(automation);
   const editSettings = fragment.querySelector(".ocr-edit-settings");
   const editError = fragment.querySelector(".ocr-edit-error");
@@ -977,58 +939,26 @@ function renderAutomation(automation, compact = false) {
         pager.update(fieldPage, Math.ceil(fields.length / 2));
       };
       editFields.after(pager.node);
+      card.addEventListener("card-settings-open", (event) => {
+        if (event.detail !== "ocr-edit-settings") return;
+        const invalid = fields.findIndex(field => !field.querySelector("input").value.trim());
+        if (invalid >= 0) { fieldPage = Math.floor(invalid / 2); updateFields(); }
+      });
       updateFields();
     }
   }
-  let checkVersion = 0;
-  let lastGuardKey = "";
-  const refreshGuard = async (invalidate = false) => {
-    const version = ++checkVersion;
-    if (invalidate) lastGuardKey = "";
-    if (busy) { runButton.disabled = folderRunButton.disabled = true; screenHint.hidden = true; return; }
+  const refreshRunAvailability = () => {
+    if (busy) { runButton.disabled = true; runHint.hidden = true; return; }
     if (loopSelection && !loopSelection.includedIndices.length) {
-      runButton.disabled = folderRunButton.disabled = true;
-      screenHint.hidden = false;
-      screenHint.textContent = "Inclua ao menos uma empresa antes de executar.";
+      runButton.disabled = true;
+      runHint.hidden = false;
+      runHint.textContent = "Inclua ao menos uma empresa antes de executar.";
       return;
     }
-    let configured;
-    try { configured = screenGuardFromForm(guardForm); } catch (error) {
-      runButton.disabled = folderRunButton.disabled = true; screenHint.hidden = false; screenHint.textContent = error.message; return;
-    }
-    screenHint.hidden = !configured.enabled;
-    if (!configured.enabled) { runButton.disabled = folderRunButton.disabled = false; runButton.title = ""; return; }
-    const key = JSON.stringify(configured);
-    if (key !== lastGuardKey) { runButton.disabled = folderRunButton.disabled = true; screenHint.textContent = "Identificando a tela da automacao..."; }
-    lastGuardKey = key;
-    const targetTabId = executionPages.find((page) => page.id === pageIdForCard)?.tabId;
-    const screen = targetTabId ? await chrome.runtime.sendMessage({ type: "flowdetect-screen-ready", screenGuard: configured,
-      tabId: targetTabId }).catch(() => null) : { ready: false, reason: "Vincule a aba do site usando ‘Usar aba atual’." };
-    if (version !== checkVersion || !runButton.isConnected) return;
-    runButton.disabled = folderRunButton.disabled = !screen?.ready;
-    runButton.title = screen?.reason || "Aguardando tela da automacao.";
-    screenHint.textContent = screen?.reason || "Aguardando tela da automacao.";
-    screenHint.classList.toggle("ready", Boolean(screen?.ready));
+    runButton.disabled = false;
+    runHint.hidden = true;
   };
-  const invalidateGuard = () => { lastGuardKey = ""; refreshGuard(); };
-  screenGuardRefreshers.add(refreshGuard);
-  guardForm.addEventListener("input", invalidateGuard);
-  runButton.disabled = folderRunButton.disabled = busy || Boolean(guard.enabled);
-  guardForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    saveScreenGuard(automation, guardForm).catch((error) => window.alert(error.message));
-  });
-  fragment.querySelector(".screen-guard-current").addEventListener("click", async () => {
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      const url = new URL(tab?.url || "");
-      if (!["http:", "https:"].includes(url.protocol)) throw new Error("Abra a pagina da automacao para usar sua URL.");
-      url.search = "";
-      guardForm.querySelector(".screen-guard-url").value = url.href;
-      guardForm.querySelector(".screen-guard-enabled").checked = true;
-      invalidateGuard();
-    } catch (error) { window.alert(error.message); }
-  });
+  runButton.disabled = busy;
   const loop = spreadsheetLoopInfo(automation);
   const loopStart = fragment.querySelector(".loop-start");
   const loopStartChoice = fragment.querySelector(".loop-start-choice");
@@ -1075,7 +1005,7 @@ function renderAutomation(automation, compact = false) {
       loopEdit.querySelector(".loop-edit-results").textContent = skipped
         ? `${skipped} ${skipped === 1 ? "linha ignorada" : "linhas ignoradas"} nesta execução.`
         : "Todas as linhas serão executadas.";
-      refreshGuard();
+      refreshRunAvailability();
     };
     loopStartChoice.addEventListener("change", () => {
       loopStartChoice.title = loopStartChoice.selectedOptions[0]?.title || "Selecione uma empresa para iniciar.";
@@ -1091,7 +1021,27 @@ function renderAutomation(automation, compact = false) {
     };
     let loopListPage = 0;
     const loopPager = compact ? makeCardPager(() => { loopListPage--; renderLoopList(); }, () => { loopListPage++; renderLoopList(); }) : null;
-    if (loopPager) list.after(loopPager.node);
+    let selectionActions;
+    if (loopPager) {
+      list.after(loopPager.node);
+      selectionActions = document.createElement("select");
+      selectionActions.className = "loop-selection-actions";
+      selectionActions.setAttribute("aria-label", "Ações de seleção das empresas");
+      for (const [value, text] of [["", "Selecionar…"], ["include", "Marcar resultados"], ["exclude", "Desmarcar resultados"], ["all", "Incluir todas"]]) {
+        const option = document.createElement("option"); option.value = value; option.textContent = text; selectionActions.append(option);
+      }
+      selectionActions.disabled = busy;
+      selectionActions.addEventListener("change", () => {
+        const action = selectionActions.value; selectionActions.value = "";
+        if (action === "include") includeFiltered.click();
+        if (action === "exclude") excludeFiltered.click();
+        if (action === "all") loopEdit.querySelector(".loop-include-all").click();
+      });
+      loopPager.node.prepend(selectionActions);
+      const saveLabel = saveExclusions.parentElement;
+      saveLabel.title = "Manter as empresas excluídas nas próximas execuções desta automação";
+      for (const child of [...saveLabel.childNodes]) if (child.nodeType === Node.TEXT_NODE) child.textContent = " Lembrar seleção";
+    }
     const renderLoopList = () => {
       const matches = matchingLoopRows();
       const filtered = Boolean(search.value.trim());
@@ -1099,6 +1049,11 @@ function renderAutomation(automation, compact = false) {
       excludeFiltered.textContent = filtered ? `Desmarcar encontradas (${matches.length})` : `Desmarcar todas (${loop.total})`;
       includeFiltered.disabled = busy || !matches.length;
       excludeFiltered.disabled = busy || !matches.length;
+      if (selectionActions) {
+        selectionActions.options[1].textContent = includeFiltered.textContent;
+        selectionActions.options[2].textContent = excludeFiltered.textContent;
+        selectionActions.options[1].disabled = selectionActions.options[2].disabled = !matches.length;
+      }
       const oldTop = list.scrollTop;
       const pageSize = compact ? 2 : 100;
       loopListPage = Math.max(0, Math.min(loopListPage, Math.ceil(matches.length / pageSize) - 1));
@@ -1125,6 +1080,11 @@ function renderAutomation(automation, compact = false) {
         const subtitle = document.createElement("small");
         subtitle.textContent = `#${index + 1} · ${cnpj ? `CNPJ ${cnpj}` : `${loop.name}: ${value || "(vazio)"}`}`
           + (cnpj && cnpj !== value ? ` · ${loop.name}: ${value || "(vazio)"}` : "");
+        if (compact && company.replace(/\D/g, "") === cnpj && cnpj) {
+          title.textContent = cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
+          subtitle.hidden = true;
+          label.title = `Linha ${index + 1} · CNPJ ${cnpj}`;
+        }
         copy.append(title, subtitle);
         label.append(checkbox, copy);
         return label;
@@ -1279,7 +1239,7 @@ function renderAutomation(automation, compact = false) {
     appendLogs(fragment.querySelector(".run-log"), currentRun.logs);
   }
 
-  const startConfiguredAutomation = async (withFolder) => {
+  const startConfiguredAutomation = async () => {
     const startRow = loop ? clampSpreadsheetStartRow(loopStartChoice.value, loopSelection.includedIndices.length) : 1;
     let configuredOcr;
     let execution;
@@ -1287,40 +1247,34 @@ function renderAutomation(automation, compact = false) {
       configuredOcr = automationWithEditableOcr(automation, drafts);
       execution = loop ? automationWithSelectedLoopRows(configuredOcr, loopSelection.includedIndices) : configuredOcr;
     } catch (error) {
-      if (loop && !loopSelection.includedIndices.length) loopEdit.open = true;
+      if (loop && !loopSelection.includedIndices.length) {
+        loopEdit.open = true;
+        card.dispatchEvent(new CustomEvent("card-settings-open", { detail: "loop-edit-settings" }));
+      }
       else {
         editSettings.open = true;
         editError.textContent = String(error.message || error);
         editError.hidden = false;
+        card.dispatchEvent(new CustomEvent("card-settings-open", { detail: "ocr-edit-settings" }));
       }
       return;
     }
     if (loopSelection?.excludedRows.length && !window.confirm(
       `Executar ${loopSelection.includedIndices.length} de ${loop.total} linhas?\n${loopSelection.excludedRows.length} serão ignoradas.`)) return;
-    return saveScreenGuard(automation, guardForm).then(async (configured) => {
+    try {
       if (loop) await saveLoopExclusions(automation.id,
         loopEdit.querySelector(".loop-save-exclusions").checked ? loopExcludedKeys : []);
-      if (withFolder) {
-        const tab = await getExecutionTargetTab(pageIdForCard);
-        if (!tab?.id) throw new Error("Abra a aba da automacao antes de escolher o destino.");
-        const pendingId = crypto.randomUUID();
-        await chrome.storage.local.set({ [`flowdetectPendingFolderRun:${pendingId}`]: {
-          automation: { ...execution, screen_guard: configured.screen_guard }, tabId: tab.id, pageId: pageIdForCard,
-          startRow, loopIncludedIndices: loopSelection?.includedIndices || null,
-          loopExcludedRows: loopSelection?.excludedRows || [],
-        } });
-        await chrome.tabs.create({ url: chrome.runtime.getURL(`download-launch.html?id=${pendingId}`) });
-        return;
-      }
-      return runAutomation({ ...execution, screen_guard: configured.screen_guard }, startRow,
+      return await runAutomation(execution, startRow,
         loopSelection?.includedIndices || null, loopSelection?.excludedRows || [], null, pageIdForCard);
-    }).catch((error) => {
+    } catch (error) {
       const page = executionPages.find((item) => item.id === pageIdForCard);
       pageFeedback(`${page?.name || "Página"}: ${String(error.message || error)}`);
-    });
+    }
   };
-  fragment.querySelector(".run-automation").addEventListener("click", () => startConfiguredAutomation(false));
-  folderRunButton.addEventListener("click", () => startConfiguredAutomation(true));
+  runButton.addEventListener("click", startConfiguredAutomation);
+  fragment.querySelector(".download-open-settings").addEventListener("click", () => {
+    chrome.tabs.create({ url: "chrome://settings/downloads" }).catch(pageFeedback);
+  });
   // Native confirm dialogs are unreliable in Chrome action popups. Confirm in-place.
   const deleteButton = fragment.querySelector(".delete-automation");
   const confirmation = document.createElement("div");
@@ -1364,10 +1318,13 @@ function makeCardPager(previous, next) {
 }
 
 function installCardSettings(card, key) {
+  const actions = document.createElement("div"); actions.className = "card-primary-actions";
+  actions.append(card.querySelector(".run-automation"));
+  card.append(actions);
   const panel = document.createElement("section"); panel.className = "card-settings-panel";
   const choice = document.createElement("select"); choice.className = "card-settings-choice";
   choice.setAttribute("aria-label", "Seção de configurações");
-  const sections = [["loop-edit-settings", "Empresas"], ["ocr-edit-settings", "Textos OCR"], ["screen-guard-settings", "Tela inicial"], ["download-settings", "Downloads"]]
+  const sections = [["loop-edit-settings", "Empresas"], ["ocr-edit-settings", "Textos OCR"], ["download-settings", "Downloads"]]
     .map(([className, title]) => ({ node: card.querySelector(`.${className}`), className, title }))
     .filter(section => section.node && !section.node.hidden);
   panel.append(choice);
@@ -1380,7 +1337,11 @@ function installCardSettings(card, key) {
     const state = cardEditorViews.get(key);
     card.dataset.editing = String(Boolean(state));
     panel.hidden = !state;
-    configure.textContent = state ? "← Voltar" : "Configurações";
+    configure.textContent = state ? "←" : "Configurações";
+    configure.title = state ? "Voltar à execução" : "Configurar esta automação";
+    configure.setAttribute("aria-label", configure.title);
+    if (state) card.querySelector(".automation-card-top").prepend(configure);
+    else actions.prepend(configure);
     configure.setAttribute("aria-expanded", String(Boolean(state)));
     choice.value = sections.some(section => section.className === state) ? state : sections[0].className;
     sections.forEach(section => { section.node.hidden = section.className !== choice.value; });
@@ -1391,6 +1352,11 @@ function installCardSettings(card, key) {
     refresh();
   });
   choice.addEventListener("change", () => { cardEditorViews.set(key, choice.value); refresh(); });
+  card.addEventListener("card-settings-open", event => {
+    if (sections.some(section => section.className === event.detail)) {
+      cardEditorViews.set(key, event.detail); refresh();
+    }
+  });
   card.append(configure, panel); refresh();
 }
 
@@ -1624,17 +1590,17 @@ function makeAutomationTile(automation) {
     const close = document.createElement("button");
     close.type = "button";
     close.className = "automation-flip-close";
-    close.textContent = "← Recolher";
+    close.textContent = "←";
+    close.title = "Recolher automação";
     close.setAttribute("aria-label", "Recolher detalhes da automação");
     close.addEventListener("click", closeExpandedAutomation);
-    card.prepend(close);
+    card.querySelector(".automation-card-top").prepend(close);
     item.append(fragment);
   }
   return item;
 }
 
 function renderAutomations(automations = automationsCache) {
-  screenGuardRefreshers.clear();
   automationsCache = Array.isArray(automations) ? automations : [];
   // Execution graphics and live images never displace the automation cards.
   const isRunFocused = false;
@@ -1688,14 +1654,12 @@ function renderAutomations(automations = automationsCache) {
   if (isRunFocused) {
     const automation = ordered.find((item) => String(item.id) === activeId);
     if (automation) automationList.append(renderAutomation(automation));
-    refreshScreenGuards();
     return;
   }
 
   // One automation = one DOM grid item. Expanding transforms that item
   // in-place; the other tiles reflow beneath it.
   for (const automation of ordered) automationList.append(makeAutomationTile(automation));
-  refreshScreenGuards();
 }
 
 
@@ -1823,8 +1787,6 @@ function renderAssistedView() {
   const legacyManager = monitor.querySelector(".block-carousel-manager");
   if (legacyManager) legacyManager.hidden = true;
   content.append(monitor);
-  // Form controls are not mounted here, so there is no guard form to poll.
-  screenGuardRefreshers.clear();
 }
 
 function setWorkspaceView(nextView, persist = true) {
@@ -1861,10 +1823,6 @@ document.querySelector("#workspaceAutomations").addEventListener("click", () => 
 document.querySelector("#workspaceAssisted").addEventListener("click", () => setWorkspaceView("assisted"));
 document.querySelector("#assistedPageSelect").addEventListener("change", (event) => selectExecutionPage(event.target.value));
 
-chrome.tabs.onActivated?.addListener(refreshScreenGuards);
-chrome.tabs.onUpdated?.addListener(refreshScreenGuards);
-chrome.windows?.onFocusChanged?.addListener(refreshScreenGuards);
-setInterval(() => { for (const refresh of screenGuardRefreshers) refresh(); }, 1000);
 
 importInput.addEventListener("change", async () => {
   const files = Array.from(importInput.files || []);
