@@ -1,5 +1,16 @@
 # Histórico de versões
 
+## 0.2.69 — 26/10/2026
+
+- Tema do painel acompanha a cor da página selecionada.
+- Seção Páginas simplificada, sem moldura e com espaçamentos reduzidos.
+- Inclui a correção de execução assistida antiga da versão 0.2.68.
+
+## 0.2.68 — 26/10/2026
+
+- Execuções assistidas deixam de exibir execuções encerradas de automações removidas da página.
+- Relatórios salvos são preservados; execuções ativas continuam com monitoramento e controle de parada.
+
 ## 0.2.67 — 26/10/2026
 
 - Imagens de referência exibidas inteiras e proporcionais na execução assistida.

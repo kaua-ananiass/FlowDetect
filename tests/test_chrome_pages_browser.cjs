@@ -408,7 +408,13 @@ test('execution pages: distinct tabs, independent runs, deletion and responsive 
     await page.locator('.automation-import-card').waitFor();
     assert.equal(await page.locator('.automation-flip-item').count(), 0);
     await page.locator('#workspaceAssisted').click();
-    assert.equal(await page.locator('#assistedContent .block-carousel').count(), 1, 'Deleting library item preserves run history');
+    assert.equal(await page.locator('#assistedContent .block-carousel').count(), 0, 'Deleted automation must not leave a stale assisted monitor');
+    assert.equal(await page.locator('#assistedContent .assisted-empty').isVisible(), true);
+    assert.ok(await page.evaluate(() => pageRuns.get('p1')?.id), 'The saved report remains available in storage');
+    await page.evaluate(() => updateRun({ ...pageRuns.get('p1'), status: 'running' }));
+    assert.equal(await page.locator('#assistedContent .block-carousel').count(), 1, 'Active executions retain their monitoring and stop controls');
+    await page.evaluate(() => updateRun({ ...pageRuns.get('p1'), status: 'stopped' }));
+    assert.equal(await page.locator('#assistedContent .assisted-empty').isVisible(), true);
     assert.deepEqual(errors,[]);
     if(process.env.FLOWDETECT_TEST_SCREENSHOT)await page.screenshot({path:process.env.FLOWDETECT_TEST_SCREENSHOT});
   }finally{await browser?.close();await new Promise(r=>server.close(r));}

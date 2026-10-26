@@ -132,7 +132,10 @@ function renderExecutionPages() {
   nav.setAttribute("role", "tablist");
 
   const page = executionPages.find((item) => item.id === selectedPageId);
-  document.querySelector(".execution-pages").style.setProperty("--selected-page-color", page ? pageAccent(page, executionPages.indexOf(page)) : "#12b5cb");
+  const selectedAccent = page ? pageAccent(page, executionPages.indexOf(page)) : PAGE_COLORS[0];
+  document.documentElement.style.setProperty("--accent", selectedAccent);
+  document.documentElement.style.setProperty("--accent-soft", `color-mix(in srgb, ${selectedAccent} 65%, white)`);
+  document.documentElement.style.setProperty("--selected-page-color", selectedAccent);
   const busy = startingPages.has(selectedPageId) || ["running", "waiting_screen"].includes(currentRun?.status);
   const target = document.querySelector("#executionPageTarget");
   target.textContent = !page ? "Crie uma página para vincular uma aba do navegador."
@@ -1694,7 +1697,15 @@ function renderAssistedView() {
   content.replaceChildren();
 
   const page = executionPages.find((item) => item.id === selectedPageId);
-  const run = pageRuns.get(selectedPageId);
+  const savedRun = pageRuns.get(selectedPageId);
+  const savedRunActive = ["running", "waiting_screen"].includes(savedRun?.status);
+  const listedAutomation = automationsCache.find((item) => (
+    String(item.id) === String(savedRun?.automationId)
+    && (item.pageId === selectedPageId || (!item.pageId && selectedPageId === executionPages[0]?.id))
+  ));
+  // Keep the saved report, but do not present a deleted automation as a current
+  // assisted run. An active execution can still be followed and stopped.
+  const run = savedRunActive || listedAutomation ? savedRun : null;
   const title = document.createElement("div");
   title.className = "assisted-run-title";
   const copy = document.createElement("strong");

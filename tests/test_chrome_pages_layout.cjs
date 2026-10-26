@@ -63,6 +63,22 @@ test('compact popup keeps pages legible and never clips action buttons',async()=
     assert.deepEqual(pageLayout.numbers, ['1', '2']);
     assert.match(pageLayout.selectedLabel, /Página 1, Pronta/);
     assert.equal(await page.locator('.execution-page-state').first().isVisible(), false);
+    const themes = await page.evaluate(() => {
+      const original = selectedPageId;
+      const result = executionPages.slice(0, 2).map(p => {
+        selectExecutionPage(p.id);
+        return {
+          accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
+          workspace: getComputedStyle(document.querySelector('.workspace-tab.is-active')).backgroundImage,
+          importBorder: getComputedStyle(document.querySelector('.import-automation')).borderColor,
+        };
+      });
+      selectExecutionPage(original);
+      return result;
+    });
+    assert.notEqual(themes[0].accent, themes[1].accent);
+    assert.notEqual(themes[0].workspace, themes[1].workspace);
+    assert.notEqual(themes[0].importBorder, themes[1].importBorder);
     const switching = await page.evaluate(() => {
       const sharedLayout = () => ['.popup-toolbar','.popup-tools','.studio-pair-bar','#mapElementButton','#workspaceTabs']
         .map(selector => {

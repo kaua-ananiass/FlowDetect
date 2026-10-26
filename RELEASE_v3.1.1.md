@@ -1,6 +1,6 @@
 # FlowDetect 3.1.1
 
-**Studio 3.1.1 · Extensão Chrome 0.2.67**
+**Studio 3.1.1 · Extensão Chrome 0.2.69**
 
 ## Novo design da extensão Chrome
 
@@ -18,13 +18,16 @@ Painel mais limpo, imagens em destaque e controles organizados para acompanhar s
 - **Mais espaço:** cabeçalhos compactos e botão Mapear junto de Importar.
 - **Configuração no card:** empresas, busca e textos OCR no próprio painel.
 - **Páginas independentes:** organize e acompanhe automações por aba.
+- **Cores por página:** botões, abas e destaques acompanham a página selecionada.
+- **Painel mais compacto:** seção Páginas sem moldura e com menos espaçamento.
+- **Execução assistida corrigida:** automações removidas deixam de aparecer como execuções antigas no painel.
 - **Downloads simplificados:** acesso direto às configurações de downloads do Chrome.
 - **Fluxos antigos:** retirada a trava legada de “Tela inicial”.
 
 ## Downloads
 
 - [Studio 3.1.1 — Windows x64 (NSIS)](https://github.com/kaua-ananiass/FlowDetect/releases/download/v3.1.1/FlowDetect.Studio_3.1.1_x64-setup.exe)
-- [Extensão Chrome 0.2.67 — ZIP](https://github.com/kaua-ananiass/FlowDetect/releases/download/v3.1.1/FlowDetect-para-Chrome-v0.2.67.zip)
+- [Extensão Chrome 0.2.69 — ZIP](https://github.com/kaua-ananiass/FlowDetect/releases/download/v3.1.1/FlowDetect-para-Chrome-v0.2.69.zip)
 
 **Chrome:** extraia o ZIP → abra `chrome://extensions` → ative **Modo do desenvolvedor** → **Carregar sem compactação**.
 
