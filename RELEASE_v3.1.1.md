@@ -9,7 +9,7 @@ Painel mais limpo, imagens em destaque e controles organizados para acompanhar s
 <table>
   <tr><th>Automações e páginas</th><th>Execução assistida</th></tr>
   <tr>
-    <td><img width="360" alt="Novo painel de automações da extensão Chrome" src="https://raw.githubusercontent.com/kaua-ananiass/FlowDetect/4d2fe88ae2eb5c7fdcd63f42a857d7327dbc3ca5/docs/releases/v3.1.1/chrome-automacoes.png" /></td>
+    <td><img width="360" alt="Novo painel de automações e páginas sem moldura da extensão Chrome" src="https://raw.githubusercontent.com/kaua-ananiass/FlowDetect/33afb3839b479ab02d9c2f04a2679013de23d61f/docs/releases/v3.1.1/chrome-automacoes.png" /></td>
     <td><img width="360" alt="Novo painel de execução assistida com imagem em destaque" src="https://raw.githubusercontent.com/kaua-ananiass/FlowDetect/4d2fe88ae2eb5c7fdcd63f42a857d7327dbc3ca5/docs/releases/v3.1.1/chrome-execucao-assistida.png" /></td>
   </tr>
 </table>
