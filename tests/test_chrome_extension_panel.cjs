@@ -65,10 +65,11 @@ test("Chrome popup keeps execution details inside the active automation card", (
   assert.match(html, /class="loop-edit-search"/);
   assert.match(html, /class="loop-include-filtered"/);
   assert.match(html, /class="loop-exclude-filtered"/);
-  assert.match(html, /class="download-run-with-folder"/);
-  assert.match(fs.readFileSync(path.join(root, "download-launch.html"), "utf8"), /id="chooseFolder"/);
+  assert.match(html, /class="download-open-settings"/);
+  assert.doesNotMatch(html, /screen-guard-form|download-run-with-folder/);
   assert.ok(manifest.permissions.includes("downloads"));
-  assert.match(source, /download-launch\.html\?id=/);
+  assert.match(source, /chrome:\/\/settings\/downloads/);
+  assert.doesNotMatch(source, /download-launch\.html\?id=|flowdetect-screen-ready/);
   assert.match(source, /downloadRouteId\s*\}/);
   assert.match(html, /class="loop-save-exclusions"/);
   assert.match(css, /\.loop-edit-row\.is-excluded/);
