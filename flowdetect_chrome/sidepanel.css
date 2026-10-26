@@ -2558,7 +2558,7 @@ body:not(.run-focused) .automation-flip-detail > .automation-card-top {
 .assisted-content .run-log-details summary { padding: 3px 0; }
 
 /* The expanded library card is a quick-action surface, not the full editor. */
-.automation-list:has(> .is-expanded) { overflow: hidden; align-content: start; }
+.automation-list:has(> .is-expanded) { overflow: hidden; align-content: start; padding-bottom: 0; }
 .automation-list:has(> .is-expanded) > .automation-flip-item:not(.is-expanded) { display: none; }
 .automation-list > .automation-flip-item.is-expanded { min-height: 0; }
 .automation-flip-item.is-expanded > .automation-flip-detail {
@@ -2595,7 +2595,7 @@ body:not(.run-focused) .automation-flip-detail > .automation-card-top {
 /* Square-ish card: settings replace its content, never expand the popup. */
 .automation-list > .automation-flip-item.is-expanded { width: 296px; max-width: 100%; justify-self: center; }
 .automation-flip-item.is-expanded > .automation-flip-detail { height: 256px; gap: 5px; border-radius: 16px; }
-.automation-flip-detail:not([data-editing="true"]) { align-content: start; row-gap: 12px !important; }
+.automation-flip-item.is-expanded > .automation-flip-detail:not([data-editing="true"]) { align-content: space-between; row-gap: 6px !important; }
 .automation-flip-detail .automation-card-actions { gap: 5px; }
 .automation-flip-detail .automation-card-top { min-width: 0; }
 .automation-flip-detail .automation-card-title { min-width: 0; }
@@ -2634,3 +2634,68 @@ body:not(.run-focused) .automation-flip-detail > .automation-card-top {
 .card-settings-panel .loop-edit-footer label { font-size: 8px; gap: 3px; }
 .card-settings-panel .loop-edit-footer button { white-space: nowrap; font-size: 8px; }
 .card-settings-panel .download-settings-body { padding: 5px 0; gap: 8px; }
+
+/* Content-led spacing: a shared header, readable controls and no forced blank rows. */
+.automation-list > .automation-flip-item.is-expanded {
+  width: 354px; border-color: rgba(91,194,215,.32); border-radius: 14px;
+  box-shadow: none; background: linear-gradient(145deg,#0c2535,#0a1929);
+}
+.automation-flip-item.is-expanded > .automation-flip-detail,
+.automation-flip-item.is-expanded > .automation-flip-detail:not([data-editing="true"]) {
+  height: auto; align-content: start; padding: 10px !important; gap: 9px !important;
+}
+body:not(.run-focused) .automation-flip-detail > .automation-card-top {
+  grid-row: 1; min-height: 28px; gap: 8px; justify-content: initial;
+}
+.automation-flip-detail .automation-card-title { flex: 1; }
+.automation-flip-detail .automation-name { font-size: 13px !important; }
+.automation-flip-detail .automation-card-top .automation-flip-close,
+.automation-flip-detail .automation-card-top .automation-configure {
+  flex: 0 0 28px; width: 28px; height: 28px; min-height: 28px; padding: 0; margin: 0;
+  border: 1px solid #7bb8cb25; border-radius: 8px; color: #b8dce7; background: #ffffff05; font-size: 14px;
+}
+.automation-flip-detail[data-editing="true"] .automation-flip-close { display: none; }
+.automation-flip-detail .delete-automation { width: 28px; height: 28px; min-height: 28px; }
+.automation-flip-detail .step-count { font-size: 10px; background: transparent; border: 0; padding: 0; }
+.automation-flip-detail > .automation-configure {
+  grid-row: auto; grid-column: 1; height: 32px; font-size: 11px; border-radius: 8px;
+}
+.automation-flip-detail > .run-automation {
+  grid-column: 2; min-height: 32px; height: 32px; font-size: 11px;
+}
+.automation-flip-detail > .loop-start { margin: 2px 0 !important; }
+.automation-flip-detail:not([data-editing="true"]) .loop-start-label { display: grid !important; gap: 6px; font-size: 11px; }
+.automation-flip-detail .loop-start-choice { height: 32px; font-size: 11px; padding: 4px 8px; }
+.automation-flip-detail .screen-guard-hint { font-size: 10px; line-height: 14px; }
+.card-settings-panel { gap: 8px; }
+.card-settings-choice { height: 28px; font-size: 11px; border-radius: 8px; }
+.card-settings-panel input:not([type="checkbox"]) { height: 28px; min-height: 28px; font-size: 11px; padding: 4px 8px; }
+.card-settings-panel button { height: 28px; min-height: 28px; font-size: 10px; }
+.card-settings-panel .loop-edit-body { gap: 5px; }
+.card-settings-panel .loop-edit-list { gap: 4px; }
+.card-settings-panel .loop-edit-row { min-height: 34px; padding: 4px 8px; gap: 8px; border-radius: 8px; }
+.card-settings-panel .loop-edit-row strong { font-size: 11px; font-weight: 600; line-height: 14px; }
+.card-settings-panel .loop-edit-row small { font-size: 10px; line-height: 12px; }
+.card-settings-panel input[type="checkbox"] { width: 14px; height: 14px; flex-shrink: 0; }
+.card-settings-panel .loop-edit-bulk-actions,
+.card-settings-panel .loop-edit-footer .loop-include-all { display: none; }
+.card-settings-panel .loop-edit-footer label { font-size: 11px; gap: 6px; line-height: 16px; }
+.card-settings-pager { height: 28px; gap: 6px; margin: 0; font-size: 11px; }
+.card-settings-pager button { width: 30px; flex-shrink: 0; }
+.loop-selection-actions { flex: 1; min-width: 0; height: 28px; margin-right: 6px; border: 1px solid #75bcc32b; border-radius: 7px; background: #102333; color: #b8dce7; font-size: 11px; }
+.card-settings-panel .screen-guard-fields { gap: 4px; }
+.card-settings-panel .screen-guard-fields label,
+.card-settings-panel .ocr-edit-fields label { font-size: 11px; }
+.card-settings-panel .ocr-edit-fields { gap: 8px; }
+.card-settings-panel .ocr-edit-fields label { gap: 5px; }
+.card-settings-panel .download-settings-body { gap: 10px; }
+.automation-flip-detail button:focus-visible,
+.automation-flip-detail select:focus-visible { outline: 2px solid #64d9e0; outline-offset: 2px; }
+.card-primary-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1.25fr; gap: 8px; }
+.card-primary-actions > button { height: 32px; min-height: 32px; margin: 0; border-radius: 8px; padding: 4px 8px; font-size: 11px; }
+.card-primary-actions .automation-configure { border: 1px solid #6bcddd25; background: #12b5cb0c; color: #a4dbe6; }
+.automation-flip-detail[data-editing="true"] > .card-primary-actions { display: none; }
+.run-availability-hint { grid-column: 1 / -1; margin: 0; color: #a5b6c2; font-size: 11px; line-height: 15px; }
+.automation-flip-detail[data-editing="true"] > .run-availability-hint { display: none; }
+.card-settings-panel .download-open-settings { width: 100%; height: 34px; border: 1px solid #75bcc340; border-radius: 8px; color: #c7eef4; background: #12b5cb12; font-size: 11px; }
+.card-settings-panel .download-settings-body p { font-size: 11px; line-height: 1.5; }
