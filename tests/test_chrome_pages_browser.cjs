@@ -27,6 +27,7 @@ test('execution pages: distinct tabs, independent runs, deletion and responsive 
       const pagesKey = 'flowdetectChromeExecutionPages', runPrefix = 'flowdetectChromePageRun:';
       const automation = {
         id:'demo', schema:'flowdetect_chrome_automation', version:3,
+        screen_guard:{enabled:true,url:'https://old-start-screen.invalid/',text:'Legacy gate'},
         automation:{nome:'Automação de teste'}, steps:[
           {type:'ocr_text',text:'Pesquisar',source_order:1,sequence:'principal',preview_image:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9T1hFbAAAAAASUVORK5CYII='},
           {type:'focused_text',text:'Teste',source_order:2,sequence:'principal'}]
@@ -340,11 +341,15 @@ test('execution pages: distinct tabs, independent runs, deletion and responsive 
     const tabBeforeSettings = await page.evaluate(() => window.createdTab?.url);
     await page.locator('.automation-configure').click();
     assert.equal(await page.evaluate(() => window.createdTab?.url), tabBeforeSettings, 'Settings never opens another tab');
-    await page.locator('.card-settings-choice').selectOption('screen-guard-settings');
-    assert.equal(await page.locator('.screen-guard-text').isVisible(), true);
-    await page.locator('.screen-guard-text').fill('Tela inicial de teste');
-    await page.locator('.screen-guard-form button[type="submit"]').click();
-    await page.waitForFunction(() => JSON.parse(sessionStorage.getItem('test-db')).flowdetectChromeAutomations.find(a => a.id === 'demo').screen_guard?.text === 'Tela inicial de teste');
+    assert.equal(await page.locator('.screen-guard-form').count(),0);
+    assert.equal(await page.locator('.card-settings-choice option[value="screen-guard-settings"]').count(),0);
+    await page.locator('.card-settings-choice').selectOption('download-settings');
+    const startsBeforeDownloads = await page.evaluate(() => messages.filter(m => m.type === 'flowdetect-start').length);
+    await page.locator('.download-open-settings').click();
+    assert.equal(await page.evaluate(() => window.createdTab.url),'chrome://settings/downloads');
+    assert.equal(await page.evaluate(() => messages.filter(m => m.type === 'flowdetect-start').length), startsBeforeDownloads);
+    assert.equal(await page.evaluate(() => messages.some(m => m.type === 'flowdetect-screen-ready')),false);
+    assert.equal(await page.evaluate(() => Object.keys(JSON.parse(sessionStorage.getItem('test-db'))).some(k=>k.startsWith('flowdetectPendingFolderRun:'))),false);
     await page.locator('.automation-configure').click();
     await page.locator('.delete-automation').click();
     assert.equal(await page.locator('.automation-delete-confirm').isVisible(), true);

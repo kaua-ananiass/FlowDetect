@@ -144,7 +144,7 @@ test('compact popup keeps pages legible and never clips action buttons',async()=
     if(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR){
       await page.screenshot({path:path.join(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR,'flip-expanded-390.png')});
     }
-    // A large company/OCR configuration stays inside the same square card.
+    // Settings use the available width, with content-led height and no scrolling.
     await page.evaluate(() => {
       const items = structuredClone(automationsCache);
       items[0].steps[0] = {type:'data_source',name:'CNPJ',source_order:1,
@@ -165,11 +165,12 @@ test('compact popup keeps pages legible and never clips action buttons',async()=
           listScroll:list.scrollHeight,listHeight:list.clientHeight,
           clipped:visible.filter(el=>{const r=el.getBoundingClientRect();return r.bottom>box.bottom||r.right>box.right||r.left<box.left;}).map(el=>el.className)};
       });
-      assert.ok(fit.width/fit.height<1.25 && fit.bottom<=600,JSON.stringify(fit));
+      assert.ok(fit.width>=340 && fit.width<=374 && fit.bottom<=600,JSON.stringify(fit));
       assert.ok(fit.scroll<=fit.client+1 && fit.listScroll<=fit.listHeight+1,JSON.stringify(fit));
       assert.deepEqual(fit.clipped,[],JSON.stringify(fit));
     };
-    for(const section of ['loop-edit-settings','ocr-edit-settings','screen-guard-settings','download-settings']) {
+    assert.equal(await page.locator('.screen-guard-settings').count(),0);
+    for(const section of ['loop-edit-settings','ocr-edit-settings','download-settings']) {
       await page.locator('.card-settings-choice').selectOption(section);
       await checkInlineFit();
       if(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR) await page.screenshot({animations:'disabled',path:path.join(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR,`inline-${section}.png`)});
@@ -183,6 +184,14 @@ test('compact popup keeps pages legible and never clips action buttons',async()=
     await page.locator('.loop-edit-search').fill('Empresa 33');
     assert.equal(await page.locator('.loop-edit-row').count(),1);
     await checkInlineFit();
+    await page.locator('.loop-selection-actions').selectOption('exclude');
+    assert.match(await page.locator('.loop-edit-count').textContent(),/31\/33/);
+    await page.locator('.loop-selection-actions').selectOption('include');
+    assert.match(await page.locator('.loop-edit-count').textContent(),/32\/33/);
+    await page.locator('.loop-selection-actions').selectOption('all');
+    assert.match(await page.locator('.loop-edit-count').textContent(),/33\/33/);
+    assert.equal(await page.locator('.loop-selection-actions').inputValue(),'');
+    await page.locator('.loop-save-exclusions').check();
     await page.locator('.card-settings-choice').selectOption('ocr-edit-settings');
     await page.locator('.ocr-edit-fields input:visible').first().fill('Edição preservada');
     await page.locator('.ocr-edit-settings .card-settings-pager button').last().click();
@@ -191,6 +200,20 @@ test('compact popup keeps pages legible and never clips action buttons',async()=
     assert.equal(await page.locator('.ocr-edit-fields input:visible').first().inputValue(),'Edição preservada');
     await page.locator('.automation-configure').click();
     await checkInlineFit();
+    if(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR) await page.screenshot({animations:'disabled',path:path.join(process.env.FLOWDETECT_TEST_SCREENSHOT_DIR,'square-home-companies.png')});
+    await page.locator('.automation-configure').click();
+    await page.locator('.card-settings-choice').selectOption('ocr-edit-settings');
+    await page.locator('.ocr-edit-settings .card-settings-pager button').last().click();
+    await page.locator('.ocr-edit-settings .card-settings-pager button').last().click();
+    await page.locator('.ocr-edit-fields input:visible').first().fill('');
+    await page.locator('.automation-configure').click();
+    await page.locator('.run-automation').click();
+    assert.equal(await page.locator('.card-settings-choice').inputValue(),'ocr-edit-settings');
+    assert.equal(await page.locator('.ocr-edit-error').isVisible(),true);
+    assert.equal(await page.locator('.ocr-edit-fields input:visible').first().inputValue(),'');
+    await checkInlineFit();
+    await page.locator('.ocr-edit-fields input:visible').first().fill('Texto corrigido');
+    await page.locator('.automation-configure').click();
     await page.locator('.automation-flip-close').click();
     await page.waitForFunction(()=>document.querySelectorAll('.automation-flip-detail').length===0);
     assert.equal(await page.locator('.automation-flip-item.is-expanded').count(),0);
