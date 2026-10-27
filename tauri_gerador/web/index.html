@@ -9,6 +9,8 @@
     <link rel="preload" href="./vendor/fonts/cormorant-garamond-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="./vendor/fonts/fonts.css" />
     <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./integrations.css" />
+    <link rel="stylesheet" href="./alterdata.css" />
   </head>
   <body>
     <section id="loginOverlay" class="login-overlay welcome-overlay" aria-modal="true" role="dialog" aria-labelledby="loginTitleText">
@@ -142,9 +144,51 @@
         <button id="commandTabButton" class="workspace-tab" data-tab="commands">Mapa dos comandos</button>
         <button id="workbookTabButton" class="workspace-tab" data-tab="workbook">Planilha e dados</button>
         <button id="agentsTabButton" class="workspace-tab" data-tab="agents">Agentes</button>
+        <button id="integrationsTabButton" class="workspace-tab" data-tab="integrations">Integrações</button>
+        <button id="alterdataTabButton" class="workspace-tab" data-tab="alterdata">Alterdata</button>
         <button id="agentScreenTabButton" class="workspace-tab" data-tab="agent-screen">Tela do Agent</button>
         <button id="smartRecorderTabButton" class="workspace-tab" data-tab="smart-recorder">Gravador inteligente</button>
         <div id="sessionChip" class="workspace-session-chip">Sessao bloqueada</div>
+      </section>
+
+      <section id="alterdataPanel" class="workspace-panel" aria-labelledby="alterdataTitle">
+        <div class="alterdata-shell">
+          <header class="alterdata-header"><div><p class="panel-kicker">Integração · Departamento Pessoal</p><h1 id="alterdataTitle">Alterdata</h1><p>Prepare o pedido aqui. Execute no computador do agente.</p></div><button id="alterdataRefresh" class="ghost-button" type="button">Atualizar agentes e fluxos</button></header>
+          <div id="alterdataTemplates" class="alterdata-templates"></div>
+          <div class="alterdata-layout">
+            <form id="alterdataForm" class="alterdata-form">
+              <div><p class="panel-kicker">Novo pedido</p><h2 id="alterdataTaskTitle">Férias</h2><p class="alterdata-muted">Cadastro manual · Consulta ao banco ainda não conectada. Cada rotina precisa de um fluxo visual configurado e testado.</p></div>
+              <div id="alterdataFields" class="alterdata-fields"></div>
+              <div class="alterdata-fields">
+                <label>Computador de execução<select id="alterdataAgent" required><option value="">Selecione um agente</option></select></label>
+                <label>Fluxo visual salvo<select id="alterdataFlow" required><option value="">Selecione um fluxo</option></select></label>
+              </div>
+              <details class="alterdata-help"><summary>Como preparar o fluxo</summary><p>Crie e teste o fluxo visual no editor. Nos blocos de texto, habilite a edição na execução e use as variáveis abaixo. O pedido substitui esses textos somente nesta execução.</p><div id="alterdataVariables"></div><button id="alterdataOpenEditor" class="ghost-button" type="button">Abrir editor</button></details>
+              <label class="alterdata-review"><input id="alterdataReviewed" type="checkbox" /> Conferi os dados e validei o fluxo no Alterdata deste agente.</label>
+              <div class="alterdata-actions"><button id="alterdataSave" class="soft-button" type="button">Salvar pedido</button><button id="alterdataExecute" class="primary-button" type="submit">Enviar e executar no agente</button><button id="alterdataWatch" class="ghost-button" type="button" hidden>Acompanhar agente</button></div>
+              <p id="alterdataFeedback" role="status" aria-live="polite"></p>
+            </form>
+            <aside class="alterdata-requests"><div class="alterdata-section-head"><h2>Pedidos preparados</h2><span id="alterdataRequestCount">0</span></div><p class="alterdata-muted">Salvos neste Studio. Não executam automaticamente.</p><div id="alterdataRequests"></div></aside>
+          </div>
+        </div>
+      </section>
+
+      <section id="integrationsPanel" class="workspace-panel" aria-labelledby="integrationsTitle">
+        <div class="integrations-shell">
+          <header class="integrations-header">
+            <div><p class="panel-kicker">Conecte suas rotinas</p><h1 id="integrationsTitle">Integrações</h1><p>Organize os programas que você quer integrar ao FlowDetect.</p></div>
+            <span id="integrationsSummary" class="integrations-summary"></span>
+          </header>
+          <p class="integrations-notice">Catálogo inicial · Os conectores abaixo ainda não estão implementados. Priorizar um programa apenas salva sua escolha neste computador; não conecta contas nem executa automações.</p>
+          <div class="integrations-toolbar">
+            <label>Buscar programa ou rotina<input id="integrationsSearch" type="search" placeholder="Ex.: Alterdata, notas, e-mail..." /></label>
+            <label>Exibir<select id="integrationsFilter"><option value="all">Todos os programas</option><option value="selected">Minha lista</option></select></label>
+          </div>
+          <div id="integrationsGrid" class="integrations-grid"></div>
+          <p id="integrationsEmpty" hidden>Nenhum programa encontrado. Altere a busca ou adicione programas à sua lista.</p>
+          <section id="integrationDetails" class="integration-details" aria-labelledby="integrationDetailTitle" hidden tabindex="-1"></section>
+          <p id="integrationsFeedback" class="integrations-feedback" role="status" aria-live="polite"></p>
+        </div>
       </section>
 
       <section id="launcherPanel" class="workspace-panel is-active">
@@ -1038,6 +1082,7 @@
           <div class="agents-topbar">
             <nav class="agents-subtabs" aria-label="Areas dos agentes">
               <button id="agentsMachinesTabButton" class="is-active" type="button">Maquinas virtuais</button>
+              <button id="agentsPhysicalTabButton" type="button">Físicos</button>
               <button id="agentsAutomationsTabButton" type="button">Automacoes</button>
             </nav>
             <div id="agentsMachineActions" class="agents-header-actions agents-topbar-actions">
@@ -1046,6 +1091,7 @@
             </div>
           </div>
           <section id="agentsMachinesView">
+          <p id="agentsPhysicalHint" class="agents-physical-hint" hidden>Computadores dedicados, sem VM. Abra o FlowDetect Agent no outro PC e cadastre o IP exibido nele. Use apenas uma rede confiável; não exponha a porta à internet.</p>
           <section id="hypervBasePanel" class="agents-create-panel" hidden>
             <div id="hypervBaseStatus" class="hyperv-base-status" role="status">Verificando o Hyper-V...</div>
             <label><span>Nome da VM-base</span><input id="hypervBaseNameInput" type="text" value="FlowDetect-Windows10-Base" /></label>
@@ -1089,8 +1135,8 @@
         <section class="studio-control-screen-panel">
           <div class="studio-control-screen-head">
             <div>
-              <p class="panel-kicker">Console nativo Hyper-V</p>
-              <h3>Tela da maquina virtual</h3>
+              <p id="agentScreenKicker" class="panel-kicker">Console nativo Hyper-V</p>
+              <h3 id="agentScreenTitle">Tela da maquina virtual</h3>
               <span id="studioControlScreenStatus">Selecione uma VM na aba Agentes. A conexao usa o GUID do Hyper-V, sem IP.</span>
             </div>
             <div class="studio-control-screen-actions">
@@ -1100,12 +1146,23 @@
                   <span id="studioControlRemoteInputLabel">Mouse</span>
                   <i aria-hidden="true"></i>
                 </label>
-                <span class="agent-screen-bar-label">Tela</span>
+                <span class="agent-screen-bar-label" data-vm-screen-control>Tela</span>
                 <label>
                   <select id="agentScreenVmSelect"><option value="">Selecionar VM</option></select>
                 </label>
                 <button id="agentScreenPrepareButton" class="ghost-button" type="button">Preparar telas</button>
                 <button id="agentScreenOpenVmButton" class="ghost-button" type="button" disabled>Abrir tela</button>
+              </section>
+              <section id="agentPhysicalScreenActions" class="agent-screen-execution-bar" hidden>
+                <label title="Fluidez reduz o tamanho das imagens e melhora o tempo de resposta na rede local">
+                  <span>Qualidade da transmissão</span>
+                  <select id="agentPhysicalQualitySelect" aria-label="Qualidade da transmissão do Agent">
+                    <option value="fast" selected>Fluidez (rápido)</option>
+                    <option value="balanced">Equilibrado</option>
+                    <option value="sharp">Nitidez (detalhado)</option>
+                  </select>
+                </label>
+                <button id="agentPhysicalReconnectButton" class="ghost-button" type="button">Reconectar tela</button>
               </section>
               <section class="agent-screen-execution-bar" aria-label="Automacao do Agent">
                 <label>
@@ -1120,6 +1177,8 @@
           <div class="agent-screen-workspace">
             <div class="agent-screen-console-column">
               <div id="studioControlScreenFrameWrap" class="studio-control-screen-frame-wrap">
+                <video id="studioControlScreenVideo" class="studio-control-screen-video" autoplay playsinline muted tabindex="0" aria-label="Tela remota do Agent" hidden></video>
+                <img id="studioControlScreenImage" class="studio-control-screen-image" tabindex="0" alt="Tela remota do Agent" draggable="false" hidden />
                 <div class="studio-control-screen-placeholder">
                   <strong>Nenhuma VM selecionada</strong>
                   <span>Abra a aba Agentes e clique em uma maquina virtual para iniciar a sessao nativa.</span>

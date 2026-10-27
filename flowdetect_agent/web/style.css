@@ -2169,3 +2169,14 @@ body.agent-lite-mode .agent-panel,
 body.agent-lite-mode .agent-runtime-card {
   box-shadow: none !important;
 }
+
+.agent-pairing-code {
+  display: inline-flex; align-items: center; gap: 7px; background: #112b49; color: #fff;
+  border: 1px solid rgba(255,153,48,.65); border-radius: 12px; padding: 6px 10px;
+  white-space: nowrap; font-size: 10px; line-height: 1.2;
+}
+.agent-pairing-code strong { font-size: 14px; letter-spacing: 1px; color: #ffb05d; user-select: text; }
+.agent-pairing-code button { border: 0; border-radius: 6px; background: #23476c; color: white; cursor: pointer; padding: 3px 7px; font-size: 16px; }
+.agent-pairing-code button:focus-visible { outline: 2px solid #ffb05d; }
+body.agent-service-mode .agent-pairing-code { display: none; }
+@media (max-width: 970px) { .agent-pairing-code { flex-wrap: wrap; } }

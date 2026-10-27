@@ -1,5 +1,9 @@
 # FlowDetect para Chrome
 
+Versão 0.2.70: desvinculação de abas, cores de OCR por página, bloqueio opcional
+de interação manual e correção da conexão por código com o Studio atualizado.
+Depois de atualizar a extensão, recarregue as abas dos sites.
+
 Versao 0.2.60: quando a competencia exibida difere da esperada, o OCR 2 segue
 sua propria rota de falha sem repetir o clique do OCR 1. O painel Ao vivo mostra
 qual alvo foi testado, o resultado e o bloco de destino.
@@ -51,22 +55,11 @@ e a planilha original não são apagados; o relatório PDF registra as linhas
 ignoradas em uma seção separada. A lista não pode ser alterada enquanto uma
 execução estiver em andamento.
 
-## Escolher o destino dos downloads em cada execucao
+## Configurar downloads
 
-Abra **Destino dos downloads** no card da automacao e clique em **Executar
-escolhendo pasta**. Uma pagina da propria extensao abre para escolher o destino.
-Na primeira utilizacao, o botao unico pede autorizacao para a pasta
-`FlowDetect-Temporario` dentro de Downloads. Depois disso, o mesmo botao
-abre a escolha do destino. Nas execucoes seguintes, basta escolher o destino:
-a automacao inicia automaticamente, sem outro clique. O Studio nao precisa estar aberto. A extensao
-acompanha apenas os downloads iniciados pela aba da automacao, salva-os primeiro
-na pasta temporaria (inclusive os iniciados ate um minuto depois do fim do fluxo)
-e, quando terminam, copia-os para o destino escolhido. Uma nova execucao normal
-encerra esse direcionamento para nao afetar seus proximos downloads. Nomes
-repetidos recebem um numero; o arquivo temporario so e removido depois que a
-copia e conferida. Se a pasta de destino estiver indisponivel, o original fica
-em `Downloads/FlowDetect-Temporario/<id da execucao>` e a extensao mostra o erro.
-O botao **Executar automacao** continua funcionando sem redirecionar downloads.
+Abra **Configurações → Downloads** no card e clique em **Configurar pasta de
+downloads**. A extensão abre `chrome://settings/downloads`, a configuração nativa
+do Chrome. A pasta definida ali é usada por todo o perfil atual do navegador.
 
 ## Mapear um elemento da pagina
 
@@ -114,21 +107,13 @@ O Studio exporta os blocos web de URL, texto, tecla, OCR, reconhecimento visual,
 
 O OCR da extensão lê o texto que a página disponibiliza para o navegador, inclusive rótulos e conteúdos dinâmicos. O reconhecimento visual compara a imagem de referência com a aba escolhida ao iniciar a automação. A captura permanece vinculada a essa aba enquanto a execução estiver ativa, mesmo que outra aba receba o foco. Se o Chrome encerrar essa captura, a extensão aguarda a aba da automação ficar ativa antes de usar uma captura visível. Depois de dois minutos sem imagem da aba correta, ela encerra com um erro específico, sem tratar a captura de outra aba como resultado do bloco. Blocos que controlam programas Windows continuam no Studio, pois uma extensão não tem permissão para controlar outros aplicativos.
 
-## Aguardar a tela correta antes de iniciar
+## Iniciar uma automação
 
-No card da automacao, abra **Tela da automacao** e ative **Liberar somente na tela correta**.
-Informe a URL da pagina e um texto visivel que identifique a tela inicial. O botao
-**Usar aba atual** preenche a URL; clique em **Salvar** para guardar a configuracao.
-
-A extensao identifica a aba atual e deixa **Executar automacao** desativado ate
-confirmar a URL e o texto esperado. Trocar para uma aba incorreta bloqueia o
-botao; voltar para a tela correta libera a execucao automaticamente. Nenhuma
-execucao ou captura e iniciada enquanto o botao esta bloqueado. As condicoes
-sao conferidas novamente ao clicar. Depois de iniciar, o fluxo pode mudar de tela.
-
-A URL deve ter o mesmo dominio, caminho e rota apos `#`. Parametros apos `?`
-sao ignorados. O texto e procurado no conteudo visivel da pagina. A configuracao
-e individual por automacao e fica desativada por padrao nos fluxos existentes.
+Vincule a página de execução à aba desejada e clique em **Executar automação**.
+A antiga configuração de “Tela inicial” foi removida e não bloqueia mais fluxos
+importados anteriormente. As verificações e rotas definidas nos próprios blocos
+da automação — como OCR, reconhecimento visual e estado de elemento — continuam
+valendo normalmente.
 
 ## Tempo entre destinos do OCR
 
@@ -142,3 +127,15 @@ para enviar esses tempos para a extensao.
 ## Formato do arquivo
 
 Os arquivos novos usam o schema `flowdetect_chrome_automation`, versão `2`. A extensão também aceita os arquivos da versão `1` já exportados.
+## Bloqueio de interação durante a execução
+
+Na seção Páginas, marque **Bloquear interação durante a execução**. A escolha é
+salva por página e vale para a próxima execução. Cliques, rolagem e digitação
+manuais no conteúdo da aba são bloqueados; os eventos programáticos da automação
+continuam permitidos. O popup da extensão e os controles do Chrome continuam acessíveis.
+
+Use **Parar** na extensão ou **Ctrl+Alt+Shift+L** dentro da aba para liberar a
+interação. O atalho libera a aba sem interromper a automação. O bloqueio também
+é removido ao terminar/falhar ou quando a extensão deixa de responder, e é
+reaplicado após navegação enquanto a execução permanecer ativa. Não é um modo
+de quiosque: abas, barra do navegador e janelas nativas do Chrome não são bloqueadas.

@@ -1,16 +1,59 @@
-import { routeAvailable, activateDownloadRoute, deactivateDownloadRoute, clearDownloadRouteForTab }
+import { routeAvailable, activateDownloadRoute, deactivateDownloadRoute, clearDownloadRouteForTab, noteDownloadSource }
   from "./download-routing.js";
+import { PAGE_RUN_PREFIX, PAGES_KEY, getPages, createPage, bindPage, unbindPage, deletePage, editPages } from "./execution-pages.js";
+async function updatePageOutline(tabId, page) {
+  if (!Number.isInteger(tabId)) return;
+  const update = { type: "flowdetect-page-outline-update", page: page || null };
+  try {
+    if ((await chrome.tabs.sendMessage?.(tabId, update))?.ok) return;
+  } catch (_) { /* Pages opened before installation might not have the script. */ }
+  if (!page || !chrome.scripting?.executeScript) return;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["page-outline.js"] });
+    await chrome.tabs.sendMessage(tabId, update);
+  } catch (_) { /* Restricted Chrome pages cannot be injected. */ }
+}
 
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.58";
-const CONTENT_RUNTIME_VERSION = "0.2.59";
+const RUNTIME_VERSION = "0.2.70";
+const CONTENT_RUNTIME_VERSION = "0.2.70";
 const STUDIO_TEST_BRIDGE = "http://127.0.0.1:18453";
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const PAIR_CODE_KEY = "flowdetectStudioPairCode";
+
+async function ensureAutomationPageOwnership(pages) {
+  const defaultPage = pages[0]?.id;
+  if (!defaultPage) return [];
+  const stored = (await chrome.storage.local.get(AUTOMATIONS_KEY))[AUTOMATIONS_KEY];
+  const automations = Array.isArray(stored) ? stored : [];
+  const valid = new Set(pages.map((page) => page.id));
+  // One-time, non-destructive migration: existing global automations belong to
+  // the first execution page. Original definitions and IDs are kept intact.
+  const changed = automations.some((item) => !valid.has(item?.pageId));
+  if (!changed) return automations;
+  const updated = automations.map((item) => (
+    valid.has(item?.pageId) ? item : { ...item, pageId: defaultPage }
+  ));
+  await chrome.storage.local.set({ [AUTOMATIONS_KEY]: updated });
+  return updated;
+}
+
+async function chosenAutomationPageId() {
+  let pages = await getPages();
+  if (!pages.length) {
+    await createPage(null);
+    pages = await getPages();
+  }
+  await ensureAutomationPageOwnership(pages);
+  const selection = (await chrome.storage.session.get("flowdetectSelectedPage")).flowdetectSelectedPage;
+  return pages.find((page) => page.id === selection)?.id || pages[0].id;
+}
 let studioTestPolling = false;
 let pairCodePromise = null;
 const studioConnection = { lastSeen: 0, paired: false, phase: "offline", error: "" };
 const activeRuns = new Map();
+const reservedTabs = new Set();
+const reservedPages = new Set();
 const imageBitmapCache = new Map();
 let creatingCaptureDocument = null;
 
@@ -73,6 +116,7 @@ async function importStudioAutomation(job) {
   if (raw?.schema !== "flowdetect_chrome_automation" || ![1, 2, 3].includes(Number(raw.version)) || !Array.isArray(raw.steps)) {
     return { ok: false, error: "A automacao enviada pelo Studio e invalida." };
   }
+  const pageId = await chosenAutomationPageId();
   const stored = (await chrome.storage.local.get(AUTOMATIONS_KEY))[AUTOMATIONS_KEY] || [];
   const previous = job.id && stored.find((item) => item.studioTransferId === job.id);
   if (previous) return { ok: true, steps: previous.steps?.length || 0 };
@@ -80,6 +124,7 @@ async function importStudioAutomation(job) {
     ...raw,
     id: crypto.randomUUID(),
     studioTransferId: job.id,
+    pageId,
     automation: {
       ...raw.automation,
       nome: String(raw.automation?.nome || "Automacao Chrome"),
@@ -245,22 +290,22 @@ function updateSpreadsheetProgress(run) {
 async function updateProgressBadge(run) {
   if (!chrome.action?.setBadgeText) return;
   if (!["running", "waiting_screen"].includes(run?.status)) {
-    await chrome.action.setBadgeText({ text: "" });
+    await chrome.action.setBadgeText({ tabId: run.tabId, text: "" });
     return;
   }
   const total = Math.max(0, Number(run.totalSteps || 0));
   const measured = typeof run.progressPercent === "number" ? run.progressPercent : NaN;
   const estimated = total ? Math.round((Math.max(0, Number(run.currentStep || 0)) / total) * 100) : 0;
   const percent = Math.max(0, Math.min(99, Number.isFinite(measured) ? measured : estimated));
-  await chrome.action.setBadgeBackgroundColor?.({ color: "#087d89" });
-  await chrome.action.setBadgeText({ text: `${percent}%` });
+  await chrome.action.setBadgeBackgroundColor?.({ tabId: run.tabId, color: "#087d89" });
+  await chrome.action.setBadgeText({ tabId: run.tabId, text: `${percent}%` });
 }
 
 async function persistRun(run) {
   updateSpreadsheetProgress(run);
   const persisted = { ...run, logs: run.logs.slice(-100) };
   delete persisted.cancelled;
-  await chrome.storage.local.set({ [RUN_STORAGE_KEY]: persisted });
+  await chrome.storage.local.set({ [run.pageId ? `${PAGE_RUN_PREFIX}${run.pageId}` : RUN_STORAGE_KEY]: persisted });
   await updateProgressBadge(run).catch(() => {});
 }
 
@@ -743,7 +788,7 @@ async function clickVisualResult(run, step, match, label = "VISUAL") {
     clicks: step.click ? Math.max(1, Number(step.clicks || 1)) : 0,
     timeout_ms: Math.max(500, Number(step.timeout_ms || 10000)),
     label,
-    color: label === "OCR" ? "#44b9ff" : "#cf8cff",
+    color: label === "OCR" ? (run.pageColor || "#12b5cb") : "#cf8cff",
     width: (match.width / Math.max(.001, match.screenshotScale || 1)) / screenshotScaleX,
     height: match.height / screenshotScaleY
   });
@@ -777,7 +822,7 @@ async function executeVisualState(run, step) {
 async function executePageStep(run, step) {
   const response = await sendToPage(run.tabId, {
     type: "flowdetect-execute-step",
-    step,
+    step: { ...step, highlight_color: run.pageColor || "#12b5cb" },
     run_id: `${run.id}:${run.spreadsheetLoop?.row ?? ""}`,
   });
   if (!response?.ok) throw new Error(response?.error || "A etapa não foi concluída.");
@@ -1202,27 +1247,50 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
   }
 }
 
-async function executeAutomation(automation, tabId, startRow = 1, loopIncludedIndices = null, loopExcludedRows = [], downloadRouteId = null) {
-  if (activeRuns.size) throw new Error("Ja existe uma automacao executando ou aguardando a tela. Pare essa execucao primeiro.");
+async function executeAutomation(automation, tabId, startRow = 1, loopIncludedIndices = null, loopExcludedRows = [], downloadRouteId = null, pageId = null) {
+  const page = pageId ? (await getPages()).find((item) => item.id === pageId) : await createPage(tabId);
+  if (!page || page.tabId !== tabId) throw new Error("A aba não corresponde à página de execução. Vincule a aba novamente.");
+  if (reservedTabs.has(tabId) || reservedPages.has(page.id)) throw new Error("Já existe uma execução nesta aba ou página.");
+  if (reservedTabs.size >= 2) throw new Error("Duas execuções já estão ativas. Aguarde ou pare uma delas.");
+  reservedTabs.add(tabId);
+  reservedPages.add(page.id);
+  try {
+    const bound = (await getPages()).find((item) => item.id === page.id);
+    if (bound?.tabId !== tabId) throw new Error("O vínculo da aba mudou. Confira a página antes de executar.");
+    return await executeAutomationOnPage(automation, tabId, startRow, loopIncludedIndices, loopExcludedRows, downloadRouteId, page);
+  } finally {
+    reservedTabs.delete(tabId);
+    reservedPages.delete(page.id);
+  }
+}
+
+async function executeAutomationOnPage(automation, tabId, startRow, loopIncludedIndices, loopExcludedRows, downloadRouteId, page) {
   if (!automation || automation.schema !== "flowdetect_chrome_automation" || ![1, 2, 3].includes(Number(automation.version))) {
     throw new Error("Arquivo de automação Chrome inválido.");
   }
   if (!Array.isArray(automation.steps) || !automation.steps.length) {
     throw new Error("Essa automação não possui blocos compatíveis com a extensão.");
   }
-  const screenGuard = normalizeScreenGuard(automation.screen_guard);
-  const screen = await checkAutomationScreen(screenGuard, tabId);
-  if (!screen.ready) throw new Error(screen.reason);
+  // Legacy screen_guard metadata no longer gates execution. The page/tab binding
+  // and the checks configured in the actual automation blocks still apply.
   if (downloadRouteId) await routeAvailable(downloadRouteId);
   else await clearDownloadRouteForTab(tabId);
-  if (activeRuns.size) throw new Error("Ja existe uma automacao executando.");
   const run = createRun(automation, tabId, startRow, loopIncludedIndices, loopExcludedRows);
+  run.pageId = page.id;
+  run.pageName = page.name;
+  run.pageColor = page.color;
+  run.blockInput = page.blockInput === true;
+  // Retain the exact configuration for viewing this execution after library edits.
+  run.automationSnapshot = automation;
   if (downloadRouteId) run.downloadRouteId = downloadRouteId;
   activeRuns.set(run.id, run);
-  await addLog(run, `Iniciando ${run.automationName}.`);
-  if (run.loopExcludedRows.length) await addLog(run,
-    `${run.loopExcludedRows.length} linha(s) removida(s) deste loop antes da execução.`, "info");
   try {
+    if (run.blockInput) {
+      await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["input-lock.js"] });
+    }
+    await addLog(run, `Iniciando ${run.automationName} em ${page.name}.`);
+    if (run.loopExcludedRows.length) await addLog(run,
+      `${run.loopExcludedRows.length} linha(s) removida(s) deste loop antes da execução.`, "info");
     if (downloadRouteId) {
       await activateDownloadRoute(downloadRouteId, tabId, run.id);
       await addLog(run, "Downloads desta execucao serao enviados a pasta escolhida na extensao.");
@@ -1284,8 +1352,10 @@ async function executeAutomation(automation, tabId, startRow = 1, loopIncludedIn
     }
     await addLog(run, String(error?.message || error), "error");
   } finally {
+    run.blockInput = false;
+    await chrome.tabs.sendMessage(tabId, { type: "flowdetect-input-lock-refresh" }).catch(() => {});
     if (downloadRouteId) await deactivateDownloadRoute(run.id).catch(() => {});
-    await stopTabCapture(run);
+    await stopTabCapture(run).catch(() => {});
     run.finishedAt = new Date().toISOString();
     if (run.report) run.report.finishedAt = run.finishedAt;
     activeRuns.delete(run.id);
@@ -1296,6 +1366,113 @@ async function executeAutomation(automation, tabId, startRow = 1, loopIncludedIn
 }
 
 async function handleMessage(message, sender) {
+  if (message?.type === "flowdetect-input-lock-state") {
+    const run = [...activeRuns.values()].find(item => item.tabId === sender?.tab?.id && item.blockInput && !item.cancelled);
+    return { locked: Boolean(run), runId: run?.id || null };
+  }
+  if (message?.type === "flowdetect-input-lock-release") {
+    const run = [...activeRuns.values()].find(item => item.tabId === sender?.tab?.id && item.id === message.runId);
+    if (run) {
+      run.blockInput = false;
+      await chrome.tabs.sendMessage(run.tabId, { type: "flowdetect-input-lock-refresh" }).catch(() => {});
+    }
+    return { ok: true };
+  }
+  if (message?.type === "flowdetect-page-input-lock") {
+    if (reservedPages.has(message.pageId)) throw new Error("Aguarde a execução terminar para alterar o bloqueio.");
+    const page = await editPages(pages => {
+      const target = pages.find(item => item.id === message.pageId);
+      if (!target) throw new Error("Página não encontrada.");
+      target.blockInput = message.enabled === true;
+      return target;
+    });
+    return { ok: true, page };
+  }
+  if (message?.type === "flowdetect-download-source") {
+    // The sender tab, not a page-supplied tabId, is authoritative.
+    return { ok: noteDownloadSource(sender?.tab?.id, message.url, "click") };
+  }
+  if (message?.type === "flowdetect-page-outline-state") {
+    const tabId = sender?.tab?.id;
+    const page = Number.isInteger(tabId) ? (await getPages()).find((item) => item.tabId === tabId) : null;
+    return { ok: true, page: page || null };
+  }
+  if (message?.type === "flowdetect-pages") {
+    let pages = await getPages();
+    const saved = await chrome.storage.local.get(PAGES_KEY);
+    if (!Array.isArray(saved[PAGES_KEY])) {
+      const legacy = (await chrome.storage.local.get(RUN_STORAGE_KEY))[RUN_STORAGE_KEY];
+      const page = await createPage(null);
+      if (legacy?.automationId) await chrome.storage.local.set({ [`${PAGE_RUN_PREFIX}${page.id}`]: { ...legacy, pageId: page.id, pageName: page.name } });
+      pages = await getPages();
+    }
+    await ensureAutomationPageOwnership(pages);
+    const runs = {};
+    for (const page of pages) {
+      const key = `${PAGE_RUN_PREFIX}${page.id}`;
+      let run = (await chrome.storage.local.get(key))[key];
+      if (run && ["running", "waiting_screen"].includes(run.status) && !activeRuns.has(run.id) && !reservedPages.has(page.id)) {
+        run = { ...run, status: "stopped", finishedAt: new Date().toISOString(), waitingReason: "A extensão reiniciou. Execução interrompida; não retomada automaticamente." };
+        await chrome.storage.local.set({ [key]: run });
+      }
+      if (run) runs[page.id] = run;
+    }
+    return { ok: true, pages, runs, activeRunIds: [...activeRuns.keys()] };
+  }
+  if (message?.type === "flowdetect-page-create") {
+    // The user selects the correct browser tab after creating an unbound page.
+    const page = await createPage(null);
+    await ensureAutomationPageOwnership(await getPages());
+    return { ok: true, page };
+  }
+  if (message?.type === "flowdetect-page-bind") {
+    // Reserve synchronously, before the asynchronous tab/storage operations.
+    const tabId = Number(message.tabId);
+    if (reservedPages.has(message.pageId) || reservedTabs.has(tabId)) throw new Error("Pare a execução antes de trocar a aba.");
+    reservedPages.add(message.pageId); reservedTabs.add(tabId);
+    try {
+      const old = (await getPages()).find((page) => page.id === message.pageId);
+      const page = await bindPage(message.pageId, tabId);
+      if (Number.isInteger(old?.tabId) && old.tabId !== tabId) {
+        await updatePageOutline(old.tabId, null);
+      }
+      await updatePageOutline(tabId, page);
+      return { ok: true, page };
+    } finally { reservedPages.delete(message.pageId); reservedTabs.delete(tabId); }
+  }
+  if (message?.type === "flowdetect-page-unbind") {
+    const pageId = String(message.pageId || "");
+    if (reservedPages.has(pageId) || [...activeRuns.values()].some((run) => run.pageId === pageId)) {
+      throw new Error("Pare a execução antes de desvincular a aba.");
+    }
+    reservedPages.add(pageId);
+    try {
+      const old = (await getPages()).find((page) => page.id === pageId);
+      const oldTabId = old?.tabId;
+      const page = await unbindPage(pageId);
+      await updatePageOutline(oldTabId, null);
+      return { ok: true, page };
+    } finally { reservedPages.delete(pageId); }
+  }
+  if (message?.type === "flowdetect-page-delete") {
+    const pageId = String(message.pageId || "");
+    if (reservedPages.has(pageId) || [...activeRuns.values()].some((run) => run.pageId === pageId)) {
+      throw new Error("Pare a automação desta página antes de excluí-la.");
+    }
+    reservedPages.add(pageId);
+    try {
+      const page = await deletePage(pageId);
+      const remainingPages = await getPages();
+      const owner = remainingPages[0]?.id || null;
+      const automations = (await chrome.storage.local.get(AUTOMATIONS_KEY))[AUTOMATIONS_KEY] || [];
+      const updated = automations.map((item) => item.pageId === pageId ? { ...item, pageId: owner } : item);
+      const movedAutomations = automations.filter((item) => item.pageId === pageId).length;
+      if (movedAutomations) await chrome.storage.local.set({ [AUTOMATIONS_KEY]: updated });
+      await chrome.storage.local.remove(PAGE_RUN_PREFIX + pageId);
+      await updatePageOutline(page.tabId, null);
+      return { ok: true, pageId, movedAutomations, destinationPageId: owner };
+    } finally { reservedPages.delete(pageId); }
+  }
   if (message?.type === "flowdetect-studio-connection") {
     return {
       ok: true,
@@ -1317,18 +1494,21 @@ async function handleMessage(message, sender) {
       ok: true,
       version: RUNTIME_VERSION,
       activeRunIds: [...activeRuns.keys()],
-      capabilities: ["ocr_text", "visual_match", "visual_state", "focused_text", "data_source", "key_sequence", "download_destination"]
+      capabilities: ["ocr_text", "visual_match", "visual_state", "focused_text", "data_source", "key_sequence", "download_destination", "execution_pages"]
     };
   }
   if (message?.type === "flowdetect-start") {
     const tabId = Number(message.tabId || sender?.tab?.id);
     if (!Number.isInteger(tabId)) throw new Error("Não encontrei a aba que receberá a automação.");
+    if (message.automation?.pageId && message.automation.pageId !== message.pageId) {
+      throw new Error("Esta automação pertence a outra página. Selecione a página correta.");
+    }
     const run = await executeAutomation(message.automation, tabId, message.startRow,
-      message.loopIncludedIndices, message.loopExcludedRows, message.downloadRouteId);
+      message.loopIncludedIndices, message.loopExcludedRows, message.downloadRouteId, message.pageId);
     return { ok: run.status === "completed", run };
   }
   if (message?.type === "flowdetect-stop") {
-    const running = [...activeRuns.values()].find((run) => ["running", "waiting_screen"].includes(run.status));
+    const running = [...activeRuns.values()].find((run) => run.id === message.runId && (!message.pageId || run.pageId === message.pageId));
     if (running) {
       running.cancelled = true;
       await addLog(running, "Parada solicitada pelo usuário.", "warning");
@@ -1353,4 +1533,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.target === "flowdetect-offscreen") return false;
   handleMessage(message, sender).then(sendResponse).catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
   return true;
+});
+chrome.runtime.onInstalled?.addListener(() => {
+  // Refresh outlines for tabs that were already open before an extension update.
+  getPages().then((pages) => Promise.all(pages
+    .filter((page) => Number.isInteger(page.tabId))
+    .map((page) => updatePageOutline(page.tabId, page))
+  )).catch((error) => console.warn("FlowDetect: não foi possível restaurar todas as bordas:", error));
+});
+
+chrome.tabs.onRemoved?.addListener((tabId) => {
+  for (const run of activeRuns.values()) if (run.tabId === tabId) run.cancelled = true;
+  editPages((pages) => { for (const page of pages) if (page.tabId === tabId) { page.tabId = null; page.tabTitle = ""; } }).catch(() => {});
+});
+// Chrome tab IDs do not survive a browser restart reliably. Keep history, not bindings.
+chrome.runtime.onStartup?.addListener(() => {
+  editPages((pages) => { for (const page of pages) page.tabId = null; }).catch(() => {});
 });

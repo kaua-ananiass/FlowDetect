@@ -16594,6 +16594,41 @@ label span {
   min-width: 0;
 }
 
+.agents-physical-hint {
+  margin: 0 0 18px;
+  padding: 14px 18px;
+  border: 1px solid rgba(94, 234, 212, 0.18);
+  border-radius: 14px;
+  background: rgba(18, 181, 203, 0.055);
+  color: var(--text-soft);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.physical-agent-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 24px;
+  background: radial-gradient(ellipse at 50% 0, rgba(18, 181, 203, 0.12), transparent 65%), #0b1520;
+}
+.physical-agent-card.is-connected { border-color: rgba(94, 234, 212, 0.5); }
+.physical-agent-card h3 { margin: 0; color: var(--white); overflow-wrap: anywhere; }
+.physical-agent-card p, .physical-agent-form p { margin: 0; color: var(--text-soft); font-size: 0.8rem; line-height: 1.5; overflow-wrap: anywhere; }
+.physical-agent-card .physical-agent-address { color: #5eead4; font-family: monospace; }
+.physical-agent-icon { display: grid; place-items: center; height: 90px; color: #5eead4; }
+.physical-agent-icon svg { width: 74px; stroke: currentColor; stroke-width: 2; }
+.physical-agent-card .agent-card-actions { margin-top: auto; display: flex; flex-wrap: wrap; gap: 8px; }
+.physical-agent-card .agent-card-actions .primary-button { flex: 1 0 100%; }
+#agentPhysicalScreenActions[hidden],
+.agent-screen-vm-bar [hidden],
+.studio-control-screen-video[hidden],
+.studio-control-screen-image[hidden],
+#agentsMachineActions[hidden] { display: none !important; }
+
 .agents-subtabs button {
   position: relative;
   display: inline-flex;
@@ -16998,3 +17033,23 @@ label span {
   .agent-screen-vm-bar select,
   .agent-screen-execution-bar select { flex: 1 1 auto; min-width: 0; max-width: none; }
 }
+
+
+/* Pairing errors remain visible where the operator expects feedback. */
+.physical-agent-card.has-error {
+  border: 1px solid rgba(237, 75, 78, 0.85);
+}
+.physical-agent-error,
+.agent-pairing-inline-error {
+  display: block;
+  padding: 11px 13px;
+  margin: 10px 0;
+  border: 1px solid rgba(215, 64, 64, 0.62);
+  border-radius: 10px;
+  background: rgba(127, 16, 23, 0.25);
+  color: #ffe1de;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.agent-pairing-inline-error[hidden] { display: none !important; }

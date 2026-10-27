@@ -1,6 +1,6 @@
 [package]
 name = "gerador_automacao"
-version = "3.0.2"
+version = "3.1.1"
 description = "Gerador visual da automacao"
 authors = ["OpenAI Codex"]
 edition = "2021"
@@ -13,6 +13,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+aes-gcm = "0.10.3"
+getrandom = "0.2"
+sha2 = "0.10"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 serde = { version = "1", features = ["derive"] }

@@ -4,11 +4,12 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FlowDetect para Chrome</title>
-    <link rel="stylesheet" href="sidepanel.css">
+    <link rel="stylesheet" href="sidepanel.css?v=0.2.70">
   </head>
   <body>
     <main class="app-shell">
-      <input id="importInput" type="file" accept="application/json,.json" hidden>
+      <input id="importInput" type="file" accept="application/json,.json" multiple hidden>
+      <div class="popup-fixed-header">
       <header class="popup-toolbar">
         <div class="popup-brand">
           <img class="popup-brand-icon" src="icons/icon-48.png" alt="">
@@ -20,17 +21,42 @@
         </div>
         <div class="popup-tools">
           <label class="import-automation" for="importInput">Importar</label>
+          <button id="mapElementButton" class="map-element-button" type="button" title="Mapear elemento da página" aria-label="Mapear elemento da página">Mapear</button>
           <button id="newButton" class="add-automation" type="button"><span>+</span> Adicionar</button>
         </div>
       </header>
       <div class="studio-pair-bar"><span>C&oacute;digo para conectar ao Studio</span><strong id="studioPairCode">······</strong><button id="studioNewPairCode" type="button" title="Gerar novo codigo de conexao">Novo</button></div>
       <span id="studioConnectionCompact" class="studio-connection studio-connection-compact" title="Aguardando conexao com o Studio">Studio desconectado</span>
-      <div class="element-picker-toolbar">
-        <button id="mapElementButton" class="map-element-button" type="button" title="Mapear elemento da página">Mapear elemento</button>
-        <p id="mapElementStatus" class="map-element-status" role="status" aria-live="polite" hidden></p>
-      </div>
+      <p id="mapElementStatus" class="map-element-status" role="status" aria-live="polite" hidden></p>
       <p id="downloadActivity" class="download-activity" role="status" hidden></p>
+      <nav id="workspaceTabs" class="workspace-tabs" role="tablist" aria-label="Áreas do FlowDetect">
+        <button id="workspaceAutomations" class="workspace-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="automationList">▦ Automações</button>
+        <button id="workspaceAssisted" class="workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="assistedView">◉ Execuções assistidas <span id="assistedLiveCount" class="workspace-live-count" hidden></span></button>
+      </nav>
+      </div>
+      <section class="execution-pages" aria-labelledby="executionPagesHeading">
+        <div class="execution-pages-heading">
+          <h2 id="executionPagesHeading">Páginas</h2>
+          <button id="addExecutionPage" class="execution-page-add" type="button" title="Criar outra página de execução" aria-label="Criar página">+</button>
+        </div>
+        <nav id="executionPageTabs" aria-label="Selecionar página de execução"></nav>
+        <div class="execution-page-target">
+          <strong id="executionPageTarget">Selecione uma página.</strong>
+          <div class="execution-page-actions">
+            <button id="bindExecutionPage" class="execution-page-bind" type="button" title="Vincular ou trocar a aba desta página">Vincular</button>
+            <button id="openExecutionPage" class="execution-page-open" type="button" title="Abrir a aba vinculada">Ver aba</button>
+            <button id="unbindExecutionPage" class="execution-page-unbind" type="button" title="Remover o vínculo sem fechar a aba" hidden>Desvincular</button>
+          </div>
+        </div>
+        <label class="page-input-lock-option" title="Impede cliques, digitação e rolagem manuais durante a execução. Ctrl+Alt+Shift+L libera a aba."><input id="pageInputLock" type="checkbox"> Bloquear interação durante a execução</label>
+        <p id="executionPageFeedback" role="alert" aria-live="polite" hidden></p>
+      </section>
       <section id="automationList" class="automation-list" aria-live="polite"></section>
+      <section id="assistedView" class="assisted-view" aria-label="Execuções assistidas" hidden>
+        <select id="assistedPageSelect" aria-label="Escolher página para assistir"></select>
+        <div id="assistedContent" class="assisted-content" role="region" aria-label="Acompanhamento da página escolhida"></div>
+      </section>
+
     </main>
 
     <template id="automationTemplate">
@@ -60,31 +86,19 @@
             <div class="loop-edit-footer"><button class="loop-include-all" type="button">Incluir todas</button><label><input class="loop-save-exclusions" type="checkbox"> Salvar exclus&otilde;es nesta automa&ccedil;&atilde;o</label></div>
           </div>
         </details>
-        <details class="screen-guard-settings">
-          <summary>Tela da automa&ccedil;&atilde;o <span class="screen-guard-state"></span></summary>
-          <form class="screen-guard-form">
-            <fieldset class="screen-guard-fields">
-              <label class="screen-guard-toggle"><input class="screen-guard-enabled" type="checkbox">Liberar somente na tela correta</label>
-              <label>URL da p&aacute;gina<input class="screen-guard-url" type="url" placeholder="https://site.com/pagina" autocomplete="off"></label>
-              <label>Texto esperado<input class="screen-guard-text" type="text" placeholder="Texto vis&iacute;vel na tela inicial" autocomplete="off"></label>
-              <p>Libera Executar apenas quando a aba atual tem a URL e o texto esperados. Par&acirc;metros depois de ? s&atilde;o ignorados.</p>
-              <div class="screen-guard-actions"><button class="screen-guard-current" type="button">Usar aba atual</button><button type="submit">Salvar</button></div>
-            </fieldset>
-          </form>
-        </details>
         <details class="ocr-edit-settings" hidden>
           <summary>Textos OCR editaveis <span class="ocr-edit-count"></span></summary>
           <div class="ocr-edit-fields"></div>
           <p>Apenas o texto de validacao muda nesta execucao. O ponto de clique permanece. A imagem de referencia ainda mostra o texto original.</p>
           <p class="ocr-edit-error" role="alert" hidden></p>
         </details>
-        <p class="screen-guard-hint" aria-live="polite" hidden></p>
+        <p class="run-availability-hint" aria-live="polite" hidden></p>
         <button class="play-button run-automation" type="button"><span class="play-icon" aria-hidden="true">&#9654;</span><span>Executar automa&ccedil;&atilde;o</span></button>
         <details class="download-settings">
-          <summary>Destino dos downloads <span>opcional</span></summary>
+          <summary>Downloads</summary>
           <div class="download-settings-body">
-            <p>Abra a escolha de pasta da extens&atilde;o para esta execu&ccedil;&atilde;o. O Studio n&atilde;o precisa estar aberto.</p>
-            <button class="download-run-with-folder" type="button">Executar escolhendo pasta</button>
+            <p>A pasta de destino é definida no Chrome. A alteração vale para os downloads deste perfil do navegador.</p>
+            <button class="download-open-settings" type="button">Configurar pasta de downloads ↗</button>
           </div>
         </details>
         <section class="execution" hidden>

@@ -92,7 +92,7 @@ async function startAutomation() {
     await chrome.tabs.update(tab.id, { active: true });
     await chrome.storage.local.set({ [pendingKey]: { ...pending, started: true } });
     const response = await chrome.runtime.sendMessage({ type: "flowdetect-start",
-      automation: pending.automation, tabId: tab.id, startRow: pending.startRow,
+      automation: pending.automation, tabId: tab.id, pageId: pending.pageId, startRow: pending.startRow,
       loopIncludedIndices: pending.loopIncludedIndices, loopExcludedRows: pending.loopExcludedRows,
       downloadRouteId: routeId });
     if (!response?.run) throw new Error(response?.error || "A automação não iniciou.");

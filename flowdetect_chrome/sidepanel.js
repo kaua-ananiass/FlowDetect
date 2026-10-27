@@ -1,6 +1,13 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.58";
+const REQUIRED_RUNTIME_VERSION = "0.2.70";
+const PAGES_KEY = "flowdetectChromeExecutionPages";
+const PAGE_RUN_PREFIX = "flowdetectChromePageRun:";
+let executionPages = [];
+let selectedPageId = null;
+const pageRuns = new Map();
+const startingPages = new Set();
+const pageViews = new Map();
 const automationList = document.querySelector("#automationList");
 const automationTemplate = document.querySelector("#automationTemplate");
 const importInput = document.querySelector("#importInput");
@@ -15,17 +22,237 @@ const studioNewPairCode = document.querySelector("#studioNewPairCode");
 let automationsCache = [];
 let currentRun = {};
 let lastDownloadStatus = null;
-const screenGuardRefreshers = new Set();
 const carouselStates = new Map();
 const companyPreviewRows = new Map();
 const editableOcrDrafts = new Map();
 const loopExclusionDrafts = new Map();
 const expandedRunLogs = new Set();
 let managerViewRequested = false;
+let workspaceView = "automations";
+let workspaceAnimations = [];
 
-function refreshScreenGuards() {
-  for (const refresh of screenGuardRefreshers) refresh(true);
+function pageFeedback(error) {
+  const node = document.querySelector("#executionPageFeedback");
+  node.textContent = String(error?.message || error || "");
+  node.hidden = !node.textContent;
 }
+
+const PAGE_COLORS = ["#12b5cb", "#8b5cf6", "#4ade80", "#f59e0b"];
+const pageAccent = (page, index) => PAGE_COLORS.includes(page.color)
+  ? page.color : PAGE_COLORS[(Number(page.slot || index + 1) - 1) % PAGE_COLORS.length];
+
+async function deleteExecutionPage(id) {
+  const page = executionPages.find((item) => item.id === id);
+  if (!page) return;
+  const run = pageRuns.get(id);
+  if (startingPages.has(id) || ["running", "waiting_screen"].includes(run?.status)) {
+    pageFeedback("Pare a execução desta página antes de excluí-la.");
+    return;
+  }
+  if (!window.confirm(`Excluir ${page.name}? A aba será desvinculada e o histórico será apagado. As automações desta página serão transferidas para a próxima página disponível, sem serem excluídas.`)) return;
+  try {
+    const result = await chrome.runtime.sendMessage({ type: "flowdetect-page-delete", pageId: id });
+    if (!result?.ok) throw new Error(result?.error || "Não foi possível excluir a página.");
+    pageRuns.delete(id);
+    pageViews.delete(id);
+    startingPages.delete(id);
+    executionPages = executionPages.filter((item) => item.id !== id);
+    selectExecutionPage(executionPages.some((item) => item.id === selectedPageId)
+      ? selectedPageId : (executionPages[0]?.id || null));
+  } catch (error) { pageFeedback(error); }
+}
+
+function renderExecutionPages() {
+  const nav = document.querySelector("#executionPageTabs");
+  // Keep each tab mounted: live progress must not restart animations or lose focus.
+  const existingCards = new Map([...nav.children].map((card) => [card.dataset.pageId, card]));
+  const cards = executionPages.map((page, index) => {
+    const color = pageAccent(page, index);
+    const run = pageRuns.get(page.id);
+    const busy = startingPages.has(page.id) || ["running", "waiting_screen"].includes(run?.status);
+    const isNew = !existingCards.has(page.id);
+    const card = existingCards.get(page.id) || document.createElement("div");
+    if (isNew) card.className = "execution-page-card";
+    card.dataset.pageId = page.id;
+    card.classList.toggle("is-selected", page.id === selectedPageId);
+    card.classList.toggle("is-linked", Number.isInteger(page.tabId));
+    card.classList.toggle("is-running", busy);
+    card.style.setProperty("--page-accent", color);
+
+    const select = card.querySelector(".execution-page-select") || document.createElement("button");
+    select.type = "button";
+    select.className = "execution-page-select";
+    select.setAttribute("role", "tab");
+    select.setAttribute("aria-current", page.id === selectedPageId ? "page" : "false");
+    select.setAttribute("aria-selected", page.id === selectedPageId ? "true" : "false");
+    select.title = page.tabTitle || `${page.name} — sem aba vinculada`;
+
+    const number = card.querySelector(".execution-page-number") || document.createElement("span");
+    number.className = "execution-page-number";
+    number.textContent = String(page.slot || index + 1);
+    const name = card.querySelector(".execution-page-name") || document.createElement("strong");
+    name.className = "execution-page-name";
+    name.textContent = String(page.name || "Página").replace(/^Página\s+(\d+)$/i, "Pág. $1");
+    const state = card.querySelector(".execution-page-state") || document.createElement("small");
+    state.className = "execution-page-state";
+    state.textContent = ({ running: "Executando", waiting_screen: "Aguardando tela",
+      completed: "Concluída", failed: "Falhou", stopped: "Interrompida" }[run?.status]
+      || (startingPages.has(page.id) ? "Iniciando…" : "Pronta"));
+    card.dataset.state = run?.status || "ready";
+    select.setAttribute("aria-label", `${page.name}, ${state.textContent}`);
+    select.title = `${page.name} · ${state.textContent}\n${page.tabTitle || "Sem aba vinculada"}`;
+
+    const linked = card.querySelector(".execution-page-tabtitle") || document.createElement("span");
+    linked.className = "execution-page-tabtitle";
+    linked.textContent = Number.isInteger(page.tabId)
+      ? (page.tabTitle || "Aba vinculada")
+      : "Sem aba vinculada";
+    if (isNew) {
+      select.append(number, name, state, linked);
+      select.addEventListener("click", () => selectExecutionPage(page.id));
+    }
+
+    const remove = card.querySelector(".execution-page-delete") || document.createElement("button");
+    remove.type = "button";
+    remove.className = "execution-page-delete";
+    remove.textContent = "×";
+    remove.title = `Excluir ${page.name}`;
+    remove.setAttribute("aria-label", `Excluir ${page.name}`);
+    remove.disabled = busy;
+    if (isNew) {
+      remove.addEventListener("click", () => deleteExecutionPage(page.id));
+      card.append(select, remove);
+    }
+    return card;
+  });
+  for (const card of existingCards.values()) if (!cards.includes(card)) card.remove();
+  cards.forEach((card, index) => {
+    if (nav.children[index] !== card) nav.insertBefore(card, nav.children[index] || null);
+  });
+  nav.setAttribute("role", "tablist");
+
+  const page = executionPages.find((item) => item.id === selectedPageId);
+  const selectedAccent = page ? pageAccent(page, executionPages.indexOf(page)) : PAGE_COLORS[0];
+  document.documentElement.style.setProperty("--accent", selectedAccent);
+  document.documentElement.style.setProperty("--accent-soft", `color-mix(in srgb, ${selectedAccent} 65%, white)`);
+  document.documentElement.style.setProperty("--selected-page-color", selectedAccent);
+  const busy = startingPages.has(selectedPageId) || ["running", "waiting_screen"].includes(currentRun?.status);
+  const inputLock = document.querySelector("#pageInputLock");
+  inputLock.checked = page?.blockInput === true;
+  inputLock.disabled = !page || busy;
+  const target = document.querySelector("#executionPageTarget");
+  target.textContent = !page ? "Crie uma página para vincular uma aba do navegador."
+    : Number.isInteger(page.tabId) ? (page.tabTitle || "Aba vinculada")
+    : "Sem aba vinculada. Abra o site, depois clique em Vincular aba.";
+  target.title = target.textContent;
+  const bindButton = document.querySelector("#bindExecutionPage");
+  bindButton.disabled = !page || busy;
+  bindButton.textContent = Number.isInteger(page?.tabId) ? "Trocar" : "Vincular";
+  bindButton.title = Number.isInteger(page?.tabId) ? "Trocar a aba vinculada a esta página" : "Vincular a aba ativa a esta página";
+  document.querySelector("#openExecutionPage").disabled = !Number.isInteger(page?.tabId);
+  const unbindButton = document.querySelector("#unbindExecutionPage");
+  unbindButton.hidden = !Number.isInteger(page?.tabId);
+  unbindButton.disabled = busy;
+  document.querySelector("#addExecutionPage").disabled = executionPages.length >= 12;
+  updateAssistedLiveCount();
+}
+
+function selectExecutionPage(id) {
+  if (!executionPages.some((page) => page.id === id) && !(id === null && !executionPages.length)) return;
+  if (selectedPageId !== id) {
+    pageViews.set(selectedPageId, { managerViewRequested, maps: [carouselStates, companyPreviewRows, editableOcrDrafts, loopExclusionDrafts]
+      .map((map) => new Map(map)), logs: new Set(expandedRunLogs) });
+    const view = pageViews.get(id);
+    [carouselStates, companyPreviewRows, editableOcrDrafts, loopExclusionDrafts].forEach((map, index) => {
+      map.clear();
+      for (const [key, value] of view?.maps[index] || []) map.set(key, value);
+    });
+    expandedRunLogs.clear();
+    for (const key of view?.logs || []) expandedRunLogs.add(key);
+    managerViewRequested = view?.managerViewRequested || false;
+  }
+  selectedPageId = id;
+  currentRun = pageRuns.get(id) || {};
+  pageFeedback("");
+  chrome.storage.session.set({ flowdetectSelectedPage: id }).catch(() => {});
+  const routeId = currentRun.downloadRouteId;
+  lastDownloadStatus = null;
+  if (routeId) chrome.storage.local.get(`flowdetectDownloadStatus:${routeId}`).then((storage) => {
+    if (currentRun.downloadRouteId !== routeId) return;
+    lastDownloadStatus = storage[`flowdetectDownloadStatus:${routeId}`];
+    refreshDownloadActivity();
+  });
+  renderExecutionPages();
+  refreshDownloadActivity();
+  renderAutomations();
+}
+
+async function getExecutionTargetTab(pageId = selectedPageId) {
+  const page = executionPages.find((item) => item.id === pageId);
+  if (!Number.isInteger(page?.tabId)) throw new Error("Clique em ‘Usar aba atual’ para vincular esta página ao site.");
+  const tab = await chrome.tabs.get(page.tabId).catch(() => null);
+  if (!tab || !/^https?:\/\//i.test(tab.url || "")) throw new Error("A aba vinculada foi fechada ou não é um site. Use ‘Usar aba atual’.");
+  return tab;
+}
+
+document.querySelector("#addExecutionPage").addEventListener("click", async () => {
+  try {
+    const result = await chrome.runtime.sendMessage({ type: "flowdetect-page-create" });
+    if (!result?.ok) throw new Error(result?.error || "Não foi possível criar a página.");
+    const index = executionPages.findIndex((page) => page.id === result.page.id);
+    if (index < 0) executionPages.push(result.page); else executionPages[index] = result.page;
+    selectExecutionPage(result.page.id);
+  } catch (error) { pageFeedback(error); }
+});
+
+document.querySelector("#bindExecutionPage").addEventListener("click", async () => {
+  try {
+    if (!selectedPageId) throw new Error("Crie uma página antes de vincular a aba.");
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!Number.isInteger(tab?.id) || !/^https?:\/\//i.test(tab.url || "")) {
+      throw new Error("Abra o site HTTP/HTTPS em uma aba antes de vincular.");
+    }
+    const result = await chrome.runtime.sendMessage({
+      type: "flowdetect-page-bind", pageId: selectedPageId, tabId: tab.id
+    });
+    if (!result?.ok) throw new Error(result?.error || "Não foi possível vincular a aba.");
+    const index = executionPages.findIndex((page) => page.id === result.page.id);
+    if (index < 0) throw new Error("Página não encontrada após vincular a aba.");
+    executionPages[index] = result.page;
+    selectExecutionPage(result.page.id);
+  } catch (error) { pageFeedback(error); }
+});
+document.querySelector("#unbindExecutionPage").addEventListener("click", async () => {
+  try {
+    if (!selectedPageId) return;
+    const result = await chrome.runtime.sendMessage({ type: "flowdetect-page-unbind", pageId: selectedPageId });
+    if (!result?.ok) throw new Error(result?.error || "Não foi possível desvincular a aba.");
+    const index = executionPages.findIndex((page) => page.id === result.page.id);
+    if (index >= 0) executionPages[index] = result.page;
+    pageFeedback("");
+    selectExecutionPage(result.page.id);
+  } catch (error) { pageFeedback(error); }
+});
+document.querySelector("#pageInputLock").addEventListener("change", async event => {
+  const pageId = selectedPageId;
+  event.target.disabled = true;
+  try {
+    const result = await chrome.runtime.sendMessage({ type: "flowdetect-page-input-lock", pageId, enabled: event.target.checked });
+    if (!result?.ok) throw new Error(result?.error || "Não foi possível alterar o bloqueio.");
+    const index = executionPages.findIndex(page => page.id === pageId);
+    if (index >= 0) executionPages[index] = result.page;
+    pageFeedback("");
+  } catch (error) { pageFeedback(error); }
+  renderExecutionPages();
+});
+document.querySelector("#openExecutionPage").addEventListener("click", async () => {
+  try {
+    const tab = await getExecutionTargetTab();
+    await chrome.tabs.update(tab.id, { active: true });
+    await chrome.windows.update(tab.windowId, { focused: true });
+  } catch (error) { pageFeedback(error); }
+});
+
 
 const getAutomations = async () => (await chrome.storage.local.get(AUTOMATIONS_KEY))[AUTOMATIONS_KEY] || [];
 const setAutomations = async (automations) => chrome.storage.local.set({ [AUTOMATIONS_KEY]: automations });
@@ -69,7 +296,8 @@ studioNewPairCode?.addEventListener("click", async () => {
   }
 });
 
-function normalizeImportedAutomation(raw) {
+function normalizeImportedAutomation(raw, targetPageId = selectedPageId) {
+  if (!targetPageId) throw new Error("Selecione uma página antes de importar uma automação.");
   const version = Number(raw?.version);
   if (!raw || raw.schema !== "flowdetect_chrome_automation" || ![1, 2, 3].includes(version) || !Array.isArray(raw.steps)) {
     throw new Error("Escolha um arquivo JSON exportado pelo FlowDetect Studio para Chrome.");
@@ -77,6 +305,7 @@ function normalizeImportedAutomation(raw) {
   return {
     ...raw,
     id: crypto.randomUUID(),
+    pageId: targetPageId,
     version,
     automation: {
       ...raw.automation,
@@ -557,28 +786,6 @@ async function saveLoopExclusions(automationId, excludedKeys) {
   await setAutomations(updated);
 }
 
-function screenGuardFromForm(form) {
-  const enabled = form.querySelector(".screen-guard-enabled").checked;
-  const text = form.querySelector(".screen-guard-text").value.trim();
-  let url = form.querySelector(".screen-guard-url").value.trim();
-  if (enabled) {
-    let parsed;
-    try { parsed = new URL(url); } catch (_) { throw new Error("Informe uma URL valida para a tela da automacao."); }
-    if (!["http:", "https:"].includes(parsed.protocol) || !text) throw new Error("Informe a URL HTTP/HTTPS e o texto esperado na tela.");
-    parsed.search = "";
-    url = parsed.href;
-  }
-  return { enabled, url, text };
-}
-
-async function saveScreenGuard(automation, form) {
-  const guard = screenGuardFromForm(form);
-  const updated = { ...automation, screen_guard: guard };
-  const stored = await getAutomations();
-  await setAutomations(stored.map((item) => String(item.id) === String(automation.id) ? updated : item));
-  automation.screen_guard = guard;
-  return updated;
-}
 
 function clampSpreadsheetStartRow(value, total) {
   const parsed = Math.trunc(Number(value));
@@ -619,52 +826,46 @@ function automationWithEditableOcr(automation, values) {
   return { ...automation, steps };
 }
 
-async function runAutomation(automation, startRow = 1, loopIncludedIndices = null, loopExcludedRows = [], downloadRouteId = null) {
+async function runAutomation(automation, startRow = 1, loopIncludedIndices = null, loopExcludedRows = [], downloadRouteId = null, pageId = selectedPageId) {
   if (!await ensureCurrentRuntime()) return;
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tab?.id) throw new Error("Abra a pagina onde deseja executar a automacao.");
-  if (automation.screen_guard?.enabled) {
-    const screen = await chrome.runtime.sendMessage({ type: "flowdetect-screen-ready", screenGuard: automation.screen_guard, tabId: tab.id });
-    if (!screen?.ready) throw new Error(screen?.reason || "Aguardando tela da automacao.");
-  }
+  const tab = await getExecutionTargetTab(pageId);
   const loop = spreadsheetLoopInfo(automation);
   const selectedStartRow = loop ? clampSpreadsheetStartRow(startRow, loop.total) : 1;
-  managerViewRequested = false;
-  companyPreviewRows.delete(String(automation.id));
-  currentRun = {
-    automationId: automation.id,
-    automationName: automation.automation?.nome,
-    downloadRouteId,
-    status: "running",
-    currentStep: 0,
-    totalSteps: loop ? automation.steps.length * (loop.total - selectedStartRow + 1) : automation.steps.length,
-    loopIncludedIndices,
-    loopExcludedRows,
-    recentSteps: [],
-    logs: [{ level: "info", message: loop
-      ? `Iniciando na linha ${selectedStartRow} de ${loop.total}; ${loopExcludedRows.length} linha(s) ignorada(s).`
-      : "Iniciando automacao." }]
-  };
-  renderAutomations();
-  const response = await chrome.runtime.sendMessage({ type: "flowdetect-start", automation, tabId: tab.id,
-    startRow: selectedStartRow, loopIncludedIndices, loopExcludedRows, downloadRouteId });
-  if (response?.run) {
-    updateRun(response.run);
-    return response.run;
+  if (startingPages.has(pageId)) throw new Error("Esta página já está iniciando uma execução.");
+  startingPages.add(pageId);
+  if (pageId === selectedPageId) {
+    managerViewRequested = false;
+    companyPreviewRows.delete(String(automation.id));
   }
-  if (!response?.ok) throw new Error(response?.run?.logs?.at(-1)?.message || response?.error || "A automacao falhou.");
-  return response;
+  renderExecutionPages();
+  renderAutomations();
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "flowdetect-start", automation, tabId: tab.id, pageId,
+      startRow: selectedStartRow, loopIncludedIndices, loopExcludedRows, downloadRouteId });
+    if (response?.run) { updateRun(response.run); return response.run; }
+    if (!response?.ok) throw new Error(response?.error || "A automacao falhou.");
+    return response;
+  } finally {
+    startingPages.delete(pageId);
+    renderExecutionPages();
+    renderAutomations();
+  }
 }
 
 function updateRun(run = {}) {
+  if (run.pageId) pageRuns.set(run.pageId, run);
+  renderExecutionPages();
+  if (run.pageId !== selectedPageId) return;
   if (["running", "waiting_screen"].includes(run?.status)
-      && String(run?.id || "") !== String(currentRun?.id || "")) managerViewRequested = false;
+      && String(run?.id || "") !== String(currentRun?.id || "")
+      && !galleryRunPages.has(run.pageId)) managerViewRequested = false;
   if (hasFinishedRun(run?.status) && !hasFinishedRun(currentRun?.status)) {
     const state = carouselStates.get(String(run?.automationId || ""));
     if (state) state.following = true;
     loopExclusionDrafts.delete(String(run?.automationId || ""));
   }
   currentRun = run || {};
+  renderExecutionPages();
   refreshDownloadActivity();
   renderAutomations();
 }
@@ -696,47 +897,45 @@ async function downloadExecutionReport(run) {
   }
   const filename = globalThis.FlowDetectExecutionReport.download(run);
   const updated = { ...run, reportGeneratedAt: new Date().toISOString(), reportFilename: filename };
-  currentRun = updated;
-  await chrome.storage.local.set({ [RUN_STORAGE_KEY]: updated });
-  renderAutomations();
+  await chrome.storage.local.set({ [`${PAGE_RUN_PREFIX}${run.pageId}`]: updated });
+  updateRun(updated);
 }
 
 async function deleteAutomation(automation) {
-  const nome = automation?.automation?.nome || "esta automacao";
-  if (!window.confirm(`Excluir "${nome}"? Essa acao nao pode ser desfeita.`)) return;
-
-  const isCurrent = String(currentRun?.automationId || "") === String(automation.id);
-  if (isCurrent && ["running", "waiting_screen"].includes(currentRun?.status)) {
-    await chrome.runtime.sendMessage({ type: "flowdetect-stop" }).catch(() => null);
-  }
+  if ([...pageRuns.values()].some((run) => String(run.automationId) === String(automation.id)
+      && ["running", "waiting_screen"].includes(run.status))) throw new Error("Pare as execuções desta automação antes de excluí-la.");
+  if (startingPages.has(selectedPageId)) throw new Error("Aguarde o início da execução antes de excluir.");
 
   const remaining = (await getAutomations()).filter((item) => String(item.id) !== String(automation.id));
   await setAutomations(remaining);
-
-  if (isCurrent) {
-    currentRun = {};
-    await chrome.storage.local.remove(RUN_STORAGE_KEY);
-    renderAutomations(remaining);
+  for (const [pageId, id] of expandedAutomationByPage) {
+    if (id === String(automation.id)) expandedAutomationByPage.delete(pageId);
   }
+
+  // Completed page snapshots stay available even when the library item is deleted.
+  renderAutomations(remaining);
 }
 
-function renderAutomation(automation) {
+function renderAutomation(automation, compact = false) {
   const fragment = automationTemplate.content.cloneNode(true);
   const card = fragment.querySelector(".automation-card");
+  const ownerPage = executionPages.find((page) => page.id === selectedPageId);
+  const cardAccent = ownerPage ? pageAccent(ownerPage, executionPages.indexOf(ownerPage)) : "#12b5cb";
+  card.classList.add("automation-imported-card");
+  card.style.setProperty("--automation-card-accent", cardAccent);
+  card.dataset.pageId = selectedPageId || "";
+  const descriptor = document.createElement("p");
+  descriptor.className = "automation-card-description";
+  descriptor.textContent = String(automation.automation?.descricao || "Automação pronta para configurar e executar nesta página.");
+  fragment.querySelector(".automation-card-top").after(descriptor);
   fragment.querySelector(".automation-source").textContent = automation.automation?.source || "FLOWDETECT";
   fragment.querySelector(".automation-name").textContent = automation.automation?.nome || "Automacao Chrome";
   fragment.querySelector(".step-count").textContent = `${automation.steps.length} blocos`;
-  const busy = ["running", "waiting_screen"].includes(currentRun?.status);
-  const guardForm = fragment.querySelector(".screen-guard-form");
-  const guard = automation.screen_guard || {};
-  guardForm.querySelector(".screen-guard-enabled").checked = Boolean(guard.enabled);
-  guardForm.querySelector(".screen-guard-url").value = guard.url || "";
-  guardForm.querySelector(".screen-guard-text").value = guard.text || "";
-  fragment.querySelector(".screen-guard-state").textContent = guard.enabled ? "Ativa" : "Desativada";
-  guardForm.querySelector("fieldset").disabled = busy;
+  const pageIdForCard = selectedPageId;
+  const runForCard = currentRun;
+  const busy = startingPages.has(pageIdForCard) || ["running", "waiting_screen"].includes(currentRun?.status);
   const runButton = fragment.querySelector(".run-automation");
-  const folderRunButton = fragment.querySelector(".download-run-with-folder");
-  const screenHint = fragment.querySelector(".screen-guard-hint");
+  const runHint = fragment.querySelector(".run-availability-hint");
   const editableEntries = editableOcrEntries(automation);
   const editSettings = fragment.querySelector(".ocr-edit-settings");
   const editError = fragment.querySelector(".ocr-edit-error");
@@ -763,54 +962,35 @@ function renderAutomation(automation) {
       label.append(caption, input);
       editFields.append(label);
     }
+    if (compact && editableEntries.length > 2) {
+      let fieldPage = 0;
+      const fields = [...editFields.children];
+      const pager = makeCardPager(() => { fieldPage--; updateFields(); }, () => { fieldPage++; updateFields(); });
+      const updateFields = () => {
+        fields.forEach((field, index) => { field.hidden = Math.floor(index / 2) !== fieldPage; });
+        pager.update(fieldPage, Math.ceil(fields.length / 2));
+      };
+      editFields.after(pager.node);
+      card.addEventListener("card-settings-open", (event) => {
+        if (event.detail !== "ocr-edit-settings") return;
+        const invalid = fields.findIndex(field => !field.querySelector("input").value.trim());
+        if (invalid >= 0) { fieldPage = Math.floor(invalid / 2); updateFields(); }
+      });
+      updateFields();
+    }
   }
-  let checkVersion = 0;
-  let lastGuardKey = "";
-  const refreshGuard = async (invalidate = false) => {
-    const version = ++checkVersion;
-    if (invalidate) lastGuardKey = "";
-    if (busy) { runButton.disabled = folderRunButton.disabled = true; screenHint.hidden = true; return; }
+  const refreshRunAvailability = () => {
+    if (busy) { runButton.disabled = true; runHint.hidden = true; return; }
     if (loopSelection && !loopSelection.includedIndices.length) {
-      runButton.disabled = folderRunButton.disabled = true;
-      screenHint.hidden = false;
-      screenHint.textContent = "Inclua ao menos uma empresa antes de executar.";
+      runButton.disabled = true;
+      runHint.hidden = false;
+      runHint.textContent = "Inclua ao menos uma empresa antes de executar.";
       return;
     }
-    let configured;
-    try { configured = screenGuardFromForm(guardForm); } catch (error) {
-      runButton.disabled = folderRunButton.disabled = true; screenHint.hidden = false; screenHint.textContent = error.message; return;
-    }
-    screenHint.hidden = !configured.enabled;
-    if (!configured.enabled) { runButton.disabled = folderRunButton.disabled = false; runButton.title = ""; return; }
-    const key = JSON.stringify(configured);
-    if (key !== lastGuardKey) { runButton.disabled = folderRunButton.disabled = true; screenHint.textContent = "Identificando a tela da automacao..."; }
-    lastGuardKey = key;
-    const screen = await chrome.runtime.sendMessage({ type: "flowdetect-screen-ready", screenGuard: configured }).catch(() => null);
-    if (version !== checkVersion || !runButton.isConnected) return;
-    runButton.disabled = folderRunButton.disabled = !screen?.ready;
-    runButton.title = screen?.reason || "Aguardando tela da automacao.";
-    screenHint.textContent = screen?.reason || "Aguardando tela da automacao.";
-    screenHint.classList.toggle("ready", Boolean(screen?.ready));
+    runButton.disabled = false;
+    runHint.hidden = true;
   };
-  const invalidateGuard = () => { lastGuardKey = ""; refreshGuard(); };
-  screenGuardRefreshers.add(refreshGuard);
-  guardForm.addEventListener("input", invalidateGuard);
-  runButton.disabled = folderRunButton.disabled = busy || Boolean(guard.enabled);
-  guardForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    saveScreenGuard(automation, guardForm).catch((error) => window.alert(error.message));
-  });
-  fragment.querySelector(".screen-guard-current").addEventListener("click", async () => {
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      const url = new URL(tab?.url || "");
-      if (!["http:", "https:"].includes(url.protocol)) throw new Error("Abra a pagina da automacao para usar sua URL.");
-      url.search = "";
-      guardForm.querySelector(".screen-guard-url").value = url.href;
-      guardForm.querySelector(".screen-guard-enabled").checked = true;
-      invalidateGuard();
-    } catch (error) { window.alert(error.message); }
-  });
+  runButton.disabled = busy;
   const loop = spreadsheetLoopInfo(automation);
   const loopStart = fragment.querySelector(".loop-start");
   const loopStartChoice = fragment.querySelector(".loop-start-choice");
@@ -857,7 +1037,7 @@ function renderAutomation(automation) {
       loopEdit.querySelector(".loop-edit-results").textContent = skipped
         ? `${skipped} ${skipped === 1 ? "linha ignorada" : "linhas ignoradas"} nesta execução.`
         : "Todas as linhas serão executadas.";
-      refreshGuard();
+      refreshRunAvailability();
     };
     loopStartChoice.addEventListener("change", () => {
       loopStartChoice.title = loopStartChoice.selectedOptions[0]?.title || "Selecione uma empresa para iniciar.";
@@ -871,6 +1051,29 @@ function renderAutomation(automation) {
           || (value.replace(/\D/g, "").length === 14 ? value : ""), key: loopRowKey(loop, index) }))
         .filter(({ value, company, cnpj }) => !query || normalizedSpreadsheetColumn(`${value} ${company} ${cnpj}`).includes(query));
     };
+    let loopListPage = 0;
+    const loopPager = compact ? makeCardPager(() => { loopListPage--; renderLoopList(); }, () => { loopListPage++; renderLoopList(); }) : null;
+    let selectionActions;
+    if (loopPager) {
+      list.after(loopPager.node);
+      selectionActions = document.createElement("select");
+      selectionActions.className = "loop-selection-actions";
+      selectionActions.setAttribute("aria-label", "Ações de seleção das empresas");
+      for (const [value, text] of [["", "Selecionar…"], ["include", "Marcar resultados"], ["exclude", "Desmarcar resultados"], ["all", "Incluir todas"]]) {
+        const option = document.createElement("option"); option.value = value; option.textContent = text; selectionActions.append(option);
+      }
+      selectionActions.disabled = busy;
+      selectionActions.addEventListener("change", () => {
+        const action = selectionActions.value; selectionActions.value = "";
+        if (action === "include") includeFiltered.click();
+        if (action === "exclude") excludeFiltered.click();
+        if (action === "all") loopEdit.querySelector(".loop-include-all").click();
+      });
+      loopPager.node.prepend(selectionActions);
+      const saveLabel = saveExclusions.parentElement;
+      saveLabel.title = "Manter as empresas excluídas nas próximas execuções desta automação";
+      for (const child of [...saveLabel.childNodes]) if (child.nodeType === Node.TEXT_NODE) child.textContent = " Lembrar seleção";
+    }
     const renderLoopList = () => {
       const matches = matchingLoopRows();
       const filtered = Boolean(search.value.trim());
@@ -878,8 +1081,16 @@ function renderAutomation(automation) {
       excludeFiltered.textContent = filtered ? `Desmarcar encontradas (${matches.length})` : `Desmarcar todas (${loop.total})`;
       includeFiltered.disabled = busy || !matches.length;
       excludeFiltered.disabled = busy || !matches.length;
+      if (selectionActions) {
+        selectionActions.options[1].textContent = includeFiltered.textContent;
+        selectionActions.options[2].textContent = excludeFiltered.textContent;
+        selectionActions.options[1].disabled = selectionActions.options[2].disabled = !matches.length;
+      }
       const oldTop = list.scrollTop;
-      list.replaceChildren(...matches.slice(0, 100).map(({ value, index, company, cnpj, key }) => {
+      const pageSize = compact ? 2 : 100;
+      loopListPage = Math.max(0, Math.min(loopListPage, Math.ceil(matches.length / pageSize) - 1));
+      loopPager?.update(loopListPage, Math.max(1, Math.ceil(matches.length / pageSize)));
+      list.replaceChildren(...matches.slice(loopListPage * pageSize, (loopListPage + 1) * pageSize).map(({ value, index, company, cnpj, key }) => {
         const label = document.createElement("label");
         label.className = `loop-edit-row${loopExcludedKeys.has(key) ? " is-excluded" : ""}`;
         const checkbox = document.createElement("input");
@@ -901,20 +1112,25 @@ function renderAutomation(automation) {
         const subtitle = document.createElement("small");
         subtitle.textContent = `#${index + 1} · ${cnpj ? `CNPJ ${cnpj}` : `${loop.name}: ${value || "(vazio)"}`}`
           + (cnpj && cnpj !== value ? ` · ${loop.name}: ${value || "(vazio)"}` : "");
+        if (compact && company.replace(/\D/g, "") === cnpj && cnpj) {
+          title.textContent = cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
+          subtitle.hidden = true;
+          label.title = `Linha ${index + 1} · CNPJ ${cnpj}`;
+        }
         copy.append(title, subtitle);
         label.append(checkbox, copy);
         return label;
       }));
       list.scrollTop = oldTop;
       if (!matches.length) list.textContent = "Nenhuma empresa encontrada.";
-      else if (matches.length > 100) {
+      else if (!compact && matches.length > 100) {
         const hint = document.createElement("p");
         hint.className = "loop-edit-results";
         hint.textContent = `Mostrando 100 de ${matches.length}. Refine a busca para ver as demais.`;
         list.append(hint);
       }
     };
-    search.addEventListener("input", renderLoopList);
+    search.addEventListener("input", () => { loopListPage = 0; renderLoopList(); });
     const setFilteredInclusion = (include) => {
       for (const { key } of matchingLoopRows()) {
         if (include) loopExcludedKeys.delete(key);
@@ -938,9 +1154,9 @@ function renderAutomation(automation) {
 
   const isCurrent = String(currentRun?.automationId || "") === String(automation.id);
   const executionLoop = isCurrent ? loopInfoForRun(automation, currentRun) : loop;
-  const executionAutomation = isCurrent && Array.isArray(currentRun?.loopIncludedIndices)
+  const executionAutomation = isCurrent && currentRun.automationSnapshot || (isCurrent && Array.isArray(currentRun?.loopIncludedIndices)
     && currentRun.loopIncludedIndices.length
-    ? automationWithSelectedLoopRows(automation, currentRun.loopIncludedIndices) : automation;
+    ? automationWithSelectedLoopRows(automation, currentRun.loopIncludedIndices) : automation);
   const resumeButton = fragment.querySelector(".resume-run-button");
   if (isCurrent && managerViewRequested && ["running", "waiting_screen", "completed", "failed", "stopped"].includes(currentRun?.status)) {
     resumeButton.hidden = false;
@@ -1033,16 +1249,16 @@ function renderAutomation(automation) {
     fragment.querySelector(".progress-bar").style.width = `${progress.percent}%`;
     const stop = fragment.querySelector(".stop-button");
     stop.hidden = !["running", "waiting_screen"].includes(status);
-    stop.addEventListener("click", () => chrome.runtime.sendMessage({ type: "flowdetect-stop" }));
+    stop.addEventListener("click", () => chrome.runtime.sendMessage({ type: "flowdetect-stop", runId: runForCard.id, pageId: pageIdForCard }));
     const managerButton = fragment.querySelector(".block-carousel-manager");
     managerButton.hidden = !hasFinishedRun(status);
-    managerButton.addEventListener("click", () => { managerViewRequested = true; renderAutomations(); });
+    managerButton.addEventListener("click", () => setWorkspaceView("automations"));
     const reportButton = fragment.querySelector(".report-button");
     const canGenerateReport = hasFinishedRun(status);
     reportButton.hidden = !canGenerateReport;
     if (canGenerateReport) {
       reportButton.textContent = currentRun.reportGeneratedAt ? "Gerar novo relatório PDF" : "Gerar relatório PDF";
-      reportButton.addEventListener("click", () => downloadExecutionReport(currentRun).catch((error) => {
+      reportButton.addEventListener("click", () => downloadExecutionReport(runForCard).catch((error) => {
         window.alert(`Nao foi possivel gerar o relatorio: ${String(error.message || error)}`);
       }));
     }
@@ -1055,7 +1271,7 @@ function renderAutomation(automation) {
     appendLogs(fragment.querySelector(".run-log"), currentRun.logs);
   }
 
-  const startConfiguredAutomation = async (withFolder) => {
+  const startConfiguredAutomation = async () => {
     const startRow = loop ? clampSpreadsheetStartRow(loopStartChoice.value, loopSelection.includedIndices.length) : 1;
     let configuredOcr;
     let execution;
@@ -1063,92 +1279,601 @@ function renderAutomation(automation) {
       configuredOcr = automationWithEditableOcr(automation, drafts);
       execution = loop ? automationWithSelectedLoopRows(configuredOcr, loopSelection.includedIndices) : configuredOcr;
     } catch (error) {
-      if (loop && !loopSelection.includedIndices.length) loopEdit.open = true;
+      if (loop && !loopSelection.includedIndices.length) {
+        loopEdit.open = true;
+        card.dispatchEvent(new CustomEvent("card-settings-open", { detail: "loop-edit-settings" }));
+      }
       else {
         editSettings.open = true;
         editError.textContent = String(error.message || error);
         editError.hidden = false;
+        card.dispatchEvent(new CustomEvent("card-settings-open", { detail: "ocr-edit-settings" }));
       }
       return;
     }
     if (loopSelection?.excludedRows.length && !window.confirm(
       `Executar ${loopSelection.includedIndices.length} de ${loop.total} linhas?\n${loopSelection.excludedRows.length} serão ignoradas.`)) return;
-    return saveScreenGuard(automation, guardForm).then(async (configured) => {
+    try {
       if (loop) await saveLoopExclusions(automation.id,
         loopEdit.querySelector(".loop-save-exclusions").checked ? loopExcludedKeys : []);
-      if (withFolder) {
-        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-        if (!tab?.id) throw new Error("Abra a aba da automacao antes de escolher o destino.");
-        const pendingId = crypto.randomUUID();
-        await chrome.storage.local.set({ [`flowdetectPendingFolderRun:${pendingId}`]: {
-          automation: { ...execution, screen_guard: configured.screen_guard }, tabId: tab.id,
-          startRow, loopIncludedIndices: loopSelection?.includedIndices || null,
-          loopExcludedRows: loopSelection?.excludedRows || [],
-        } });
-        await chrome.tabs.create({ url: chrome.runtime.getURL(`download-launch.html?id=${pendingId}`) });
-        return;
-      }
-      return runAutomation({ ...execution, screen_guard: configured.screen_guard }, startRow,
-        loopSelection?.includedIndices || null, loopSelection?.excludedRows || []);
-    }).catch((error) => {
-      if (!["running", "waiting_screen"].includes(currentRun?.status)) {
-        screenHint.hidden = false;
-        screenHint.textContent = String(error.message || error);
-        invalidateGuard();
-        return;
-      }
-      updateRun({
-        automationId: automation.id,
-        automationName: automation.automation?.nome,
-        status: "failed",
-        totalSteps: automation.steps.length,
-        currentStep: 0,
-        logs: [{ level: "error", message: String(error.message || error) }]
-      });
-    });
+      return await runAutomation(execution, startRow,
+        loopSelection?.includedIndices || null, loopSelection?.excludedRows || [], null, pageIdForCard);
+    } catch (error) {
+      const page = executionPages.find((item) => item.id === pageIdForCard);
+      pageFeedback(`${page?.name || "Página"}: ${String(error.message || error)}`);
+    }
   };
-  fragment.querySelector(".run-automation").addEventListener("click", () => startConfiguredAutomation(false));
-  folderRunButton.addEventListener("click", () => startConfiguredAutomation(true));
-  fragment.querySelector(".delete-automation").addEventListener("click", () => deleteAutomation(automation).catch((error) => {
-    window.alert(`Nao foi possivel excluir a automacao: ${String(error.message || error)}`);
-  }));
+  runButton.addEventListener("click", startConfiguredAutomation);
+  fragment.querySelector(".download-open-settings").addEventListener("click", () => {
+    chrome.tabs.create({ url: "chrome://settings/downloads" }).catch(pageFeedback);
+  });
+  // Native confirm dialogs are unreliable in Chrome action popups. Confirm in-place.
+  const deleteButton = fragment.querySelector(".delete-automation");
+  const confirmation = document.createElement("div");
+  confirmation.className = "automation-delete-confirm";
+  confirmation.hidden = true;
+  const warning = document.createElement("span");
+  warning.textContent = "Excluir da biblioteca? O histórico será mantido.";
+  const cancelDelete = document.createElement("button");
+  cancelDelete.type = "button"; cancelDelete.textContent = "Cancelar";
+  const confirmDelete = document.createElement("button");
+  confirmDelete.type = "button"; confirmDelete.textContent = "Excluir";
+  confirmDelete.className = "confirm-delete-automation";
+  confirmation.append(warning, cancelDelete, confirmDelete);
+  fragment.querySelector(".automation-card-top").after(confirmation);
+  deleteButton.addEventListener("click", () => { confirmation.hidden = false; cancelDelete.focus(); });
+  cancelDelete.addEventListener("click", () => { confirmation.hidden = true; deleteButton.focus(); });
+  confirmDelete.addEventListener("click", async () => {
+    confirmDelete.disabled = true;
+    try { await deleteAutomation(automation); }
+    catch (error) { warning.textContent = String(error.message || error); }
+    finally { confirmDelete.disabled = false; }
+  });
   return fragment;
 }
 
+
+
+const expandedAutomationByPage = new Map();
+const cardEditorViews = new Map();
+const galleryRunPages = new Set();
+
+function makeCardPager(previous, next) {
+  const node = document.createElement("div"); node.className = "card-settings-pager";
+  const back = document.createElement("button"), forward = document.createElement("button"), label = document.createElement("span");
+  back.type = forward.type = "button";
+  back.textContent = "←"; forward.textContent = "→";
+  back.setAttribute("aria-label", "Itens anteriores"); forward.setAttribute("aria-label", "Próximos itens");
+  back.addEventListener("click", previous); forward.addEventListener("click", next);
+  node.append(back, label, forward);
+  return { node, update(index, total) { label.textContent = `${index + 1} / ${total}`; back.disabled = index === 0; forward.disabled = index + 1 >= total; } };
+}
+
+function installCardSettings(card, key) {
+  const actions = document.createElement("div"); actions.className = "card-primary-actions";
+  actions.append(card.querySelector(".run-automation"));
+  card.append(actions);
+  const panel = document.createElement("section"); panel.className = "card-settings-panel";
+  const choice = document.createElement("select"); choice.className = "card-settings-choice";
+  choice.setAttribute("aria-label", "Seção de configurações");
+  const sections = [["loop-edit-settings", "Empresas"], ["ocr-edit-settings", "Textos OCR"], ["download-settings", "Downloads"]]
+    .map(([className, title]) => ({ node: card.querySelector(`.${className}`), className, title }))
+    .filter(section => section.node && !section.node.hidden);
+  panel.append(choice);
+  for (const section of sections) {
+    const option = document.createElement("option"); option.value = section.className; option.textContent = section.title;
+    choice.append(option); section.node.open = true; panel.append(section.node);
+  }
+  const configure = document.createElement("button"); configure.type = "button"; configure.className = "automation-configure";
+  const refresh = () => {
+    const state = cardEditorViews.get(key);
+    card.dataset.editing = String(Boolean(state));
+    panel.hidden = !state;
+    configure.textContent = state ? "←" : "Configurações";
+    configure.title = state ? "Voltar à execução" : "Configurar esta automação";
+    configure.setAttribute("aria-label", configure.title);
+    if (state) card.querySelector(".automation-card-top").prepend(configure);
+    else actions.prepend(configure);
+    configure.setAttribute("aria-expanded", String(Boolean(state)));
+    choice.value = sections.some(section => section.className === state) ? state : sections[0].className;
+    sections.forEach(section => { section.node.hidden = section.className !== choice.value; });
+  };
+  configure.addEventListener("click", () => {
+    if (cardEditorViews.has(key)) cardEditorViews.delete(key);
+    else cardEditorViews.set(key, choice.value || sections[0].className);
+    refresh();
+  });
+  choice.addEventListener("change", () => { cardEditorViews.set(key, choice.value); refresh(); });
+  card.addEventListener("card-settings-open", event => {
+    if (sections.some(section => section.className === event.detail)) {
+      cardEditorViews.set(key, event.detail); refresh();
+    }
+  });
+  card.append(configure, panel); refresh();
+}
+
+function stretchAutomationCard(opened, oldRect) {
+  if (!opened || !oldRect || !opened.animate
+      || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+  const current = opened.getBoundingClientRect();
+  if (!current.width || !oldRect.width) return;
+  const dx = oldRect.left - current.left;
+  const dy = oldRect.top - current.top;
+  const hiddenRight = Math.max(0, current.width - oldRect.width);
+  const hiddenBottom = Math.max(0, current.height - oldRect.height);
+  opened.animate([
+    {
+      clipPath: `inset(0px ${hiddenRight}px ${hiddenBottom}px 0px round 11px)`,
+      transform: `translate(${dx}px, ${dy}px)`, opacity: .94
+    },
+    { clipPath: "inset(0px 0px 0px 0px round 12px)", transform: "translate(0px, 0px)", opacity: 1 }
+  ], { duration: 375, easing: "cubic-bezier(.18,.8,.23,1)" });
+}
+
+function unfoldAutomationCard(automationId, oldRect) {
+  const pageId = selectedPageId;
+  expandedAutomationByPage.set(pageId, String(automationId));
+  const scroll = automationList.scrollTop;
+  renderAutomations();
+  automationList.scrollTop = scroll;
+  const expanded = [...automationList.querySelectorAll(".automation-flip-item.is-expanded")]
+    .find((item) => item.dataset.automationId === String(automationId));
+  stretchAutomationCard(expanded, oldRect);
+}
+
+function closeExpandedAutomation() {
+  const pageId = selectedPageId;
+  const expandedId = expandedAutomationByPage.get(pageId);
+  if (!expandedId) return;
+  const item = [...automationList.querySelectorAll(".automation-flip-item.is-expanded")]
+    .find((entry) => entry.dataset.automationId === expandedId);
+  const finish = () => {
+    if (expandedAutomationByPage.get(pageId) !== expandedId) return;
+    expandedAutomationByPage.delete(pageId);
+    if (selectedPageId === pageId) {
+      const scroll = automationList.scrollTop;
+      renderAutomations();
+      automationList.scrollTop = scroll;
+      [...automationList.querySelectorAll(".automation-tile-open")]
+        .find((button) => button.closest(".automation-flip-item")?.dataset.automationId === expandedId)?.focus();
+    }
+  };
+  if (!item?.animate || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+    finish();
+    return;
+  }
+  const width = item.getBoundingClientRect().width;
+  const right = Math.max(0, width - 120);
+  const bottom = Math.max(0, item.getBoundingClientRect().height - 145);
+  item.animate([
+    { clipPath: "inset(0px 0px 0px 0px round 12px)", opacity: 1 },
+    { clipPath: `inset(0px ${right}px ${bottom}px 0px round 11px)`, opacity: .85 }
+  ], { duration: 220, easing: "cubic-bezier(.55,0,.9,.48)", fill: "forwards" })
+    .finished.then(finish, finish);
+}
+
+async function runFromCompactCard(automation, pageId) {
+  const page = executionPages.find((item) => item.id === pageId);
+  if (!page) throw new Error("Página da automação não encontrada.");
+  if (startingPages.has(pageId) || ["running", "waiting_screen"].includes(pageRuns.get(pageId)?.status)) {
+    throw new Error("Já existe uma automação em execução nesta página.");
+  }
+  // Validate the selected tab before changing the visual run presentation.
+  await getExecutionTargetTab(pageId);
+
+  let prepared = automation;
+  const entries = editableOcrEntries(automation);
+  const ocrKey = JSON.stringify([automation.id, entries.map(({ key, text }) => [key, text])]);
+  prepared = automationWithEditableOcr(prepared, editableOcrDrafts.get(ocrKey) || new Map());
+  const loop = spreadsheetLoopInfo(automation);
+  let selection = null;
+  if (loop) {
+    const fingerprint = JSON.stringify(loop.values.map((_, index) => loopRowKey(loop, index)));
+    const draft = loopExclusionDrafts.get(String(automation.id));
+    const excluded = draft?.fingerprint === fingerprint
+      ? draft.excludedKeys
+      : (Array.isArray(automation.ui?.loopExcludedKeys) ? automation.ui.loopExcludedKeys : []);
+    selection = selectedLoopRows(loop, new Set(excluded));
+    if (!selection.includedIndices.length) {
+      throw new Error("Nenhuma empresa ativa para executar. Abra os detalhes e ajuste as empresas do loop.");
+    }
+    if (selection.excludedRows.length && !window.confirm(
+      `Executar ${selection.includedIndices.length} de ${loop.total} empresas? As outras serão ignoradas.`)) return;
+    if (draft?.save && draft.fingerprint === fingerprint) {
+      await saveLoopExclusions(automation.id, new Set(excluded));
+    }
+    prepared = automationWithSelectedLoopRows(prepared, selection.includedIndices);
+  }
+
+  galleryRunPages.add(pageId);
+  if (pageId === selectedPageId) managerViewRequested = false;
+  return runAutomation(prepared, 1, selection?.includedIndices || null,
+    selection?.excludedRows || [], null, pageId);
+}
+
+function makeAutomationTile(automation) {
+  const id = String(automation.id);
+  const pageId = selectedPageId;
+  const isExpanded = expandedAutomationByPage.get(pageId) === id;
+  const page = executionPages.find((item) => item.id === pageId);
+  const accent = page ? pageAccent(page, executionPages.indexOf(page)) : "#12b5cb";
+  const pageRun = pageRuns.get(pageId);
+  const active = String(pageRun?.automationId || "") === id;
+  const starting = startingPages.has(pageId);
+  const running = active && ["running", "waiting_screen"].includes(pageRun?.status);
+  const busy = starting || ["running", "waiting_screen"].includes(pageRun?.status);
+  const percent = active ? runProgress(pageRun).percent : 0;
+  const statusLabel = running ? (pageRun.status === "waiting_screen" ? "Aguardando" : "Executando")
+    : starting && !active ? "Iniciando" : active
+      ? ({ completed: "Concluída", failed: "Falhou", stopped: "Parada" }[pageRun.status] || "Pronta")
+      : "Pronta";
+
+  const item = document.createElement("article");
+  item.className = "automation-flip-item";
+  item.classList.toggle("is-expanded", isExpanded);
+  item.classList.toggle("is-running", running);
+  item.dataset.automationId = id;
+  item.dataset.pageId = pageId || "";
+  item.style.setProperty("--automation-card-accent", accent);
+
+  const tile = document.createElement("div");
+  tile.className = "automation-flip-tile";
+  tile.dataset.automationId = id;
+  tile.dataset.pageId = pageId || "";
+  tile.style.setProperty("--automation-card-accent", accent);
+
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "automation-tile-open";
+  open.setAttribute("aria-expanded", String(isExpanded));
+  open.setAttribute("aria-label", `Ver detalhes de ${automation.automation?.nome || "Automação Chrome"}`);
+  const top = document.createElement("span");
+  top.className = "automation-tile-top";
+  const symbol = document.createElement("span");
+  symbol.className = "automation-tile-symbol";
+  symbol.textContent = "FD";
+  const expandIcon = document.createElement("span");
+  expandIcon.className = "automation-tile-flip";
+  expandIcon.textContent = "⤢";
+  expandIcon.title = "Esticar para mostrar os detalhes";
+  top.append(symbol, expandIcon);
+  const name = document.createElement("strong");
+  name.className = "automation-tile-name";
+  name.textContent = automation.automation?.nome || "Automação Chrome";
+  name.title = name.textContent;
+  open.append(top, name);
+  open.addEventListener("click", () => {
+    if (expandedAutomationByPage.get(selectedPageId) === id) closeExpandedAutomation();
+    else unfoldAutomationCard(id, item.getBoundingClientRect());
+  });
+
+  const meta = document.createElement("div");
+  meta.className = "automation-tile-meta";
+  const count = document.createElement("span");
+  count.textContent = (automation.steps?.length || 0) + " blocos";
+  const status = document.createElement("span");
+  status.className = "automation-tile-status";
+  status.textContent = statusLabel;
+  meta.append(count, status);
+
+  const progress = document.createElement("div");
+  progress.className = "automation-tile-progress";
+  progress.setAttribute("role", "progressbar");
+  progress.setAttribute("aria-label", `Progresso de ${name.textContent}`);
+  progress.setAttribute("aria-valuemin", "0");
+  progress.setAttribute("aria-valuemax", "100");
+  progress.setAttribute("aria-valuenow", String(percent));
+  const progressValue = document.createElement("span");
+  progressValue.className = "automation-tile-percent";
+  progressValue.textContent = percent + "%";
+  const track = document.createElement("span");
+  track.className = "automation-tile-track";
+  const fill = document.createElement("span");
+  fill.className = "automation-tile-fill";
+  fill.style.width = percent + "%";
+  track.append(fill);
+  progress.append(progressValue, track);
+
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "automation-tile-action";
+  action.classList.toggle("is-stop", running);
+  action.textContent = running ? "■ Parar" : starting ? "Iniciando…" : "▶ Executar";
+  action.setAttribute("aria-label", `${running ? "Parar" : "Executar"} ${name.textContent}`);
+  action.disabled = busy && !running;
+  action.title = running ? "Parar somente esta execução"
+    : busy ? "Aguarde o término da execução atual desta página" : "Executar nesta página sem abrir os detalhes";
+  action.addEventListener("click", () => {
+    if (running) {
+      chrome.runtime.sendMessage({ type: "flowdetect-stop", runId: pageRun.id, pageId })
+        .then((result) => { if (result?.ok === false) throw Error(result.error || "Falha ao parar."); })
+        .catch((error) => pageFeedback(`${page?.name || "Página"}: ${error.message || error}`));
+      return;
+    }
+    runFromCompactCard(automation, pageId)
+      .catch((error) => pageFeedback(`${page?.name || "Página"}: ${error.message || error}`));
+  });
+  tile.append(open, meta, progress, action);
+  tile.addEventListener("click", (event) => {
+    if (event.target.closest("button")) return;
+    if (expandedAutomationByPage.get(selectedPageId) === id) closeExpandedAutomation();
+    else unfoldAutomationCard(id, item.getBoundingClientRect());
+  });
+  item.append(tile);
+
+  if (isExpanded) {
+    const fragment = renderAutomation(automation, true);
+    const card = fragment.querySelector(".automation-card");
+    card.classList.add("automation-flip-detail");
+    card.dataset.automationId = id;
+    // Assisted execution lives in its own workspace, never below settings.
+    card.querySelector(".execution")?.remove();
+    card.querySelector(".resume-run-button")?.remove();
+    installCardSettings(card, `${pageId}:${id}`);
+    const lastRun = pageRuns.get(pageId);
+    if (String(lastRun?.automationId || "") === id) {
+      const watch = document.createElement("button");
+      watch.type = "button";
+      watch.className = "automation-open-assist";
+      watch.textContent = "◉ Assistir execução · " + runProgress(lastRun).percent + "%";
+      watch.addEventListener("click", () => setWorkspaceView("assisted"));
+      card.append(watch);
+    }
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "automation-flip-close";
+    close.textContent = "←";
+    close.title = "Recolher automação";
+    close.setAttribute("aria-label", "Recolher detalhes da automação");
+    close.addEventListener("click", closeExpandedAutomation);
+    card.querySelector(".automation-card-top").prepend(close);
+    item.append(fragment);
+  }
+  return item;
+}
+
 function renderAutomations(automations = automationsCache) {
-  screenGuardRefreshers.clear();
   automationsCache = Array.isArray(automations) ? automations : [];
-  document.body.classList.toggle("run-focused", !managerViewRequested
-    && Boolean(currentRun?.automationId)
-    && ["running", "waiting_screen", "completed", "failed", "stopped"].includes(currentRun?.status));
+  // Execution graphics and live images never displace the automation cards.
+  const isRunFocused = false;
+  document.body.classList.remove("run-focused");
   automationList.replaceChildren();
-  if (!automationsCache.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty-state";
-    empty.textContent = 'Nenhuma automacao importada. Use + Adicionar automacao.';
+  if (workspaceView === "assisted") {
+    renderAssistedView();
+    return;
+  }
+  // Legacy global automations belong to Page 1, not every page.
+  const defaultPageId = executionPages[0]?.id;
+  const displayAutomations = automationsCache.filter((item) => (
+    item.pageId === selectedPageId || (!item.pageId && selectedPageId === defaultPageId)
+  ));
+  if (["running", "waiting_screen"].includes(currentRun.status) && currentRun.automationSnapshot && !displayAutomations.some((item) => String(item.id) === String(currentRun.automationId))) {
+    displayAutomations.push(currentRun.automationSnapshot);
+  }
+
+  if (!isRunFocused) {
+    const header = document.createElement("div");
+    header.className = "automation-library-heading";
+    const headingTitle = document.createElement("strong");
+    headingTitle.textContent = "Automações desta página";
+    const headingCount = document.createElement("span");
+    headingCount.textContent = displayAutomations.length + " card" + (displayAutomations.length === 1 ? "" : "s");
+    header.append(headingTitle, headingCount);
+    automationList.append(header);
+  }
+  if (!displayAutomations.length) {
+    const empty = document.createElement("button");
+    empty.type = "button";
+    empty.className = "empty-state automation-import-card";
+    empty.title = "Importar arquivo JSON do FlowDetect para esta página";
+    const icon = document.createElement("span");
+    icon.className = "automation-import-icon";
+    icon.textContent = "+";
+    const title = document.createElement("strong");
+    title.textContent = "Importar automação";
+    const hint = document.createElement("span");
+    const page = executionPages.find((page) => page.id === selectedPageId);
+    hint.textContent = "Escolha um JSON para " + (page?.name || "esta página") + ".";
+    empty.append(icon, title, hint);
+    empty.addEventListener("click", () => importInput.click());
     automationList.append(empty);
     return;
   }
   const activeId = String(currentRun?.automationId || "");
-  const ordered = [...automationsCache].sort((first, second) => (
+  const ordered = displayAutomations.sort((first, second) => (
     Number(String(second.id) === activeId) - Number(String(first.id) === activeId)
   ));
-  ordered.forEach((automation) => automationList.append(renderAutomation(automation)));
-  refreshScreenGuards();
+  if (isRunFocused) {
+    const automation = ordered.find((item) => String(item.id) === activeId);
+    if (automation) automationList.append(renderAutomation(automation));
+    return;
+  }
+
+  // One automation = one DOM grid item. Expanding transforms that item
+  // in-place; the other tiles reflow beneath it.
+  for (const automation of ordered) automationList.append(makeAutomationTile(automation));
 }
 
-chrome.tabs.onActivated?.addListener(refreshScreenGuards);
-chrome.tabs.onUpdated?.addListener(refreshScreenGuards);
-chrome.windows?.onFocusChanged?.addListener(refreshScreenGuards);
-setInterval(() => { for (const refresh of screenGuardRefreshers) refresh(); }, 1000);
+
+function updateAssistedLiveCount() {
+  const count = [...pageRuns.values()].filter((run) => ["running", "waiting_screen"].includes(run?.status)).length;
+  const badge = document.querySelector("#assistedLiveCount");
+  badge.textContent = String(count);
+  badge.hidden = count === 0;
+  // Refresh page statuses without resetting the currently visible carousel.
+  const selection = document.querySelector("#assistedPageSelect");
+  for (const option of selection.options) {
+    const page = executionPages.find((item) => item.id === option.value);
+    if (!page) continue;
+    const live = ["running", "waiting_screen"].includes(pageRuns.get(page.id)?.status);
+    option.textContent = page.name + (live ? " · ao vivo" : "");
+  }
+}
+
+function renderAssistedView() {
+  const choice = document.querySelector("#assistedPageSelect");
+  const content = document.querySelector("#assistedContent");
+  choice.replaceChildren(...executionPages.map((page) => {
+    const option = document.createElement("option");
+    option.value = page.id;
+    const run = pageRuns.get(page.id);
+    const live = ["running", "waiting_screen"].includes(run?.status) ? " · ao vivo" : "";
+    option.textContent = page.name + live;
+    return option;
+  }));
+  choice.disabled = !executionPages.length;
+  choice.value = selectedPageId || "";
+  content.replaceChildren();
+
+  const page = executionPages.find((item) => item.id === selectedPageId);
+  const savedRun = pageRuns.get(selectedPageId);
+  const savedRunActive = ["running", "waiting_screen"].includes(savedRun?.status);
+  const listedAutomation = automationsCache.find((item) => (
+    String(item.id) === String(savedRun?.automationId)
+    && (item.pageId === selectedPageId || (!item.pageId && selectedPageId === executionPages[0]?.id))
+  ));
+  // Keep the saved report, but do not present a deleted automation as a current
+  // assisted run. An active execution can still be followed and stopped.
+  const run = savedRunActive || listedAutomation ? savedRun : null;
+  const title = document.createElement("div");
+  title.className = "assisted-run-title";
+  const copy = document.createElement("strong");
+  const note = document.createElement("small");
+  const active = ["running", "waiting_screen"].includes(run?.status);
+  const statusLabels = {
+    running: "Executando agora", waiting_screen: "Aguardando tela",
+    completed: "Execução concluída", failed: "Execução com falha", stopped: "Execução interrompida"
+  };
+  copy.textContent = run?.automationSnapshot?.automation?.nome
+    || automationsCache.find((item) => String(item.id) === String(run?.automationId))?.automation?.nome
+    || page?.name || "Nenhuma página selecionada";
+  note.textContent = run?.id
+    ? (statusLabels[run.status] || "Última execução")
+    : "Nenhuma execução registrada nesta página";
+  copy.title = copy.textContent;
+  note.dataset.status = run?.status || "ready";
+  note.classList.toggle("is-live", active);
+  title.append(copy, note, choice);
+  content.append(title);
+
+  if (!run?.id) {
+    const empty = document.createElement("div");
+    empty.className = "assisted-empty";
+    const symbol = document.createElement("span");
+    symbol.textContent = "◉";
+    const message = document.createElement("strong");
+    message.textContent = "Sem execução para acompanhar";
+    const hint = document.createElement("p");
+    hint.textContent = "Vá até Automações, execute um card e escolha esta página para acompanhar imagens e etapas.";
+    const open = document.createElement("button");
+    open.type = "button";
+    open.textContent = "Ver automações";
+    open.addEventListener("click", () => setWorkspaceView("automations"));
+    empty.append(symbol, message, hint, open);
+    content.append(empty);
+    return;
+  }
+
+  const automation = run.automationSnapshot
+    || automationsCache.find((item) => String(item.id) === String(run.automationId));
+  if (!automation || !Array.isArray(automation.steps)) {
+    const warning = document.createElement("p");
+    warning.className = "assisted-unavailable";
+    warning.textContent = "Progresso salvo: " + runProgress(run).percent
+      + "%. Não há um fluxo completo disponível para apresentar imagens desta execução.";
+    content.append(warning);
+    return;
+  }
+
+  // Reuse the FlowDetect carousel, visual previews, live steps and report
+  // rendering. Only the .execution subtree enters the assisted view.
+  const previousManagerState = managerViewRequested;
+  managerViewRequested = false;
+  let fragment;
+  try {
+    fragment = renderAutomation(automation);
+  } finally {
+    managerViewRequested = previousManagerState;
+  }
+  const monitor = fragment.querySelector(".execution");
+  if (!monitor || monitor.hidden) {
+    const notice = document.createElement("p");
+    notice.className = "assisted-unavailable";
+    notice.textContent = "Não foi possível montar as imagens desta execução.";
+    content.append(notice);
+    return;
+  }
+  monitor.hidden = false;
+  monitor.classList.add("assisted-execution");
+  // One title/status row and one action row leave room for recent events.
+  const count = monitor.querySelector(".block-carousel-count");
+  monitor.querySelector(".block-carousel-top").append(count);
+  // Keep block identity on one line so its visual reference owns the stage.
+  const blockTop = monitor.querySelector(".block-carousel-top");
+  blockTop.insertBefore(monitor.querySelector(".block-carousel-title"), blockTop.querySelector(".block-carousel-state"));
+  const report = monitor.querySelector(".report-button");
+  report.title = report.textContent;
+  report.setAttribute("aria-label", report.textContent);
+  report.textContent = "PDF";
+  monitor.querySelector(".block-carousel-controls").append(report);
+  const history = monitor.querySelector(".run-log-details");
+  history.insertBefore(monitor.querySelector(".execution-loop-summary"), history.querySelector(".run-log"));
+  history.open = false;
+  history.hidden = true;
+  const legacyManager = monitor.querySelector(".block-carousel-manager");
+  if (legacyManager) legacyManager.hidden = true;
+  content.append(monitor);
+}
+
+function setWorkspaceView(nextView, persist = true) {
+  const view = nextView === "assisted" ? "assisted" : "automations";
+  const changed = view !== workspaceView;
+  if (changed) {
+    for (const animation of workspaceAnimations) animation.cancel();
+    workspaceAnimations = [];
+  }
+  workspaceView = view;
+  const assisted = view === "assisted";
+  document.querySelector(".app-shell").dataset.workspace = view;
+  document.querySelector("#automationList").hidden = assisted;
+  document.querySelector("#assistedView").hidden = !assisted;
+  for (const [name, id] of [["automations", "workspaceAutomations"], ["assisted", "workspaceAssisted"]]) {
+    const control = document.querySelector("#" + id);
+    const selected = view === name;
+    control.classList.toggle("is-active", selected);
+    control.setAttribute("aria-selected", String(selected));
+  }
+  if (persist) chrome.storage.session.set({ flowdetectWorkspaceView: view }).catch(() => {});
+  renderAutomations();
+  // Animate only a deliberate workspace switch, never a live progress update.
+  if (changed && persist && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    const selectors = assisted ? ["#assistedView"] : [".execution-pages", "#automationList"];
+    workspaceAnimations = selectors.map((selector) => document.querySelector(selector).animate([
+      { opacity: 0, transform: "translateY(4px)" },
+      { opacity: 1, transform: "translateY(0)" }
+    ], { duration: 180, easing: "cubic-bezier(.22, 1, .36, 1)" }));
+  }
+}
+
+document.querySelector("#workspaceAutomations").addEventListener("click", () => setWorkspaceView("automations"));
+document.querySelector("#workspaceAssisted").addEventListener("click", () => setWorkspaceView("assisted"));
+document.querySelector("#assistedPageSelect").addEventListener("change", (event) => selectExecutionPage(event.target.value));
+
 
 importInput.addEventListener("change", async () => {
-  const file = importInput.files?.[0];
+  const files = Array.from(importInput.files || []);
   importInput.value = "";
-  if (!file) return;
+  if (!files.length) return;
+  const targetPageId = selectedPageId;
   try {
-    const imported = normalizeImportedAutomation(JSON.parse(await file.text()));
-    await setAutomations([...(await getAutomations()), imported]);
+    if (!executionPages.some((page) => page.id === targetPageId)) {
+      throw new Error("Selecione uma página antes de importar automações.");
+    }
+    const imports = await Promise.all(files.map(async (file) =>
+      normalizeImportedAutomation(JSON.parse(await file.text()), targetPageId)
+    ));
+    await setAutomations([...(await getAutomations()), ...imports]);
+    if (targetPageId === selectedPageId) renderAutomations(await getAutomations());
   } catch (error) {
     window.alert(String(error.message || error));
   }
@@ -1190,10 +1915,21 @@ mapElementButton.addEventListener("click", async () => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (changes[RUN_STORAGE_KEY]) updateRun(changes[RUN_STORAGE_KEY].newValue || {});
+  if (changes[PAGES_KEY]) {
+    executionPages = changes[PAGES_KEY].newValue || [];
+    if (!executionPages.some((page) => page.id === selectedPageId)) {
+      selectExecutionPage(executionPages[0]?.id || null);
+    } else {
+      renderExecutionPages();
+    }
+  }
+  for (const [key, change] of Object.entries(changes)) {
+    if (key.startsWith(PAGE_RUN_PREFIX) && change.newValue) updateRun(change.newValue);
+  }
   if (changes[AUTOMATIONS_KEY]) renderAutomations(changes[AUTOMATIONS_KEY].newValue || []);
-  if (changes.flowdetectDownloadStatus) {
-    lastDownloadStatus = changes.flowdetectDownloadStatus.newValue || null;
+  const downloadChange = changes[`flowdetectDownloadStatus:${currentRun.downloadRouteId}`];
+  if (downloadChange) {
+    lastDownloadStatus = downloadChange.newValue || null;
     refreshDownloadActivity();
   }
 });
@@ -1204,16 +1940,20 @@ function reconcileStoredRun(run, runtime) {
   return { ...run, status: "stopped", finishedAt: new Date().toISOString(), waitingReason: "" };
 }
 
-Promise.all([getAutomations(), chrome.storage.local.get(RUN_STORAGE_KEY),
-  chrome.runtime.sendMessage({ type: "flowdetect-runtime-info" }).catch(() => null)])
-  .then(async ([automations, storage, runtime]) => {
+Promise.all([getAutomations(), chrome.storage.session.get("flowdetectSelectedPage"),
+  chrome.runtime.sendMessage({ type: "flowdetect-pages" }),
+  chrome.storage.session.get("flowdetectWorkspaceView")])
+  .then(async ([automations, storage, state, storedWorkspace]) => {
     automationsCache = automations;
-    const storedRun = storage[RUN_STORAGE_KEY] || {};
-    currentRun = reconcileStoredRun(storedRun, runtime);
-    chrome.storage.local.get("flowdetectDownloadStatus").then((state) => {
-      lastDownloadStatus = state.flowdetectDownloadStatus || null;
-      refreshDownloadActivity();
-    }).catch(() => {});
-    if (currentRun !== storedRun) await chrome.storage.local.set({ [RUN_STORAGE_KEY]: currentRun });
-    renderAutomations();
-  });
+    if (!state?.ok || !Array.isArray(state.pages)) throw new Error("Recarregue a extensão em chrome://extensions para usar as páginas de execução.");
+    executionPages = state.pages;
+    for (const [id, run] of Object.entries(state.runs || {})) {
+      pageRuns.set(id, run);
+      // The history remains visible as a percentage on its compact card after
+      // the popup is reopened; do not force a full-screen execution view.
+      if (run?.automationId) galleryRunPages.add(id);
+    }
+    const selected = executionPages.find((page) => page.id === storage.flowdetectSelectedPage) || executionPages[0];
+    setWorkspaceView(storedWorkspace?.flowdetectWorkspaceView || "automations", false);
+    selectExecutionPage(selected?.id || null);
+  }).catch(pageFeedback);
