@@ -2,6 +2,8 @@ const tauriCore = window.__TAURI__?.core ?? null;
 const tauriEvent = window.__TAURI__?.event ?? null;
 import { validateRoadmap } from "./map-validator.js";
 import { initIntegrations } from "./integrations.js";
+import { initAlterdata, resolveAlterdataTexts } from "./alterdata.js";
+let alterdataWorkspace = null;
 const tauriDialog = window.__TAURI__?.dialog ?? null;
 window.__GENERATOR_MAIN_READY = true;
 
@@ -1116,6 +1118,7 @@ function setWorkspaceTab(tabName) {
   const remoteControlActive = tabName === "remote-control";
   const agentsActive = tabName === "agents";
   const integrationsActive = tabName === "integrations";
+  const alterdataActive = tabName === "alterdata";
   const agentScreenActive = tabName === "agent-screen";
   const smartRecorderActive = tabName === "smart-recorder";
   launcherTabButton.classList.toggle("is-active", launcherActive);
@@ -1126,6 +1129,7 @@ function setWorkspaceTab(tabName) {
   remoteControlTabButton?.classList.toggle("is-active", remoteControlActive);
   agentsTabButton?.classList.toggle("is-active", agentsActive);
   integrationsTabButton?.classList.toggle("is-active", integrationsActive);
+  document.getElementById("alterdataTabButton")?.classList.toggle("is-active", alterdataActive);
   agentScreenTabButton?.classList.toggle("is-active", agentScreenActive);
   smartRecorderTabButton?.classList.toggle("is-active", smartRecorderActive);
   launcherPanel.classList.toggle("is-active", launcherActive);
@@ -1137,6 +1141,8 @@ function setWorkspaceTab(tabName) {
   remoteControlPanel?.classList.toggle("is-active", remoteControlActive);
   agentsPanel?.classList.toggle("is-active", agentsActive);
   integrationsPanel?.classList.toggle("is-active", integrationsActive);
+  document.getElementById("alterdataPanel")?.classList.toggle("is-active", alterdataActive);
+  if (alterdataActive) alterdataWorkspace?.refresh();
   agentScreenPanel?.classList.toggle("is-active", agentScreenActive);
   smartRecorderPanel?.classList.toggle("is-active", smartRecorderActive);
   builderShell?.classList.toggle("is-launcher-active", launcherActive);
@@ -24571,6 +24577,26 @@ composerWorkbookSelect.addEventListener("change", () => {
 
 editorTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
 initIntegrations();
+alterdataWorkspace = initAlterdata({
+  listAgents: () => state.agents.items.map(normalizeAgent).filter(agent => agent.address)
+    .map(agent => ({ id: String(agent.id), name: agent.name || agent.vmName || "Agent" })),
+  listFlows: () => state.library.items.map(item => ({ id: String(item.id), name: item.nome || "Automação" })),
+  openEditor: () => setWorkspaceTab("editor"),
+  openAgent: () => setWorkspaceTab("agent-screen"),
+  execute: async (request, requiredKeys) => {
+    if (state.remoteControl.running) throw new Error("Aguarde a execução atual ou pare o agente antes de iniciar outra tarefa.");
+    const agent = state.agents.items.map(normalizeAgent).find(item => String(item.id) === request.agentId);
+    if (!agent?.address) throw new Error("Agente indisponível. Atualize a lista de agentes.");
+    if (!state.library.items.some(item => String(item.id) === request.flowId)) throw new Error("O fluxo selecionado não está mais na biblioteca.");
+    const importedId = await sendSavedAutomationToAgent(request.flowId, agent.address);
+    await openStudioControlAutomation(importedId);
+    const overrides = resolveAlterdataTexts(getEditableTextEvents(state.remoteControl.roadmap), request.values, requiredKeys);
+    state.remoteControl.editableTextOverrides = overrides;
+    renderStudioControl();
+    await runStudioControlAutomation(importedId);
+  },
+});
+document.getElementById("alterdataTabButton")?.addEventListener("click", () => setWorkspaceTab("alterdata"));
 integrationsTabButton?.addEventListener("click", () => setWorkspaceTab("integrations"));
 assistTabButton.addEventListener("click", () => setWorkspaceTab("assist"));
 commandTabButton.addEventListener("click", () => setWorkspaceTab("commands"));

@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="./vendor/fonts/fonts.css" />
     <link rel="stylesheet" href="./style.css" />
     <link rel="stylesheet" href="./integrations.css" />
+    <link rel="stylesheet" href="./alterdata.css" />
   </head>
   <body>
     <section id="loginOverlay" class="login-overlay welcome-overlay" aria-modal="true" role="dialog" aria-labelledby="loginTitleText">
@@ -144,9 +145,32 @@
         <button id="workbookTabButton" class="workspace-tab" data-tab="workbook">Planilha e dados</button>
         <button id="agentsTabButton" class="workspace-tab" data-tab="agents">Agentes</button>
         <button id="integrationsTabButton" class="workspace-tab" data-tab="integrations">Integrações</button>
+        <button id="alterdataTabButton" class="workspace-tab" data-tab="alterdata">Alterdata</button>
         <button id="agentScreenTabButton" class="workspace-tab" data-tab="agent-screen">Tela do Agent</button>
         <button id="smartRecorderTabButton" class="workspace-tab" data-tab="smart-recorder">Gravador inteligente</button>
         <div id="sessionChip" class="workspace-session-chip">Sessao bloqueada</div>
+      </section>
+
+      <section id="alterdataPanel" class="workspace-panel" aria-labelledby="alterdataTitle">
+        <div class="alterdata-shell">
+          <header class="alterdata-header"><div><p class="panel-kicker">Integração · Departamento Pessoal</p><h1 id="alterdataTitle">Alterdata</h1><p>Prepare o pedido aqui. Execute no computador do agente.</p></div><button id="alterdataRefresh" class="ghost-button" type="button">Atualizar agentes e fluxos</button></header>
+          <div id="alterdataTemplates" class="alterdata-templates"></div>
+          <div class="alterdata-layout">
+            <form id="alterdataForm" class="alterdata-form">
+              <div><p class="panel-kicker">Novo pedido</p><h2 id="alterdataTaskTitle">Férias</h2><p class="alterdata-muted">Cadastro manual · Consulta ao banco ainda não conectada. Cada rotina precisa de um fluxo visual configurado e testado.</p></div>
+              <div id="alterdataFields" class="alterdata-fields"></div>
+              <div class="alterdata-fields">
+                <label>Computador de execução<select id="alterdataAgent" required><option value="">Selecione um agente</option></select></label>
+                <label>Fluxo visual salvo<select id="alterdataFlow" required><option value="">Selecione um fluxo</option></select></label>
+              </div>
+              <details class="alterdata-help"><summary>Como preparar o fluxo</summary><p>Crie e teste o fluxo visual no editor. Nos blocos de texto, habilite a edição na execução e use as variáveis abaixo. O pedido substitui esses textos somente nesta execução.</p><div id="alterdataVariables"></div><button id="alterdataOpenEditor" class="ghost-button" type="button">Abrir editor</button></details>
+              <label class="alterdata-review"><input id="alterdataReviewed" type="checkbox" /> Conferi os dados e validei o fluxo no Alterdata deste agente.</label>
+              <div class="alterdata-actions"><button id="alterdataSave" class="soft-button" type="button">Salvar pedido</button><button id="alterdataExecute" class="primary-button" type="submit">Enviar e executar no agente</button><button id="alterdataWatch" class="ghost-button" type="button" hidden>Acompanhar agente</button></div>
+              <p id="alterdataFeedback" role="status" aria-live="polite"></p>
+            </form>
+            <aside class="alterdata-requests"><div class="alterdata-section-head"><h2>Pedidos preparados</h2><span id="alterdataRequestCount">0</span></div><p class="alterdata-muted">Salvos neste Studio. Não executam automaticamente.</p><div id="alterdataRequests"></div></aside>
+          </div>
+        </div>
       </section>
 
       <section id="integrationsPanel" class="workspace-panel" aria-labelledby="integrationsTitle">
