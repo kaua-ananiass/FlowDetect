@@ -8,6 +8,27 @@ const panel = fs.readFileSync(path.join(__dirname, '../flowdetect_chrome/sidepan
 const fn = (source, name) => source.match(new RegExp(`^(?:async )?function ${name}\\(.*?^}`, 'ms'))[0];
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 
+test('unbind clears the selected tab outline and refuses to detach a running page', async () => {
+  const pages = [{ id: 'p1', tabId: 11, tabTitle: 'Site' }, { id: 'p2', tabId: 22 }];
+  const outlines = [];
+  const ctx = vm.createContext({
+    getPages: async () => pages, reservedPages: new Set(), activeRuns: new Map(),
+    unbindPage: async id => Object.assign(pages.find(p => p.id === id), { tabId: null, tabTitle: '' }),
+    updatePageOutline: async (...args) => outlines.push(args),
+  });
+  vm.runInContext(fn(worker, 'handleMessage'), ctx);
+  const result = await ctx.handleMessage({ type: 'flowdetect-page-unbind', pageId: 'p1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.page.tabId, null);
+  assert.equal(result.page.tabTitle, '');
+  assert.deepEqual(outlines, [[11, null]]);
+  assert.equal(pages[1].tabId, 22);
+  assert.equal(ctx.reservedPages.size, 0);
+  ctx.activeRuns.set('r2', { pageId: 'p2' });
+  await assert.rejects(ctx.handleMessage({ type: 'flowdetect-page-unbind', pageId: 'p2' }), /Pare a execução/);
+  assert.equal(pages[1].tabId, 22);
+});
+
 test('two different pages run concurrently; duplicate tab/page and third run are refused', async () => {
   const pages = [1, 2, 3].map(id => ({ id: `p${id}`, tabId: id }));
   const gates = new Map(pages.map(p => [p.tabId, deferred()]));

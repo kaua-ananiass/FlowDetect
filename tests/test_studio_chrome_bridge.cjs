@@ -13,6 +13,7 @@ test('Studio and extension require the same bridge version', () => {
   const content = fs.readFileSync(path.join(extensionDir, 'content.js'), 'utf8');
   const sidepanel = fs.readFileSync(path.join(extensionDir, 'sidepanel.js'), 'utf8');
   assert.equal(source.match(/const RUNTIME_VERSION = "([^"]+)"/)[1], manifestVersion);
+  assert.equal(source.match(/const CONTENT_RUNTIME_VERSION = "([^"]+)"/)[1], manifestVersion);
   assert.equal(content.match(/const CONTENT_RUNTIME_VERSION = "([^"]+)"/)[1], manifestVersion);
   assert.equal(sidepanel.match(/const REQUIRED_RUNTIME_VERSION = "([^"]+)"/)[1], manifestVersion);
   assert.equal(studioBridge.match(/const EXTENSION_VERSION: &str = "([^"]+)"/)[1], manifestVersion);
@@ -30,6 +31,7 @@ function makeImporter(initial = []) {
   let stored = initial;
   const context = {
     AUTOMATIONS_KEY: 'flowdetectChromeAutomations',
+    chosenAutomationPageId: async () => 'page-1',
     crypto: { randomUUID: () => 'new-unique-id' },
     chrome: { storage: { local: {
       get: async () => ({ flowdetectChromeAutomations: stored }),

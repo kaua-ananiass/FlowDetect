@@ -1,5 +1,9 @@
 # FlowDetect para Chrome
 
+Versão 0.2.70: desvinculação de abas, cores de OCR por página, bloqueio opcional
+de interação manual e correção da conexão por código com o Studio atualizado.
+Depois de atualizar a extensão, recarregue as abas dos sites.
+
 Versao 0.2.60: quando a competencia exibida difere da esperada, o OCR 2 segue
 sua propria rota de falha sem repetir o clique do OCR 1. O painel Ao vivo mostra
 qual alvo foi testado, o resultado e o bloco de destino.
@@ -123,3 +127,15 @@ para enviar esses tempos para a extensao.
 ## Formato do arquivo
 
 Os arquivos novos usam o schema `flowdetect_chrome_automation`, versão `2`. A extensão também aceita os arquivos da versão `1` já exportados.
+## Bloqueio de interação durante a execução
+
+Na seção Páginas, marque **Bloquear interação durante a execução**. A escolha é
+salva por página e vale para a próxima execução. Cliques, rolagem e digitação
+manuais no conteúdo da aba são bloqueados; os eventos programáticos da automação
+continuam permitidos. O popup da extensão e os controles do Chrome continuam acessíveis.
+
+Use **Parar** na extensão ou **Ctrl+Alt+Shift+L** dentro da aba para liberar a
+interação. O atalho libera a aba sem interromper a automação. O bloqueio também
+é removido ao terminar/falhar ou quando a extensão deixa de responder, e é
+reaplicado após navegação enquanto a execução permanecer ativa. Não é um modo
+de quiosque: abas, barra do navegador e janelas nativas do Chrome não são bloqueadas.

@@ -105,6 +105,18 @@ test('execution pages: distinct tabs, independent runs, deletion and responsive 
             item.tabId=message.tabId;item.tabTitle=tab(message.tabId).title;
             await publish({[pagesKey]:db[pagesKey]});return {ok:true,page:item};
           }
+          if(message.type==='flowdetect-page-input-lock'){
+            const item=db[pagesKey].find(p=>p.id===message.pageId);
+            item.blockInput=message.enabled;
+            await publish({[pagesKey]:db[pagesKey]});
+            return {ok:true,page:item};
+          }
+          if(message.type==='flowdetect-page-unbind'){
+            const item=db[pagesKey].find(p=>p.id===message.pageId);
+            Object.assign(item,{tabId:null,tabTitle:''});
+            await publish({[pagesKey]:db[pagesKey]});
+            return {ok:true,page:item};
+          }
           if(message.type==='flowdetect-page-delete'){
             db[pagesKey]=db[pagesKey].filter(p=>p.id!==message.pageId);
             delete db[runPrefix+message.pageId];
@@ -122,16 +134,30 @@ test('execution pages: distinct tabs, independent runs, deletion and responsive 
           if(message.type==='flowdetect-stop'){
             await finishRun(message.pageId,'stopped');return {ok:true};
           }
-          return {ok:true,ready:true,version:'0.2.65'};
+          return {ok:true,ready:true,version:'0.2.70'};
         }}
       };
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/sidepanel.html`);
     const selected = () => page.locator('#executionPageTabs .execution-page-select[aria-current="page"]');
     await selected().waitFor();
+    await page.locator('#pageInputLock').check();
+    await page.reload();
+    await selected().waitFor();
+    assert.equal(await page.locator('#pageInputLock').isChecked(), true);
     await page.locator('#bindExecutionPage').click();
     await page.waitForFunction(() => document.querySelector('#executionPageTarget')?.textContent.includes('Portal Nibo'));
     assert.equal(await page.locator('.execution-page-card.is-linked').count(),1);
+    await page.locator('#unbindExecutionPage').click();
+    await page.waitForFunction(() => document.querySelector('#executionPageTarget')?.textContent.includes('Sem aba vinculada'));
+    assert.equal(await page.locator('#unbindExecutionPage').isVisible(), false);
+    assert.equal(await page.locator('#openExecutionPage').isDisabled(), true);
+    assert.equal(await page.locator('.automation-flip-item').count(), 1);
+    await page.reload();
+    await selected().waitFor();
+    assert.match(await page.locator('#executionPageTarget').textContent(), /Sem aba vinculada/);
+    await page.locator('#bindExecutionPage').click();
+    await page.waitForFunction(() => document.querySelector('#executionPageTarget')?.textContent.includes('Portal Nibo'));
     await page.locator('.automation-flip-tile').first().click();
     await page.locator('.automation-flip-detail .run-automation').click();
     await page.waitForFunction(() => document.querySelectorAll('.execution-page-card.is-running').length===1);

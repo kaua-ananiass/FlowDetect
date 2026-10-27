@@ -42,7 +42,7 @@ test('compact popup keeps pages legible and never clips action buttons',async()=
         runtime:{sendMessage:async message=>{
           if(message.type==='flowdetect-pages')return {ok:true,pages,runs:{}};
           if(message.type==='flowdetect-studio-connection')return {studioFound:false,connected:false};
-          return {ok:true,version:'0.2.65'};
+          return {ok:true,version:'0.2.70'};
         }},
         tabs:{query:async()=>[{id:12,title:pages[0].tabTitle,url:'https://example.test',windowId:1}],get:async id=>({id,url:'https://example.test',title:pages.find(p=>p.tabId===id)?.tabTitle,windowId:1}),onActivated:{addListener:()=>{}},onUpdated:{addListener:()=>{}}},
         windows:{onFocusChanged:{addListener:()=>{}},update:async()=>{}}

@@ -1,5 +1,13 @@
 # Histórico de versões
 
+## 0.2.70 — 27/10/2026
+
+- Botão Desvincular libera a página sem fechar a aba ou excluir automações.
+- Destaques de OCR acompanham a cor da página em execução, inclusive em paralelo.
+- Bloqueio opcional de interação manual por página, com liberação automática e atalho Ctrl+Alt+Shift+L.
+- Versões da ponte do Studio, popup e scripts alinhadas para corrigir a conexão por código.
+- Inclui testes de navegador para bloqueio, cores, vínculo e inicialização da extensão.
+
 ## 0.2.69 — 26/10/2026
 
 - Tema do painel acompanha a cor da página selecionada.

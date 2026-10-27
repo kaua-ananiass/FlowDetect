@@ -2782,3 +2782,5 @@ body:not(.run-focused) .automation-flip-detail > .automation-card-top {
 .automation-flip-detail[data-editing="true"] > .run-availability-hint { display: none; }
 .card-settings-panel .download-open-settings { width: 100%; height: 34px; border: 1px solid color-mix(in srgb, var(--accent) 25.1%, transparent); border-radius: 8px; color: #c7eef4; background: color-mix(in srgb, var(--accent) 7.06%, transparent); font-size: 11px; }
 .card-settings-panel .download-settings-body p { font-size: 11px; line-height: 1.5; }
+.page-input-lock-option { display: flex; align-items: center; gap: 7px; margin-top: 8px; color: #a8bdcb; font-size: 10px; line-height: 16px; cursor: pointer; }
+.page-input-lock-option input { margin: 0; width: 13px; height: 13px; accent-color: var(--accent); }

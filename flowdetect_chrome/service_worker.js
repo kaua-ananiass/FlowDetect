@@ -1,6 +1,6 @@
 import { routeAvailable, activateDownloadRoute, deactivateDownloadRoute, clearDownloadRouteForTab, noteDownloadSource }
   from "./download-routing.js";
-import { PAGE_RUN_PREFIX, PAGES_KEY, getPages, createPage, bindPage, deletePage, editPages } from "./execution-pages.js";
+import { PAGE_RUN_PREFIX, PAGES_KEY, getPages, createPage, bindPage, unbindPage, deletePage, editPages } from "./execution-pages.js";
 async function updatePageOutline(tabId, page) {
   if (!Number.isInteger(tabId)) return;
   const update = { type: "flowdetect-page-outline-update", page: page || null };
@@ -15,8 +15,8 @@ async function updatePageOutline(tabId, page) {
 }
 
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.65";
-const CONTENT_RUNTIME_VERSION = "0.2.59";
+const RUNTIME_VERSION = "0.2.70";
+const CONTENT_RUNTIME_VERSION = "0.2.70";
 const STUDIO_TEST_BRIDGE = "http://127.0.0.1:18453";
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const PAIR_CODE_KEY = "flowdetectStudioPairCode";
@@ -788,7 +788,7 @@ async function clickVisualResult(run, step, match, label = "VISUAL") {
     clicks: step.click ? Math.max(1, Number(step.clicks || 1)) : 0,
     timeout_ms: Math.max(500, Number(step.timeout_ms || 10000)),
     label,
-    color: label === "OCR" ? "#44b9ff" : "#cf8cff",
+    color: label === "OCR" ? (run.pageColor || "#12b5cb") : "#cf8cff",
     width: (match.width / Math.max(.001, match.screenshotScale || 1)) / screenshotScaleX,
     height: match.height / screenshotScaleY
   });
@@ -822,7 +822,7 @@ async function executeVisualState(run, step) {
 async function executePageStep(run, step) {
   const response = await sendToPage(run.tabId, {
     type: "flowdetect-execute-step",
-    step,
+    step: { ...step, highlight_color: run.pageColor || "#12b5cb" },
     run_id: `${run.id}:${run.spreadsheetLoop?.row ?? ""}`,
   });
   if (!response?.ok) throw new Error(response?.error || "A etapa não foi concluída.");
@@ -1278,11 +1278,16 @@ async function executeAutomationOnPage(automation, tabId, startRow, loopIncluded
   const run = createRun(automation, tabId, startRow, loopIncludedIndices, loopExcludedRows);
   run.pageId = page.id;
   run.pageName = page.name;
+  run.pageColor = page.color;
+  run.blockInput = page.blockInput === true;
   // Retain the exact configuration for viewing this execution after library edits.
   run.automationSnapshot = automation;
   if (downloadRouteId) run.downloadRouteId = downloadRouteId;
   activeRuns.set(run.id, run);
   try {
+    if (run.blockInput) {
+      await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["input-lock.js"] });
+    }
     await addLog(run, `Iniciando ${run.automationName} em ${page.name}.`);
     if (run.loopExcludedRows.length) await addLog(run,
       `${run.loopExcludedRows.length} linha(s) removida(s) deste loop antes da execução.`, "info");
@@ -1347,6 +1352,8 @@ async function executeAutomationOnPage(automation, tabId, startRow, loopIncluded
     }
     await addLog(run, String(error?.message || error), "error");
   } finally {
+    run.blockInput = false;
+    await chrome.tabs.sendMessage(tabId, { type: "flowdetect-input-lock-refresh" }).catch(() => {});
     if (downloadRouteId) await deactivateDownloadRoute(run.id).catch(() => {});
     await stopTabCapture(run).catch(() => {});
     run.finishedAt = new Date().toISOString();
@@ -1359,6 +1366,28 @@ async function executeAutomationOnPage(automation, tabId, startRow, loopIncluded
 }
 
 async function handleMessage(message, sender) {
+  if (message?.type === "flowdetect-input-lock-state") {
+    const run = [...activeRuns.values()].find(item => item.tabId === sender?.tab?.id && item.blockInput && !item.cancelled);
+    return { locked: Boolean(run), runId: run?.id || null };
+  }
+  if (message?.type === "flowdetect-input-lock-release") {
+    const run = [...activeRuns.values()].find(item => item.tabId === sender?.tab?.id && item.id === message.runId);
+    if (run) {
+      run.blockInput = false;
+      await chrome.tabs.sendMessage(run.tabId, { type: "flowdetect-input-lock-refresh" }).catch(() => {});
+    }
+    return { ok: true };
+  }
+  if (message?.type === "flowdetect-page-input-lock") {
+    if (reservedPages.has(message.pageId)) throw new Error("Aguarde a execução terminar para alterar o bloqueio.");
+    const page = await editPages(pages => {
+      const target = pages.find(item => item.id === message.pageId);
+      if (!target) throw new Error("Página não encontrada.");
+      target.blockInput = message.enabled === true;
+      return target;
+    });
+    return { ok: true, page };
+  }
   if (message?.type === "flowdetect-download-source") {
     // The sender tab, not a page-supplied tabId, is authoritative.
     return { ok: noteDownloadSource(sender?.tab?.id, message.url, "click") };
@@ -1410,6 +1439,20 @@ async function handleMessage(message, sender) {
       await updatePageOutline(tabId, page);
       return { ok: true, page };
     } finally { reservedPages.delete(message.pageId); reservedTabs.delete(tabId); }
+  }
+  if (message?.type === "flowdetect-page-unbind") {
+    const pageId = String(message.pageId || "");
+    if (reservedPages.has(pageId) || [...activeRuns.values()].some((run) => run.pageId === pageId)) {
+      throw new Error("Pare a execução antes de desvincular a aba.");
+    }
+    reservedPages.add(pageId);
+    try {
+      const old = (await getPages()).find((page) => page.id === pageId);
+      const oldTabId = old?.tabId;
+      const page = await unbindPage(pageId);
+      await updatePageOutline(oldTabId, null);
+      return { ok: true, page };
+    } finally { reservedPages.delete(pageId); }
   }
   if (message?.type === "flowdetect-page-delete") {
     const pageId = String(message.pageId || "");

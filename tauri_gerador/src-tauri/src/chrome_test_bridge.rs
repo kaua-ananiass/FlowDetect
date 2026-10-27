@@ -15,7 +15,7 @@ use std::{
 };
 
 const ADDRESS: &str = "127.0.0.1:18453";
-const EXTENSION_VERSION: &str = "0.2.58";
+const EXTENSION_VERSION: &str = "0.2.70";
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static BRIDGE: OnceLock<Arc<(Mutex<BridgeState>, Condvar)>> = OnceLock::new();
 

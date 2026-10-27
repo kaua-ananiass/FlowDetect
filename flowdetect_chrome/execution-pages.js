@@ -70,6 +70,15 @@ export async function bindPage(id, tabId) {
   });
 }
 
+export async function unbindPage(id) {
+  return editPages((pages) => {
+    const page = pages.find((item) => item.id === id);
+    if (!page) throw new Error("Página de execução não encontrada.");
+    Object.assign(page, { tabId: null, tabTitle: "" });
+    return page;
+  });
+}
+
 export async function deletePage(id) {
   return editPages((pages) => {
     const index = pages.findIndex((item) => item.id === id);

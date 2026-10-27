@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.65";
+const REQUIRED_RUNTIME_VERSION = "0.2.70";
 const PAGES_KEY = "flowdetectChromeExecutionPages";
 const PAGE_RUN_PREFIX = "flowdetectChromePageRun:";
 let executionPages = [];
@@ -137,6 +137,9 @@ function renderExecutionPages() {
   document.documentElement.style.setProperty("--accent-soft", `color-mix(in srgb, ${selectedAccent} 65%, white)`);
   document.documentElement.style.setProperty("--selected-page-color", selectedAccent);
   const busy = startingPages.has(selectedPageId) || ["running", "waiting_screen"].includes(currentRun?.status);
+  const inputLock = document.querySelector("#pageInputLock");
+  inputLock.checked = page?.blockInput === true;
+  inputLock.disabled = !page || busy;
   const target = document.querySelector("#executionPageTarget");
   target.textContent = !page ? "Crie uma página para vincular uma aba do navegador."
     : Number.isInteger(page.tabId) ? (page.tabTitle || "Aba vinculada")
@@ -147,6 +150,9 @@ function renderExecutionPages() {
   bindButton.textContent = Number.isInteger(page?.tabId) ? "Trocar" : "Vincular";
   bindButton.title = Number.isInteger(page?.tabId) ? "Trocar a aba vinculada a esta página" : "Vincular a aba ativa a esta página";
   document.querySelector("#openExecutionPage").disabled = !Number.isInteger(page?.tabId);
+  const unbindButton = document.querySelector("#unbindExecutionPage");
+  unbindButton.hidden = !Number.isInteger(page?.tabId);
+  unbindButton.disabled = busy;
   document.querySelector("#addExecutionPage").disabled = executionPages.length >= 12;
   updateAssistedLiveCount();
 }
@@ -215,6 +221,29 @@ document.querySelector("#bindExecutionPage").addEventListener("click", async () 
     executionPages[index] = result.page;
     selectExecutionPage(result.page.id);
   } catch (error) { pageFeedback(error); }
+});
+document.querySelector("#unbindExecutionPage").addEventListener("click", async () => {
+  try {
+    if (!selectedPageId) return;
+    const result = await chrome.runtime.sendMessage({ type: "flowdetect-page-unbind", pageId: selectedPageId });
+    if (!result?.ok) throw new Error(result?.error || "Não foi possível desvincular a aba.");
+    const index = executionPages.findIndex((page) => page.id === result.page.id);
+    if (index >= 0) executionPages[index] = result.page;
+    pageFeedback("");
+    selectExecutionPage(result.page.id);
+  } catch (error) { pageFeedback(error); }
+});
+document.querySelector("#pageInputLock").addEventListener("change", async event => {
+  const pageId = selectedPageId;
+  event.target.disabled = true;
+  try {
+    const result = await chrome.runtime.sendMessage({ type: "flowdetect-page-input-lock", pageId, enabled: event.target.checked });
+    if (!result?.ok) throw new Error(result?.error || "Não foi possível alterar o bloqueio.");
+    const index = executionPages.findIndex(page => page.id === pageId);
+    if (index >= 0) executionPages[index] = result.page;
+    pageFeedback("");
+  } catch (error) { pageFeedback(error); }
+  renderExecutionPages();
 });
 document.querySelector("#openExecutionPage").addEventListener("click", async () => {
   try {

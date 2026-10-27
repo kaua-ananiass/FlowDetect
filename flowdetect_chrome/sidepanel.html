@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FlowDetect para Chrome</title>
-    <link rel="stylesheet" href="sidepanel.css?v=0.2.69">
+    <link rel="stylesheet" href="sidepanel.css?v=0.2.70">
   </head>
   <body>
     <main class="app-shell">
@@ -45,8 +45,10 @@
           <div class="execution-page-actions">
             <button id="bindExecutionPage" class="execution-page-bind" type="button" title="Vincular ou trocar a aba desta página">Vincular</button>
             <button id="openExecutionPage" class="execution-page-open" type="button" title="Abrir a aba vinculada">Ver aba</button>
+            <button id="unbindExecutionPage" class="execution-page-unbind" type="button" title="Remover o vínculo sem fechar a aba" hidden>Desvincular</button>
           </div>
         </div>
+        <label class="page-input-lock-option" title="Impede cliques, digitação e rolagem manuais durante a execução. Ctrl+Alt+Shift+L libera a aba."><input id="pageInputLock" type="checkbox"> Bloquear interação durante a execução</label>
         <p id="executionPageFeedback" role="alert" aria-live="polite" hidden></p>
       </section>
       <section id="automationList" class="automation-list" aria-live="polite"></section>

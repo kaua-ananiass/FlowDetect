@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_RUNTIME_VERSION = "0.2.59";
+const CONTENT_RUNTIME_VERSION = "0.2.70";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
@@ -757,7 +757,8 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     await sleep(180);
     const refreshedTarget = findTextTarget(step.text, { allowDocumentText: !shouldClick }) || target;
     const rect = refreshedTarget.rect || refreshedTarget.element.getBoundingClientRect();
-    highlightRect(rect, { color: "#44b9ff", label: "OCR" });
+    const color = /^#[0-9a-f]{6}$/i.test(step.highlight_color || "") ? step.highlight_color : "#12b5cb";
+    highlightRect(rect, { color, label: "OCR" });
     if (shouldClick) {
       const anchor = step.click_anchor;
       const useMarkedArea = anchor
