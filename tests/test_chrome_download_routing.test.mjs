@@ -107,11 +107,28 @@ test("keeps failed copies in the temporary folder", async () => {
 
 test("a later normal run cannot inherit the previous destination", async () => {
   await routing.deactivateDownloadRoute("run-1");
-  assert.ok(session.flowdetectActiveDownloadRoute.acceptUntil > Date.now());
+  assert.ok(session["flowdetectActiveDownloadRoute:tab:7"].acceptUntil > Date.now());
   await routing.clearDownloadRouteForTab(7);
   const suggestion = await new Promise((resolve) => {
     determining({ id: 43, tabId: 7, filename: "nova-guia.pdf" }, resolve);
   });
   assert.equal(suggestion, undefined);
   assert.equal(session["flowdetectRoutedDownload:43"], undefined);
+});
+
+test("simultaneous tabs keep distinct destinations and stopping one does not stop routing the other", async () => {
+  const secondRoute = '22222222-2222-4222-8222-222222222222';
+  globalThis.FlowDetectDownloadFolders.get = async key => key === 'stage' ? stage : destination;
+  await Promise.all([routing.activateDownloadRoute(routeId, 7, 'run-a'), routing.activateDownloadRoute(secondRoute, 8, 'run-b')]);
+  const suggest = (id, tabId) => new Promise(resolve => determining({ id, tabId, filename: 'guia.pdf' }, resolve));
+  const [a, b] = await Promise.all([suggest(71, 7), suggest(81, 8)]);
+  assert.equal(a.filename, `FlowDetect-Temporario/${routeId}/guia.pdf`);
+  assert.equal(b.filename, `FlowDetect-Temporario/${secondRoute}/guia.pdf`);
+  await routing.deactivateDownloadRoute('run-a');
+  await routing.clearDownloadRouteForTab(7);
+  assert.equal(await suggest(72, 7), undefined);
+  assert.equal((await suggest(82, 8)).filename, b.filename);
+  assert.equal(session['flowdetectActiveDownloadRoute:tab:8'].active, true);
+  assert.equal(local[`flowdetectDownloadStatus:${routeId}`].routeId, routeId);
+  assert.equal(local[`flowdetectDownloadStatus:${secondRoute}`].routeId, secondRoute);
 });

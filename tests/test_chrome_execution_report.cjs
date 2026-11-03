@@ -91,3 +91,25 @@ test("the PDF lists companies skipped before the loop without counting them as p
   assert.match(pdf, /LINHAS IGNORADAS ANTES DA EXECUCAO/);
   assert.match(pdf, /Empresa ignorada/);
 });
+
+test("long report messages continue across pages without losing the last words", () => {
+  const context = vm.createContext({ Uint8Array });
+  vm.runInContext(source, context);
+  const bytes = context.FlowDetectExecutionReport.buildExecutionReportPdf({
+    automationName: 'Relatorio de documentos', status: 'completed',
+    report: { sourceName: 'Empresa', rows: [{ index: 1, value: 'Empresa A', status: 'Revisar competencia', tone: 'warning',
+      result: 'Mensagem detalhada da conferencia. '.repeat(250) + 'FIM_PRESERVADO' }] },
+  });
+  const pdf = Buffer.from(bytes).toString('latin1');
+  assert.match(pdf, /FIM_PRESERVADO/);
+  assert.match(pdf, /Continuacao da mesma linha/);
+  assert.ok((pdf.match(/\(LINHA\) Tj/g) || []).length > 1);
+});
+
+test("unbroken identifiers wrap without losing their characters", () => {
+  const context = runner();
+  const identifier = 'CNPJ1234567890'.repeat(30);
+  const lines = context.wrap(identifier, 135, 8.2, true);
+  assert.equal(lines.join(''), identifier);
+  assert.ok(lines.every(line => context.approximateWidth(line, 8.2, true) <= 135));
+});

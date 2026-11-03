@@ -6,7 +6,7 @@ const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
 const names = ["reportTone", "runWasInterrupted", "beginReportRow", "finalizeReportRow", "spreadsheetRowData", "spreadsheetColumnValue", "reportColumnValue", "reportStepForRow", "recordReportResult", "replaceVariables", "setSpreadsheetRowVariables", "loopPairs", "normalizedSequence", "buildFlowIndexes", "actionToIndex", "flowContinues", "flowLabel", "normalizedOcrTargetAction", "updateOcrLive", "executeOcrTargets", "findSpreadsheetLoopSource", "spreadsheetStartRow", "updateSpreadsheetProgress", "executeSpreadsheetLoop", "mustAdvanceSpreadsheetRow", "executeRange", "templateSamples", "scoreAt", "findTemplateInImage"];
-names.push("waitForRouteDelay");
+names.push("waitForRouteDelay", "mapPathActionToIndex");
 const functions = names.map((name) => {
   const found = source.match(new RegExp("^(?:async )?function " + name + "\\(.*?^}", "ms"));
   assert.ok(found, `Production function ${name}`);
@@ -18,6 +18,19 @@ function runner(extra = {}) {
   vm.runInContext(functions, context);
   return context;
 }
+
+test('a Chrome map lane returns an explicit desktop destination instead of executing an absent step',async()=>{
+  const seen=[];
+  const context=runner({persistRun:async()=>{},addLog:async()=>{},executeStep:async(_run,step)=>{seen.push(step.source_order);return {message:'OK',flow:{action:'ir_para_bloco',block:99}};}});
+  const steps=[{source_order:8,sequence:'web',type:'focused_text'},{source_order:9,sequence:'web',type:'focused_text'}];
+  const run={currentStep:0,variables:{},mapBoundary:{orders:[99],sequences:['principal']}};
+  await context.executeRange(run,steps,0,steps.length,new Map(),context.buildFlowIndexes(steps));
+  assert.deepEqual(seen,[8]);
+  assert.equal(run.mapExit.block,99);
+  assert.equal(run.mapExit.action,'ir_para_bloco');
+  assert.throws(()=>context.mapPathActionToIndex(run,{action:'ir_para_bloco',block:999},context.buildFlowIndexes(steps),null),/nao foi exportado/);
+  assert.throws(()=>context.mapPathActionToIndex(run,{action:'parar'},context.buildFlowIndexes(steps),null),/parar/);
+});
 
 test("OCR reports a green success event only when the target was found", async () => {
   let outcome = { message: "Texto encontrado." };
