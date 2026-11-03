@@ -1,0 +1,46 @@
+/* The form is an editor; the document is a read-only preview. */
+.report-result-editor { gap: 18px; min-width: 0; }
+.report-editor-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 8px 4px 0; }
+.report-editor-heading, .report-editor-message { grid-column: 1 / -1; }
+.report-editor-heading h4 { margin: 0 0 5px; font-size: 1.1rem; letter-spacing: -.025em; }
+.report-editor-heading p, .report-editor-message small { margin: 0; color: #8fa6b8; font-size: .75rem; line-height: 1.5; }
+.report-result-editor .report-editor-fields label { display: grid; align-content: start; gap: 7px; min-width: 0; text-align: left; }
+.report-result-editor .report-editor-fields label > span { color: #bfd0df; font-size: .75rem; font-weight: 600; text-align: left; }
+.report-editor-status-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.report-result-editor .report-editor-fields :is(input, select, textarea) { width: 100%; min-width: 0; box-sizing: border-box; min-height: 38px; padding: 9px 11px; font-size: .8rem; line-height: 1.45; border: 1px solid #2c4054; border-radius: 9px; background-color: #111e2d; color: #e6f1fa; }
+.report-result-editor .report-editor-fields textarea { min-height: 76px; resize: vertical; }
+.report-result-editor .report-editor-fields :is(input, select, textarea):focus-visible { outline: 2px solid #12b5cb; outline-offset: 2px; }
+.report-result-editor .report-pdf-preview-full { gap: 14px; padding: 20px; box-shadow: none; border-color: #263b50; border-radius: 12px; }
+.report-document-generated strong { font-size: .72rem; letter-spacing: .035em; }
+.report-document-generated small { font-size: .65rem; }
+.report-result-editor .report-document-table-head, .report-result-editor .report-document-row { min-width: 0; grid-template-columns: 32px minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, .7fr); gap: 14px; }
+.report-result-editor .report-document-table { overflow: visible; }
+.report-result-editor .report-document-table-head { min-height: 30px; background: transparent; padding: 0 12px; font-size: .6rem; letter-spacing: .04em; }
+.report-result-editor .report-document-row { padding: 16px 12px; border-radius: 8px; }
+.report-document-line { padding-top: 0; }
+.report-document-company strong, .report-document-result p { margin: 0; font-size: .78rem; line-height: 1.55; font-weight: 500; overflow-wrap: anywhere; }
+.report-document-company strong { font-weight: 650; }
+.report-document-status small { display: inline-block; padding: 5px 7px; border-radius: 6px; background: #07111f; font-size: .65rem; line-height: 1.4; letter-spacing: 0; text-transform: none; overflow-wrap: anywhere; }
+.report-result-editor .report-document-footer { font-size: .65rem; align-items: start; gap: 16px; }
+.report-document-footer span { overflow-wrap: anywhere; min-width: 0; }
+.report-pdf-next-step { padding: 16px 4px 0; gap: 12px; }
+.report-result-editor .report-pdf-next-step > div:first-child { grid-template-columns: 1fr; gap: 4px; }
+.report-pdf-next-step span { text-align: left; }
+.report-pdf-next-step .tree-inline-fields { display: grid; grid-template-columns: minmax(0, .75fr) minmax(0, 1.25fr); gap: 12px; }
+.report-pdf-next-step label { display: grid; gap: 7px; min-width: 0; }
+.report-pdf-next-step :is(input,select) { width: 100%; min-width: 0; min-height: 36px; padding: 8px 10px; border: 1px solid #2c4054; border-radius: 8px; background-color: #111e2d; color: #e6f1fa; font-size: .75rem; }
+@media (max-width: 680px) {
+  .report-editor-fields { grid-template-columns: minmax(0, 1fr); }
+  .report-pdf-next-step .tree-inline-fields { grid-template-columns: minmax(0, 1fr); }
+  .report-editor-message { grid-column: auto; }
+  .report-result-editor .report-pdf-preview-full { padding: 14px; }
+  .report-document-header { align-items: start; gap: 8px; }
+  .report-document-brand img { width: 94px; }
+  .report-document-generated strong { font-size: .62rem; }
+  .report-result-editor .report-document-table-head { display: none; }
+  .report-result-editor .report-document-row { grid-template-columns: 26px minmax(0, 1fr); gap: 9px; }
+  .report-document-company { grid-column: 2; }
+  .report-document-result { grid-column: 2; }
+  .report-document-status { grid-column: 2; justify-items: start; }
+  .report-document-footer { flex-direction: column; gap: 5px; }
+}
