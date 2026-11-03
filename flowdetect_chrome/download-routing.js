@@ -4,9 +4,76 @@ const STAGE_FOLDER = "FlowDetect-Temporario";
 const STAGE_MARKER = "LEIA-ME-FlowDetect.txt";
 const STAGE_CONTENT = "FlowDetect: pasta temporaria para guias da extensao.\n";
 const ROUTE_KEY = "flowdetectActiveDownloadRoute";
+const routeTabKey = (tabId) => `${ROUTE_KEY}:tab:${tabId}`;
+const routeRunKey = (runId) => `${ROUTE_KEY}:run:${runId}`;
 const ROUTED_PREFIX = "flowdetectRoutedDownload:";
 const ROUTE_STATUS_KEY = "flowdetectDownloadStatus";
 const processingDownloads = new Set();
+
+const downloadOrigins = [];
+const MAX_DOWNLOAD_ORIGINS = 240;
+const DOWNLOAD_ORIGIN_WINDOW_MS = 60_000;
+
+// downloads.DownloadItem does not contain tabId. Never infer a route merely
+// because a download occurred while several automations were running.
+function noteDownloadSource(tabId, url, kind = "click") {
+  const source = String(url || "");
+  if (!Number.isInteger(tabId) || tabId < 0 || source.length > 4096
+      || !/^(https?:|blob:)/i.test(source)) return false;
+  const now = Date.now();
+  downloadOrigins.push({ tabId, url: source, kind, time: now });
+  while (downloadOrigins.length > MAX_DOWNLOAD_ORIGINS
+      || (downloadOrigins.length && now - downloadOrigins[0].time > DOWNLOAD_ORIGIN_WINDOW_MS)) {
+    downloadOrigins.shift();
+  }
+  return true;
+}
+
+// webRequest provides a genuine source tab for HTTP attachments. In contrast,
+// chrome.downloads.onDeterminingFilename's DownloadItem has no source tab ID.
+chrome.webRequest?.onHeadersReceived?.addListener((details) => {
+  const disposition = (details.responseHeaders || [])
+    .find((header) => header.name?.toLowerCase() === "content-disposition")?.value || "";
+  if (/\battachment\b|\bfilename\s*\*?\s*=/i.test(disposition)) {
+    noteDownloadSource(details.tabId, details.url, "attachment");
+  }
+}, { urls: ["http://*/*", "https://*/*"] }, ["responseHeaders"]);
+
+function matchingDownloadOrigin(item) {
+  if (Number.isInteger(item.tabId) && item.tabId >= 0) return { tabId: item.tabId };
+  const urls = new Set([item.finalUrl, item.url].filter(Boolean));
+  const now = Date.now();
+  const matching = downloadOrigins.filter((entry) => urls.has(entry.url)
+    && now - entry.time <= (entry.kind === "attachment" ? 60_000 : 20_000));
+  const strong = matching.filter((entry) => entry.kind === "attachment");
+  const matches = strong.length ? strong : matching;
+  const tabIds = [...new Set(matches.map((entry) => entry.tabId))];
+  if (tabIds.length === 1) return { tabId: tabIds[0] };
+  return { tabId: null, ambiguousTabIds: tabIds.length > 1 ? tabIds : [] };
+}
+
+async function locateDownloadRoute(item) {
+  const { tabId, ambiguousTabIds } = matchingDownloadOrigin(item);
+  if (tabId !== null && tabId !== undefined) {
+    const key = routeTabKey(tabId);
+    const route = (await chrome.storage.session.get(key))[key];
+    if (route?.tabId === tabId &&
+        (route.active || Date.now() <= Number(route.acceptUntil || 0))) return route;
+    return null;
+  }
+  // Same URL from different tabs cannot be safely assigned to one run through
+  // the Chrome downloads API. Fail closed and inform both affected pages.
+  for (const id of ambiguousTabIds) {
+    const route = (await chrome.storage.session.get(routeTabKey(id)))[routeTabKey(id)];
+    if (route?.active) {
+      await recordDownloadStatus("error", safeDownloadName(item.filename),
+        "Duas abas baixaram o mesmo endereço: o Chrome não informou qual iniciou este arquivo. "
+        + "O download permaneceu na pasta padrão para evitar misturar as páginas.", route.routeId);
+    }
+  }
+  return null;
+}
+
 let copyQueue = Promise.resolve();
 
 function safeDownloadName(value) {
@@ -45,32 +112,39 @@ async function routeAvailable(routeId) {
 async function activateDownloadRoute(routeId, tabId, runId) {
   if (!/^[0-9a-f-]{36}$/i.test(String(routeId || ""))) throw new Error("Destino de download invalido.");
   await routeAvailable(routeId);
-  await chrome.storage.session.set({ [ROUTE_KEY]: {
+  const route = {
     routeId, tabId, runId, active: true, startedAt: Date.now(),
-  } });
+  };
+  await chrome.storage.session.set({ [routeTabKey(tabId)]: route, [routeRunKey(runId)]: route });
   const destination = await FlowDetectDownloadFolders.get(`destination:${routeId}`);
   await recordDownloadStatus("waiting", "", destination.name, routeId);
 }
 
 async function deactivateDownloadRoute(runId) {
-  const route = (await chrome.storage.session.get(ROUTE_KEY))[ROUTE_KEY];
+  const key = routeRunKey(runId);
+  const route = (await chrome.storage.session.get(key))[key];
   if (route?.runId === runId) {
     // A site may begin the download just after its last click completes.
-    await chrome.storage.session.set({ [ROUTE_KEY]: { ...route, active: false, acceptUntil: Date.now() + 60000 } });
+    const tabKey = routeTabKey(route.tabId);
+    const current = (await chrome.storage.session.get(tabKey))[tabKey];
+    if (current?.runId === runId) await chrome.storage.session.set({ [tabKey]: { ...route, active: false, acceptUntil: Date.now() + 60000 } });
+    await chrome.storage.session.remove(key);
   }
 }
 
 async function clearDownloadRouteForTab(tabId) {
-  const route = (await chrome.storage.session.get(ROUTE_KEY))[ROUTE_KEY];
+  const key = routeTabKey(tabId);
+  const route = (await chrome.storage.session.get(key))[key];
   if (route?.tabId === tabId) {
-    await chrome.storage.session.set({ [ROUTE_KEY]: { ...route, active: false, acceptUntil: 0 } });
+    await chrome.storage.session.remove(key);
   }
 }
 
 async function recordDownloadStatus(status, filename, detail = "", routeId = "") {
-  await chrome.storage.local.set({ [ROUTE_STATUS_KEY]: {
+  const report = {
     status, filename, detail, routeId, at: new Date().toISOString(),
-  } });
+  };
+  await chrome.storage.local.set({ [ROUTE_STATUS_KEY]: report, ...(routeId ? { [`${ROUTE_STATUS_KEY}:${routeId}`]: report } : {}) });
 }
 
 async function unusedFilename(directory, originalName) {
@@ -112,9 +186,9 @@ async function copyCompletedDownload(item, route) {
 
 chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
   (async () => {
-    const route = (await chrome.storage.session.get(ROUTE_KEY))[ROUTE_KEY];
-    if ((!route?.active && Date.now() > Number(route?.acceptUntil || 0))
-        || route.tabId !== item.tabId || item.byExtensionId) return suggest();
+    if (item.byExtensionId) return suggest();
+    const route = await locateDownloadRoute(item);
+    if (!route) return suggest();
     const name = safeDownloadName(item.filename);
     await chrome.storage.session.set({ [`${ROUTED_PREFIX}${item.id}`]: {
       routeId: route.routeId, runId: route.runId,
@@ -156,4 +230,4 @@ chrome.downloads.onChanged.addListener((delta) => {
 export { STAGE_FOLDER, STAGE_MARKER, STAGE_CONTENT, ROUTE_STATUS_KEY,
   validateStage, routeAvailable, activateDownloadRoute, deactivateDownloadRoute,
   clearDownloadRouteForTab,
-  safeDownloadName, unusedFilename };
+  safeDownloadName, unusedFilename, noteDownloadSource, matchingDownloadOrigin };
