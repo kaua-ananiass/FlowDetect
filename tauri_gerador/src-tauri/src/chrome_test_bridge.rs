@@ -15,7 +15,7 @@ use std::{
 };
 
 const ADDRESS: &str = "127.0.0.1:18453";
-const EXTENSION_VERSION: &str = "0.2.58";
+const EXTENSION_VERSION: &str = "0.2.72";
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static BRIDGE: OnceLock<Arc<(Mutex<BridgeState>, Condvar)>> = OnceLock::new();
 
@@ -211,9 +211,9 @@ fn wait_for_extension_test(textos: Vec<String>, selector: Option<String>) -> Res
     wait_for_job(json!({"type": "test_recognition", "texts": texts, "selector": selector}))
 }
 
-fn wait_for_job(mut job: Value) -> Result<Value, String> {
+pub(crate) fn wait_for_job(mut job: Value) -> Result<Value, String> {
     if !RUNNING.load(Ordering::SeqCst) {
-        return Err("A ponte com a extensao nao esta ativa. Reinicie o FlowDetect Studio.".into());
+        return Err("A ponte com a extensao nao esta ativa neste computador. Reinicie o aplicativo FlowDetect.".into());
     }
     let id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -226,7 +226,7 @@ fn wait_for_job(mut job: Value) -> Result<Value, String> {
         .last_poll
         .is_some_and(|seen| seen.elapsed() < Duration::from_secs(15))
     {
-        return Err("Extensao nao conectada. Abra Conectar Chrome no Studio e digite o codigo mostrado na extensao.".into());
+        return Err("Extensao nao conectada neste computador. Abra a extensao e pareie seu codigo pelo Studio.".into());
     }
     if !state.active_id.is_empty() {
         return Err("Ja existe um teste Chrome em andamento.".into());

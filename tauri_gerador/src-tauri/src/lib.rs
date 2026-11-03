@@ -3,7 +3,9 @@ use serde::Serialize;
 #[cfg(windows)]
 mod native_rdp;
 mod chrome_test_bridge;
+mod automation_chain;
 mod desktop_platform;
+mod agent_pairing;
 #[cfg(windows)]
 use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, ImageBuffer, Rgba};
 use serde_json::Value;
@@ -2581,6 +2583,17 @@ fn import_saved_automation_zip(app: AppHandle, arquivo: String) -> Result<Value,
 }
 
 #[tauri::command]
+async fn map_paths_action(app: AppHandle, request: Value) -> Result<Value, String> {
+    let root=workspace_root(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        if automation_chain::active() || get_remote_agent_snapshot(&root)["snapshot"]["running"]==true {
+            return Err("Pare a execucao antes de modificar os caminhos.".into());
+        }
+        run_helper_json(&root,&["map-paths".into(),"--request".into(),request.to_string()])
+    }).await.map_err(|error|error.to_string())?
+}
+
+#[tauri::command]
 fn import_saved_automation_zip_from_path(app: AppHandle, path: String) -> Result<Value, String> {
     import_saved_automation_zip(app, path)
 }
@@ -2871,7 +2884,7 @@ fn clear_workbook_column(
 fn http_json_response(status: &str, body: Value) -> Vec<u8> {
     let body_text = serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string());
     format!(
-        "HTTP/1.1 {status}\r\nContent-Type: application/json; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {status}\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         body_text.as_bytes().len(),
         body_text
     )
@@ -2951,14 +2964,36 @@ fn agent_identity_name(root: &PathBuf) -> String {
 #[tauri::command]
 fn get_agent_connection_info(app: AppHandle) -> Result<Value, String> {
     let root = workspace_root(&app);
+    let remote_server_ok = TcpStream::connect_timeout(
+        &SocketAddr::from(([127, 0, 0, 1], 18452)),
+        Duration::from_millis(250),
+    ).is_ok();
     Ok(serde_json::json!({
+        "remote_server_ok": remote_server_ok,
         "port": 18452,
         "address": local_agent_address(),
         "local": "127.0.0.1:18452",
         "agent_name": agent_identity_name(&root),
+        "pairing": if is_flowdetect_agent_runtime(&app) { agent_pairing::local_status()? } else { serde_json::json!(null) },
+        "pairing_clients": app.path().app_data_dir().ok().map(|p|agent_pairing::local_client_count(&p)).unwrap_or(0),
     }))
 }
 
+#[tauri::command]
+fn agent_pairing_renew(app: AppHandle) -> Result<Value, String> {
+    if !is_flowdetect_agent_runtime(&app){return Err("Disponivel apenas no Agent".into());}
+    agent_pairing::renew_code()
+}
+#[tauri::command]
+async fn remote_agent_pair_by_code(code: String, address: Option<String>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || agent_pairing::discover_and_pair(&code, "FlowDetect Studio",address.as_deref()))
+        .await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+async fn remote_agent_resolve_device(device_id: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || agent_pairing::resolve_device(&device_id))
+        .await.map_err(|e|e.to_string())?
+}
 #[tauri::command]
 fn get_agent_remote_snapshot(app: AppHandle) -> Result<Value, String> {
     let root = workspace_root(&app);
@@ -2978,6 +3013,8 @@ fn read_http_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), String
             break;
         }
         data.extend_from_slice(&buffer[..read]);
+        if data.len()>256*1024*1024{return Err("Requisicao remota excedeu 256 MB".into());}
+        if header_end.is_none() && data.len()>32768{return Err("Cabecalho HTTP grande demais".into());}
         if header_end.is_none() {
             header_end = data
                 .windows(4)
@@ -2997,6 +3034,7 @@ fn read_http_request(stream: &mut TcpStream) -> Result<(String, Vec<u8>), String
                     }
                 })
                 .unwrap_or(0);
+            if content_length>256*1024*1024{return Err("Corpo HTTP excedeu 256 MB".into());}
             if data.len() >= end + content_length {
                 let body = data[end..end + content_length].to_vec();
                 return Ok((header_text, body));
@@ -3583,6 +3621,7 @@ fn execute_remote_automation(
     start_company: Option<String>,
     minimize_agent: bool,
     text_overrides: Option<String>,
+    start_order: Option<i64>,
 ) -> Result<Value, String> {
     let resolved_loop_start =
         resolve_remote_loop_start(root, loop_start, start_company.as_deref())?;
@@ -3660,6 +3699,10 @@ fn execute_remote_automation(
             .arg("--loop-start")
             .arg(resolved_loop_start.max(1).to_string());
     }
+    if let Some(order) = start_order.filter(|order| *order > 0) {
+        if has_spreadsheet { return Err("Fluxos com planilha devem iniciar pelo começo para preservar o contexto do loop.".into()); }
+        command.arg("--start-order").arg(order.to_string());
+    }
     if let Some(value) = text_overrides
         .as_ref()
         .map(|value| value.trim())
@@ -3669,12 +3712,19 @@ fn execute_remote_automation(
     }
     configure_no_window(&mut command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let map_bridge_dir=root.join(".flowdetect_map_runs").join(now_millis().to_string());
+    fs::create_dir_all(&map_bridge_dir).map_err(|e|e.to_string())?;
+    command.env("FLOWDETECT_MAP_BRIDGE_DIR",&map_bridge_dir);
     let mut child = command
         .spawn()
         .map_err(|err| format!("Falha ao iniciar automacao remota no Agent: {err}"))?;
     append_launcher_log(root, "Processo remoto iniciado pelo Control.");
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
+    let map_finished=Arc::new(AtomicBool::new(false));
+    let bridge_finished=map_finished.clone();
+    let bridge_root=root.clone();
+    let map_bridge_thread=thread::spawn(move || automation_chain::serve_map_bridge(&bridge_root,&map_bridge_dir,bridge_finished));
 
     let started_snapshot = remote_status_payload(
         root,
@@ -3718,6 +3768,8 @@ fn execute_remote_automation(
             })
         });
         let success = child.wait().map(|status| status.success()).unwrap_or(false);
+        map_finished.store(true,Ordering::SeqCst);
+        let _=map_bridge_thread.join();
         if let Some(handle) = stdout_thread {
             let _ = handle.join();
         }
@@ -3783,7 +3835,14 @@ fn find_remote_automation_id_by_name(
 }
 
 fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf) {
-    let (request, body) = match read_http_request(&mut stream) {
+    let _=stream.set_nodelay(true);
+    let _=stream.set_read_timeout(Some(Duration::from_secs(15)));
+    let _=stream.set_write_timeout(Some(Duration::from_secs(15)));
+    if !stream.peer_addr().map(|peer|agent_pairing::peer_allowed(peer.ip())).unwrap_or(false) {
+        let _=stream.write_all(&http_json_response("403 Forbidden",serde_json::json!({"error":"Acesso permitido somente na rede local"})));
+        return;
+    }
+    let (request, incoming_body) = match read_http_request(&mut stream) {
         Ok(value) => value,
         Err(error) => {
             let _ = stream.write_all(&http_json_response(
@@ -3798,12 +3857,30 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
     let method = parts.next().unwrap_or("");
     let path = parts.next().unwrap_or("");
     let clean_path = path.split('?').next().unwrap_or(path);
+    let public_endpoint = (method == "GET" && matches!(clean_path,"/api/ping"|"/api/pair/challenge"))
+        || (method == "POST" && clean_path == "/api/pair/complete");
+    let credentials_dir = app.path().app_data_dir().unwrap_or_else(|_| root.join(".credentials"));
+    let (body, auth_key) = if public_endpoint {
+        (incoming_body, None)
+    } else {
+        match agent_pairing::authorize(&credentials_dir,&request,method,path,&incoming_body) {
+            Ok((body,key)) => (body,Some(key)),
+            Err(error) => {
+                let _=stream.write_all(&http_json_response("401 Unauthorized",serde_json::json!({"error":error})));
+                return;
+            }
+        }
+    };
 
     if method != "OPTIONS" {
         mark_remote_agent_contact();
     }
 
-    let response = if method == "OPTIONS" {
+    let reserved_by_chain = automation_chain::active() && method != "GET" &&
+        (clean_path.starts_with("/api/automations/") || ["/api/automation-import-zip", "/api/watch-automation/execute", "/api/spreadsheet-column/clear"].contains(&clean_path));
+    let response = if reserved_by_chain {
+        http_json_response("409 Conflict",serde_json::json!({"error":"O encadeamento reservou o agente. Pare e confira o processo antes de modificar outra automação."}))
+    } else if method == "OPTIONS" {
         http_json_response("204 No Content", serde_json::json!({}))
     } else if method == "GET" && clean_path == "/api/ping" {
         http_json_response(
@@ -3811,9 +3888,22 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             serde_json::json!({
                 "agent": agent_identity_name(&root),
                 "port": 18452,
-                "address": local_agent_address()
+                "address": local_agent_address(),
+                "pairing_protocol": agent_pairing::PROTOCOL,
+                "agent_version": app.package_info().version.to_string(),
             }),
         )
+    } else if method == "GET" && clean_path == "/api/pair/challenge" {
+        match agent_pairing::challenge(){
+            Ok(value)=>http_json_response("200 OK",value),
+            Err(error)=>http_json_response("429 Too Many Requests",serde_json::json!({"error":error})),
+        }
+    } else if method == "POST" && clean_path == "/api/pair/complete" {
+        let payload=serde_json::from_slice::<Value>(&body).unwrap_or_default();
+        match agent_pairing::complete(&credentials_dir,&payload){
+            Ok(value)=>http_json_response("200 OK",value),
+            Err(error)=>http_json_response("403 Forbidden",serde_json::json!({"error":error})),
+        }
     } else if method == "POST" && clean_path == "/api/identity" {
         let payload =
             serde_json::from_slice::<Value>(&body).unwrap_or_else(|_| serde_json::json!({}));
@@ -3854,12 +3944,27 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
                 serde_json::json!({"error": error}),
             ),
         }
+    } else if method == "POST" && clean_path == "/api/chain" {
+        let request=serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
+        match automation_chain::action(&app,&root,request) {
+            Ok(value)=>http_json_response("200 OK",value),
+            Err(error)=>http_json_response("400 Bad Request",serde_json::json!({"error":error})),
+        }
     } else if method == "GET" && clean_path == "/api/status" {
         http_json_response("200 OK", get_remote_agent_snapshot(&root))
     } else if method == "GET" && clean_path == "/api/meshcentral/status" {
         http_json_response("200 OK", meshcentral_status_payload(&root))
     } else if method == "GET" && clean_path == "/api/screen/snapshot" {
-        match capture_screen_snapshot(&root) {
+        let parameter = |name: &str| -> Option<&str> {
+            path.split_once('?')?.1.split('&').find_map(|part| {
+                let (key, value) = part.split_once('=')?;
+                if key == name { Some(value) } else { None }
+            })
+        };
+        let width = parameter("width").and_then(|s| s.parse().ok()).unwrap_or(960u32).clamp(640, 1920);
+        let quality = parameter("quality").and_then(|s| s.parse().ok()).unwrap_or(45u8).clamp(35, 80);
+        let previous_hash = parameter("previous_hash").filter(|s| s.len()==64 && s.bytes().all(|c| c.is_ascii_hexdigit()));
+        match capture_screen_snapshot(&root, width, quality, previous_hash) {
             Ok(value) => http_json_response("200 OK", value),
             Err(error) => http_json_response(
                 "500 Internal Server Error",
@@ -3951,6 +4056,13 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             ),
         }
     } else if method == "POST" && clean_path == "/api/stop" {
+        if automation_chain::active() {
+            let _=automation_chain::action(&app,&root,serde_json::json!({"action":"stop"}));
+            let response=http_json_response("200 OK",get_remote_agent_snapshot(&root));
+            let reply=if let Some(key)=auth_key {agent_pairing::encrypted_http_response(&response,&key)} else {response};
+            let _=stream.write_all(&reply);
+            return;
+        }
         let _ = fs::write(root.join(".parar_automacao.flag"), b"stop");
         let snapshot = remote_status_payload(
             &root,
@@ -4030,7 +4142,7 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             .and_then(Value::as_str)
             .unwrap_or("Aceito_Compartilhamento");
         match find_remote_automation_id_by_name(&root, automation_name).and_then(|automation_id| {
-            execute_remote_automation(&app, &root, &automation_id, 0.0, 1, None, false, None)
+            execute_remote_automation(&app, &root, &automation_id, 0.0, 1, None, false, None, None)
         }) {
             Ok(value) => http_json_response("200 OK", value),
             Err(error) => http_json_response(
@@ -4086,6 +4198,7 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             start_company,
             minimize_agent,
             text_overrides,
+            None,
         ) {
             Ok(value) => http_json_response("200 OK", value),
             Err(error) => http_json_response(
@@ -4113,15 +4226,20 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
         )
     };
 
-    let _ = stream.write_all(&response);
+    let reply = if let Some(key)=auth_key{agent_pairing::encrypted_http_response(&response,&key)} else{response};
+    let _ = stream.write_all(&reply);
     let _ = stream.flush();
 }
 
 fn start_agent_http_server(app: AppHandle, root: PathBuf) {
+    automation_chain::initialize(&root);
     thread::spawn(move || {
         let listener = match TcpListener::bind("0.0.0.0:18452") {
             Ok(listener) => listener,
-            Err(_) => return,
+            Err(error) => {
+                eprintln!("FlowDetect Agent nao iniciou TCP 18452: {error}");
+                return;
+            }
         };
         for stream in listener.incoming().flatten() {
             let root_clone = root.clone();
@@ -4244,10 +4362,10 @@ fn meshcentral_default_url(root: &Path) -> String {
     local_meshcentral_url()
 }
 
-fn capture_screen_snapshot(root: &Path) -> Result<Value, String> {
+fn capture_screen_snapshot(root: &Path, max_width: u32, quality: u8, previous_hash: Option<&str>) -> Result<Value, String> {
     #[cfg(not(windows))]
     {
-        let _ = root;
+        let _ = (root, max_width, quality, previous_hash);
         return Err(
             "A visualizacao remota por snapshot esta disponivel apenas no Windows.".to_string(),
         );
@@ -4256,6 +4374,7 @@ fn capture_screen_snapshot(root: &Path) -> Result<Value, String> {
     #[cfg(windows)]
     {
         let _ = root;
+        let capture_started = std::time::Instant::now();
         let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
         let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
         if width <= 0 || height <= 0 {
@@ -4324,13 +4443,30 @@ fn capture_screen_snapshot(root: &Path) -> Result<Value, String> {
             }
         }
 
+        // A client can reference its own previous frame hash. Avoid encoding
+        // and transporting another full JPEG when the desktop has not changed.
+        let frame_hash = {
+            use sha2::{Digest, Sha256};
+            let digest = Sha256::digest(&bgra);
+            digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+        };
+        if previous_hash == Some(frame_hash.as_str()) {
+            return Ok(serde_json::json!({
+                "ok": true,
+                "unchanged": true,
+                "frame_hash": frame_hash,
+                "captured_at": now_millis(),
+                "capture_ms": capture_started.elapsed().as_millis(),
+            }));
+        }
+
         for pixel in bgra.chunks_exact_mut(4) {
             pixel.swap(0, 2);
             pixel[3] = 255;
         }
         let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width as u32, height as u32, bgra)
             .ok_or_else(|| "Nao foi possivel montar a imagem da tela.".to_string())?;
-        let max_width = 1600u32;
+        let max_width = max_width.clamp(640, 1920);
         let scaled = if image.width() > max_width {
             let target_height = ((image.height() as f64)
                 * (max_width as f64 / image.width() as f64))
@@ -4341,7 +4477,7 @@ fn capture_screen_snapshot(root: &Path) -> Result<Value, String> {
             image
         };
         let mut bytes = Vec::new();
-        let mut encoder = JpegEncoder::new_with_quality(&mut bytes, 62);
+        let mut encoder = JpegEncoder::new_with_quality(&mut bytes, quality.clamp(35, 80));
         encoder
             .encode_image(&scaled)
             .map_err(|err| format!("Nao foi possivel compactar a tela do Agent: {err}"))?;
@@ -4352,11 +4488,16 @@ fn capture_screen_snapshot(root: &Path) -> Result<Value, String> {
             scaled.width(),
             scaled.height()
         );
+        let jpeg_bytes = bytes.len();
+        let capture_ms = capture_started.elapsed().as_millis();
         Ok(serde_json::json!({
             "ok": true,
             "mime": "image/jpeg",
             "data": general_purpose::STANDARD.encode(bytes),
             "resolution": resolution,
+            "frame_hash": frame_hash,
+            "jpeg_bytes": jpeg_bytes,
+            "capture_ms": capture_ms,
             "captured_at": now_millis()
         }))
     }
@@ -4633,16 +4774,23 @@ fn remote_agent_request(
         .ok_or_else(|| format!("Endereco do Agent invalido: {normalized}"))?;
     let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(3))
         .map_err(|err| format!("Nao foi possivel conectar ao Agent em {normalized}: {err}"))?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(8)));
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(if path == "/api/chain" {55} else {8})));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(8)));
+    let _ = stream.set_nodelay(true);
     let body_bytes = body.unwrap_or(&[]);
+    let auth = if path=="/api/ping"||path.starts_with("/api/pair/") {
+        None
+    }else{agent_pairing::authenticated_request(&normalized,method,path,body_bytes)?};
+    let (extra_headers, request_body) = if let Some((headers,body,_))=auth.as_ref(){
+        (headers.clone(),body.clone())
+    }else{(String::new(),body_bytes.to_vec())};
     let request = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {normalized}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body_bytes.len()
+        "{method} {path} HTTP/1.1\r\nHost: {normalized}\r\nContent-Type: application/octet-stream\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n",
+        request_body.len()
     );
     stream
         .write_all(request.as_bytes())
-        .and_then(|_| stream.write_all(body_bytes))
+        .and_then(|_| stream.write_all(&request_body))
         .map_err(|err| format!("Falha ao enviar requisicao ao Agent: {err}"))?;
     let mut response = String::new();
     stream
@@ -4653,7 +4801,7 @@ fn remote_agent_request(
     let parsed: Value =
         serde_json::from_str(body_text).unwrap_or_else(|_| serde_json::json!({ "raw": body_text }));
     if status_ok {
-        Ok(parsed)
+        if let Some((_,_,key))=auth.as_ref(){agent_pairing::decrypted_remote_result(parsed,key)}else{Ok(parsed)}
     } else {
         Err(parsed
             .get("error")
@@ -4694,6 +4842,14 @@ fn remote_agent_open_automation(address: String, id: String) -> Result<Value, St
 #[tauri::command]
 fn remote_agent_status(address: String) -> Result<Value, String> {
     remote_agent_request(&address, "GET", "/api/status", None)
+}
+
+#[tauri::command]
+async fn remote_agent_chain(address: String, request: Value) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let body=serde_json::to_vec(&request).map_err(|e|e.to_string())?;
+        remote_agent_request(&address,"POST","/api/chain",Some(&body))
+    }).await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]
@@ -4753,15 +4909,37 @@ fn remote_agent_meshcentral_status(address: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn remote_agent_screen_snapshot(address: String) -> Result<Value, String> {
-    remote_agent_request(&address, "GET", "/api/screen/snapshot", None)
+async fn remote_agent_screen_snapshot(
+    address: String,
+    width: Option<u32>,
+    quality: Option<u8>,
+    previous_hash: Option<String>,
+) -> Result<Value, String> {
+    // Capture + JPEG + encrypted HTTP are blocking operations. Run them
+    // off the Tauri UI thread to keep keyboard, mouse and painting responsive.
+    tauri::async_runtime::spawn_blocking(move || {
+        let width = width.unwrap_or(960).clamp(640, 1920);
+        let quality = quality.unwrap_or(45).clamp(35, 80);
+        let previous_hash = previous_hash
+            .filter(|hash| hash.len()==64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        let suffix = previous_hash.map(|hash| format!("&previous_hash={hash}")).unwrap_or_default();
+        let path = format!("/api/screen/snapshot?width={width}&quality={quality}{suffix}");
+        remote_agent_request(&address, "GET", &path, None)
+    })
+    .await
+    .map_err(|err| format!("Falha de tarefa na captura remota: {err}"))?
 }
 
 #[tauri::command]
-fn remote_agent_control_event(address: String, event: Value) -> Result<Value, String> {
-    let body = serde_json::to_vec(&event)
-        .map_err(|err| format!("Falha ao preparar evento remoto: {err}"))?;
-    remote_agent_request(&address, "POST", "/api/control/event", Some(&body))
+async fn remote_agent_control_event(address: String, event: Value) -> Result<Value, String> {
+    // Mouse and keyboard must not wait for a blocking socket on the UI thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let body = serde_json::to_vec(&event)
+            .map_err(|err| format!("Falha ao preparar evento remoto: {err}"))?;
+        remote_agent_request(&address, "POST", "/api/control/event", Some(&body))
+    })
+    .await
+    .map_err(|err| format!("Falha de tarefa no controle remoto: {err}"))?
 }
 
 #[tauri::command]
@@ -10025,10 +10203,35 @@ fn export_automation_bundle(
     })
 }
 
+fn restore_agent_main_window(app: &AppHandle) -> Result<Value, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Janela principal do Agent nao encontrada.".to_string())?;
+    // Always recover from the old compact 86px / frameless configuration.
+    let _ = window.unminimize();
+    let _ = window.set_fullscreen(false);
+    window.set_ignore_cursor_events(false).map_err(|e|e.to_string())?;
+    window.set_always_on_top(false).map_err(|e|e.to_string())?;
+    window.set_skip_taskbar(false).map_err(|e|e.to_string())?;
+    window.set_resizable(true).map_err(|e|e.to_string())?;
+    window.set_decorations(true).map_err(|e|e.to_string())?;
+    window.set_min_size(Some(tauri::LogicalSize::new(900.0, 600.0))).map_err(|e|e.to_string())?;
+    let _ = window.unmaximize();
+    window.set_size(tauri::LogicalSize::new(1280.0, 820.0)).map_err(|e|e.to_string())?;
+    let _ = window.center();
+    window.show().map_err(|e|e.to_string())?;
+    window.maximize().map_err(|e|e.to_string())?;
+    window.set_focus().map_err(|e|e.to_string())?;
+    Ok(serde_json::json!({"ok":true,"compact":false,"maximized":true,"resizable":true}))
+}
+
 #[tauri::command]
 fn set_agent_compact_mode(app: AppHandle, compact: bool) -> Result<Value, String> {
     if !is_flowdetect_agent_runtime(&app) {
         return Err("Este modo esta disponivel apenas no FlowDetect Agent.".to_string());
+    }
+    if !compact {
+        return restore_agent_main_window(&app);
     }
     let window = app
         .get_webview_window("main")
@@ -10117,10 +10320,8 @@ fn set_agent_service_window_hidden(app: &AppHandle, hidden: bool) {
         let _ = window.set_skip_taskbar(hidden);
         if hidden {
             let _ = window.hide();
-        } else {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
+        } else if let Err(error) = restore_agent_main_window(app) {
+            eprintln!("Falha ao restaurar o painel completo do Agent: {error}");
         }
     }
 }
@@ -10128,16 +10329,7 @@ fn set_agent_service_window_hidden(app: &AppHandle, hidden: bool) {
 fn toggle_agent_service_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let visible = window.is_visible().unwrap_or(false);
-        let _ = window.set_always_on_top(false);
-        if visible {
-            let _ = window.set_skip_taskbar(true);
-            let _ = window.hide();
-        } else {
-            let _ = window.set_skip_taskbar(false);
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
+        set_agent_service_window_hidden(app, visible);
     }
 }
 
@@ -10154,6 +10346,8 @@ pub fn run() {
             let app_handle = app.handle().clone();
             if is_flowdetect_agent_runtime(&app_handle) {
                 let root = workspace_root(&app_handle);
+                let _ = app_handle.path().app_data_dir().map(|p| fs::create_dir_all(p));
+                agent_pairing::serve_discovery(app_handle.path().app_data_dir().unwrap_or_else(|_|root.join(".credentials")),agent_identity_name(&root),app_handle.package_info().version.to_string());
                 start_agent_http_server(app_handle.clone(), root);
                 set_agent_service_window_hidden(&app_handle, true);
                 #[cfg(windows)]
@@ -10176,7 +10370,12 @@ pub fn run() {
                         }
                     });
                 }
-            } else if let Err(error) = chrome_test_bridge::start(
+            } else {
+                if let Ok(path)=app_handle.path().app_data_dir(){
+                    agent_pairing::configure_studio_store(path.join("studio_agent_pairings_v1.dat"));
+                }
+            }
+            if let Err(error) = chrome_test_bridge::start(
                 app_handle.path().app_data_dir().ok().map(|path| path.join("chrome_pairing.json"))
             ) {
                 eprintln!("{error}");
@@ -10191,6 +10390,8 @@ pub fn run() {
             remove_workbook_preview_row,
             clear_workbook_column,
             list_saved_automations,
+            remote_agent_chain,
+            map_paths_action,
             list_open_windows,
             map_window_elements,
             capture_uia_element_from_cursor,
@@ -10202,6 +10403,9 @@ pub fn run() {
             fit_target_window_to_agent_area,
             fit_active_window_to_agent_area,
             get_agent_connection_info,
+            agent_pairing_renew,
+            remote_agent_pair_by_code,
+            remote_agent_resolve_device,
             get_agent_remote_snapshot,
             list_hyperv_vms,
             get_hyperv_status,

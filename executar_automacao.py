@@ -5972,9 +5972,18 @@ class ExecutorAutomacao:
         def texto_limpo(valor):
             return self.limpar_saida_status(str(valor or "")).replace("\n", " ").strip()
 
-        def linhas(texto, fonte, tamanho, largura_max, limite=2):
+        def linhas(texto, fonte, tamanho, largura_max, limite=None):
             conteudo = texto_limpo(texto) or "-"
-            palavras = conteudo.split()
+            palavras = []
+            for palavra in conteudo.split():
+                parte = ""
+                for caractere in palavra:
+                    if parte and stringWidth(parte + caractere, fonte, tamanho) > largura_max:
+                        palavras.append(parte)
+                        parte = ""
+                    parte += caractere
+                if parte:
+                    palavras.append(parte)
             resultado = []
             atual = ""
             for palavra in palavras:
@@ -5982,15 +5991,15 @@ class ExecutorAutomacao:
                 if atual and stringWidth(tentativa, fonte, tamanho) > largura_max:
                     resultado.append(atual)
                     atual = palavra
-                    if len(resultado) >= limite:
+                    if limite is not None and len(resultado) >= limite:
                         break
                 else:
                     atual = tentativa
-            if len(resultado) < limite and atual:
+            if (limite is None or len(resultado) < limite) and atual:
                 resultado.append(atual)
             if not resultado:
                 return ["-"]
-            if len(resultado) >= limite and len(" ".join(resultado)) < len(conteudo):
+            if limite is not None and len(resultado) >= limite and len(" ".join(resultado)) < len(conteudo):
                 ultimo = resultado[-1]
                 while ultimo and stringWidth(f"{ultimo}...", fonte, tamanho) > largura_max:
                     ultimo = ultimo[:-1]
@@ -6041,7 +6050,7 @@ class ExecutorAutomacao:
                 pdf.setFont("Helvetica", 7.5)
                 pdf.drawRightString(largura - margem_direita, topo - 50, f"Pagina {pagina}")
                 return topo - 73
-            return topo - 50
+            return topo - 62
 
         def desenhar_rodape():
             pdf.setStrokeColor(cores["linha"])
@@ -6104,10 +6113,10 @@ class ExecutorAutomacao:
             return y_atual - 71
 
         colunas = [
-            ("LINHA", 42),
-            (coluna_relatorio.upper()[:20] or "ITEM", 160),
-            ("RESULTADO", 220),
-            ("STATUS", largura_util - 42 - 160 - 220),
+            ("LINHA", 44),
+            ((linhas(coluna_relatorio.upper() or "ITEM", "Helvetica-Bold", 6.4, 135, 1))[0], 149),
+            ("RESULTADO", 216),
+            ("STATUS", largura_util - 44 - 149 - 216),
         ]
 
         def desenhar_cabecalho_tabela(y_atual):
@@ -6125,15 +6134,28 @@ class ExecutorAutomacao:
                 x += largura_coluna
             return y_atual - 32
 
-        def desenhar_linha(y_atual, item, indice_linha):
+        def desenhar_linha(y_atual, item, indice_linha, partes=None, continuacao=False):
             tom = str(item.get("tom") or ("success" if item.get("sucesso") else "danger")).lower()
             cor_tom = cores_tom.get(tom, cores["accent"])
-            valor_linhas = linhas(item.get("empresa") or "Valor da linha", "Helvetica-Bold", 8.2, colunas[1][1] - 21, 2)
+            valor_linhas = partes[0] if partes is not None else linhas(item.get("empresa") or "Valor da linha", "Helvetica-Bold", 8.2, colunas[1][1] - 14)
             resultado_texto = item.get("resultado") or item.get("erro") or "Sem mensagem registrada."
-            resultado_linhas = linhas(resultado_texto, "Helvetica", 7.6, colunas[2][1] - 18, 2)
+            resultado_linhas = partes[1] if partes is not None else linhas(resultado_texto, "Helvetica", 8.2, colunas[2][1] - 18)
             status = texto_limpo(item.get("status") or ("Concluida" if item.get("sucesso") else "Falhou"))
-            status_linhas = linhas(status.upper(), "Helvetica-Bold", 6.6, colunas[3][1] - 18, 2)
-            altura_linha = max(54, 22 + max(len(valor_linhas), len(resultado_linhas), len(status_linhas)) * 10)
+            status_linhas = partes[2] if partes is not None else linhas(status.upper(), "Helvetica-Bold", 7.2, colunas[3][1] - 18)
+            quantidade = max(len(valor_linhas), len(resultado_linhas), len(status_linhas))
+            if partes is None:
+                inicio = 0
+                while inicio < quantidade:
+                    disponiveis = int((y_atual - rodape - 30 - 34) // 11)
+                    if disponiveis < 2 or (inicio == 0 and quantidade <= 20 and quantidade > disponiveis):
+                        y_atual = desenhar_cabecalho_tabela(proxima_pagina())
+                        disponiveis = int((y_atual - rodape - 30 - 34) // 11)
+                    trecho = min(quantidade - inicio, disponiveis)
+                    y_atual = desenhar_linha(y_atual, item, indice_linha,
+                        (valor_linhas[inicio:inicio + trecho], resultado_linhas[inicio:inicio + trecho], status_linhas[inicio:inicio + trecho]), inicio > 0)
+                    inicio += trecho
+                return y_atual
+            altura_linha = max(54, 34 + quantidade * 11)
             if y_atual - altura_linha < rodape + 30:
                 y_atual = proxima_pagina()
                 y_atual = desenhar_cabecalho_tabela(y_atual)
@@ -6156,29 +6178,36 @@ class ExecutorAutomacao:
             pdf.setFillColor(cores["texto"])
             pdf.setFont("Helvetica-Bold", 8.2)
             for posicao, parte in enumerate(valor_linhas):
-                pdf.drawString(x, y_atual - 15 - posicao * 10, parte)
+                pdf.drawString(x, y_atual - 17 - posicao * 11, parte)
             x += colunas[1][1]
             pdf.setFillColor(cores["texto_suave"])
-            pdf.setFont("Helvetica", 7.6)
+            pdf.setFont("Helvetica", 8.2)
             for posicao, parte in enumerate(resultado_linhas):
-                pdf.drawString(x, y_atual - 15 - posicao * 10, parte)
+                pdf.drawString(x, y_atual - 17 - posicao * 11, parte)
             x += colunas[2][1]
             pdf.setFillColor(cor_tom)
-            pdf.setFont("Helvetica-Bold", 6.7)
+            pdf.setFont("Helvetica-Bold", 7.2)
             for posicao, parte in enumerate(status_linhas):
-                pdf.drawString(x, y_atual - 17 - posicao * 9, parte)
+                pdf.drawString(x, y_atual - 17 - posicao * 11, parte)
+            if continuacao:
+                pdf.setFillColor(cores["muted"])
+                pdf.setFont("Helvetica", 6.4)
+                pdf.drawString(margem_x + 11 + colunas[0][1], y_atual - altura_linha + 12, "Continuacao da mesma linha")
             return y_atual - altura_linha - 7
 
         y = desenhar_cabecalho()
         pdf.setFillColor(cores["texto"])
-        pdf.setFont("Helvetica-Bold", 21)
-        pdf.drawString(margem_x, y, nome_fluxo)
-        y -= 16
+        pdf.setFont("Helvetica-Bold", 19)
+        for parte in linhas(nome_fluxo, "Helvetica-Bold", 19, largura_util, 3):
+            pdf.drawString(margem_x, y, parte)
+            y -= 24
         pdf.setFillColor(cores["texto_suave"])
         pdf.setFont("Helvetica", 8.5)
         descricao = f"Planilha: {texto_limpo(relatorio.get('aba')) or '-'} | {total_linhas} linha(s) processada(s)"
-        pdf.drawString(margem_x, y, descricao)
-        y -= 26
+        for parte in linhas(descricao, "Helvetica", 8.5, largura_util, 3):
+            pdf.drawString(margem_x, y, parte)
+            y -= 12
+        y -= 14
         y = desenhar_resumo(y)
         y = desenhar_cabecalho_tabela(y)
 
@@ -10873,6 +10902,60 @@ class ExecutorAutomacao:
             pyautogui.press(self.tecla_para_pyautogui(tecla))
         return self.resultado_sucesso_evento(evento)
 
+    def executar_caminho_chrome_mapa(self, caminho, evento, contexto_loop=None):
+        """Delegate a whole lane to the extension through the agent-owned child mailbox."""
+        # Embedded Python does not add the script folder to sys.path.
+        module_name = "_flowdetect_roteiro_mapa"
+        roteiro = sys.modules.get(module_name)
+        if roteiro is None:
+            spec = importlib.util.spec_from_file_location(module_name, APP_ROOT / "gerenciar_roteiro.py")
+            if spec is None or spec.loader is None:
+                raise RuntimeError("Modulo gerenciar_roteiro.py ausente no pacote do Agente.")
+            roteiro = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(roteiro)
+            sys.modules[module_name] = roteiro
+        pasta = os.environ.get("FLOWDETECT_MAP_BRIDGE_DIR", "")
+        if not pasta:
+            raise RuntimeError("Caminhos Chrome devem ser executados pelo Agente atualizado. Nao ha ponte Chrome nesta execucao.")
+        passos = []
+        sequencias = set(caminho.get("sequences") or [])
+        for item in self.eventos:
+            if item.get("sequencia", "principal") not in sequencias:
+                continue
+            passo, aviso = roteiro.converter_evento_para_chrome(item, [], self.arquivo_mapeamento.resolve().parent)
+            if aviso or passo is None:
+                raise ValueError(f"Caminho Chrome incompativel: {aviso or item.get('tipo')}.")
+            passos.append(passo)
+        externos = [item for item in self.eventos if item.get("sequencia", "principal") not in sequencias]
+        contexto = self.obter_contexto_linha_loop(contexto_loop)
+        automacao = {"schema": "flowdetect_chrome_automation", "version": 3,
+            "automation": {"id": caminho["id"], "nome": caminho["name"]},
+            "initial_sequence": evento["sequencia"], "steps": passos,
+            "chain_variables": {str(k): str(v) for k, v in contexto.items() if v is not None},
+            "map_boundary": {"orders": [int(item["ordem"]) for item in externos], "sequences": list({item.get("sequencia", "principal") for item in externos})}}
+        base = Path(pasta)
+        reply = base / "reply.json"
+        if reply.exists():
+            reply.unlink()
+        temporary = base / "request.tmp"
+        temporary.write_text(json.dumps({"automation": automacao, "entryOrder": int(evento["ordem"]), "pageId": caminho.get("page_id") or "1"}, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporary, base / "request.json")
+        safe_print(f"Caminho Chrome: {caminho['name']} — aguardando a extensao no agente.", flush=True)
+        limite = time.monotonic() + 1900
+        while not reply.exists():
+            if self.cancelamento_solicitado():
+                raise RuntimeError("Parada solicitada ao caminho Chrome. Confira a confirmacao no agente.")
+            if time.monotonic() > limite:
+                raise RuntimeError("Caminho Chrome sem confirmacao. Confira o agente antes de repetir.")
+            time.sleep(0.1)
+        result = json.loads(reply.read_text(encoding="utf-8"))
+        if not result.get("ok"):
+            raise RuntimeError(result.get("error") or "Caminho Chrome falhou.")
+        saida = result.get("exit") or {}
+        if saida:
+            return self.resultado_fluxo(saida["action"], saida.get("sequence", ""), bloco=saida.get("block", ""))
+        return None
+
     def executar_fluxo_controlado(
         self,
         contexto_loop=None,
@@ -11038,7 +11121,13 @@ class ExecutorAutomacao:
                     iteracao_total=(contexto_loop or {}).get("total", 0) if contexto_loop else 0,
                 )
 
-            resultado = self.executar_evento(evento, contexto_loop=contexto_loop)
+            caminho_chrome = next((path for path in self.payload.get("map_paths", []) if path.get("engine") == "chrome" and sequencia_atual in path.get("sequences", [])), None)
+            if caminho_chrome:
+                resultado = self.executar_caminho_chrome_mapa(caminho_chrome, evento, contexto_loop)
+                if resultado is None:
+                    return {"success": True, "status": "concluido", "sequencia": sequencia_atual, "indice": indice, "resultado": self.resultado_fluxo("continuar")}
+            else:
+                resultado = self.executar_evento(evento, contexto_loop=contexto_loop)
             acao = str((resultado or {}).get("acao", "continuar"))
             destino = str((resultado or {}).get("sequencia", "")).strip()
             destino_bloco = (resultado or {}).get("bloco", "")
@@ -11241,9 +11330,15 @@ class ExecutorAutomacao:
         )
         return bool(resultado.get("success"))
 
-    def executar_normal(self):
+    def executar_normal(self, start_order=0):
         safe_print("Executando roteiro completo...", flush=True)
         self._janela_contexto = ""
+        if start_order:
+            for sequencia, eventos in self.sequencias.items():
+                for indice, evento in enumerate(eventos):
+                    if int(evento.get("ordem", 0)) == int(start_order):
+                        return self.executar_fluxo(sequencia_inicial=sequencia, indice_inicial=indice)
+            raise ValueError(f"Bloco de entrada {start_order} nao encontrado.")
         return self.executar_fluxo(sequencia_inicial=self.sequencia_inicial)
 
     def executar_loop_legado(self, loop_start=1):
@@ -11858,6 +11953,7 @@ def criar_parser():
     parser.add_argument("--modo", choices=("normal", "loop", "reconhecimento"), default="normal")
     parser.add_argument("--atraso", type=float, default=3.0)
     parser.add_argument("--loop-start", type=int, default=1)
+    parser.add_argument("--start-order", type=int, default=0)
     parser.add_argument("--arquivo", default=str(ARQUIVO_MAPEAMENTO))
     parser.add_argument("--planilha", default=str(ARQUIVO_PLANILHA))
     parser.add_argument("--cancelamento-arquivo", default=str(ARQUIVO_CANCELAMENTO))
@@ -12013,7 +12109,7 @@ def main():
             elif args.modo == "loop":
                 sucesso = executor.executar_loop(loop_start=args.loop_start)
             else:
-                sucesso = executor.executar_normal()
+                sucesso = executor.executar_normal(start_order=args.start_order)
         except KeyboardInterrupt:
             executor.cancelar.set()
             safe_print("Execucao interrompida pelo teclado.", flush=True)
