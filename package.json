@@ -1,0 +1,11 @@
+{
+  "name": "flowdetect-repository-checks",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node scripts/test-node.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

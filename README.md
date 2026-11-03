@@ -61,6 +61,11 @@ O **FlowDetect** transforma tarefas repetitivas em fluxos visuais reutilizáveis
 **Tauri · Rust · Python · JavaScript · HTML/CSS · OpenCV · OCR · OpenPyXL · Playwright**
 
 ## Para desenvolvedores
+
+O mapa também permite [seções conectadas na mesma página](docs/MAPA_CAMINHOS.md),
+[encadeamentos no Agente](docs/ENCADEAMENTOS.md) e [pedidos de DP](docs/ALTERDATA_TAREFAS_DP.md).
+Veja a [auditoria dos arquivos e recursos de build](docs/AUDITORIA_REPOSITORIO.md).
+
 <details><summary><b>Estrutura do código, preparação do ambiente e referências técnicas</b></summary>
 
 | Pasta | Conteúdo |
@@ -82,11 +87,23 @@ npm.cmd run tauri:dev
 **Dependências Python:**
 ```powershell
 python -m pip install -r requirements.txt
-python -m playwright install
+```
+Para os testes de navegador e o controle direto por Playwright (opcional):
+```powershell
+python -m pip install playwright
+python -m playwright install chromium
 ```
 **Compilação Windows:**
 ```powershell
+.\scripts\preparar_build_windows.ps1
+python scripts/auditar_repositorio.py
 powershell -ExecutionPolicy Bypass -File .\scripts\compilar_gerador_exe.ps1
+```
+**Testes JavaScript e navegador (raiz do repositório):**
+```powershell
+npm ci
+npx playwright install chromium
+npm test
 ```
 [Compilação](docs/COMPILACAO.md) · [Agent](docs/README_AGENTE.md) · [Hyper-V](docs/HYPERV_AGENTES.md)
 </details>

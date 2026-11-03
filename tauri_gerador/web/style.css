@@ -8538,6 +8538,9 @@ label span {
   min-height: 32px;
 }
 
+.command-map-export-actions { display: flex; align-items: center; flex-wrap: nowrap; gap: 6px; }
+.command-map-export-actions > button { min-height: 32px; }
+
 .command-map-side-actions > .command-map-chrome-status {
   display: inline-flex;
   align-items: center;

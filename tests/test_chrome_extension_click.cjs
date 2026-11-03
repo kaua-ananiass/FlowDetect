@@ -310,12 +310,21 @@ test("content runner can be reinjected into the same tab", () => {
 const workerSource = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/manifest.json"), "utf8"));
 
-test("service worker leaves pages untouched and keeps the persistent content runner", () => {
-  assert.doesNotMatch(workerSource, /chrome\.scripting\.executeScript|progress-overlay/);
-  assert.ok(!manifest.permissions.includes("scripting"));
+test("service worker keeps the persistent content runner and limits fallback injection to page helpers", () => {
+  assert.doesNotMatch(workerSource, /progress-overlay/);
+  const injections=[...workerSource.matchAll(/chrome\.scripting\.executeScript\(([^;]+)\);/g)];
+  assert.equal(injections.length,2);
+  for(const injection of injections) assert.match(injection[1],/files: \["(?:page-outline|input-lock)\.js"\]/);
+  assert.ok(manifest.permissions.includes("scripting"));
   assert.deepEqual(manifest.content_scripts, [{
     matches: ["http://*/*", "https://*/*"],
-    js: ["content.js"],
+    js: ["input-lock.js"],
+    all_frames: true,
+    match_about_blank: true,
+    run_at: "document_start",
+  },{
+    matches: ["http://*/*", "https://*/*"],
+    js: ["page-outline.js", "content.js"],
     run_at: "document_idle",
   }]);
 });
