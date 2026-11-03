@@ -1,0 +1,26 @@
+.map-path-dialog { width: min(560px,calc(100vw - 40px)); max-height: calc(100vh - 60px); overflow: auto; box-sizing: border-box; border: 1px solid #34405c; border-radius: 20px; padding: 24px; background: #0d1725; color: #dfeaf6; box-shadow: 0 24px 90px #0009; }
+.map-path-dialog::backdrop { background: #030810bb; backdrop-filter: blur(5px); }
+.map-path-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.map-path-dialog h2 { margin: 8px 0; font-size: 1.3rem; }.map-path-dialog h3 { font-size: .9rem; }
+.map-path-dialog small { color: #99a8cb; font-size: .65rem; letter-spacing: .1em; }
+.map-path-dialog p { font-size: .76rem; line-height: 1.6; color: #99abc0; }
+.map-path-dialog section { border-top: 1px solid #263348; margin-top: 20px; padding-top: 6px; }
+.map-path-dialog label { display: grid; gap: 7px; font-size: .73rem; color: #aebfd3; margin: 12px 0; min-width: 0; }
+.map-path-dialog input,.map-path-dialog select { box-sizing: border-box; width: 100%; min-width: 0; padding: 10px; border: 1px solid #34425a; border-radius: 8px; background: #152235; color: #ecf2fa; }
+.map-path-dialog button { border: 1px solid #384768; border-radius: 8px; padding: 9px 12px; background: #1b2a43; color: #dbe8fa; cursor: pointer; font: inherit; font-size: .75rem; }
+.map-path-dialog :is(button,input,select):focus-visible { outline: 2px solid #a79bff; outline-offset: 3px; }
+.map-path-dialog button:disabled { opacity: .45; cursor: wait; }.map-path-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.map-path-buttons { display: flex; flex-wrap: wrap; gap: 8px; }#mapPathFeedback[data-error=true] { color: #ff9aa5; }
+.map-path-dialog [hidden] { display: none !important; }
+.map-canvas-section { position: absolute; box-sizing: border-box; border: 1px solid #7489ba25; border-radius: 24px; background: linear-gradient(120deg,#1d304315,#25203a0a); pointer-events: none; }
+.map-section-header { position: absolute; inset: 0 0 auto; height: 78px; display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 0 24px; border-bottom: 1px solid #7489ba1a; background: #111b2a66; border-radius: 24px 24px 0 0; }
+.map-path-lane-title { display: grid; gap: 5px; color: #ddd6ff; pointer-events: none; max-width: 550px; }
+.map-path-lane-title strong { font-size: 17px; }.map-path-lane-title span { font-size: 11px; color: #93a8bd; }
+.map-path-lane-title .map-section-number { font-size: 9px; letter-spacing: .14em; color: #a49cc4; }
+.map-section-header button { pointer-events: auto; border: 1px solid #6f87aa40; border-radius: 10px; background: #172537b3; color: #c4d5e8; font: inherit; font-size: 12px; padding: 10px 16px; cursor: pointer; }
+.map-section-add { position: absolute; display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 74px; border: 1px dashed #7b95b54d; border-radius: 18px; background: #14223555; color: #c9d9ed; cursor: pointer; font: inherit; }
+.map-section-add > span { font-size: 22px; color: #99b8df; }.map-section-add strong { font-size: 14px; font-weight: 600; }.map-section-add small { font-size: 11px; color: #8599b4; }
+.map-section-add:hover,.map-section-header button:hover { background: #233a505c; border-color: #8aa9d380; }
+.map-section-empty-add { margin: 20px; padding: 12px 20px; border: 1px dashed #617694; border-radius: 12px; color: #c9d9ed; background: #142235; cursor: pointer; }
+.map-section-add:focus-visible,.map-section-header button:focus-visible { outline: 2px solid #a79bff; outline-offset: 4px; }
+@media(max-width:500px) { .map-path-fields { grid-template-columns: 1fr; gap: 0; } }

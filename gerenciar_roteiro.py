@@ -2947,6 +2947,7 @@ def payload_para_resposta(payload):
             "sequence_count": len({normalizar_nome_sequencia(evento.get("sequencia")) for evento in eventos}) or 1,
         },
         "events": [card_do_evento(evento) for evento in eventos],
+        "map_paths": payload.get("map_paths", []),
         "sequences": sorted({normalizar_nome_sequencia(evento.get("sequencia")) for evento in eventos}) or ["principal"],
         "sequence_settings": configuracoes_sequencia,
         "workbook": carregar_planilha_meta(),
@@ -2992,13 +2993,19 @@ def remapear_referencias_de_blocos(payload, mapa_ordem_anterior):
         if ordem_antiga:
             ordem_nova_por_antiga[int(ordem_antiga)] = indice
 
-    campos_destino = ("bloco_sucesso", "bloco_falha", "bloco_nao_encontrar")
-    for evento in eventos:
-        detalhes = evento.get("detalhes")
+    def remapear(detalhes):
+        if isinstance(detalhes, list):
+            for item in detalhes:
+                remapear(item)
+            return
         if not isinstance(detalhes, dict):
-            continue
-        for campo in campos_destino:
-            valor = detalhes.get(campo, "")
+            return
+        for campo, valor in detalhes.items():
+            if isinstance(valor, (dict, list)):
+                remapear(valor)
+                continue
+            if not (campo.startswith("bloco_") or campo in {"bloco", "block"}):
+                continue
             if str(valor or "").strip() == "":
                 continue
             try:
@@ -3007,6 +3014,8 @@ def remapear_referencias_de_blocos(payload, mapa_ordem_anterior):
                 continue
             nova_ordem = ordem_nova_por_antiga.get(ordem_destino)
             detalhes[campo] = int(nova_ordem) if nova_ordem else ""
+    for evento in eventos:
+        remapear(evento.get("detalhes"))
 
 
 def salvar_e_retornar(payload):
@@ -3070,6 +3079,159 @@ def comando_abrir_automacao(args):
     resposta["library"] = listar_automacoes_resumidas()
     resposta["active_automation"] = item
     return resposta
+
+
+def comando_prever_automacao(args):
+    biblioteca = carregar_biblioteca()
+    _, item = localizar_item_biblioteca(biblioteca, args.id)
+    resposta = payload_para_resposta(carregar_payload_da_automacao(args.id))
+    resposta["active_automation"] = item
+    return resposta
+
+
+def mesclar_caminho_mapa(payload, origem, nome, pagina, pasta_origem=None):
+    """Copy a flow as isolated sequences, including nested block references."""
+    origem = json.loads(json.dumps(origem))
+    eventos = origem.get("eventos") or []
+    if not eventos:
+        raise ValueError("A automacao de origem nao possui blocos.")
+    ordens = [int(e.get("ordem", 0)) for e in eventos]
+    if len(set(ordens)) != len(ordens) or any(n <= 0 for n in ordens):
+        raise ValueError("A origem possui identificadores de blocos invalidos.")
+    token = uuid.uuid4().hex[:12]
+    sequencias = list(dict.fromkeys(normalizar_nome_sequencia(e.get("sequencia")) for e in eventos))
+    mapa_seq = {s: f"caminho_{token}_{i}" for i, s in enumerate(sequencias)}
+    inicio = normalizar_nome_sequencia(origem.get("sequencia_inicial"))
+    if inicio not in mapa_seq:
+        raise ValueError("A sequencia inicial da origem nao possui blocos.")
+    offset = len(payload.get("eventos") or [])
+    mapa_ordem = {old: offset + i + 1 for i, old in enumerate(ordens)}
+    recursos = []
+
+    def reescrever(valor, chave=""):
+        if isinstance(valor, dict):
+            return {k: reescrever(v, k) for k, v in valor.items()}
+        if isinstance(valor, list):
+            return [reescrever(v, chave) for v in valor]
+        if valor in (None, ""):
+            return valor
+        if chave.startswith("bloco_") or chave in {"bloco", "block"}:
+            try:
+                return mapa_ordem[int(valor)]
+            except (ValueError, TypeError, KeyError):
+                raise ValueError(f"Referencia de bloco externo ou inexistente: {valor}.")
+        if chave.startswith("sequencia_") or chave in {"sequencia", "sequence", "after_loop_sequence"}:
+            if str(valor) not in mapa_seq:
+                raise ValueError(f"Referencia de sequencia externa: {valor}.")
+            return mapa_seq[str(valor)]
+        imagem = chave in {"imagem", "imagem_ocr", "imagem_ativo", "imagem_desativado", "imagem_referencia", "imagem_id"}
+        planilha = chave in {"arquivo_planilha", "workbook_file"} or (chave in {"arquivo", "arquivo_fonte"} and isinstance(valor, str) and Path(valor).suffix.lower() in EXTENSOES_PLANILHA)
+        if isinstance(valor, str) and (imagem or planilha):
+            if not pasta_origem:
+                return valor
+            base = Path(pasta_origem).resolve()
+            relativo = Path(valor.replace("\\", "/"))
+            candidates = [base / relativo, base / ("imagens" if imagem else "planilhas") / relativo.name]
+            arquivo = next((p.resolve() for p in candidates if p.is_file() and p.resolve().is_relative_to(base)), None)
+            if arquivo is None:
+                raise ValueError(f"Recurso da origem nao encontrado: {valor}.")
+            pasta = PASTA_IMAGENS if imagem else DIRETORIO_PLANILHAS
+            destino = pasta / f"mapa_{token}_{arquivo.name}"
+            recursos.append((arquivo, destino))
+            return str(destino).replace("\\", "/")
+        return valor
+
+    importados = []
+    for evento in eventos:
+        evento["detalhes"] = reescrever(evento.get("detalhes") or {})
+        evento["sequencia"] = mapa_seq[normalizar_nome_sequencia(evento.get("sequencia"))]
+        evento["ordem"] = mapa_ordem[int(evento["ordem"])]
+        evento["id"] = uuid.uuid4().hex
+        if evento.get("tipo") == "sequencia_planilha" and pasta_origem:
+            detalhes = evento["detalhes"]
+            if not detalhes.get("arquivo_planilha") and not detalhes.get("workbook_file") and not detalhes.get("arquivo"):
+                detalhes["arquivo"] = reescrever("db.xlsx", "arquivo")
+        importados.append(evento)
+    configs = {mapa_seq[s]: reescrever(c) for s, c in (origem.get("configuracoes_sequencia") or {}).items() if s in mapa_seq}
+    for arquivo, destino in recursos:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(arquivo, destino)
+    payload.setdefault("eventos", []).extend(importados)
+    payload.setdefault("configuracoes_sequencia", {}).update(configs)
+    filhos = []
+    for path in origem.get("map_paths") or []:
+        seqs = [mapa_seq[s] for s in path.get("sequences", []) if s in mapa_seq]
+        if seqs:
+            filhos.append({"id": uuid.uuid4().hex[:12], "name": f"{nome} / {path.get('name', 'Caminho')}", "parent": normalizar_nome_sequencia(pagina), "entry_sequence": mapa_seq.get(path.get("entry_sequence"), seqs[0]), "sequences": seqs, "engine": path.get("engine", "desktop"), "page_id": path.get("page_id", "1")})
+    seqs_filhos = {s for path in filhos for s in path["sequences"]}
+    caminho = {"id": token, "name": str(nome or "Novo caminho")[:120], "parent": normalizar_nome_sequencia(pagina), "entry_sequence": mapa_seq[inicio], "sequences": [s for s in mapa_seq.values() if s not in seqs_filhos]}
+    payload.setdefault("map_paths", []).append(caminho)
+    payload["map_paths"].extend(filhos)
+    return caminho
+
+
+def comando_caminhos_mapa(args):
+    pedido = json.loads(args.request)
+    payload = carregar_e_normalizar()
+    acao = pedido.get("action")
+    if acao in {"create", "import", "importFile"}:
+        if acao == "importFile":
+            arquivo = Path(str(pedido.get("file") or ""))
+            with tempfile.TemporaryDirectory(prefix="flowdetect_map_") as temp:
+                if arquivo.suffix.lower() == ".zip":
+                    base = Path(temp)
+                    extrair_zip_com_seguranca(arquivo, base)
+                    manifesto = localizar_manifesto_bundle(base)
+                    pasta = localizar_pasta_automacao_importada(base, manifesto)
+                    if not pasta:
+                        raise ValueError("ZIP sem projeto FlowDetect.")
+                    origem = ler_json_arquivo(pasta / ARQUIVO_SAIDA.name)
+                elif arquivo.suffix.lower() == ".json":
+                    origem = ler_json_arquivo(arquivo)
+                    pasta = arquivo.parent
+                else:
+                    raise ValueError("Escolha um projeto JSON ou ZIP FlowDetect.")
+                if "eventos" not in origem:
+                    raise ValueError("Use o JSON original do Studio ou seu ZIP. O JSON convertido da extensao nao e um projeto editavel.")
+                caminho = mesclar_caminho_mapa(payload, origem, pedido.get("name") or arquivo.stem, pedido.get("parent") or "principal", pasta)
+                caminho.update(engine="chrome" if pedido.get("engine") == "chrome" else "desktop", page_id=str(pedido.get("pageId") or ""))
+            return salvar_e_retornar(payload)
+        if acao == "import":
+            automacao_id = str(pedido.get("id") or "")
+            _, item = localizar_item_biblioteca(carregar_biblioteca(), automacao_id)
+            origem = carregar_payload_da_automacao(automacao_id)
+            pasta = diretorio_automacao(automacao_id)
+        else:
+            item = {"nome": "Novo caminho"}
+            origem = {"sequencia_inicial": "principal", "eventos": [{"ordem": 1, "tipo": "texto_livre", "texto": "", "sequencia": "principal", "intervalo_antes": 0, "detalhes": {}}]}
+            pasta = None
+        caminho = mesclar_caminho_mapa(payload, origem, pedido.get("name") or item["nome"], pedido.get("parent") or "principal", pasta)
+        caminho["engine"] = "chrome" if pedido.get("engine") == "chrome" else "desktop"
+        caminho["page_id"] = str(pedido.get("pageId") or "")
+    elif acao == "connect":
+        _, evento = localizar_evento(payload, int(pedido["source"]))
+        alvo = str(pedido.get("sequence") or "")
+        bloco = int(pedido.get("targetBlock") or 0)
+        if bloco:
+            localizar_evento(payload, bloco)
+        elif not any(e["sequencia"] == alvo for e in payload["eventos"]):
+            raise ValueError("O caminho de destino nao possui blocos.")
+        destino = "ir_para_bloco" if bloco else "ir_para_sequencia"
+        alvo = "" if bloco else alvo
+        route = pedido.get("route")
+        detalhes = evento.setdefault("detalhes", {})
+        if route == "success":
+            detalhes.update(ao_sucesso=destino, sequencia_sucesso=alvo, bloco_sucesso=bloco or "")
+        elif route == "failure" and evento["tipo"] in {"clicar_imagem", "procurar_texto_ocr", "uia_elemento"}:
+            if evento["tipo"] == "uia_elemento":
+                detalhes.update(ao_falhar=destino, sequencia_falha=alvo, bloco_falha=bloco or "")
+            else:
+                detalhes.update(ao_nao_encontrar=destino, sequencia_nao_encontrar=alvo, bloco_nao_encontrar=bloco or "")
+        else:
+            raise ValueError("Este bloco nao possui essa rota. Use um bloco de reconhecimento para a rota de falha.")
+    else:
+        raise ValueError("Acao de caminho invalida.")
+    return salvar_e_retornar(payload)
 
 
 def comando_duplicar_automacao(args):
@@ -4389,6 +4551,10 @@ def build_parser():
 
     open_automation = subparsers.add_parser("automation-open")
     open_automation.add_argument("--id", required=True)
+    map_paths = subparsers.add_parser("map-paths")
+    map_paths.add_argument("--request", required=True)
+    preview_automation = subparsers.add_parser("automation-preview")
+    preview_automation.add_argument("--id", required=True)
 
     duplicate_automation = subparsers.add_parser("automation-duplicate")
     duplicate_automation.add_argument("--id", required=True)
@@ -4846,10 +5012,12 @@ def build_parser():
 
 
 COMANDOS = {
+    "map-paths": comando_caminhos_mapa,
     "list": comando_listar,
     "automation-library-list": comando_listar_automacoes,
     "automation-create": comando_criar_automacao,
     "automation-open": comando_abrir_automacao,
+    "automation-preview": comando_prever_automacao,
     "automation-duplicate": comando_duplicar_automacao,
     "automation-rename": comando_renomear_automacao,
     "automation-delete": comando_excluir_automacao,

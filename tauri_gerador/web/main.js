@@ -1,6 +1,12 @@
-﻿const tauriCore = window.__TAURI__?.core ?? null;
+const tauriCore = window.__TAURI__?.core ?? null;
 const tauriEvent = window.__TAURI__?.event ?? null;
 import { validateRoadmap } from "./map-validator.js";
+import { initIntegrations } from "./integrations.js";
+import { initAlterdata, resolveAlterdataTexts } from "./alterdata.js";
+import { initAutomationChain } from "./automation-chain.js";
+import { initMapPaths } from "./map-paths.js";
+let alterdataWorkspace = null;
+let chainWorkspace = null;
 const tauriDialog = window.__TAURI__?.dialog ?? null;
 window.__GENERATOR_MAIN_READY = true;
 
@@ -137,6 +143,12 @@ const state = {
   },
   activeTab: "launcher",
   remoteControl: {
+    physicalAgentId: "",
+    physicalConnecting: false,
+    physicalHeldInputs: new Map(),
+    screenGeneration: 0,
+    screenError: "",
+    webrtcCancel: null,
     address: "127.0.0.1:18452",
     meshUrl: "",
     meshFrameUrl: "",
@@ -169,6 +181,13 @@ const state = {
     screenStreaming: false,
     screenStreamTimer: null,
     screenSnapshotUrl: "",
+    screenSnapshotHash: "",
+    screenFramesInWindow: 0,
+    screenStatsSince: 0,
+    screenLastCaptureMs: 0,
+    screenLastRttMs: 0,
+    screenFps: 0,
+    httpPointerSending: false,
     screenSnapshotAt: 0,
     screenSnapshotLoading: false,
     webrtcPeer: null,
@@ -511,6 +530,8 @@ const workbookTabButton = document.getElementById("workbookTabButton");
 const launcherTabButton = document.getElementById("launcherTabButton");
 const remoteControlTabButton = document.getElementById("remoteControlTabButton");
 const agentsTabButton = document.getElementById("agentsTabButton");
+const integrationsTabButton = document.getElementById("integrationsTabButton");
+const integrationsPanel = document.getElementById("integrationsPanel");
 const agentScreenTabButton = document.getElementById("agentScreenTabButton");
 const smartRecorderTabButton = document.getElementById("smartRecorderTabButton");
 const sessionChip = document.getElementById("sessionChip");
@@ -564,6 +585,7 @@ const saveAgentCardButton = document.getElementById("saveAgentCardButton");
 const cancelAgentCardButton = document.getElementById("cancelAgentCardButton");
 const agentsList = document.getElementById("agentsList");
 const agentsMachinesTabButton = document.getElementById("agentsMachinesTabButton");
+const agentsPhysicalTabButton = document.getElementById("agentsPhysicalTabButton");
 const agentsAutomationsTabButton = document.getElementById("agentsAutomationsTabButton");
 const agentsMachineActions = document.getElementById("agentsMachineActions");
 const agentsMachinesView = document.getElementById("agentsMachinesView");
@@ -1087,6 +1109,7 @@ function setWorkspaceTab(tabName) {
   }
   const previousTab = state.activeTab;
   if (previousTab === "agent-screen" && tabName !== "agent-screen") {
+    releasePhysicalRemoteInput();
     hideNativeHypervSurface(true);
   }
   state.activeTab = tabName;
@@ -1097,6 +1120,9 @@ function setWorkspaceTab(tabName) {
   const workbookActive = tabName === "workbook";
   const remoteControlActive = tabName === "remote-control";
   const agentsActive = tabName === "agents";
+  const integrationsActive = tabName === "integrations";
+  const alterdataActive = tabName === "alterdata";
+  const chainActive = tabName === "chains";
   const agentScreenActive = tabName === "agent-screen";
   const smartRecorderActive = tabName === "smart-recorder";
   launcherTabButton.classList.toggle("is-active", launcherActive);
@@ -1106,6 +1132,9 @@ function setWorkspaceTab(tabName) {
   workbookTabButton.classList.toggle("is-active", workbookActive);
   remoteControlTabButton?.classList.toggle("is-active", remoteControlActive);
   agentsTabButton?.classList.toggle("is-active", agentsActive);
+  integrationsTabButton?.classList.toggle("is-active", integrationsActive);
+  document.getElementById("alterdataTabButton")?.classList.toggle("is-active", alterdataActive);
+  document.getElementById("chainTabButton")?.classList.toggle("is-active", chainActive);
   agentScreenTabButton?.classList.toggle("is-active", agentScreenActive);
   smartRecorderTabButton?.classList.toggle("is-active", smartRecorderActive);
   launcherPanel.classList.toggle("is-active", launcherActive);
@@ -1116,6 +1145,11 @@ function setWorkspaceTab(tabName) {
   workbookPanel.classList.toggle("is-active", workbookActive);
   remoteControlPanel?.classList.toggle("is-active", remoteControlActive);
   agentsPanel?.classList.toggle("is-active", agentsActive);
+  integrationsPanel?.classList.toggle("is-active", integrationsActive);
+  document.getElementById("alterdataPanel")?.classList.toggle("is-active", alterdataActive);
+  if (alterdataActive) alterdataWorkspace?.refresh();
+  document.getElementById("chainPanel")?.classList.toggle("is-active", chainActive);
+  if (chainActive) chainWorkspace?.refresh();
   agentScreenPanel?.classList.toggle("is-active", agentScreenActive);
   smartRecorderPanel?.classList.toggle("is-active", smartRecorderActive);
   builderShell?.classList.toggle("is-launcher-active", launcherActive);
@@ -1445,17 +1479,19 @@ function getCommandMapFailureRoute(event) {
     return {
       action,
       block: Number.isFinite(block) && block > 0 ? block : null,
+      sequence: String(details.sequencia_nao_encontrar || ''),
       delay,
     };
   }
 
-  if (eventType === "chrome_elemento_html") {
+  if (eventType === "chrome_elemento_html" || eventType === "uia_elemento") {
     const action = String(details.ao_falhar || "parar").trim().toLowerCase();
     const block = Number(details.bloco_falha || 0);
     const delay = Math.max(0, parseNumber(details.atraso_antes_sequencia_falha, 0));
     return {
       action,
       block: Number.isFinite(block) && block > 0 ? block : null,
+      sequence: String(details.sequencia_falha || ''),
       delay,
     };
   }
@@ -1722,6 +1758,18 @@ function createCommandMapTreeLinkEnergy(pathData, kind = "success") {
   return energy;
 }
 
+function commandMapSectionReturnPath(source, target, laneY, laneIndex = 0) {
+  const offset=(laneIndex % 3 - 1) * 22;
+  const startX=Math.max(source.left+24,Math.min(source.right-24,source.centerX+offset));
+  const endX=Math.max(target.left+24,Math.min(target.right-24,target.centerX+offset));
+  const direction=endX>=startX?1:-1;
+  const radius=Math.min(20,Math.abs(endX-startX)/2,Math.max(0,(source.top-target.bottom)/4));
+  const d=radius<1
+    ? `M ${startX} ${source.top} L ${endX} ${target.bottom}`
+    : [`M ${startX} ${source.top}`,`L ${startX} ${laneY+radius}`,`Q ${startX} ${laneY} ${startX+direction*radius} ${laneY}`,`L ${endX-direction*radius} ${laneY}`,`Q ${endX} ${laneY} ${endX} ${laneY-radius}`,`L ${endX} ${target.bottom}`].join(' ');
+  return {d,startX,endX};
+}
+
 function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive = false) {
   if (!root || (!allowInactive && state.activeTab !== "commands")) {
     return;
@@ -1788,13 +1836,27 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
       const ocrColor = String(label.dataset.treeEdgeOcrColor || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
       const isPrimaryNext = label.classList.contains("is-primary-next");
       const isTerminal = isTerminalRoute || !targetOrder;
+      const sourceSection=sourceCard.closest('[data-tree-node-sequence]')?.dataset.treeNodeSequence;
+      const targetSection=targetElement.closest('[data-tree-node-sequence]')?.dataset.treeNodeSequence;
+      const isSectionReturn=!isTerminal && sourceSection && targetSection && sourceSection!==targetSection && targetRect.bottom<sourceRect.top;
       const labelRect = toStageRect(label);
       const hasManualLabelPosition = label.dataset.treeLayoutManual === "true";
       const branchLaneIndex = Math.max(0, Number(label.dataset.treeEdgeBranchLane || 0));
       const branchSide = String(label.dataset.treeEdgeSide || (isPrimaryNext ? "main" : "lower")).trim().toLowerCase();
       const isUpperBranch = branchSide === "upper";
       let laneY = Number(label.dataset.treeEdgeLaneY || 0) || sourceRect.centerY;
-      if (isPrimaryNext) {
+      label.classList.toggle('is-section-return',Boolean(isSectionReturn));
+      label.dataset.treeEdgeDirection=isSectionReturn?'up':branchSide;
+      if (isSectionReturn) {
+        const gap=sourceRect.top-targetRect.bottom;
+        const padding=Math.min(36,gap/3);
+        const preferred=hasManualLabelPosition?labelRect.centerY:(sourceRect.top+targetRect.bottom)/2-branchLaneIndex*24;
+        laneY=Math.max(targetRect.bottom+padding,Math.min(sourceRect.top-padding,preferred));
+        const route=commandMapSectionReturnPath(sourceRect,targetRect,laneY,branchLaneIndex);
+        const labelX=hasManualLabelPosition?labelRect.left:(route.startX+route.endX-labelRect.width)/2;
+        label.style.left=`${Math.max(8,Math.round(labelX))}px`;
+        label.style.top=`${Math.round(laneY-labelRect.height/2)}px`;
+      } else if (isPrimaryNext) {
         if (!hasManualLabelPosition) {
           const gap = targetRect.left - sourceRect.right;
           const labelX = gap > labelRect.width + 28
@@ -1873,7 +1935,10 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("id", pathId);
 
-      if (!isPrimaryNext && isUpperBranch) {
+      if (isSectionReturn) {
+        path.setAttribute('d',commandMapSectionReturnPath(sourceRect,targetRect,laneY,branchLaneIndex).d);
+        path.dataset.treeEdgeDirection='up';
+      } else if (!isPrimaryNext && isUpperBranch) {
         const upperDirection = branchLaneIndex % 2 === 0 ? -1 : 1;
         const upperStep = Math.floor(branchLaneIndex / 2) + 1;
         const upperSourceOffsetX = upperDirection * (46 + upperStep * 34);
@@ -5632,7 +5697,7 @@ function showCaptureOverlay(text) {
 }
 
 function resolveNearestCommandMapFocus(roadmap, preferredOrder) {
-  const events = getCommandMapEvents(state.commandMapPageSequence, roadmap);
+  const events = getCommandMapCanvasEvents(state.commandMapPageSequence, roadmap);
   if (!events.length) {
     return null;
   }
@@ -5653,7 +5718,7 @@ function resolveNearestCommandMapFocus(roadmap, preferredOrder) {
 function resolveCommandMapFocusByClientKey(roadmap, clientKey, fallbackOrder = null) {
   const normalizedClientKey = String(clientKey || "").trim();
   if (normalizedClientKey) {
-    const match = getCommandMapEvents(state.commandMapPageSequence, roadmap)
+    const match = getCommandMapCanvasEvents(state.commandMapPageSequence, roadmap)
       .find((event) => String(event?.clientKey || "").trim() === normalizedClientKey);
     if (match?.order != null) {
       return Number(match.order);
@@ -5974,8 +6039,10 @@ function setCommandMapFocus(order, behavior = "smooth", options = {}) {
   const animateFocusPulse = Boolean(options.animateFocusPulse);
   const suppressScroll = Boolean(options.suppressScroll);
   const scrollMode = options.scrollMode || "center";
-  const targetSequence = getCommandMapEventSequenceByOrder(order);
-  const lockedSequence = activeCommandMapPageSequenceLock();
+  const eventSequence = getCommandMapEventSequenceByOrder(order);
+  const targetSequence = eventSequence ? resolveCommandMapParentPage(eventSequence) : '';
+  const lock = activeCommandMapPageSequenceLock();
+  const lockedSequence = lock ? resolveCommandMapParentPage(lock) : '';
   if (lockedSequence && targetSequence && targetSequence !== lockedSequence) {
     state.commandMapPageSequence = lockedSequence;
     syncSequenceContextInput();
@@ -8704,7 +8771,7 @@ function renderSuccessFlowFields(
 }
 
 function resolveDestinationPage(preferredValue = "") {
-  const pages = getCommandMapPageDefinitions();
+  const pages = getCommandMapRouteDestinations();
   if (!pages.length) {
     return "";
   }
@@ -11276,15 +11343,32 @@ function resolveRoadmapInitialSequence(roadmap = state.roadmap) {
   return normalizeSequenceName(roadmap?.events?.[0]?.sequence || roadmap?.events?.[0]?.sequencia || "principal");
 }
 
+function resolveCommandMapParentPage(sequenceName, roadmap = state.roadmap) {
+  let sequence=normalizeSequenceName(sequenceName);
+  const visited=new Set();
+  while(!visited.has(sequence)) {
+    visited.add(sequence);
+    const section=(roadmap?.map_paths||[]).find(path=>(path.sequences||[]).includes(sequence));
+    if(!section?.parent)return sequence;
+    sequence=normalizeSequenceName(section.parent);
+  }
+  return 'principal';
+}
+
+function getCommandMapCanvasEvents(pageSequence = state.commandMapPageSequence, roadmap = state.roadmap) {
+  const parent=resolveCommandMapParentPage(pageSequence,roadmap);
+  return (roadmap?.events||[]).filter(event=>resolveCommandMapParentPage(event.sequence||event.sequencia,roadmap)===parent);
+}
+
 function getCommandMapPageDefinitions(roadmap = state.roadmap) {
   const basePages = COMMAND_PAGE_DEFINITIONS.map((page) => ({ ...page, isExtra: false }));
   const knownSequences = new Set(basePages.map((page) => page.sequence));
   const extraPages = Array.from(new Set(roadmap?.sequences ?? []))
     .map((sequence) => normalizeSequenceName(sequence))
-    .filter((sequence) => !knownSequences.has(sequence))
+    .filter((sequence) => !knownSequences.has(sequence) && !(roadmap?.map_paths||[]).some(path=>(path.sequences||[]).includes(sequence)))
     .map((sequence, index) => ({
       sequence,
-      label: sequence,
+      label: (roadmap?.map_paths||[]).find(path=>path.sequences.includes(sequence))?.name || sequence,
       shortLabel: String(basePages.length + index + 1),
       number: basePages.length + index + 1,
       theme: "principal",
@@ -11294,12 +11378,16 @@ function getCommandMapPageDefinitions(roadmap = state.roadmap) {
 }
 
 function getCommandMapPageDefinition(sequenceName, roadmap = state.roadmap) {
-  const normalized = normalizeSequenceName(sequenceName);
+  const normalized = resolveCommandMapParentPage(sequenceName, roadmap);
   return (
     getCommandMapPageDefinitions(roadmap).find((page) => page.sequence === normalized)
     || getCommandMapPageDefinitions(roadmap)[0]
     || COMMAND_PAGE_DEFINITIONS[0]
   );
+}
+
+function getCommandMapRouteDestinations(roadmap = state.roadmap) {
+  return [...getCommandMapPageDefinitions(roadmap),...(roadmap?.map_paths||[]).flatMap(path=>(path.sequences||[]).map(sequence=>({sequence,label:getCommandMapPageLabel(sequence,roadmap)})))];
 }
 
 function resolveCommandMapPageTheme(sequenceName) {
@@ -11318,6 +11406,8 @@ function syncCommandMapPageTheme() {
 }
 
 function getCommandMapPageLabel(sequenceName, roadmap = state.roadmap) {
+  const section=(roadmap?.map_paths||[]).find(path=>(path.sequences||[]).includes(sequenceName));
+  if(section)return `${getCommandMapPageDefinition(sequenceName,roadmap)?.label || 'Página 1'} / ${section.name}`;
   return getCommandMapPageDefinition(sequenceName, roadmap)?.label || "Pagina 1";
 }
 
@@ -11760,7 +11850,7 @@ function activeCommandMapPageSequenceLock() {
 function ensureCommandMapPageSelection(roadmap = state.roadmap) {
   const pages = getCommandMapPageDefinitions(roadmap);
   const lockedSequence = activeCommandMapPageSequenceLock();
-  const currentSequence = normalizeSequenceName(lockedSequence || state.commandMapPageSequence);
+  const currentSequence = resolveCommandMapParentPage(lockedSequence || state.commandMapPageSequence,roadmap);
   const hasCurrent = pages.some((page) => page.sequence === currentSequence);
   state.commandMapPageSequence = hasCurrent
     ? currentSequence
@@ -11772,7 +11862,7 @@ function renderSequenceSuggestionsOptions(selectedValue = "", placeholder = "Esc
   const normalizedSelected = normalizeSequenceName(selectedValue || "");
   const options = [
     `<option value="">${escapeHtml(placeholder)}</option>`,
-    ...getCommandMapPageDefinitions().map((page) => `
+    ...getCommandMapRouteDestinations().map((page) => `
       <option value="${escapeHtml(page.sequence)}" ${page.sequence === normalizedSelected ? "selected" : ""}>
         ${escapeHtml(page.label)}
       </option>
@@ -11909,7 +11999,9 @@ function renderCommandMapPageExecutionSettings() {
 
 function updateCommandMapHeaderSummary() {
   const pageDefinition = getCommandMapPageDefinition(state.commandMapPageSequence);
-  const pageEvents = getCommandMapEvents();
+  const paths = (state.roadmap?.map_paths||[]).filter(path=>path.parent===state.commandMapPageSequence);
+  const sequences = new Set([state.commandMapPageSequence,...paths.flatMap(path=>path.sequences)]);
+  const pageEvents = paths.length && normalizeCommandMapViewMode(state.commandMapViewMode)==='tree' ? (state.roadmap?.events||[]).filter(event=>sequences.has(event.sequence)) : getCommandMapEvents();
   const total = pageEvents.length;
   const settings = getSequenceExecutionSettings(pageDefinition.sequence);
   syncCommandMapPageTheme();
@@ -11919,7 +12011,10 @@ function updateCommandMapHeaderSummary() {
   }
 
   if (commandMapMeta) {
-    if (settings.executionMode === "loop_planilha") {
+    if(normalizeCommandMapViewMode(state.commandMapViewMode)==='tree') {
+      const sectionCount=new Set(pageEvents.map(event=>event.sequence)).size;
+      commandMapMeta.textContent=`${total} blocos em ${sectionCount} ${sectionCount===1?'seção':'seções'} nesta página. Adicione seções abaixo e conecte os blocos para definir o fluxo.`;
+    } else if (settings.executionMode === "loop_planilha") {
       const afterLoopLabel = settings.afterLoopSequence ? getCommandMapPageLabel(settings.afterLoopSequence) : "encerrar o loop aqui";
       commandMapMeta.textContent = total
         ? `${pageDefinition.label} tem ${total} bloco${total === 1 ? "" : "s"}. Ela roda no loop da planilha e, ao terminar, segue para ${afterLoopLabel}.`
@@ -12225,7 +12320,7 @@ async function moveSelectedCommandMapCards(destination = "") {
 
 function switchCommandMapPage(sequenceName, options = {}) {
   const { skipAutoSave = false } = options;
-  const nextSequence = normalizeSequenceName(sequenceName);
+  const nextSequence = resolveCommandMapParentPage(sequenceName);
   if (nextSequence === normalizeSequenceName(state.commandMapPageSequence)) {
     return Promise.resolve(true);
   }
@@ -12251,6 +12346,9 @@ function switchCommandMapPage(sequenceName, options = {}) {
 }
 
 function currentSequenceName() {
+  const target = state.insertPanel?.targetOrder;
+  const source = target && (state.roadmap?.events||[]).find(event=>Number(event.order)===Number(target));
+  if(source)return normalizeSequenceName(source.sequence);
   return normalizeSequenceName(state.commandMapPageSequence || sequenceContextInput?.value);
 }
 
@@ -12264,7 +12362,7 @@ function refreshSequenceSuggestions() {
   if (!list) {
     return;
   }
-  list.innerHTML = getCommandMapPageDefinitions()
+  list.innerHTML = getCommandMapRouteDestinations()
     .map((page) => `<option value="${escapeHtml(page.sequence)}">${escapeHtml(page.label)}</option>`)
     .join("");
 }
@@ -14490,13 +14588,14 @@ async function syncNativeHypervInputLock() {
 }
 
 async function setStudioRemoteMouseEnabled(enabled, { notify = true } = {}) {
+  if (!enabled) releasePhysicalRemoteInput();
   state.remoteControl.remoteInputEnabled = Boolean(enabled);
   renderStudioControlScreenOnly();
   await syncNativeHypervInputLock();
   if (notify) {
     setMessage(
       state.remoteControl.remoteInputEnabled
-        ? "Mouse remoto ligado: movimentos e cliques podem entrar na tela da VM."
+        ? "Controle remoto ligado: clique na tela para usar mouse e teclado."
         : "Mouse remoto desligado: a tela fica somente para assistir.",
       "success"
     );
@@ -14609,6 +14708,10 @@ function scheduleNativeHypervRdpSync(liveResize = false) {
 async function openNativeHypervRdp(vmName = "") {
   const name = String(vmName || "").trim();
   if (!name || state.remoteControl.nativeRdpOpening) return false;
+  if (state.remoteControl.physicalAgentId) {
+    stopStudioControlScreenStream({ clear: true });
+    state.remoteControl.physicalAgentId = "";
+  }
   state.remoteControl.nativeRdpOpening = true;
   state.remoteControl.nativeRdpLastError = "";
   try {
@@ -14759,6 +14862,10 @@ function scheduleEmbeddedHypervConsoleSync() {
 }
 
 async function openEmbeddedHypervConsole(vmName = "") {
+  if (state.remoteControl.physicalAgentId) {
+    stopStudioControlScreenStream({ clear: true });
+    state.remoteControl.physicalAgentId = "";
+  }
   const name = String(vmName || "").trim();
   if (!name || state.remoteControl.hypervConsoleOpening) {
     return false;
@@ -15054,7 +15161,29 @@ async function closeEmbeddedHypervConsole() {
 
 function renderStudioControlScreen() {
   const remote = state.remoteControl;
+  if (remote.physicalAgentId && remote.screenAddress && remote.screenAddress !== remote.address) {
+    releasePhysicalRemoteInput();
+    remote.screenAddress = "";
+    stopStudioControlScreenStream({ clear: true });
+    return;
+  }
+  const physical = Boolean(remote.physicalAgentId) && !remote.nativeRdpActive && !remote.hypervConsoleActive;
+  const physicalAgent = state.agents.items.find((agent) => agent.id === remote.physicalAgentId);
   const hasNativeScreen = Boolean(remote.nativeRdpActive || remote.hypervConsoleActive);
+  const hasScreen = hasNativeScreen || Boolean(physical && (remote.webrtcActive || remote.screenSnapshotUrl));
+  document.getElementById("agentScreenKicker").textContent = physical ? "Computador físico · conexão pela rede" : "Console nativo Hyper-V";
+  document.getElementById("agentScreenTitle").textContent = physical ? physicalAgent?.name || "Tela do Agent" : "Tela da máquina virtual";
+  document.getElementById("agentPhysicalScreenActions").hidden = !physical;
+  document.getElementById("agentPhysicalReconnectButton").disabled = Boolean(remote.physicalConnecting);
+  if (agentScreenVmSelect) agentScreenVmSelect.closest("label").hidden = physical;
+  if (agentScreenPrepareButton) agentScreenPrepareButton.hidden = physical;
+  if (agentScreenOpenVmButton) agentScreenOpenVmButton.hidden = physical;
+  document.querySelector("[data-vm-screen-control]").hidden = physical;
+  const placeholder = studioControlScreenFrameWrap?.querySelector(".studio-control-screen-placeholder");
+  if (placeholder) {
+    placeholder.querySelector("strong").textContent = physical ? remote.screenError ? "Tela indisponível" : remote.screenStreaming ? "Conectando à tela…" : "Tela desconectada" : "Nenhuma VM selecionada";
+    placeholder.querySelector("span").textContent = physical ? remote.screenError || "Mantenha o Agent aberto e a sessão Windows disponível no computador de destino." : "Abra a aba Agentes e selecione uma máquina virtual.";
+  }
   const boot = remote.vmScreenBoot || {};
   const bootActive = Boolean(boot.active);
   const mouseEnabled = Boolean(remote.remoteInputEnabled);
@@ -15064,11 +15193,11 @@ function renderStudioControlScreen() {
     studioControlRemoteInputToggle.closest(".studio-control-input-toggle")?.classList.toggle("is-disabled", !mouseEnabled);
   }
   if (studioControlRemoteInputLabel) {
-    studioControlRemoteInputLabel.textContent = mouseEnabled ? "Mouse ON" : "Mouse OFF";
+    studioControlRemoteInputLabel.textContent = physical ? mouseEnabled ? "Mouse e teclado ON" : "Somente assistir" : mouseEnabled ? "Mouse ON" : "Mouse OFF";
   }
-  studioControlScreenFrameWrap?.classList.toggle("has-screen", hasNativeScreen);
-  studioControlScreenFrameWrap?.classList.toggle("is-input-locked", hasNativeScreen && !mouseEnabled);
-  studioControlScreenFrameWrap?.classList.toggle("is-input-ready", hasNativeScreen && mouseEnabled);
+  studioControlScreenFrameWrap?.classList.toggle("has-screen", hasScreen);
+  studioControlScreenFrameWrap?.classList.toggle("is-input-locked", hasScreen && !mouseEnabled);
+  studioControlScreenFrameWrap?.classList.toggle("is-input-ready", hasScreen && mouseEnabled);
   studioControlScreenFrameWrap?.classList.toggle("is-booting-vm", bootActive);
   if (studioControlScreenBootOverlay) {
     studioControlScreenBootOverlay.hidden = !bootActive;
@@ -15085,7 +15214,9 @@ function renderStudioControlScreen() {
     studioControlScreenBootFill.parentElement?.setAttribute("aria-valuenow", String(Math.round(bootPercent)));
   }
   if (studioControlScreenStatus) {
-    if (bootActive) {
+    if (physical) {
+      studioControlScreenStatus.textContent = remote.screenError || `${remote.address} · ${remote.webrtcActive ? "Vídeo ao vivo" : remote.screenSnapshotUrl ? "Modo compatível · atualização por imagens" : remote.screenStreaming ? "Preparando transmissão" : "Tela fechada"} · Clique na tela para controlar; Esc libera o teclado.`;
+    } else if (bootActive) {
       const bootPercent = Math.round(Math.max(0, Math.min(100, Number(boot.percent || 0))));
       studioControlScreenStatus.textContent = `${boot.label || "Inicializando VM"}... ${bootPercent}%`;
     } else if (remote.nativeRdpActive) {
@@ -15097,7 +15228,7 @@ function renderStudioControlScreen() {
     }
   }
   if (studioControlHypervCloseButton) {
-    studioControlHypervCloseButton.hidden = !remote.hypervConsoleActive && !remote.nativeRdpActive;
+    studioControlHypervCloseButton.hidden = !hasNativeScreen && !(physical && remote.screenStreaming);
     studioControlHypervCloseButton.textContent = "Fechar tela";
   }
 }
@@ -16005,6 +16136,8 @@ function normalizeAgent(agent = {}) {
     id: String(agent.id || createAgentId(name)),
     name,
     address,
+    kind: agent.kind === "physical" || (!agent.kind && !agent.vmName && !agent.baseVmName) ? "physical" : "vm",
+    deviceId: String(agent.deviceId || "").trim(),
     vmName: String(agent.vmName || "").trim(),
     baseVmName: String(agent.baseVmName || "").trim(),
     storagePath: String(agent.storagePath || "").trim(),
@@ -16019,6 +16152,99 @@ function normalizeAgent(agent = {}) {
     createdAt: Number(agent.createdAt || Date.now()),
     lastSeenAt: Number(agent.lastSeenAt || 0),
   };
+}
+
+function validatePhysicalAgentAddress(value) {
+  const address = normalizeAgentAddress(value);
+  const match = /^([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::(\d+))?$/i.exec(address);
+  if (!match) throw new Error("Informe o IP ou nome do computador e a porta. Ex.: 192.168.1.150:18452");
+  const port = Number(match[2] || 18452);
+  if (port < 1 || port > 65535) throw new Error("A porta precisa estar entre 1 e 65535.");
+  if (/^\d+(?:\.\d+){3}$/.test(match[1]) && match[1].split(".").some((part) => Number(part) > 255)) throw new Error("O endereço IP não é válido.");
+  if (/^(localhost|127\..*|0\.0\.0\.0)$/i.test(match[1])) throw new Error("Use o IP do outro computador, não o endereço local deste Studio.");
+  return `${match[1].toLowerCase()}:${port}`;
+}
+
+function physicalAgentFormMarkup() {
+  const draft = state.agents.createDraft || {};
+  return `<article class="agent-create-card physical-agent-form">
+    <div class="agent-create-card-head"><span>${state.agents.editingId ? "Editar computador" : "Novo computador físico"}</span><button class="micro-button" type="button" data-agent-action="create-cancel">Cancelar</button></div>
+    <label><span>Nome</span><input id="agentNameInput" type="text" placeholder="Ex.: PC de automações" value="${escapeHtml(draft.name || "")}" /></label>
+    <label><span>Código de pareamento</span><input id="agentPairCodeInput" type="text" placeholder="ABCD-EFGH-JKLM" maxlength="14" autocomplete="off" spellcheck="false" autocapitalize="characters" /></label>
+    <p class="agent-pairing-inline-error" data-agent-pairing-error role="alert" hidden></p>
+    <label><span>Perfil</span><select id="agentProfileSelect">${Object.entries({fiscal:"Fiscal", dp:"Departamento Pessoal", contabil:"Contábil", ti:"TI"}).map(([value, label]) => `<option value="${value}" ${draft.profile === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+    <p>Abra o FlowDetect Agent no outro PC e informe o código exibido nele. Os computadores precisam estar na mesma rede. Para ver o Agent use Ctrl + Shift + F12.</p>
+    <details class="agent-pairing-advanced"><summary>Não encontrou o Agent? Configuração avançada</summary>
+      <label><span>IP local (opcional)</span><input id="agentAddressHintInput" type="text" placeholder="192.168.1.150" spellcheck="false" /></label>
+      <small>Use somente se a descoberta automática estiver bloqueada. O código continua obrigatório para autorizar a conexão.</small>
+    </details>
+    <div class="agent-create-card-actions"><button class="primary-button" type="button" data-agent-action="create-save">Salvar computador</button></div>
+  </article>`;
+}
+
+function physicalAgentCardMarkup(agent) {
+  const connected = agentConnected(agent);
+  const connecting = state.agents.startingIds.has(String(agent.id));
+  return `<article class="physical-agent-card ${connected ? "is-connected" : agent.status === "error" ? "has-error" : ""}" data-agent-id="${escapeHtml(agent.id)}">
+    <div class="agent-card-top"><span class="agent-card-status ${connected ? "is-online" : ""}">${connecting ? "Conectando…" : connected ? "Conectado" : agent.status === "error" ? "Falha na conexão" : "Não conectado"}</span><span class="agent-card-chip">PC físico</span></div>
+    <div class="physical-agent-icon" aria-hidden="true"><svg viewBox="0 0 64 54" fill="none"><rect x="6" y="4" width="52" height="34" rx="6"/><path d="M24 48h16M32 38v10M14 29h36"/></svg></div>
+    <h3>${escapeHtml(agent.name)}</h3><p class="physical-agent-address" title="${escapeHtml(agent.address)}">Vinculado por código · rede local</p>
+    <p class="physical-agent-last-seen">Última conexão: ${escapeHtml(formatAgentLastSeen(agent.lastSeenAt))}</p>
+    ${agent.status === "error" ? `<p class="physical-agent-error" role="alert">${escapeHtml(agent.connectionStage || "Não foi possível conectar. Confira o Agent e a rede privada.")}</p>` : ""}
+    <div class="agent-card-actions"><button class="primary-button" type="button" data-agent-action="connect" data-agent-id="${escapeHtml(agent.id)}" ${connecting || state.remoteControl.physicalConnecting ? "disabled" : ""}>${connecting ? "Conectando…" : "Conectar e abrir tela"}</button><button class="ghost-button" type="button" data-agent-action="edit" data-agent-id="${escapeHtml(agent.id)}" ${connecting ? "disabled" : ""}>Editar</button><button class="danger-button" type="button" data-agent-action="delete" data-agent-id="${escapeHtml(agent.id)}" ${connecting ? "disabled" : ""}>Remover</button></div>
+  </article>`;
+}
+
+async function connectPhysicalAgent(agent) {
+  const remote = state.remoteControl;
+  if (remote.physicalConnecting) return;
+  remote.physicalConnecting = true;
+  state.agents.startingIds.add(String(agent.id));
+  renderAgents();
+  try {
+    releasePhysicalRemoteInput();
+    stopStudioControlScreenStream({ clear: true });
+    if (remote.nativeRdpActive) await closeNativeHypervRdp();
+    if (remote.hypervConsoleActive) await closeEmbeddedHypervConsole();
+    remote.connected = false;
+    remote.physicalAgentId = agent.id;
+    remote.screenError = "";
+    remote.library = [];
+    remote.selectedId = "";
+    remote.roadmap = null;
+    remote.logs = [];
+    remote.running = false;
+    remote.lastStatusSignature = "";
+    let connectedAgent = agent;
+    let compatibility;
+    try {
+      compatibility = await invoke("remote_agent_ping", { address: agent.address });
+    } catch (error) {
+      if (!agent.deviceId) throw error;
+      const found = await invoke("remote_agent_resolve_device", { deviceId: agent.deviceId });
+      connectedAgent = updateAgentRuntime(agent.id, { address: found.address }) || agent;
+      compatibility = await invoke("remote_agent_ping", { address: connectedAgent.address });
+    }
+    if (Number(compatibility?.pairing_protocol || 0) !== 1) {
+      throw new Error("Agent incompatível: instale o FlowDetect Agent com suporte ao pareamento por código.");
+    }
+    if (!await connectAgentFromCard(connectedAgent)) throw new Error(state.agents.lastConnectionError || "Agent indisponível.");
+    updateAgentRuntime(agent.id, { status: "online", connectionStage: "", lastSeenAt: Date.now() });
+    setWorkspaceTab("agent-screen");
+    await setStudioRemoteMouseEnabled(true, { notify: false });
+    startStudioControlScreenStream();
+  } catch (error) {
+    remote.connected = false;
+    remote.remoteInputEnabled = false;
+    remote.screenError = String(error);
+    updateAgentRuntime(agent.id, { status: "error", connectionStage: String(error).replace(/^(?:Error:\s*)+/, "") });
+    renderStudioControl();
+    throw error;
+  } finally {
+    remote.physicalConnecting = false;
+    state.agents.startingIds.delete(String(agent.id));
+    renderAgents();
+  }
 }
 
 function formatAgentLastSeen(timestamp = 0) {
@@ -16118,6 +16344,7 @@ function hypervVmLauncherMarkup(vm = {}) {
 }
 
 function agentCreateLauncherMarkup() {
+  if (state.agents.activeView === "physical") return physicalAgentFormMarkup();
   const draft = state.agents.createDraft || {};
   const progress = state.agents.createProgress || {};
   const creating = Boolean(progress.active);
@@ -16201,6 +16428,7 @@ function agentCreateLauncherMarkup() {
 }
 
 function agentAddLauncherMarkup() {
+  if (state.agents.activeView === "physical") return `<button class="agent-launcher-add" type="button" data-agent-action="new"><span class="agent-launcher-add-icon">+</span><strong>Adicionar computador</strong><small>Conecte pelo IP do FlowDetect Agent, sem VM.</small></button>`;
   return `
     <button class="agent-launcher-add" type="button" data-agent-action="new">
       <span class="agent-launcher-add-icon">+</span>
@@ -16407,7 +16635,14 @@ function setAgentCreateProgress(update = {}) {
     }
   });
   const saveButton = card.querySelector("[data-agent-action='create-save']");
-  if (saveButton) saveButton.textContent = next.active ? "Criando..." : "Criar maquina";
+  if (saveButton) saveButton.textContent = state.agents.activeView === "physical"
+    ? (next.active ? "Vinculando..." : "Vincular computador")
+    : (next.active ? "Criando..." : "Criar maquina");
+  const inlineError = card.querySelector("[data-agent-pairing-error]");
+  if (inlineError) {
+    inlineError.hidden = !next.error;
+    inlineError.textContent = next.error || "";
+  }
 }
 
 function startAgentCreateProgressTicker(maxPercent = 88, label = "Clonando VM-base", detail = "") {
@@ -16447,11 +16682,23 @@ async function saveAgentFromForm() {
   if (state.agents.createProgress?.active) {
     return;
   }
-  setBusy("Criando maquina");
+  setBusy(state.agents.activeView === "physical" ? "Pareando computador" : "Criando maquina");
   const readValue = (id) => String(document.getElementById(id)?.value || "").trim();
   const name = readValue("agentNameInput") || "FlowDetect Agent";
   const profile = readValue("agentProfileSelect") || "fiscal";
-  const address = normalizeAgentAddress(readValue("agentAddressInput"));
+  const physical = state.agents.activeView === "physical";
+  let address = physical
+    ? normalizeAgentAddress(state.agents.items.find((agent) => String(agent.id) === String(state.agents.editingId || ""))?.address || "")
+    : normalizeAgentAddress(readValue("agentAddressInput"));
+  const pairingCode = physical ? readValue("agentPairCodeInput") : "";
+  const addressHint = physical ? readValue("agentAddressHintInput") : "";
+  if (physical && !address && !pairingCode) {
+    setBusy("Erro");
+    const error = "Informe o código de pareamento de 12 caracteres exibido no FlowDetect Agent.";
+    setAgentCreateProgress({active:false,percent:0,error,label:"Código obrigatório"});
+    setMessage(error,"error");
+    return;
+  }
   let vmName = readValue("agentVmNameInput");
   const baseVmName = readValue("agentBaseVmSelect");
   const storagePath = readValue("agentStoragePathInput");
@@ -16466,7 +16713,7 @@ async function saveAgentFromForm() {
     const vmNameInput = document.getElementById("agentVmNameInput");
     if (vmNameInput) vmNameInput.value = vmName;
   }
-  if (!vmName && !address) {
+  if (!physical && !vmName && !address) {
     setBusy("Erro");
     setMessage("Informe o nome da VM ou selecione uma VM-base para clonar.", "error");
     document.getElementById("agentVmNameInput")?.focus();
@@ -16485,10 +16732,23 @@ async function saveAgentFromForm() {
   try {
   const editingId = String(state.agents.editingId || "");
   const previousAgent = state.agents.items.find((agent) => String(agent.id) === editingId);
+  let deviceId = String(previousAgent?.deviceId || "");
+  if (physical && pairingCode) {
+    setAgentCreateProgress({active:true,percent:30,label:"Localizando Agent",detail:"Buscando o computador na rede e validando o código...",error:""});
+    const paired = await invoke("remote_agent_pair_by_code", { code: pairingCode, address: addressHint || null });
+    if (Number(paired?.pairing_protocol) !== 1) throw new Error("Agent incompatível. Atualize o FlowDetect Agent.");
+    address = validatePhysicalAgentAddress(paired.address);
+    deviceId = String(paired.agent_id || "");
+  }
+  if (physical && state.agents.items.some((agent) => String(agent.id) !== editingId && normalizeAgentAddress(agent.address) === address)) {
+    throw new Error("Este computador já está cadastrado. Edite o registro existente.");
+  }
   let nextAgent = normalizeAgent({
     ...previousAgent,
     id: editingId || createAgentId(name),
     name,
+    kind: physical ? "physical" : "vm",
+    deviceId,
     profile,
     address,
     vmName,
@@ -16570,7 +16830,19 @@ async function saveAgentFromForm() {
   resetAgentForm();
   renderAgents();
   setMessage(nextAgent.vmName ? `Maquina criada: ${nextAgent.vmName}` : `Agente salvo: ${name}`, "success");
-  if (nextAgent.vmName && !editingId) {
+  if (physical && pairingCode) {
+    setBusy("Verificando conexão");
+    try {
+      await connectPhysicalAgent(nextAgent);
+      setBusy("Pronto");
+      setMessage(`Agent vinculado e conectado: ${name}.`, "success");
+    } catch (connectionError) {
+      const detail = String(connectionError?.message || connectionError || "Falha de comunicação com o Agent.");
+      setBusy("Erro");
+      setMessage(`Código aceito, mas não foi possível abrir a conexão: ${detail}`, "error");
+      // The persisted card now shows the error and offers a new connection attempt.
+    }
+  } else if (nextAgent.vmName && !editingId) {
     await startAndWatchAgent(nextAgent);
   } else {
     setBusy("Pronto");
@@ -16815,6 +17087,9 @@ async function startAndWatchAgent(agent) {
   if (!agent) {
     return;
   }
+  if (normalizeAgent(agent).kind === "physical") return connectPhysicalAgent(agent);
+  if (state.remoteControl.physicalAgentId) stopStudioControlScreenStream({ clear: true });
+  state.remoteControl.physicalAgentId = "";
   if (state.agents.startingIds.has(String(agent.id))) {
     return;
   }
@@ -17061,6 +17336,7 @@ function automationStepCount(item = {}) {
 
 function renderAgentAutomationViews() {
   const automationActive = state.agents.activeView === "automations";
+  const physicalActive = state.agents.activeView === "physical";
   const selectedTransferAddress = normalizeAgentAddress(
     state.agents.transferTargetAddress
     || agentAutomationTargetSelect?.value
@@ -17072,9 +17348,12 @@ function renderAgentAutomationViews() {
     && selectedTransferAddress
     && normalizeAgentAddress(state.remoteControl.address || "") === selectedTransferAddress
   );
-  agentsMachinesTabButton?.classList.toggle("is-active", !automationActive);
+  agentsMachinesTabButton?.classList.toggle("is-active", !automationActive && !physicalActive);
+  agentsPhysicalTabButton?.classList.toggle("is-active", physicalActive);
   agentsAutomationsTabButton?.classList.toggle("is-active", automationActive);
-  if (agentsMachineActions) agentsMachineActions.hidden = automationActive;
+  if (agentsMachineActions) agentsMachineActions.hidden = automationActive || physicalActive;
+  document.getElementById("agentsPhysicalHint").hidden = !physicalActive;
+  if (physicalActive && hypervBasePanel) hypervBasePanel.hidden = true;
   if (agentsMachinesView) agentsMachinesView.hidden = automationActive;
   if (agentsAutomationsView) agentsAutomationsView.hidden = !automationActive;
 
@@ -17155,6 +17434,11 @@ function renderAgents() {
     saveAgentCardButton.textContent = state.agents.editingId ? "Salvar alteracoes" : "Salvar agente";
   }
   if (!agentsList) {
+    return;
+  }
+  if (state.agents.activeView === "physical") {
+    const physicalAgents = state.agents.items.filter((agent) => normalizeAgent(agent).kind === "physical");
+    agentsList.innerHTML = [state.agents.createOpen ? physicalAgentFormMarkup() : agentAddLauncherMarkup(), ...physicalAgents.map(physicalAgentCardMarkup)].join("");
     return;
   }
   const hypervVms = state.agents.vms || [];
@@ -17573,7 +17857,9 @@ async function refreshStudioControlLibrary(options = {}) {
     renderStudioControl();
     return;
   }
-  const result = await invoke("remote_agent_list_automations", { address: state.remoteControl.address });
+  const address = state.remoteControl.address;
+  const result = await invoke("remote_agent_list_automations", { address });
+  if (address !== state.remoteControl.address || !state.remoteControl.connected) return;
   state.remoteControl.library = Array.isArray(result?.items) ? result.items : [];
   const visibleLibrary = studioControlVisibleLibrary();
   if (options.preferredId) {
@@ -17639,8 +17925,10 @@ async function refreshStudioControlStatus(options = {}) {
     return;
   }
   state.remoteControl.statusRefreshing = true;
+  const address = state.remoteControl.address;
   try {
-    const result = await invoke("remote_agent_status", { address: state.remoteControl.address });
+    const result = await invoke("remote_agent_status", { address });
+    if (address !== state.remoteControl.address) return;
     applyStudioControlStatus(result);
   } catch (error) {
     if (!options.silent) {
@@ -17783,7 +18071,11 @@ async function refreshStudioControlScreenSnapshot({ silent = false } = {}) {
   }
   remote.screenSnapshotLoading = true;
   try {
-    const result = await invoke("remote_agent_screen_snapshot", { address: remote.address });
+    const result = await invoke("remote_agent_screen_snapshot", {
+      address: remote.address,
+      width: 1280,
+      quality: 55,
+    });
     const imageData = String(result?.data || "");
     if (!imageData) {
       throw new Error("O Agent nao retornou imagem da tela.");
@@ -17834,13 +18126,18 @@ function waitForIceGatheringComplete(peer, timeoutMs = 2200) {
 
 function stopStudioControlWebRtc({ clearRemote = false } = {}) {
   const remote = state.remoteControl;
+  if (remote.webrtcCancel) {
+    remote.webrtcCancel(new Error("Transmissão encerrada."));
+    remote.webrtcCancel = null;
+  }
   if (remote.webrtcAnswerTimer) {
     window.clearInterval(remote.webrtcAnswerTimer);
     remote.webrtcAnswerTimer = null;
   }
   if (remote.webrtcPeer) {
-    remote.webrtcPeer.close();
+    const peer = remote.webrtcPeer;
     remote.webrtcPeer = null;
+    peer.close();
   }
   remote.webrtcControlChannel = null;
   remote.webrtcPointerChannel = null;
@@ -17857,7 +18154,7 @@ function stopStudioControlWebRtc({ clearRemote = false } = {}) {
     studioControlScreenVideo.closest(".studio-control-screen-frame-wrap")?.classList.remove("has-webrtc");
   }
   if (clearRemote && remote.connected) {
-    invoke("remote_agent_webrtc_clear", { address: remote.address }).catch(() => null);
+    invoke("remote_agent_webrtc_clear", { address: remote.webrtcAddress || remote.address }).catch(() => null);
   }
   if (remote.connected) {
     startStudioControlPolling();
@@ -17872,7 +18169,7 @@ async function startStudioControlWebRtc() {
   if (!window.RTCPeerConnection) {
     throw new Error("WebRTC nao esta disponivel neste WebView.");
   }
-  stopStudioControlWebRtc({ clearRemote: true });
+  stopStudioControlWebRtc();
   if (remote.screenStreamTimer) {
     window.clearInterval(remote.screenStreamTimer);
     remote.screenStreamTimer = null;
@@ -17883,11 +18180,13 @@ async function startStudioControlWebRtc() {
     studioControlScreenImage.hidden = true;
   }
   const peer = new RTCPeerConnection({ iceServers: [] });
+  remote.webrtcAddress = remote.address;
   remote.webrtcPeer = peer;
   remote.webrtcControlChannel = peer.createDataChannel("flowdetect-control", { ordered: true });
   remote.webrtcPointerChannel = peer.createDataChannel("flowdetect-pointer", { ordered: false, maxRetransmits: 0 });
   peer.addTransceiver("video", { direction: "recvonly" });
   peer.ontrack = (event) => {
+    if (remote.webrtcPeer !== peer) return;
     const stream = event.streams?.[0];
     if (stream && studioControlScreenVideo) {
       studioControlScreenVideo.srcObject = stream;
@@ -17904,8 +18203,14 @@ async function startStudioControlWebRtc() {
     }
   };
   peer.onconnectionstatechange = () => {
+    if (remote.webrtcPeer !== peer) return;
     if (["failed", "closed", "disconnected"].includes(peer.connectionState)) {
       remote.webrtcActive = false;
+      if (remote.physicalAgentId && remote.screenStreaming) {
+        releasePhysicalRemoteInput();
+        stopStudioControlWebRtc({ clearRemote: true });
+        startPhysicalSnapshotStream(remote.screenGeneration);
+      }
       startStudioControlPolling();
       renderStudioControlScreenOnly();
     }
@@ -17913,6 +18218,7 @@ async function startStudioControlWebRtc() {
   const offer = await peer.createOffer();
   await peer.setLocalDescription(offer);
   await waitForIceGatheringComplete(peer);
+  if (remote.webrtcPeer !== peer) throw new Error("Transmissão cancelada.");
   const session = await invoke("remote_agent_webrtc_offer", {
     address: remote.address,
     offer: {
@@ -17920,6 +18226,7 @@ async function startStudioControlWebRtc() {
       sdp: peer.localDescription.sdp,
     },
   });
+  if (remote.webrtcPeer !== peer) throw new Error("Transmissão cancelada.");
   remote.webrtcSessionId = String(session?.session_id || "");
   if (!remote.webrtcSessionId) {
     throw new Error("O Agent nao aceitou a sessao WebRTC.");
@@ -17929,20 +18236,29 @@ async function startStudioControlWebRtc() {
   }
   let attempts = 0;
   return new Promise((resolve, reject) => {
+    remote.webrtcCancel = reject;
+    let polling = false;
+    let answerApplied = false;
     remote.webrtcAnswerTimer = window.setInterval(async () => {
+      if (polling || remote.webrtcPeer !== peer) return;
+      polling = true;
       attempts += 1;
       try {
+        if (remote.webrtcActive) {
+          window.clearInterval(remote.webrtcAnswerTimer);
+          remote.webrtcAnswerTimer = null;
+          remote.webrtcCancel = null;
+          resolve(true);
+          return;
+        }
+        if (attempts > 60) throw new Error("O Agent não iniciou o vídeo dentro do prazo.");
+        if (answerApplied) return;
         const answerPayload = await invoke("remote_agent_webrtc_answer", { address: remote.address });
+        if (remote.webrtcPeer !== peer) return;
         const answer = answerPayload?.answer || null;
         if (answer && String(answerPayload?.session_id || "") === remote.webrtcSessionId) {
-          window.clearInterval(remote.webrtcAnswerTimer);
-          remote.webrtcAnswerTimer = null;
           await peer.setRemoteDescription(answer);
-          resolve(true);
-        } else if (attempts > 60) {
-          window.clearInterval(remote.webrtcAnswerTimer);
-          remote.webrtcAnswerTimer = null;
-          reject(new Error("O Agent nao respondeu ao WebRTC. Vou usar a visualizacao leve."));
+          answerApplied = true;
         }
       } catch (error) {
         if (attempts > 60) {
@@ -17950,6 +18266,8 @@ async function startStudioControlWebRtc() {
           remote.webrtcAnswerTimer = null;
           reject(error);
         }
+      } finally {
+        polling = false;
       }
     }, 200);
   });
@@ -17987,9 +18305,41 @@ function remoteVideoPointFromEvent(event) {
   return remoteScreenPointFromEvent(event, studioControlScreenVideo);
 }
 
+function scheduleHttpRemotePointerMove() {
+  const remote = state.remoteControl;
+  if (remote.httpPointerSending || remote.remotePointerMoveFrame || !remote.pendingRemotePointerMove) return;
+  remote.remotePointerMoveFrame = window.requestAnimationFrame(() => {
+    remote.remotePointerMoveFrame = null;
+    if (remote.httpPointerSending || !remote.connected || !remote.screenStreaming) return;
+    const nextPayload = remote.pendingRemotePointerMove;
+    remote.pendingRemotePointerMove = null;
+    if (!nextPayload) return;
+    remote.httpPointerSending = true;
+    invoke("remote_agent_control_event", {
+      address: remote.address,
+      event: nextPayload,
+    }).catch((error) => console.warn("Mouse remoto indisponível:", error))
+      .finally(() => {
+        remote.httpPointerSending = false;
+        if (remote.pendingRemotePointerMove && remote.connected && remote.screenStreaming) {
+          scheduleHttpRemotePointerMove();
+        }
+      });
+  });
+}
+
 function sendStudioRemoteControlEvent(payload) {
   if (!state.remoteControl.remoteInputEnabled) {
     return;
+  }
+  const remote = state.remoteControl;
+  if (remote.physicalAgentId) {
+    if (!remote.connected || !remote.screenStreaming || remote.screenAddress !== remote.address || state.activeTab !== "agent-screen" || !(remote.webrtcActive || remote.screenSnapshotUrl)) return;
+    remote.physicalHeldInputs ||= new Map();
+    const key = payload.kind === "key" ? `key:${payload.code || payload.key}` : `mouse:${payload.button}`;
+    if (payload.event === "down") remote.physicalHeldInputs.set(key, payload);
+    if (payload.event === "up") remote.physicalHeldInputs.delete(key);
+    if (payload.kind === "mouse") remote.physicalLastPoint = { x: payload.x, y: payload.y };
   }
   const isMouseMove = payload?.kind === "mouse" && payload?.event === "move";
   const channel = isMouseMove
@@ -17997,18 +18347,10 @@ function sendStudioRemoteControlEvent(payload) {
     : state.remoteControl.webrtcControlChannel;
   if (!channel || channel.readyState !== "open") {
     if (isMouseMove) {
-      state.remoteControl.pendingRemotePointerMove = payload;
-      if (state.remoteControl.remotePointerMoveFrame) return;
-      state.remoteControl.remotePointerMoveFrame = window.requestAnimationFrame(() => {
-        state.remoteControl.remotePointerMoveFrame = null;
-        const nextPayload = state.remoteControl.pendingRemotePointerMove;
-        state.remoteControl.pendingRemotePointerMove = null;
-        if (!nextPayload) return;
-        invoke("remote_agent_control_event", {
-          address: state.remoteControl.address,
-          event: nextPayload,
-        }).catch(() => null);
-      });
+      // A frame of mouse input must never create another HTTP request while
+      // the previous request is pending. Keep only the latest pointer location.
+      remote.pendingRemotePointerMove = payload;
+      scheduleHttpRemotePointerMove();
       return;
     }
     invoke("remote_agent_control_event", {
@@ -18039,8 +18381,112 @@ function sendStudioRemoteControlEvent(payload) {
   channel.send(JSON.stringify(payload));
 }
 
+function releasePhysicalRemoteInput() {
+  const remote = state.remoteControl;
+  if (!remote.physicalAgentId) return;
+  for (const payload of remote.physicalHeldInputs?.values() || []) {
+    const event = { ...payload, ...(payload.kind === "mouse" ? remote.physicalLastPoint : {}), event: "up" };
+    const channel = remote.webrtcControlChannel;
+    if (channel?.readyState === "open") channel.send(JSON.stringify(event));
+    else if (remote.connected) invoke("remote_agent_control_event", { address: remote.screenAddress || remote.address, event }).catch(() => null);
+  }
+  remote.physicalHeldInputs?.clear();
+  remote.pendingRemotePointerMove = null;
+  if (remote.remotePointerMoveFrame) {
+    window.cancelAnimationFrame(remote.remotePointerMoveFrame);
+    remote.remotePointerMoveFrame = null;
+  }
+  remote.remotePointerInside = false;
+}
+
+function physicalKeyboardFocused() {
+  const remote = state.remoteControl;
+  if (!remote.physicalAgentId) return remote.remotePointerInside;
+  return state.activeTab === "agent-screen" && [studioControlScreenVideo, studioControlScreenImage].includes(document.activeElement);
+}
+
+function physicalRemoteScreenProfile() {
+  const selected = document.getElementById("agentPhysicalQualitySelect")?.value || "fast";
+  const profiles = {
+    fast: { width: 960, quality: 43, interval: 100, label: "Fluidez" },
+    balanced: { width: 1280, quality: 53, interval: 160, label: "Equilibrado" },
+    sharp: { width: 1600, quality: 68, interval: 260, label: "Nitidez" },
+  };
+  return profiles[selected] || profiles.fast;
+}
+
+function startPhysicalSnapshotStream(generation) {
+  const remote = state.remoteControl;
+  if (!remote.physicalAgentId || !remote.screenStreaming || generation !== remote.screenGeneration || remote.screenStreamTimer) return;
+  const address = remote.address;
+  remote.screenSnapshotHash = "";
+  remote.screenFramesInWindow = 0;
+  remote.screenStatsSince = Date.now();
+  remote.screenLastCaptureMs = 0;
+  remote.screenLastRttMs = 0;
+  remote.screenFps = 0;
+  const tick = async () => {
+    if (!remote.screenStreaming || generation !== remote.screenGeneration || address !== remote.address) return;
+    remote.screenStreamTimer = -1;
+    const started = performance.now();
+    const profile = physicalRemoteScreenProfile();
+    try {
+      const frame = await invoke("remote_agent_screen_snapshot", {
+        address,
+        width: profile.width,
+        quality: profile.quality,
+        previousHash: remote.screenSnapshotHash || null,
+      });
+      if (generation !== remote.screenGeneration || address !== remote.address || !remote.screenStreaming) return;
+      if (!frame?.unchanged && !frame?.data) throw new Error("O Agent não retornou uma imagem da tela.");
+      const firstFrame = !remote.screenSnapshotUrl;
+      remote.screenError = "";
+      remote.screenLastCaptureMs = Number(frame.capture_ms || 0);
+      remote.screenLastRttMs = Math.round(performance.now() - started);
+      if (frame.frame_hash) remote.screenSnapshotHash = String(frame.frame_hash);
+      if (!frame.unchanged) {
+        remote.screenSnapshotUrl = `data:${frame.mime || "image/jpeg"};base64,${frame.data}`;
+        studioControlScreenImage.src = remote.screenSnapshotUrl;
+        studioControlScreenImage.hidden = false;
+        studioControlScreenVideo.hidden = true;
+        remote.screenFramesInWindow += 1;
+        // Re-render the controls only once. Re-rendering the entire panel for
+        // every JPEG wastes time on the same UI thread that decodes the image.
+        if (firstFrame) renderStudioControlScreenOnly();
+      }
+      const now = Date.now();
+      const elapsed = now - remote.screenStatsSince;
+      if (elapsed >= 1000) {
+        remote.screenFps = Math.round(remote.screenFramesInWindow * 10000 / elapsed) / 10;
+        remote.screenFramesInWindow = 0;
+        remote.screenStatsSince = now;
+        if (studioControlScreenStatus) {
+          studioControlScreenStatus.textContent =
+            `${profile.label} · ${remote.screenFps} quadros/s · captura ${remote.screenLastCaptureMs} ms · resposta total ${remote.screenLastRttMs} ms. Mouse e teclado ativos quando habilitados.`;
+        }
+      }
+    } catch (error) {
+      if (generation !== remote.screenGeneration) return;
+      releasePhysicalRemoteInput();
+      remote.screenError = `Falha na transmissão: ${String(error)}. Tentando novamente; use Reconectar tela se persistir.`;
+      // Keep the last good frame displayed instead of flashing a black screen.
+      renderStudioControlScreenOnly();
+    } finally {
+      if (generation === remote.screenGeneration && remote.screenStreaming && address === remote.address) {
+        const elapsed = performance.now() - started;
+        const delay = remote.screenError ? 1000 : Math.max(25, Math.round(profile.interval - elapsed));
+        remote.screenStreamTimer = window.setTimeout(tick, delay);
+      }
+    }
+  };
+  remote.screenStreamTimer = -1;
+  void tick();
+}
+
 function stopStudioControlScreenStream({ clear = false } = {}) {
   const remote = state.remoteControl;
+  releasePhysicalRemoteInput();
+  remote.screenGeneration = (remote.screenGeneration || 0) + 1;
   remote.screenStreaming = false;
   if (remote.screenStreamTimer) {
     window.clearInterval(remote.screenStreamTimer);
@@ -18049,6 +18495,7 @@ function stopStudioControlScreenStream({ clear = false } = {}) {
   if (clear) {
     stopStudioControlWebRtc({ clearRemote: true });
     remote.screenSnapshotUrl = "";
+    remote.screenSnapshotHash = "";
     remote.screenSnapshotAt = 0;
     if (studioControlScreenImage) {
       studioControlScreenImage.removeAttribute("src");
@@ -18071,18 +18518,36 @@ function startStudioControlScreenStream() {
     return;
   }
   remote.screenStreaming = true;
+  remote.screenAddress = remote.address;
+  remote.screenError = "";
+  const generation = remote.screenGeneration = (remote.screenGeneration || 0) + 1;
   remote.meshFrameUrl = "";
   if (studioControlMeshFrame) {
     studioControlMeshFrame.setAttribute("src", "about:blank");
   }
   renderStudioControl();
-  runSelectedAutomationWithScreenStart().catch(() => null);
+  if (!remote.physicalAgentId) runSelectedAutomationWithScreenStart().catch(() => null);
+  if (remote.physicalAgentId) {
+    // The Agent currently exposes WebRTC signaling but has no video sender.
+    // Starting the handshake first adds a 12s timeout before JPEG fallback.
+    // Use the optimized snapshot transport immediately.
+    startPhysicalSnapshotStream(generation);
+    setMessage("Transmissão otimizada iniciada. Ajuste Fluidez / Nitidez acima da tela.", "info");
+    return;
+  }
   startStudioControlWebRtc()
     .then(() => {
+      if (generation !== remote.screenGeneration) return;
       setMessage("WebRTC nativo conectado ao Agent.", "success");
     })
     .catch((error) => {
+      if (generation !== remote.screenGeneration) return;
       stopStudioControlWebRtc({ clearRemote: true });
+      if (remote.physicalAgentId) {
+        startPhysicalSnapshotStream(generation);
+        setMessage("Vídeo indisponível. Usando modo compatível por imagens, com mouse e teclado.", "info");
+        return;
+      }
       remote.screenStreaming = false;
       if (studioControlScreenStatus) {
         studioControlScreenStatus.textContent = `Transmissao H.264 nativa indisponivel: ${String(error)}`;
@@ -18529,6 +18994,10 @@ function syncReportResultPreview(container) {
   if (statusCell) statusCell.dataset.tone = safeTone;
   const reportRow = preview.querySelector("[data-report-row]");
   if (reportRow) reportRow.dataset.tone = safeTone;
+  const companyPreview = preview.querySelector("[data-report-preview-company]");
+  if (companyPreview) companyPreview.textContent = companyColumn ? `Valor de ${companyColumn}` : `Valor de ${sourceName}`;
+  const resultPreview = preview.querySelector("[data-report-preview-result]");
+  if (resultPreview) resultPreview.textContent = String(field("reportResult")?.value || "").trim() || "Sem mensagem registrada.";
 }
 
 function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) {
@@ -18538,60 +19007,50 @@ function renderReportResultFields(fieldAttr, details = {}, currentOrder = null) 
   const companyColumn = String(details.coluna_relatorio ?? details.report_column ?? "");
   const status = String(details.status ?? "Concluida");
   const resultMessage = String(details.resultado ?? details.result ?? "");
-  const loopHint = reportColumns.hasColumns
-    ? "A linha e definida pelo loop. Escolha a coluna da empresa, escreva o resultado e defina o status."
-    : "Adicione um loop de planilha para escolher a coluna da empresa.";
   return `
     <div class="field-stack spreadsheet-write-editor report-result-editor">
-      <section class="report-pdf-preview report-pdf-preview-full" aria-label="Previa editavel do relatorio PDF" data-report-loop-column="${escapeHtml(reportColumns.sourceName)}" data-report-tone="${escapeHtml(safeTone)}">
+      <section class="report-editor-fields" aria-label="Configuração do resultado">
+        <header class="report-editor-heading"><h4>Resultado no relatório</h4><p>Defina o que será registrado para cada item do loop.</p></header>
+        <label class="report-editor-company"><span>Empresa ou identificação</span><select ${fieldAttr}="reportColumn" aria-label="Coluna da empresa no PDF">${reportColumns.companyOptions(companyColumn)}</select></label>
+        <div class="report-editor-status-fields">
+          <label><span>Status</span><input ${fieldAttr}="reportStatus" type="text" value="${escapeHtml(status)}" aria-label="Status no relatorio" placeholder="Concluída" /></label>
+          <label><span>Cor do status</span><select ${fieldAttr}="reportTone" aria-label="Cor do status">
+            <option value="success" ${safeTone === "success" ? "selected" : ""}>Sucesso · verde</option>
+            <option value="info" ${safeTone === "info" ? "selected" : ""}>Informação · azul</option>
+            <option value="warning" ${safeTone === "warning" ? "selected" : ""}>Revisão · amarelo</option>
+            <option value="danger" ${safeTone === "danger" ? "selected" : ""}>Falha · vermelho</option>
+          </select></label>
+        </div>
+        <label class="report-editor-message"><span>Mensagem do resultado</span><textarea ${fieldAttr}="reportResult" rows="3" spellcheck="false" aria-label="Mensagem do resultado" placeholder="Ex.: Guia emitida com sucesso.">${escapeHtml(resultMessage)}</textarea><small>Use {{empresa}} para incluir o item atual do loop.</small></label>
+      </section>
+      <section class="report-pdf-preview report-pdf-preview-full" aria-label="Prévia ilustrativa da linha no PDF" data-report-loop-column="${escapeHtml(reportColumns.sourceName)}" data-report-tone="${escapeHtml(safeTone)}">
         <header class="report-document-header">
           <div class="report-document-brand">
             <img src="./assets/flowdetect-report-wordmark.png" alt="FlowDetect" />
           </div>
-          <div class="report-document-generated"><strong>RELATORIO DE EXECUCAO</strong><small>Previa da linha no PDF</small></div>
+          <div class="report-document-generated"><strong>RELATÓRIO DE EXECUÇÃO</strong><small>Prévia ilustrativa · uma linha</small></div>
         </header>
         <div class="report-document-rule"></div>
-        <section class="report-document-heading">
-          <h4>Resultado da linha</h4>
-          <p>${escapeHtml(loopHint)}</p>
-        </section>
-        <section class="report-document-summary" aria-label="Resumo ilustrativo do PDF">
-          <div><span>EXECUTADAS</span><strong>1</strong></div>
-          <div><span>EMITIDAS</span><strong>1</strong></div>
-          <div><span>SEM DEBITOS</span><strong>0</strong></div>
-          <div><span>REVISAO</span><strong>0</strong></div>
-        </section>
         <section class="report-document-table" aria-label="Linha configuravel do relatorio">
           <div class="report-document-table-head"><span>LINHA</span><span>EMPRESA</span><span>RESULTADO</span><span>STATUS</span></div>
           <article class="report-document-row" data-report-row data-tone="${escapeHtml(safeTone)}">
-            <div class="report-document-line"><strong>01</strong><small>Definida pelo loop</small></div>
+            <div class="report-document-line"><strong>01</strong></div>
             <div class="report-document-field report-document-company">
-              <span>Empresa no PDF</span>
-              <select ${fieldAttr}="reportColumn" aria-label="Coluna da empresa no PDF">${reportColumns.companyOptions(companyColumn)}</select>
-              <small data-report-company-caption>${escapeHtml(companyColumn ? `Coluna ${companyColumn} da linha atual` : `Coluna do loop da planilha: ${reportColumns.sourceName}`)}</small>
+              <strong data-report-preview-company>${escapeHtml(`Valor de ${companyColumn || reportColumns.sourceName}`)}</strong>
+              <small data-report-company-caption>Preenchido pela linha atual</small>
             </div>
             <div class="report-document-field report-document-result">
-              <span>Resultado no PDF</span>
-              <textarea ${fieldAttr}="reportResult" rows="3" spellcheck="false" aria-label="Mensagem do resultado" placeholder="Ex.: Guia emitida com sucesso.">${escapeHtml(resultMessage)}</textarea>
-              <small>Mensagem exibida para esta linha.</small>
+              <p data-report-preview-result>${escapeHtml(resultMessage || "Sem mensagem registrada.")}</p>
             </div>
             <div class="report-document-status" data-report-status-cell data-tone="${escapeHtml(safeTone)}">
-              <span>Status no PDF</span>
-              <input ${fieldAttr}="reportStatus" type="text" value="${escapeHtml(status)}" aria-label="Status no relatorio" placeholder="Concluida" />
-              <select ${fieldAttr}="reportTone" aria-label="Cor do status">
-                <option value="success" ${safeTone === "success" ? "selected" : ""}>Concluido (verde)</option>
-                <option value="info" ${safeTone === "info" ? "selected" : ""}>Informativo (azul)</option>
-                <option value="warning" ${safeTone === "warning" ? "selected" : ""}>Revisar (amarelo)</option>
-                <option value="danger" ${safeTone === "danger" ? "selected" : ""}>Falhou (vermelho)</option>
-              </select>
               <small data-report-preview-status>${escapeHtml(status)}</small>
             </div>
           </article>
         </section>
-        <footer class="report-document-footer"><span>Loop: ${escapeHtml(reportColumns.loopLabel)}</span><span>A linha e preenchida automaticamente a cada item.</span></footer>
+        <footer class="report-document-footer"><span>${escapeHtml(reportColumns.loopLabel)}</span><span>Os valores reais aparecem na execução.</span></footer>
       </section>
       <section class="report-pdf-next-step" aria-label="Proximo passo da automacao">
-        <div><strong>Depois de registrar esta linha</strong><span>Defina para onde a automacao segue apos gravar o resultado.</span></div>
+        <div><strong>Próximo passo</strong><span>Destino após registrar o resultado.</span></div>
         <div class="tree-inline-fields">
           ${renderSuccessFlowFields(fieldAttr, details.ao_sucesso ?? "continuar", details.bloco_sucesso ?? "", details.sequencia_sucesso ?? "", details.atraso_antes_sequencia_sucesso ?? 0, currentOrder)}
         </div>
@@ -20520,7 +20979,7 @@ function rememberCommandMapTreeNodePosition(order, x, y, pageSequence = state.co
 }
 
 function captureCommandMapTreeInsertion(targetOrder, position) {
-  const events = getCommandMapEvents();
+  const events = getCommandMapCanvasEvents();
   const pageSequence = state.commandMapPageSequence;
   return {
     targetOrder: Number(targetOrder),
@@ -20555,7 +21014,7 @@ function placeCreatedCommandMapTreeNode(roadmap, insertion) {
     x: origin ? origin.x + (insertion.position === "before" ? 0 : constants.columnGap) : constants.paddingX,
     y: origin ? origin.y : constants.rowTop,
   };
-  const following = origin ? nodes.slice(originIndex + (insertion.position === "before" ? 0 : 1)) : [];
+  const following = origin ? nodes.slice(originIndex + (insertion.position === "before" ? 0 : 1)).filter(node=>node.event.sequence===origin.event.sequence) : [];
   const shiftX = following.length
     ? Math.max(0, newPosition.x + constants.columnGap - Math.min(...following.map(node => node.x)))
     : 0;
@@ -20779,12 +21238,12 @@ function getCommandMapCompareDivergeRoute(event) {
 
 function resolveCommandMapTreeTarget(route, event, index, events, context) {
   const action = String(route?.action || "continuar").trim().toLowerCase();
-  const nextEvent = events[index + 1] || null;
+  const nextEvent = events.slice(index + 1).find(item => String(item.sequence||'principal') === String(event.sequence||'principal')) || null;
   if (action === "continuar" || action === "pular") {
     return nextEvent
       ? {
           targetEvent: nextEvent,
-          targetIndex: index + 1,
+          targetIndex: events.indexOf(nextEvent),
           targetLabel: `Bloco ${nextEvent.order}`,
           delay: parseNumber(nextEvent.delay, 0),
           editableDelay: "next",
@@ -20832,6 +21291,8 @@ function resolveCommandMapTreeTarget(route, event, index, events, context) {
   }
   if (action === "ir_para_sequencia" && route.sequence) {
     const firstOrder = getCommandMapFirstOrderForSequence(route.sequence);
+    const localTarget = context.orderToEvent.get(Number(firstOrder));
+    if (localTarget) return { targetEvent:localTarget, targetIndex:context.orderToIndex.get(Number(firstOrder)), targetOrder:Number(firstOrder), targetLabel:`Bloco ${firstOrder}`, delay:Math.max(0,parseNumber(route.delay,0)), editableDelay:"route",sourceOrder:Number(event.order) };
     return {
       terminal: true,
       targetLabel: firstOrder
@@ -21073,7 +21534,7 @@ function isCommandMapEmptyTerminalRoute(route) {
 
 function shouldRenderCommandMapFailureBranch(event, route) {
   const eventType = String(event?.type || "");
-  if (!["clicar_imagem", "procurar_texto_ocr", "chrome_elemento_html"].includes(eventType)) {
+  if (!["clicar_imagem", "procurar_texto_ocr", "chrome_elemento_html", "uia_elemento"].includes(eventType)) {
     return false;
   }
   return !isCommandMapEmptyTerminalRoute(route);
@@ -21193,14 +21654,19 @@ function buildCommandMapTreeStageLayout(events, pageDefinition, { includeInsertP
   const orderToEvent = new Map(events.map((event) => [Number(event.order), event]));
   const orderToIndex = new Map(events.map((event, index) => [Number(event.order), index]));
   const context = { orderToEvent, orderToIndex, seen: new Set() };
+  const lanes = Array.from(new Set(events.map(event => normalizeSequenceName(event.sequence))));
+  const laneColumns = new Map();
   const nodes = events.map((event, index) => {
     const order = Number(event.order || 0);
+    const sequence = normalizeSequenceName(event.sequence);
+    const column = laneColumns.get(sequence) || 0;
+    laneColumns.set(sequence,column+1);
     return {
       event,
       index,
       order,
-      x: constants.paddingX + index * constants.columnGap,
-      y: constants.rowTop,
+      x: constants.paddingX + column * constants.columnGap,
+      y: constants.rowTop + lanes.indexOf(sequence) * 850,
     };
   });
   const manualPositions = getCommandMapTreeManualPositions(pageDefinition?.sequence);
@@ -21242,7 +21708,8 @@ function buildCommandMapTreeStageLayout(events, pageDefinition, { includeInsertP
       const targetIndex = Number.isFinite(branch.targetIndex) ? branch.targetIndex : orderToIndex.get(targetOrder);
       const isPrimaryNext = Boolean(branch.targetEvent)
         && branch.kind === "success"
-        && Number(targetIndex) === index + 1;
+        && Number(targetIndex) === index + 1
+        && normalizeSequenceName(branch.targetEvent.sequence) === normalizeSequenceName(event.sequence);
       const isUpperSuccessJump = !isPrimaryNext
         && branch.kind === "success"
         && Boolean(branch.targetEvent)
@@ -21254,10 +21721,10 @@ function buildCommandMapTreeStageLayout(events, pageDefinition, { includeInsertP
           ? Math.max(0, branchIndex)
           : -1;
       const laneY = isPrimaryNext
-        ? constants.rowTop + 118
+        ? sourceNode.y + 118
         : branchSide === "upper"
-          ? constants.upperBranchBaseY + currentBranchLaneIndex * constants.upperBranchLaneGap
-          : constants.lowerBranchBaseY + currentBranchLaneIndex * constants.lowerBranchLaneGap;
+          ? sourceNode.y - constants.rowTop + constants.upperBranchBaseY + currentBranchLaneIndex * constants.upperBranchLaneGap
+          : sourceNode.y - constants.rowTop + constants.lowerBranchBaseY + currentBranchLaneIndex * constants.lowerBranchLaneGap;
 
       const edge = {
         ...branch,
@@ -21282,7 +21749,7 @@ function buildCommandMapTreeStageLayout(events, pageDefinition, { includeInsertP
             })()
           : sourceNode.x + 28,
         labelY: isPrimaryNext
-          ? constants.mainLabelTop
+          ? sourceNode.y - constants.rowTop + constants.mainLabelTop
           : laneY - 18,
       };
       edge.layoutKey = commandMapTreeEdgeLayoutKey(edge);
@@ -21318,7 +21785,7 @@ function buildCommandMapTreeStageLayout(events, pageDefinition, { includeInsertP
   const insertPreviewRight = insertPreviewNode ? insertPreviewNode.x + 680 : 0;
   const stageWidth = Math.max(
     720,
-    constants.paddingX * 2 + Math.max(0, events.length - 1) * constants.columnGap + 280,
+    constants.paddingX * 2 + Math.max(0, ...laneColumns.values()) * constants.columnGap + 280,
     maxNodeX + constants.paddingX,
     maxEdgeX + constants.paddingX,
     insertPreviewRight + constants.paddingX
@@ -21347,6 +21814,7 @@ function renderCommandMapTreeStageNode(node, events) {
     <div
       class="command-map-tree-node-slot"
       data-tree-node-order="${escapeHtml(String(node.order))}"
+      data-tree-node-sequence="${escapeHtml(normalizeSequenceName(node.event.sequence))}"
       data-tree-layout-key="${escapeHtml(String(node.order))}"
       style="left:${Math.round(node.x)}px;top:${Math.round(node.y)}px"
     >
@@ -21484,23 +21952,41 @@ function renderCommandMapTreeNode(event, index, events, context, path = [], dept
 
 function renderCommandMapTreeView(events, pageDefinition) {
   const layout = buildCommandMapTreeStageLayout(events, pageDefinition);
+  const sequences=Array.from(new Set(events.map(event=>normalizeSequenceName(event.sequence))));
+  const sections=sequences.map((sequence,index)=>{
+    const nodes=layout.nodes.filter(node=>normalizeSequenceName(node.event.sequence)===sequence);
+    const path=(state.roadmap?.map_paths||[]).find(path=>path.sequences.includes(sequence));
+    return {sequence,index,nodes,path,top:Math.max(16,Math.min(...nodes.map(node=>node.y))-100),bottom:Math.max(...nodes.map(node=>node.y+700))};
+  });
+  const footerY=Math.max(...sections.map(section=>section.bottom))+36;
+  const stageHeight=Math.max(layout.height,footerY+110);
   return `
     <div class="command-map-tree" role="tree" aria-label="Arvore da ${escapeHtml(pageDefinition.label.toLowerCase())}">
-      <div class="command-map-tree-header-card">
-        <span>Workflow</span>
-        <strong>${escapeHtml(pageDefinition.label)} - ${events.length} bloco(s)</strong>
-        <small>Arraste os cards pelo botao superior e os bloquinhos pela propria etiqueta.</small>
-      </div>
       <div
         class="command-map-tree-stage"
-        style="width:${Math.ceil(layout.width)}px;height:${Math.ceil(layout.height)}px"
+        style="width:${Math.ceil(layout.width)}px;height:${Math.ceil(stageHeight)}px"
       >
+        ${sections.map(({sequence,index,nodes,path,top,bottom})=>{
+          return `<section class="map-canvas-section" data-map-section="${escapeHtml(sequence)}" aria-label="${escapeHtml(path?.name||pageDefinition.label)}" style="left:24px;top:${top}px;width:${Math.max(640,layout.width-48)}px;height:${bottom-top}px"><header class="map-section-header"><div class="map-path-lane-title"><span class="map-section-number">SEÇÃO ${String(index+1).padStart(2,'0')}</span><strong>${escapeHtml(path?.name||pageDefinition.label)}</strong><span>${path?.engine==='chrome'?'Chrome · extensão':'Desktop'} · ${nodes.length} blocos</span></div><button type="button" data-map-section-action="connect" data-map-section-sequence="${escapeHtml(sequence)}">Conectar blocos ↗</button></header></section>`;
+        }).join("")}
         ${layout.edges.map((edge) => renderCommandMapTreeStageEdgeLabel(edge)).join("")}
         ${layout.terminals.map((terminal) => renderCommandMapTreeStageTerminal(terminal)).join("")}
         ${layout.nodes.map((node) => renderCommandMapTreeStageNode(node, events)).join("")}
+        <button class="map-section-add" data-map-section-action="create" type="button" style="left:24px;top:${footerY}px;width:${Math.max(640,layout.width-48)}px"><span aria-hidden="true">＋</span><strong>Adicionar seção abaixo</strong><small>Crie do zero ou importe uma automação</small></button>
       </div>
     </div>
   `;
+}
+
+function frameCommandMapPaths() {
+  const stage=commandMapList?.querySelector('.command-map-tree-stage');
+  if(!stage)return;
+  const width=parseFloat(stage.style.width),height=parseFloat(stage.style.height);
+  setCommandMapZoom(Math.min(1,(commandMapList.clientWidth-80)/width,(commandMapList.clientHeight-80)/height));
+  const view=commandMapList.getBoundingClientRect(),bounds=stage.getBoundingClientRect();
+  moveCommandMapTreePanOffset(view.left+view.width/2-bounds.left-bounds.width/2,view.top+view.height/2-bounds.top-bounds.height/2);
+  state.commandMapTreePanUserMoved=true;
+  scheduleCommandConnectorLayout({refreshTreeLinks:true});
 }
 
 function commandMapTreeStageMetrics(stage) {
@@ -21768,7 +22254,7 @@ function renderCommandMap(options = {}) {
   } = options;
   const previousScrollLeft = preserveScroll ? commandMapList.scrollLeft : null;
   const previousScrollTop = preserveScroll ? commandMapList.scrollTop : null;
-  const events = getCommandMapEvents().map((event) => applyCommandMapDraftToEvent(event));
+  const events = (normalizeCommandMapViewMode(state.commandMapViewMode)==='tree' ? getCommandMapCanvasEvents() : getCommandMapEvents()).map((event) => applyCommandMapDraftToEvent(event));
   pruneCommandMapCardSelection(events);
   syncCommandMapCardMoveControls(events);
   state.commandMapOrderCache = events
@@ -21781,7 +22267,7 @@ function renderCommandMap(options = {}) {
   syncCommandMapViewModeControls();
   if (!events.length) {
     state.expandedTreeCardOrder = null;
-    commandMapList.innerHTML = renderEmptyCommandMapStarter();
+    commandMapList.innerHTML = renderEmptyCommandMapStarter()+'<button class="map-section-empty-add" data-map-section-action="create" type="button">＋ Adicionar seção</button>';
     applyCommandMapZoom();
     updateCommandMapNavButtons();
     return;
@@ -21930,7 +22416,7 @@ function applyRoadmap(roadmap, options = {}) {
   const commandMapLayoutSnapshot = options.commandMapLayoutSnapshot || null;
   const commandMapLayoutAnimationMode = options.commandMapLayoutAnimationMode || "arc";
   const preserveCommandMapSequence = options.preserveCommandMapSequence
-    ? normalizeSequenceName(options.preserveCommandMapSequence)
+    ? resolveCommandMapParentPage(options.preserveCommandMapSequence,roadmap)
     : "";
   if (resetCommandMapDrafts) {
     state.commandMapDrafts = {};
@@ -21939,8 +22425,8 @@ function applyRoadmap(roadmap, options = {}) {
   state.roadmap = decoratedRoadmap;
   syncCommandMapDraftsWithRoadmap(decoratedRoadmap);
   if (resetCommandMapNavigation) {
-    const initialSequence = normalizeSequenceName(
-      decoratedRoadmap?.initial_sequence || decoratedRoadmap?.sequencia_inicial || "principal"
+    const initialSequence = resolveCommandMapParentPage(
+      decoratedRoadmap?.initial_sequence || decoratedRoadmap?.sequencia_inicial || "principal", decoratedRoadmap
     );
     const pageExists = getCommandMapPageDefinitions(decoratedRoadmap)
       .some((page) => page.sequence === initialSequence);
@@ -23317,7 +23803,7 @@ async function invokeCommandCardUpdate(snapshot) {
     return invoke("update_loop_marker_block", {
       order,
       delay: values.delay,
-      sequencia: currentSequenceName(),
+      sequencia: findRoadmapEventByOrder(order)?.sequence || currentSequenceName(),
       aoSucesso: values.successAction,
       blocoSucesso: optionalPositiveInt(values.successBlock),
       sequenciaSucesso: values.successAction === "ir_para_sequencia"
@@ -24182,26 +24668,86 @@ composerWorkbookSelect.addEventListener("change", () => {
 });
 
 editorTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
+initIntegrations();
+initMapPaths({invoke,chooseFile:()=>openNativeFileDialog({multiple:false,filters:[{name:'Automação FlowDetect',extensions:['json','zip']}]}),getRoadmap:()=>state.roadmap,getLibrary:()=>state.library.items,getPage:()=>state.commandMapPageSequence,beforeChange:()=>persistCommandMapDraftsForExecution(),apply:(roadmap,action)=>{state.commandMapViewMode='tree';applyPersistedRoadmap(roadmap);if(action!=='connect')requestAnimationFrame(frameCommandMapPaths);}});
+document.getElementById('mapPathsFit')?.addEventListener('click',frameCommandMapPaths);
+chainWorkspace = initAutomationChain({
+  listAgents: () => state.agents.items.map(normalizeAgent).filter(agent => agent.address)
+    .map(agent => ({ id:String(agent.id), name:agent.name || agent.vmName || "Agente", address:agent.address })),
+  invoke,
+  openAgent: async agent => {
+    if (agent?.address) await connectStudioControl(agent.address);
+    setWorkspaceTab("agent-screen");
+  },
+});
+document.getElementById("chainTabButton")?.addEventListener("click", () => setWorkspaceTab("chains"));
+alterdataWorkspace = initAlterdata({
+  listAgents: () => state.agents.items.map(normalizeAgent).filter(agent => agent.address)
+    .map(agent => ({ id: String(agent.id), name: agent.name || agent.vmName || "Agent" })),
+  listFlows: () => state.library.items.map(item => ({ id: String(item.id), name: item.nome || "Automação" })),
+  openEditor: () => setWorkspaceTab("editor"),
+  openAgent: () => setWorkspaceTab("agent-screen"),
+  execute: async (request, requiredKeys) => {
+    if (state.remoteControl.running) throw new Error("Aguarde a execução atual ou pare o agente antes de iniciar outra tarefa.");
+    const agent = state.agents.items.map(normalizeAgent).find(item => String(item.id) === request.agentId);
+    if (!agent?.address) throw new Error("Agente indisponível. Atualize a lista de agentes.");
+    if (!state.library.items.some(item => String(item.id) === request.flowId)) throw new Error("O fluxo selecionado não está mais na biblioteca.");
+    const importedId = await sendSavedAutomationToAgent(request.flowId, agent.address);
+    await openStudioControlAutomation(importedId);
+    const overrides = resolveAlterdataTexts(getEditableTextEvents(state.remoteControl.roadmap), request.values, requiredKeys);
+    state.remoteControl.editableTextOverrides = overrides;
+    renderStudioControl();
+    await runStudioControlAutomation(importedId);
+  },
+});
+document.getElementById("alterdataTabButton")?.addEventListener("click", () => setWorkspaceTab("alterdata"));
+integrationsTabButton?.addEventListener("click", () => setWorkspaceTab("integrations"));
 assistTabButton.addEventListener("click", () => setWorkspaceTab("assist"));
 commandTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
 workbookTabButton.addEventListener("click", () => setWorkspaceTab("workbook"));
 launcherTabButton.addEventListener("click", () => setWorkspaceTab("launcher"));
 agentsTabButton?.addEventListener("click", () => {
   setWorkspaceTab("agents");
-  refreshAgentVmList({ silent: true }).catch(() => null);
+  if (state.agents.activeView === "machines") refreshAgentVmList({ silent: true }).catch(() => null);
 });
 agentScreenTabButton?.addEventListener("click", () => {
   setWorkspaceTab("agent-screen");
-  refreshAgentVmList({ silent: true }).catch(() => null);
+  if (!state.remoteControl.physicalAgentId) refreshAgentVmList({ silent: true }).catch(() => null);
   if (state.remoteControl.connected) refreshStudioControlLibrary({ silent: true }).catch(() => null);
 });
 studioControlHypervCloseButton?.addEventListener("click", () => {
+  if (state.remoteControl.physicalAgentId && !state.remoteControl.nativeRdpActive && !state.remoteControl.hypervConsoleActive) {
+    stopStudioControlScreenStream({ clear: true });
+    state.remoteControl.remoteInputEnabled = false;
+    renderStudioControlScreen();
+    return;
+  }
   if (state.remoteControl.nativeRdpActive) {
     closeNativeHypervRdp().catch((error) => setMessage(String(error), "error"));
   } else {
     closeEmbeddedHypervConsole().catch((error) => setMessage(String(error), "error"));
   }
 });
+document.getElementById("agentPhysicalQualitySelect")?.addEventListener("change", () => {
+  // Request one full frame on a quality change even if the desktop is static.
+  state.remoteControl.screenSnapshotHash = "";
+  state.remoteControl.screenStatsSince = Date.now();
+  state.remoteControl.screenFramesInWindow = 0;
+  if (state.remoteControl.physicalAgentId && state.remoteControl.screenStreaming) {
+    setMessage("Qualidade de transmissão alterada. A próxima imagem usará o novo perfil.", "info");
+  }
+});
+document.getElementById("agentPhysicalReconnectButton")?.addEventListener("click", () => {
+  const agent = state.agents.items.find((item) => item.id === state.remoteControl.physicalAgentId);
+  if (agent) connectPhysicalAgent(agent).catch((error) => setMessage(String(error), "error"));
+});
+window.addEventListener("blur", releasePhysicalRemoteInput);
+window.addEventListener("mouseup", () => {
+  if ([...state.remoteControl.physicalHeldInputs.values()].some((event) => event.kind === "mouse")) releasePhysicalRemoteInput();
+});
+for (const element of [studioControlScreenVideo, studioControlScreenImage]) {
+  element?.addEventListener("blur", releasePhysicalRemoteInput);
+}
 window.addEventListener("resize", () => {
   if (state.remoteControl.hypervConsoleActive) scheduleEmbeddedHypervConsoleSync();
   if (state.remoteControl.nativeRdpActive) scheduleNativeHypervRdpSync(true);
@@ -24401,7 +24947,8 @@ agentsList?.addEventListener("click", (event) => {
     return;
   }
   if (action === "connect") {
-    connectAgentFromCard(agent);
+    if (normalizeAgent(agent).kind === "physical") connectPhysicalAgent(agent).catch((error) => setMessage(String(error), "error"));
+    else connectAgentFromCard(agent);
   } else if (action === "watch") {
     startAndWatchAgent(agent);
   } else if (action === "start-vm") {
@@ -24411,7 +24958,8 @@ agentsList?.addEventListener("click", (event) => {
   } else if (action === "console") {
     startAndWatchAgent(agent).catch((error) => setMessage(String(error), "error"));
   } else if (action === "edit") {
-    editAgentCard(id);
+    if (normalizeAgent(agent).kind === "physical") openAgentForm(agent);
+    else editAgentCard(id);
   } else if (action === "cancel-edit") {
     cancelAgentCardEdit();
   } else if (action === "save-edit") {
@@ -24436,10 +24984,20 @@ agentsList?.addEventListener("input", (event) => {
   state.agents.createDraft[key] = String(field.value || "").trim();
 });
 agentsMachinesTabButton?.addEventListener("click", () => {
+  if (state.agents.createProgress?.active) return;
+  resetAgentForm();
   state.agents.activeView = "machines";
-  renderAgentAutomationViews();
+  renderAgents();
+});
+agentsPhysicalTabButton?.addEventListener("click", () => {
+  if (state.agents.createProgress?.active) return;
+  resetAgentForm();
+  state.agents.activeView = "physical";
+  renderAgents();
 });
 agentsAutomationsTabButton?.addEventListener("click", async () => {
+  if (state.agents.createProgress?.active) return;
+  resetAgentForm();
   state.agents.activeView = "automations";
   renderAgentAutomationViews();
   try {
@@ -25491,22 +26049,30 @@ studioControlScreenImage?.addEventListener("wheel", (event) => {
 }, { passive: false });
 
 window.addEventListener("keydown", (event) => {
-  if (!state.remoteControl.remoteInputEnabled || !state.remoteControl.remotePointerInside) {
+  if (!state.remoteControl.remoteInputEnabled || !physicalKeyboardFocused()) {
+    return;
+  }
+  if (state.remoteControl.physicalAgentId) event.stopImmediatePropagation();
+  if (state.remoteControl.physicalAgentId && event.key === "Escape") {
+    event.preventDefault();
+    releasePhysicalRemoteInput();
+    document.activeElement?.blur();
     return;
   }
   event.preventDefault();
   if (!event.repeat) {
     sendStudioRemoteControlEvent({ kind: "key", event: "down", key: event.key, code: event.code });
   }
-});
+}, true);
 
 window.addEventListener("keyup", (event) => {
-  if (!state.remoteControl.remoteInputEnabled || !state.remoteControl.remotePointerInside) {
+  if (!state.remoteControl.remoteInputEnabled || !physicalKeyboardFocused()) {
     return;
   }
+  if (state.remoteControl.physicalAgentId) event.stopImmediatePropagation();
   event.preventDefault();
   sendStudioRemoteControlEvent({ kind: "key", event: "up", key: event.key, code: event.code });
-});
+}, true);
 
 studioControlSheetRefreshButton?.addEventListener("click", () => {
   refreshStudioControlSpreadsheet({ force: true }).catch((error) => setMessage(String(error), "error"));

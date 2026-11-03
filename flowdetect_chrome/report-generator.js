@@ -4,12 +4,12 @@
   const MARGIN = 30;
   const REPORT_TABLE = Object.freeze({
     lineOffset: 12,
-    companyOffset: 59,
-    companyWidth: 153,
-    resultOffset: 224,
-    resultWidth: 193,
-    statusOffset: 431,
-    statusWidth: 92
+    companyOffset: 56,
+    companyWidth: 135,
+    resultOffset: 205,
+    resultWidth: 198,
+    statusOffset: 421,
+    statusWidth: 102
   });
 
   const COLORS = {
@@ -127,15 +127,23 @@
     return `${output}...`;
   }
 
-  function wrap(value, maxWidth, size, bold = false, maxLines = 2) {
+  function wrap(value, maxWidth, size, bold = false, maxLines = Infinity) {
     const words = String(value || "-").replace(/\s+/g, " ").trim().split(" ");
     const lines = [];
     let current = "";
     let omitted = false;
-    for (const rawWord of words) {
-      const word = approximateWidth(rawWord, size, bold) > maxWidth
-        ? truncate(rawWord, maxWidth, size, bold)
-        : rawWord;
+    const tokens = [];
+    for (const word of words) {
+      let part = "";
+      for (const character of word) {
+        if (part && approximateWidth(part + character, size, bold) > maxWidth) {
+          tokens.push(part); part = "";
+        }
+        part += character;
+      }
+      if (part) tokens.push(part);
+    }
+    for (const word of tokens) {
       const candidate = current ? `${current} ${word}` : word;
       if (approximateWidth(candidate, size, bold) <= maxWidth) {
         current = candidate;
@@ -191,24 +199,24 @@
     page.y += 32;
   }
 
-  function drawRow(page, row, sourceName, rowIndex = 1) {
+  function drawRow(page, row, sourceName, rowIndex = 1, parts = null, continued = false) {
     const contentWidth = PAGE_WIDTH - (MARGIN * 2);
-    const valueLines = wrap(row.value || "(vazio)", REPORT_TABLE.companyWidth, 8.2, true, 2);
+    const valueLines = parts?.value || wrap(row.value || "(vazio)", REPORT_TABLE.companyWidth, 8.2, true);
     const result = row.result || row.error || "Sem mensagem registrada.";
-    const resultLines = wrap(result, REPORT_TABLE.resultWidth, 7.6, false, 2);
-    const statusLines = wrap(row.status || (row.success === false ? "Falhou" : "Concluida"), REPORT_TABLE.statusWidth, 6.7, true, 2);
+    const resultLines = parts?.result || wrap(result, REPORT_TABLE.resultWidth, 8.2, false);
+    const statusLines = parts?.status || wrap(String(row.status || (row.success === false ? "Falhou" : "Concluida")).toUpperCase(), REPORT_TABLE.statusWidth, 7.2, true);
     const lineCount = Math.max(valueLines.length, resultLines.length, statusLines.length);
-    const height = Math.max(64, 30 + (lineCount * 10));
+    const height = Math.max(54, 36 + (lineCount * 11));
     page.rect(MARGIN, page.y, contentWidth, height, rowIndex % 2 ? COLORS.panel : COLORS.panelStrong);
     const tone = toneColor(row.tone || (row.success === false ? "danger" : "success"));
     page.rect(MARGIN, page.y, 3, height, tone);
     page.text(MARGIN + REPORT_TABLE.lineOffset, page.y + 14, String(row.index || rowIndex).padStart(2, "0"), 9.8, COLORS.white, true);
     const time = row.finishedAt ? dateLabel(row.finishedAt).slice(-5) : "--:--";
     page.text(MARGIN + REPORT_TABLE.lineOffset, page.y + 31, time, 6.3, COLORS.muted, false);
-    valueLines.forEach((line, index) => page.text(MARGIN + REPORT_TABLE.companyOffset, page.y + 14 + (index * 10), line, 8.2, COLORS.white, true));
-    resultLines.forEach((line, index) => page.text(MARGIN + REPORT_TABLE.resultOffset, page.y + 14 + (index * 10), line, 7.6, COLORS.textSoft, false));
-    statusLines.forEach((line, index) => page.text(MARGIN + REPORT_TABLE.statusOffset, page.y + 15 + (index * 10), line.toUpperCase(), 6.7, tone, true));
-    const detail = `${sourceName || "item"} ${row.index || rowIndex} | ${durationLabel(row.startedAt, row.finishedAt)}`;
+    valueLines.forEach((line, index) => page.text(MARGIN + REPORT_TABLE.companyOffset, page.y + 14 + (index * 11), line, 8.2, COLORS.white, true));
+    resultLines.forEach((line, index) => page.text(MARGIN + REPORT_TABLE.resultOffset, page.y + 14 + (index * 11), line, 8.2, COLORS.textSoft, false));
+    statusLines.forEach((line, index) => page.text(MARGIN + REPORT_TABLE.statusOffset, page.y + 14 + (index * 11), line, 7.2, tone, true));
+    const detail = continued ? "Continuacao da mesma linha" : `Duracao: ${durationLabel(row.startedAt, row.finishedAt)}`;
     page.text(MARGIN + REPORT_TABLE.companyOffset, page.y + height - 14, truncate(detail, REPORT_TABLE.companyWidth, 6.4), 6.4, COLORS.muted, false);
     page.y += height + 7;
   }
@@ -280,20 +288,43 @@
     let page = createPage();
     pages.push(page);
     drawHeader(page);
-    page.text(MARGIN, page.y, truncate(run?.automationName || "Automacao", 440, 21, true), 21, COLORS.white, true);
-    page.y += 28;
-    page.text(MARGIN, page.y, `${rows.length} processada(s) | ${excludedRows.length} ignorada(s) | Planilha: ${run?.report?.sourceName || "-"}`, 8.5, COLORS.textSoft, false);
-    page.y += 23;
+    for (const title of wrap(run?.automationName || "Automacao", PAGE_WIDTH - MARGIN * 2, 19, true, 3)) {
+      page.text(MARGIN, page.y, title, 19, COLORS.white, true); page.y += 24;
+    }
+    for (const detail of wrap(`${rows.length} processada(s) | ${excludedRows.length} ignorada(s) | Planilha: ${run?.report?.sourceName || "-"}`, PAGE_WIDTH - MARGIN * 2, 8.5, false, 3)) {
+      page.text(MARGIN, page.y, detail, 8.5, COLORS.textSoft); page.y += 12;
+    }
+    page.y += 14;
+    const counters = reportCounters(rows);
+    const summaryWidth = (PAGE_WIDTH - MARGIN * 2) / 4;
+    [["PROCESSADAS", counters.total, COLORS.white], ["CONCLUIDAS", counters.success, COLORS.success], ["INFORMATIVAS", counters.info, COLORS.info], ["ATENCAO", counters.review + counters.failed, COLORS.warning]].forEach(([label, count, color], index) => {
+      const x = MARGIN + index * summaryWidth;
+      page.rect(x, page.y, summaryWidth, 47, COLORS.panel);
+      page.text(x + 12, page.y + 9, label, 6.4, COLORS.muted, true);
+      page.text(x + 12, page.y + 22, String(count), 16, color, true);
+    });
+    page.y += 63;
     drawTableHeader(page, run?.report?.sourceName || "item");
     rows.forEach((row, rowIndex) => {
-      const estimatedHeight = 77;
-      if (page.y + estimatedHeight > PAGE_HEIGHT - 47) {
-        page = createPage();
-        pages.push(page);
-        drawHeader(page);
-        drawTableHeader(page, run?.report?.sourceName || "item");
+      const parts = {
+        value: wrap(row.value || "(vazio)", REPORT_TABLE.companyWidth, 8.2, true),
+        result: wrap(row.result || row.error || "Sem mensagem registrada.", REPORT_TABLE.resultWidth, 8.2),
+        status: wrap(String(row.status || (row.success === false ? "Falhou" : "Concluida")).toUpperCase(), REPORT_TABLE.statusWidth, 7.2, true),
+      };
+      const count = Math.max(parts.value.length, parts.result.length, parts.status.length);
+      let offset = 0;
+      while (offset < count) {
+        let available = Math.floor((PAGE_HEIGHT - 54 - page.y - 36) / 11);
+        if (available < 2 || (offset === 0 && count <= 20 && count > available)) {
+          page = createPage(); pages.push(page); drawHeader(page);
+          drawTableHeader(page, run?.report?.sourceName || "item");
+          available = Math.floor((PAGE_HEIGHT - 54 - page.y - 36) / 11);
+        }
+        const take = Math.min(count - offset, available);
+        const chunk = Object.fromEntries(Object.entries(parts).map(([key, lines]) => [key, lines.slice(offset, offset + take)]));
+        drawRow(page, row, run?.report?.sourceName || "item", rowIndex + 1, chunk, offset > 0);
+        offset += take;
       }
-      drawRow(page, row, run?.report?.sourceName || "item", rowIndex + 1);
     });
     if (excludedRows.length) {
       if (page.y + 55 > PAGE_HEIGHT - 47) { page = createPage(); pages.push(page); drawHeader(page); }

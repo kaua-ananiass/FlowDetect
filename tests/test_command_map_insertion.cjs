@@ -6,6 +6,7 @@ const { test } = require("node:test");
 
 const source = fs.readFileSync(path.join(__dirname, "../tauri_gerador/web/main.js"), "utf8");
 const names = [
+  "resolveCommandMapParentPage", "getCommandMapCanvasEvents",
   "commandMapTreeLayoutPageKey", "getCommandMapTreeManualPositions",
   "getCommandMapTreeStageConstants", "getCommandMapTreeCardLayoutWidth",
   "getCommandMapTreeInsertPreview", "buildCommandMapTreeStageLayout",
@@ -30,6 +31,7 @@ function setup(events, layouts = {}, sequence = "principal") {
   };
   const context = vm.createContext({
     state,
+    normalizeSequenceName: value => String(value || 'principal').trim(),
     getCommandMapEvents: (page = state.commandMapPageSequence) => state.roadmap.events.filter(e => e.sequence === page),
     getCommandMapPageDefinition: sequence => ({ sequence }),
     isLoopMarkerType: () => false,
@@ -57,6 +59,16 @@ function insert(context, targetOrder, position = "after") {
   context.state.roadmap = result;
   return { insertion, result, positions: context.state.commandMapTreeLayouts[context.state.commandMapPageSequence] };
 }
+
+test('independent paths occupy separate rows and restart their horizontal position',()=>{
+  const context=setup([event(1),event(2),event(3,'recuperacao'),event(4,'recuperacao')]);
+  const layout=context.buildCommandMapTreeStageLayout(context.state.roadmap.events,{sequence:'principal'});
+  const [a,b,c,d]=layout.nodes;
+  assert.equal(a.x,c.x);
+  assert.equal(b.x,d.x);
+  assert.ok(c.y>a.y+700);
+  assert.ok(layout.height>d.y+600);
+});
 
 test("appending places the new card ahead of its manually moved origin, ignoring a stale order", () => {
   const context = setup([1, 2, 3, 4, 5].map(n => event(n)), {

@@ -42,7 +42,7 @@
           <strong>FLOWDETECT AGENT</strong>
         </div>
         <div class="agent-observer-footer-item agent-observer-footer-address">
-          <span>IP PARA CONEXÃO</span>
+          <span>CODIGO DE PAREAMENTO</span>
           <strong>Carregando IP...</strong>
         </div>
         <div class="agent-observer-footer-item">
@@ -65,7 +65,12 @@
         </div>
 
         <div class="agent-hero-actions">
-          <span id="agentConnectionAddress" class="agent-connection-chip">Conectar: carregando...</span>
+          <div class="agent-pairing-code" aria-label="Código de pareamento para conectar um Studio">
+            <span>PAREAR STUDIO</span>
+            <strong id="agentPairCode">Preparando código…</strong>
+            <button id="agentRenewPairCode" type="button" title="Gerar novo código">↻</button>
+          </div>
+          <span id="agentConnectionAddress" class="agent-connection-chip" title="Endereço técnico para diagnósticos">Conectar: carregando...</span>
           <button id="toggleMouseControlButton" class="agent-mouse-control-button is-disabled" type="button" aria-pressed="false" title="Bloqueia movimentos e cliques remotos enviados pelo Studio">Mouse desligado</button>
           <button id="importZipButton" class="agent-primary-button" type="button">Importar ZIP</button>
           <button id="refreshLibraryButton" class="agent-secondary-button" type="button">Atualizar</button>

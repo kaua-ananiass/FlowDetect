@@ -18,6 +18,10 @@ test("the panel keeps the complete stopped run returned by the extension", async
   };
   let shownRun = null;
   const context = vm.createContext({
+    selectedPageId: "page-1",
+    startingPages: new Set(),
+    getExecutionTargetTab: async () => ({ id: 42 }),
+    renderExecutionPages: () => {},
     ensureCurrentRuntime: async () => true,
     spreadsheetLoopInfo: () => null,
     companyPreviewRows: new Map(),
