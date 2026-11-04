@@ -20973,7 +20973,7 @@ function clearCommandMapTreeManualPositions(pageSequence = state.commandMapPageS
 
 function reorganizeCommandMapTree(pageSequence = state.commandMapPageSequence) {
   const page = commandMapTreeLayoutPageKey(pageSequence);
-  const removedManualPositions = clearCommandMapTreeManualPositions(page);
+  clearCommandMapTreeManualPositions(page);
   state.commandMapTreePanOffset = { x: 0, y: 0 };
   state.commandMapTreePanUserMoved = false;
   state.commandMapFocusOrder = null;
@@ -20985,9 +20985,7 @@ function reorganizeCommandMapTree(pageSequence = state.commandMapPageSequence) {
   });
   const label = getCommandMapPageDefinition(page).label;
   setMessage(
-    removedManualPositions
-      ? `${label} reorganizada automaticamente.`
-      : `${label} ja estava no layout automatico.`,
+    `${label}: blocos e ligações reorganizados.`,
     "success",
   );
 }

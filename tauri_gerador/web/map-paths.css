@@ -29,6 +29,11 @@
 .map-path-lane-title strong { font-size: 17px; }.map-path-lane-title span { font-size: 11px; color: #93a8bd; }
 .map-path-lane-title .map-section-number { font-size: 9px; letter-spacing: .14em; color: #a49cc4; }
 .map-section-header button { pointer-events: auto; border: 1px solid #6f87aa40; border-radius: 10px; background: #172537b3; color: #c4d5e8; font: inherit; font-size: 12px; padding: 10px 16px; cursor: pointer; }
+.map-section-actions { display: flex; align-items: center; gap: 8px; pointer-events: auto; }
+.map-section-header .map-section-delete { display: grid; place-items: center; padding: 10px; color: #97a9ba; }
+.map-section-header .map-section-delete:hover { color: #ffb0b9; border-color: #ff8b9c55; background: #ff71851a; }
+.map-path-dialog .map-path-danger { background: #aa3548; border-color: #ef879344; color: #fff; }
+.map-path-dialog .map-path-danger:hover { background: #bd4155; }
 .map-section-add { position: absolute; display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 74px; border: 1px dashed #7b95b54d; border-radius: 18px; background: #14223555; color: #c9d9ed; cursor: pointer; font: inherit; }
 .map-section-add > span { font-size: 22px; color: #99b8df; }.map-section-add strong { font-size: 14px; font-weight: 600; }.map-section-add small { font-size: 11px; color: #8599b4; }
 .map-section-add:hover,.map-section-header button:hover { background: #233a505c; border-color: #8aa9d380; }
@@ -53,8 +58,44 @@
 .builder-shell.is-commands-active .command-map-header .map-validation-panel[open] { pointer-events: auto; }
 .builder-shell.is-commands-active .command-map-list { grid-area: 1 / 1; width: 100%; height: 100%; min-height: 0; }
 
-.map-section-actions { display: flex; align-items: center; gap: 8px; pointer-events: auto; }
-
-.map-section-header .map-section-delete { display: grid; place-items: center; padding: 10px; color: #97a9ba; }
-
-.map-section-header .map-section-delete:hover { color: #ffb0b9; border-color: #ff8b9c55; background: #ff71851a; }
+/* Compact connection labels; the path remains automatic. */
+.command-map-tree-stage .command-map-tree-edge-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 24px;
+  width: max-content;
+  max-width: 190px;
+  padding: 3px 7px;
+  border-radius: 8px;
+  box-shadow: 0 3px 10px #0003;
+  opacity: 1;
+}
+.command-map-tree-stage .command-map-tree-edge-label > span {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 8px;
+  line-height: 1.2;
+  letter-spacing: .025em;
+}
+.command-map-tree-stage .command-map-tree-edge-label em {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  line-height: 1;
+}
+.command-map-tree-stage .command-map-tree-edge-label input {
+  width: 32px;
+  min-height: 18px;
+  height: 18px;
+  padding: 0 3px;
+  font-size: 9px;
+  text-align: center;
+  border-radius: 5px;
+}
+.command-map-tree-stage .command-map-tree-edge-label::before { display: none; }
