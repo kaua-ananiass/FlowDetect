@@ -60,7 +60,15 @@ const COMMAND_MAP_TREE_LAYOUT_STORAGE_KEY = "flowdetect_command_map_tree_layout_
 function loadCommandMapTreeLayouts() {
   try {
     const parsed = JSON.parse(window.localStorage?.getItem(COMMAND_MAP_TREE_LAYOUT_STORAGE_KEY) || "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    let migrated=false;
+    for(const [page,positions] of Object.entries(parsed)){
+      if(positions&&typeof positions==='object'&&Object.keys(positions).some(key=>key.startsWith('section:'))){
+        delete parsed[page];migrated=true;
+      }
+    }
+    if(migrated)window.localStorage?.setItem(COMMAND_MAP_TREE_LAYOUT_STORAGE_KEY,JSON.stringify(parsed));
+    return parsed;
   } catch {
     return {};
   }
@@ -239,7 +247,7 @@ const state = {
   },
   commandMapZoom: 1,
   commandMapRequestedZoom: 1,
-  commandMapViewMode: "sequence",
+  commandMapViewMode: "tree",
   commandMapPageSequence: "principal",
   commandMapPageSequenceLock: null,
   commandMapFocusOrder: null,
@@ -1759,15 +1767,133 @@ function createCommandMapTreeLinkEnergy(pathData, kind = "success") {
 }
 
 function commandMapSectionReturnPath(source, target, laneY, laneIndex = 0) {
+  const down = target.top > source.bottom;
+  const startY = down ? source.bottom : source.top;
+  const endY = down ? target.top : target.bottom;
+  const vertical = down ? 1 : -1;
   const offset=(laneIndex % 3 - 1) * 22;
   const startX=Math.max(source.left+24,Math.min(source.right-24,source.centerX+offset));
   const endX=Math.max(target.left+24,Math.min(target.right-24,target.centerX+offset));
   const direction=endX>=startX?1:-1;
-  const radius=Math.min(20,Math.abs(endX-startX)/2,Math.max(0,(source.top-target.bottom)/4));
+  const radius=Math.min(20,Math.abs(endX-startX)/2,Math.abs(endY-startY)/4);
   const d=radius<1
-    ? `M ${startX} ${source.top} L ${endX} ${target.bottom}`
-    : [`M ${startX} ${source.top}`,`L ${startX} ${laneY+radius}`,`Q ${startX} ${laneY} ${startX+direction*radius} ${laneY}`,`L ${endX-direction*radius} ${laneY}`,`Q ${endX} ${laneY} ${endX} ${laneY-radius}`,`L ${endX} ${target.bottom}`].join(' ');
+    ? `M ${startX} ${startY} L ${endX} ${endY}`
+    : [`M ${startX} ${startY}`,`L ${startX} ${laneY-vertical*radius}`,`Q ${startX} ${laneY} ${startX+direction*radius} ${laneY}`,`L ${endX-direction*radius} ${laneY}`,`Q ${endX} ${laneY} ${endX} ${laneY+vertical*radius}`,`L ${endX} ${endY}`].join(' ');
   return {d,startX,endX};
+}
+
+function reserveCommandMapConnectionLane(occupied, left, right, preferred, direction = 1) {
+  const start = Math.min(left, right) - 40;
+  const end = Math.max(left, right) + 40;
+  let y = preferred;
+  while (occupied.some(lane => start < lane.right && end > lane.left && Math.abs(y - lane.y) < 56)) {
+    y += direction * 56;
+  }
+  occupied.push({left:start, right:end, y});
+  return y;
+}
+
+function routeCommandMapAroundCards(start, end, obstacles, waypoint = null) {
+  const blocked = point => obstacles.some(r => point.x > r.left && point.x < r.right && point.y > r.top && point.y < r.bottom);
+  const clear = (a, b) => !obstacles.some(r => a.x === b.x
+    ? a.x > r.left && a.x < r.right && Math.max(a.y,b.y) > r.top && Math.min(a.y,b.y) < r.bottom
+    : a.y > r.top && a.y < r.bottom && Math.max(a.x,b.x) > r.left && Math.min(a.x,b.x) < r.right);
+  function solve(from, to) {
+    if (blocked(from) || blocked(to)) return null;
+    const xs = [...new Set([from.x,to.x,...obstacles.flatMap(r=>[r.left,r.right])])].sort((a,b)=>a-b);
+    const ys = [...new Set([from.y,to.y,...obstacles.flatMap(r=>[r.top,r.bottom])])].sort((a,b)=>a-b);
+    const width = xs.length, count = width * ys.length;
+    const origin = ys.indexOf(from.y)*width+xs.indexOf(from.x), goal = ys.indexOf(to.y)*width+xs.indexOf(to.x);
+    const point = i => ({x:xs[i%width],y:ys[Math.floor(i/width)]});
+    const queue = [], costs = new Map(), previous = new Map();
+    const push = item => { queue.push(item); let i=queue.length-1; while(i){const p=(i-1)>>1;if(queue[p].score<=item.score)break;queue[i]=queue[p];i=p;}queue[i]=item; };
+    const pop = () => {const first=queue[0],last=queue.pop();if(queue.length){let i=0;while(i*2+1<queue.length){let child=i*2+1;if(child+1<queue.length&&queue[child+1].score<queue[child].score)child++;if(queue[child].score>=last.score)break;queue[i]=queue[child];i=child;}queue[i]=last;}return first;};
+    const initial = origin*3;
+    costs.set(initial,0);push({key:initial,cost:0,score:Math.abs(from.x-to.x)+Math.abs(from.y-to.y)});
+    while(queue.length){
+      const current=pop();if(costs.get(current.key)!==current.cost)continue;
+      const index=Math.floor(current.key/3),direction=current.key%3,a=point(index);
+      if(index===goal){const result=[];let key=current.key;while(key!==undefined){result.push(point(Math.floor(key/3)));key=previous.get(key);}return result.reverse();}
+      for(const [next,axis] of [[index-1,1],[index+1,1],[index-width,2],[index+width,2]]){
+        if(next<0||next>=count||(axis===1&&Math.floor(next/width)!==Math.floor(index/width)))continue;
+        const b=point(next);if(blocked(b)||!clear(a,b))continue;
+        const cost=current.cost+Math.abs(a.x-b.x)+Math.abs(a.y-b.y)+(direction&&direction!==axis?32:0),key=next*3+axis;
+        if(cost>=(costs.get(key)??Infinity))continue;
+        costs.set(key,cost);previous.set(key,current.key);push({key,cost,score:cost+Math.abs(b.x-to.x)+Math.abs(b.y-to.y)});
+      }
+    }
+    return null;
+  }
+  const first=solve(start,waypoint||end);
+  if(!first)return null;
+  const second=waypoint?solve(waypoint,end):[];
+  if(waypoint&&!second)return null;
+  const points=first.concat(waypoint?second.slice(1):[]);
+  return points.filter((p,i)=>i===0||i===points.length-1||(waypoint&&p.x===waypoint.x&&p.y===waypoint.y)||!((points[i-1].x===p.x&&p.x===points[i+1].x)||(points[i-1].y===p.y&&p.y===points[i+1].y)));
+}
+
+function commandMapRoundedRoute(points) {
+  if(!points?.length)return '';
+  let d=`M ${points[0].x} ${points[0].y}`;
+  for(let i=1;i<points.length-1;i++){
+    const a=points[i-1],b=points[i],c=points[i+1];
+    const before=Math.hypot(b.x-a.x,b.y-a.y),after=Math.hypot(c.x-b.x,c.y-b.y),r=Math.min(14,before/2,after/2);
+    if(!r)continue;
+    d+=` L ${b.x+(a.x-b.x)*r/before} ${b.y+(a.y-b.y)*r/before} Q ${b.x} ${b.y} ${b.x+(c.x-b.x)*r/after} ${b.y+(c.y-b.y)*r/after}`;
+  }
+  return d+` L ${points.at(-1).x} ${points.at(-1).y}`;
+}
+
+function routeCommandMapThroughLabel(from, to, obstacles, marker, terminal = false) {
+  const direction=to.x>=from.x?1:-1;
+  const entry={x:direction>0?marker.left-18:marker.right+18,y:marker.centerY};
+  const exit=terminal?{x:marker.centerX,y:marker.centerY}:{x:direction>0?marker.right+18:marker.left-18,y:marker.centerY};
+  const before=routeCommandMapAroundCards(from,entry,obstacles);
+  const across=routeCommandMapAroundCards(entry,exit,obstacles);
+  const after=terminal?[]:routeCommandMapAroundCards(exit,to,obstacles);
+  if(!before||!across||!after)return null;
+  return [...before,...across.slice(1),...after.slice(1)];
+}
+
+function commandMapBranchPort(rect, index, count, top = true) {
+  const ratio = (index + 1) / (count + 1);
+  return {x:rect.left + 24 + Math.max(0,rect.width - 48) * ratio, y:top ? rect.top : rect.bottom};
+}
+
+function fitCommandMapSectionBounds(stage) {
+  if (!stage || state.commandMapTreeNodeDrag) return;
+  const scale = stage.offsetWidth ? stage.getBoundingClientRect().width / stage.offsetWidth : 0;
+  if (!scale) return;
+  let previousBottom = 16;
+  let firstSection = true;
+  for (const section of stage.querySelectorAll('.map-canvas-section')) {
+    const slots = Array.from(stage.querySelectorAll('[data-tree-node-sequence]'))
+      .filter(slot => slot.dataset.treeNodeSequence === section.dataset.mapSection);
+    if (!slots.length) continue;
+    const stageTop = stage.getBoundingClientRect().top;
+    const cards = slots.map(slot => slot.querySelector('.command-tree-card') || slot);
+    const top = Math.min(...cards.map(card => (card.getBoundingClientRect().top - stageTop) / scale));
+    const bottom = Math.max(...cards.map(card => (card.getBoundingClientRect().bottom - stageTop) / scale));
+    const shift = firstSection ? 0 : Math.max(0, previousBottom + 140 - top);
+    firstSection = false;
+    if (shift) {
+      const orders = new Set(slots.map(slot => slot.dataset.treeNodeOrder));
+      slots.forEach(slot => slot.style.top = `${parseFloat(slot.style.top) + shift}px`);
+      stage.querySelectorAll('[data-tree-edge-source-order]').forEach(label => {
+        if (!orders.has(label.dataset.treeEdgeSourceOrder)) return;
+        label.style.top = `${parseFloat(label.style.top) + shift}px`;
+        label.dataset.treeEdgeLaneY = String(Number(label.dataset.treeEdgeLaneY || 0) + shift);
+      });
+    }
+    const sectionTop = Math.max(16, top + shift - 140);
+    previousBottom = bottom + shift + 240;
+    section.style.top = `${sectionTop}px`;
+    section.style.height = `${previousBottom - sectionTop}px`;
+    previousBottom += 48;
+  }
+  const footer = stage.querySelector('.map-section-add');
+  if (footer) footer.style.top = `${previousBottom}px`;
+  stage.style.height = `${Math.max(parseFloat(stage.style.height) || 0, previousBottom + 110)}px`;
 }
 
 function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive = false) {
@@ -1780,6 +1906,7 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
   }
   clearCommandMapTreeReferenceLayer(tree);
   const stage = tree.querySelector(".command-map-tree-stage");
+  fitCommandMapSectionBounds(stage);
   const edgeLabels = stage ? Array.from(stage.querySelectorAll("[data-tree-edge-source-order]")) : [];
   if (stage && edgeLabels.length) {
     const stageRect = stage.getBoundingClientRect();
@@ -1799,6 +1926,11 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
 
     const toStageRect = (element) => {
       const rect = element.getBoundingClientRect();
+      const drag=state.commandMapTreeNodeDrag;
+      if(drag?.nodeSlot===element){
+        const width=rect.width/stageZoom,height=rect.height/stageZoom;
+        return {left:drag.latestX,right:drag.latestX+width,top:drag.latestY,bottom:drag.latestY+height,width,height,centerX:drag.latestX+width/2,centerY:drag.latestY+height/2};
+      }
       return {
         left: (rect.left - stageRect.left) / stageZoom,
         right: (rect.right - stageRect.left) / stageZoom,
@@ -1811,6 +1943,13 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
       };
     };
     let dynamicStageHeight = stageHeight;
+    let dynamicStageWidth = stageWidth;
+    const occupiedLanes = [];
+    const sectionHeaderRects = Array.from(stage.querySelectorAll('.map-path-lane-title, .map-section-actions')).map(toStageRect);
+    const cardRects = Array.from(stage.querySelectorAll('[data-tree-node-sequence]')).map(slot => ({
+      section: slot.dataset.treeNodeSequence,
+      rect: toStageRect(slot.querySelector('.command-tree-card') || slot),
+    }));
 
     edgeLabels.forEach((label, index) => {
       const sourceOrder = Number(label.dataset.treeEdgeSourceOrder || 0);
@@ -1839,6 +1978,8 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
       const sourceSection=sourceCard.closest('[data-tree-node-sequence]')?.dataset.treeNodeSequence;
       const targetSection=targetElement.closest('[data-tree-node-sequence]')?.dataset.treeNodeSequence;
       const isSectionReturn=!isTerminal && sourceSection && targetSection && sourceSection!==targetSection && targetRect.bottom<sourceRect.top;
+      const isSectionForward=!isTerminal && sourceSection && targetSection && sourceSection!==targetSection && targetRect.top>sourceRect.bottom;
+      const isSectionLink=isSectionReturn||isSectionForward;
       const labelRect = toStageRect(label);
       const hasManualLabelPosition = label.dataset.treeLayoutManual === "true";
       const branchLaneIndex = Math.max(0, Number(label.dataset.treeEdgeBranchLane || 0));
@@ -1846,16 +1987,21 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
       const isUpperBranch = branchSide === "upper";
       let laneY = Number(label.dataset.treeEdgeLaneY || 0) || sourceRect.centerY;
       label.classList.toggle('is-section-return',Boolean(isSectionReturn));
-      label.dataset.treeEdgeDirection=isSectionReturn?'up':branchSide;
-      if (isSectionReturn) {
-        const gap=sourceRect.top-targetRect.bottom;
+      label.dataset.treeEdgeDirection=isSectionReturn?'up':isSectionForward?'down':branchSide;
+      if (isSectionLink) {
+        const upper=isSectionReturn?targetRect:sourceRect;
+        const lower=isSectionReturn?sourceRect:targetRect;
+        const gap=lower.top-upper.bottom;
         const padding=Math.min(36,gap/3);
-        const preferred=hasManualLabelPosition?labelRect.centerY:(sourceRect.top+targetRect.bottom)/2-branchLaneIndex*24;
-        laneY=Math.max(targetRect.bottom+padding,Math.min(sourceRect.top-padding,preferred));
+        const preferred=hasManualLabelPosition?labelRect.centerY:(lower.top+upper.bottom)/2;
+        laneY=hasManualLabelPosition?preferred:reserveCommandMapConnectionLane(occupiedLanes,sourceRect.centerX,targetRect.centerX,preferred,isSectionReturn?-1:1);
+        if(!hasManualLabelPosition)laneY=Math.max(upper.bottom+padding,Math.min(lower.top-padding,laneY));
         const route=commandMapSectionReturnPath(sourceRect,targetRect,laneY,branchLaneIndex);
         const labelX=hasManualLabelPosition?labelRect.left:(route.startX+route.endX-labelRect.width)/2;
-        label.style.left=`${Math.max(8,Math.round(labelX))}px`;
-        label.style.top=`${Math.round(laneY-labelRect.height/2)}px`;
+        if(!hasManualLabelPosition){
+          label.style.left=`${Math.max(8,Math.round(labelX))}px`;
+          label.style.top=`${Math.round(laneY-labelRect.height/2)}px`;
+        }
       } else if (isPrimaryNext) {
         if (!hasManualLabelPosition) {
           const gap = targetRect.left - sourceRect.right;
@@ -1863,14 +2009,17 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
             ? sourceRect.right + (gap - labelRect.width) / 2
             : sourceRect.right + 18;
           label.style.left = `${Math.round(labelX)}px`;
-          label.style.top = `${Math.round(((sourceRect.centerY + targetRect.centerY) / 2) - (labelRect.height / 2))}px`;
+          const commonY=(Math.max(sourceRect.top,targetRect.top)+Math.min(sourceRect.bottom,targetRect.bottom))/2;
+          label.style.top = `${Math.round(commonY - labelRect.height / 2)}px`;
         }
       } else if (isUpperBranch) {
         if (hasManualLabelPosition) {
           laneY = labelRect.centerY;
         } else {
-          const upperGap = 48 + branchLaneIndex * 58;
-          laneY = Math.max(54 + branchLaneIndex * 10, Math.min(sourceRect.top, isTerminal ? sourceRect.top : targetRect.top) - upperGap);
+          const spanLeft=Math.min(sourceRect.left,targetRect.left),spanRight=Math.max(sourceRect.right,targetRect.right);
+          const obstacles=cardRects.filter(card=>card.section===sourceSection&&card.rect.right>=spanLeft&&card.rect.left<=spanRight);
+          const top=Math.min(sourceRect.top,...obstacles.map(card=>card.rect.top));
+          laneY = reserveCommandMapConnectionLane(occupiedLanes,spanLeft,spanRight,top-52,-1);
           const upperLabelCenterX = isTerminal
             ? sourceRect.centerX
             : (sourceRect.centerX + targetRect.centerX) / 2;
@@ -1879,7 +2028,6 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
           label.style.top = `${Math.round(laneY - (labelRect.height / 2))}px`;
         }
       } else {
-        const compactLaneOffset = branchLaneIndex * 46 + ((Math.abs(sourceOrder) + index) % 4) * 18;
         const branchPortOffsetX = (branchLaneIndex - 0.5) * 44;
         const lowerFailureAnchorX = sourceRect.left + Math.min(
           sourceRect.width - 76,
@@ -1902,7 +2050,13 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
         laneY = Math.max(
           sourceRect.bottom,
           isTerminal ? sourceRect.bottom : targetRect.bottom
-        ) + 46 + compactLaneOffset;
+        ) + 52;
+        if (!hasManualLabelPosition) {
+          const spanLeft=Math.min(sourceRect.left,targetRect.left),spanRight=Math.max(sourceRect.right,targetRect.right);
+          const obstacles=cardRects.filter(card=>card.section===sourceSection&&card.rect.right>=spanLeft&&card.rect.left<=spanRight);
+          laneY=Math.max(laneY,...obstacles.map(card=>card.rect.bottom+52));
+          laneY=reserveCommandMapConnectionLane(occupiedLanes,spanLeft,spanRight,laneY);
+        }
         const lowerTargetAnchorX = isTerminal
           ? terminalAnchorX
           : isOcrAction
@@ -1935,9 +2089,9 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("id", pathId);
 
-      if (isSectionReturn) {
+      if (isSectionLink) {
         path.setAttribute('d',commandMapSectionReturnPath(sourceRect,targetRect,laneY,branchLaneIndex).d);
-        path.dataset.treeEdgeDirection='up';
+        path.dataset.treeEdgeDirection=isSectionReturn?'up':'down';
       } else if (!isPrimaryNext && isUpperBranch) {
         const upperDirection = branchLaneIndex % 2 === 0 ? -1 : 1;
         const upperStep = Math.floor(branchLaneIndex / 2) + 1;
@@ -2034,9 +2188,11 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
         ].join(" "));
       } else if (isPrimaryNext && isForward) {
         const startX = sourceRect.right;
-        const startY = sourceRect.centerY;
+        const commonY=(Math.max(sourceRect.top,targetRect.top)+Math.min(sourceRect.bottom,targetRect.bottom))/2;
+        const aligned=Math.max(sourceRect.top,targetRect.top)<Math.min(sourceRect.bottom,targetRect.bottom);
+        const startY = aligned ? commonY : sourceRect.centerY;
         const endX = targetRect.left;
-        const endY = targetRect.centerY;
+        const endY = aligned ? commonY : targetRect.centerY;
         if (hasManualLabelPosition) {
           const labelX = labelRect.centerX;
           const labelY = labelRect.centerY;
@@ -2081,6 +2237,55 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
         ].join(" "));
       }
 
+      if(!isPrimaryNext || hasManualLabelPosition){
+        // Route in both dimensions around every card, including intervening sections.
+        const obstacles=[
+          ...cardRects.map(({rect})=>({left:rect.left-18,right:rect.right+18,top:rect.top-18,bottom:rect.bottom+18})),
+          ...sectionHeaderRects.map(rect=>({left:rect.left-12,right:rect.right+12,top:rect.top-12,bottom:rect.bottom+12})),
+        ];
+        let marker=toStageRect(label);
+        if(!hasManualLabelPosition){
+          for(let attempt=0;attempt<obstacles.length+1;attempt++){
+            const collisions=obstacles.filter(r=>marker.right+8>r.left&&marker.left-8<r.right&&marker.bottom+8>r.top&&marker.top-8<r.bottom);
+            if(!collisions.length)break;
+            label.style.top=`${Math.max(...collisions.map(r=>r.bottom))+12}px`;
+            marker=toStageRect(label);
+          }
+        }
+        let start,end,from,to;
+        if(isSectionLink){
+          const route=commandMapSectionReturnPath(sourceRect,targetRect,laneY,branchLaneIndex),v=isSectionForward?1:-1;
+          start={x:route.startX,y:isSectionForward?sourceRect.bottom:sourceRect.top};
+          end={x:route.endX,y:isSectionForward?targetRect.top:targetRect.bottom};
+          from={x:start.x,y:start.y+v*26};to={x:end.x,y:end.y-v*26};
+        }else if(isPrimaryNext){
+          start={x:sourceRect.right,y:sourceRect.centerY};end={x:targetRect.left,y:targetRect.centerY};
+          from={x:start.x+26,y:start.y};to={x:end.x-26,y:end.y};
+        }else{
+          const v=isUpperBranch?-1:1;
+          start={x:sourceRect.centerX+(kind==='failure'?-sourceRect.width*.22:0),y:isUpperBranch?sourceRect.top:sourceRect.bottom};
+          end=isTerminal?{x:marker.centerX,y:marker.centerY}:{x:targetRect.centerX,y:isUpperBranch?targetRect.top:targetRect.bottom};
+          from={x:start.x,y:start.y+v*26};to=isTerminal?end:{x:end.x,y:end.y+v*26};
+        }
+        if(!isTerminal&&!isPrimaryNext){
+          const incoming=edgeLabels.filter(item=>!item.classList.contains('is-primary-next')&&item.dataset.treeEdgeTargetOrder===String(targetOrder)&&item.dataset.treeEdgeTerminalRoute!=='true');
+          const top=isSectionForward||(!isSectionReturn&&isUpperBranch);
+          end=commandMapBranchPort(targetRect,incoming.indexOf(label),incoming.length,top);
+          to={x:end.x,y:end.y+(top?-42:42)};
+          const outgoing=edgeLabels.filter(item=>!item.classList.contains('is-primary-next')&&item.dataset.treeEdgeSourceOrder===String(sourceOrder));
+          const sourceTop=isSectionReturn||(!isSectionForward&&isUpperBranch);
+          start=commandMapBranchPort(sourceRect,outgoing.indexOf(label),outgoing.length,sourceTop);
+          from={x:start.x,y:start.y+(sourceTop?-26:26)};
+        }
+        const points=routeCommandMapThroughLabel(from,to,obstacles,marker,isTerminal)
+          || routeCommandMapAroundCards(from,to,obstacles);
+        if(points){
+          path.setAttribute('d',commandMapRoundedRoute([start,...points,end]));
+          path.dataset.obstacleRouted='true';
+          dynamicStageHeight=Math.max(dynamicStageHeight,...points.map(p=>p.y+60));
+          dynamicStageWidth=Math.max(dynamicStageWidth,...points.map(p=>p.x+36));
+        }
+      }
       path.setAttribute("class", `command-map-tree-link-path is-${kind} ${ocrColor ? `is-ocr-${ocrColor}` : ""} ${isPrimaryNext ? "is-primary-next" : "is-branch-route"} is-${branchSide}`);
       svg.appendChild(path);
       const energy = createCommandMapTreeLinkEnergy(path.getAttribute("d"), kind);
@@ -2091,9 +2296,12 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
     });
 
     const finalStageHeight = Math.ceil(dynamicStageHeight);
+    const finalStageWidth = Math.ceil(dynamicStageWidth);
     stage.style.height = `${finalStageHeight}px`;
+    stage.style.width = `${finalStageWidth}px`;
     layer.style.height = `${finalStageHeight}px`;
-    svg.setAttribute("viewBox", `0 0 ${Math.ceil(stageWidth)} ${finalStageHeight}`);
+    layer.style.width = `${finalStageWidth}px`;
+    svg.setAttribute("viewBox", `0 0 ${finalStageWidth} ${finalStageHeight}`);
     energyLayers.forEach((energy) => svg.appendChild(energy));
     layer.appendChild(svg);
     stage.prepend(layer);
@@ -11257,10 +11465,10 @@ function typeChipLabel(type) {
 }
 
 const COMMAND_PAGE_DEFINITIONS = Object.freeze([
-  { sequence: "principal", label: "Pagina 1", shortLabel: "1", number: 1, theme: "principal" },
-  { sequence: "pagina_2", label: "Pagina 2", shortLabel: "2", number: 2, theme: "pagina_2" },
-  { sequence: "pagina_3", label: "Pagina 3", shortLabel: "3", number: 3, theme: "pagina_3" },
-  { sequence: "pagina_4", label: "Pagina 4", shortLabel: "4", number: 4, theme: "pagina_4" },
+  { sequence: "principal", label: "Página 1", shortLabel: "1", number: 1, theme: "principal" },
+  { sequence: "pagina_2", label: "Página 2", shortLabel: "2", number: 2, theme: "pagina_2" },
+  { sequence: "pagina_3", label: "Página 3", shortLabel: "3", number: 3, theme: "pagina_3" },
+  { sequence: "pagina_4", label: "Página 4", shortLabel: "4", number: 4, theme: "pagina_4" },
 ]);
 
 function sequenceLabel(sequenceName) {
@@ -13644,28 +13852,26 @@ function renderLauncherCreateCard() {
             <div class="automation-library-top automation-library-top--create">
               <div>
                 <p class="panel-kicker">Novo projeto</p>
-                <h3>Novo card de automacao</h3>
+                <h3>Nova automação</h3>
               </div>
-              <button class="launcher-flip-trigger" type="button" data-library-action="create-cancel">Cancelar</button>
             </div>
             <div class="automation-library-create-form">
               <label class="automation-library-create-field">
                 <span>Nome</span>
-                <input data-create-field="nome" type="text" placeholder="Ex.: Cadastro de Cliente Alterdata" value="${escapeHtml(draft.nome || "")}" />
+                <input data-create-field="nome" type="text" placeholder="Ex.: Cadastro de cliente" value="${escapeHtml(draft.nome || "")}" />
               </label>
               <label class="automation-library-create-field">
                 <span>Categoria</span>
                 <input data-create-field="categoria" type="text" list="launcherCategorySuggestions" placeholder="Alterdata" value="${escapeHtml(draft.categoria || "")}" />
               </label>
               <label class="automation-library-create-field automation-library-create-field--full">
-                <span>Descricao</span>
-                <textarea data-create-field="descricao" rows="4" placeholder="Explique rapidamente o objetivo da automacao">${escapeHtml(draft.descricao || "")}</textarea>
+                <span>Descrição</span>
+                <textarea data-create-field="descricao" rows="4" placeholder="Objetivo da automação">${escapeHtml(draft.descricao || "")}</textarea>
               </label>
             </div>
             <div class="automation-library-actions automation-library-actions--create">
-              <button class="ghost-button secondary-inline-action" data-library-action="import">Importar ZIP</button>
               <button class="ghost-button secondary-inline-action" data-library-action="create-cancel">Cancelar</button>
-              <button class="primary-button primary-inline-action" data-library-action="create-confirm">Criar automacao</button>
+              <button class="primary-button primary-inline-action" data-library-action="create-confirm">Criar automação</button>
             </div>
           </section>
         </div>
@@ -13677,11 +13883,14 @@ function renderLauncherCreateCard() {
     <article class="automation-library-card automation-library-card--create" data-automation-id="__new__">
       <div class="automation-library-card-stage">
         <section class="automation-library-card-face automation-library-card-front automation-library-create-face">
+          <div class="automation-library-create-symbol" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+          </div>
           <p class="panel-kicker">Novo projeto</p>
-          <h3>Criar automacao</h3>
-          <p class="automation-library-description">Inicie outra automacao sem sair da biblioteca.</p>
+          <h3>Criar automação</h3>
+          <p class="automation-library-description">Inicie outra automação sem sair da biblioteca.</p>
           <div class="automation-library-actions">
-            <button class="primary-button primary-inline-action" data-library-action="create">+ Nova automacao</button>
+            <button class="primary-button primary-inline-action" data-library-action="create">+ Nova automação</button>
             <button class="ghost-button secondary-inline-action" data-library-action="import">Importar ZIP</button>
           </div>
         </section>
@@ -13910,7 +14119,7 @@ function renderLauncherLibrary() {
             descricao: item.descricao || "",
           };
       return `
-        <article class="automation-library-card${activeClass}${editingClass}${flippedClass}" data-automation-id="${escapeHtml(item.id)}">
+        <article class="automation-library-card${activeClass}${editingClass}${flippedClass}" data-library-theme="${String(item.categoria||'').toLowerCase().includes('alterdata')?'violet':String(item.categoria||'').toLowerCase().includes('chrome')?'cyan':'blue'}" data-automation-id="${escapeHtml(item.id)}">
           <div class="automation-library-card-stage">
             <section class="automation-library-card-face automation-library-card-front">
               <div class="automation-library-top">
@@ -13934,6 +14143,10 @@ function renderLauncherLibrary() {
                   <span>
                     <small>Sequencias</small>
                     <strong>${escapeHtml(item.sequence_count ?? 1)}</strong>
+                  </span>
+                  <span>
+                    <small>Seções</small>
+                    <strong>${escapeHtml(item.section_count ?? (item.command_count ? item.sequence_count ?? 1 : 0))}</strong>
                   </span>
                   <span>
                     <small>Execucoes</small>
@@ -13979,7 +14192,7 @@ function renderLauncherLibrary() {
                           <input type="text" value="${escapeHtml(String(editDraft.categoria || ""))}" list="launcherCategorySuggestions" data-library-edit-field="categoria" />
                         </label>
                         <label class="automation-library-card-edit-field automation-library-card-edit-field--full">
-                          <span>Descricao</span>
+                          <span>Descrição</span>
                           <textarea rows="5" data-library-edit-field="descricao">${escapeHtml(String(editDraft.descricao || ""))}</textarea>
                         </label>
                         <div class="automation-library-id">ID: ${escapeHtml(item.id)}</div>
@@ -20711,8 +20924,8 @@ function renderTimeline() {
 }
 
 
-function normalizeCommandMapViewMode(mode = "sequence") {
-  return String(mode || "sequence").trim().toLowerCase() === "tree" ? "tree" : "sequence";
+function normalizeCommandMapViewMode() {
+  return "tree";
 }
 
 function commandMapTreeLayoutPageKey(pageSequence = state.commandMapPageSequence) {
@@ -20760,7 +20973,7 @@ function clearCommandMapTreeManualPositions(pageSequence = state.commandMapPageS
 
 function reorganizeCommandMapTree(pageSequence = state.commandMapPageSequence) {
   const page = commandMapTreeLayoutPageKey(pageSequence);
-  const removedManualPositions = clearCommandMapTreeManualPositions(page);
+  clearCommandMapTreeManualPositions(page);
   state.commandMapTreePanOffset = { x: 0, y: 0 };
   state.commandMapTreePanUserMoved = false;
   state.commandMapFocusOrder = null;
@@ -20772,9 +20985,7 @@ function reorganizeCommandMapTree(pageSequence = state.commandMapPageSequence) {
   });
   const label = getCommandMapPageDefinition(page).label;
   setMessage(
-    removedManualPositions
-      ? `${label} reorganizada automaticamente.`
-      : `${label} ja estava no layout automatico.`,
+    `${label}: blocos e ligações reorganizados.`,
     "success",
   );
 }
@@ -21679,6 +21890,15 @@ function buildCommandMapTreeStageLayout(events, pageDefinition, { includeInsertP
       node.y = Math.max(24, manualY);
     }
   });
+  // Old manually saved positions must not pull a section over the previous one.
+  let nextLaneTop = constants.rowTop;
+  lanes.forEach(sequence => {
+    const laneNodes = nodes.filter(node => normalizeSequenceName(node.event.sequence) === sequence);
+    const top = Math.min(...laneNodes.map(node => node.y));
+    const shift = lanes.indexOf(sequence) === 0 ? 0 : Math.max(0, nextLaneTop - top);
+    laneNodes.forEach(node => node.y += shift);
+    nextLaneTop = Math.max(...laneNodes.map(node => node.y)) + 850;
+  });
   const insertPreview = includeInsertPreview ? getCommandMapTreeInsertPreview(events, nodes, constants) : null;
   if (insertPreview) {
     // O painel de criacao ocupa uma coluna inteira entre o card de origem e
@@ -21956,7 +22176,7 @@ function renderCommandMapTreeView(events, pageDefinition) {
   const sections=sequences.map((sequence,index)=>{
     const nodes=layout.nodes.filter(node=>normalizeSequenceName(node.event.sequence)===sequence);
     const path=(state.roadmap?.map_paths||[]).find(path=>path.sequences.includes(sequence));
-    return {sequence,index,nodes,path,top:Math.max(16,Math.min(...nodes.map(node=>node.y))-100),bottom:Math.max(...nodes.map(node=>node.y+700))};
+    return {sequence,index,nodes,path,top:Math.max(16,Math.min(...nodes.map(node=>node.y))-140),bottom:Math.max(...nodes.map(node=>node.y+700))};
   });
   const footerY=Math.max(...sections.map(section=>section.bottom))+36;
   const stageHeight=Math.max(layout.height,footerY+110);
@@ -21967,7 +22187,7 @@ function renderCommandMapTreeView(events, pageDefinition) {
         style="width:${Math.ceil(layout.width)}px;height:${Math.ceil(stageHeight)}px"
       >
         ${sections.map(({sequence,index,nodes,path,top,bottom})=>{
-          return `<section class="map-canvas-section" data-map-section="${escapeHtml(sequence)}" aria-label="${escapeHtml(path?.name||pageDefinition.label)}" style="left:24px;top:${top}px;width:${Math.max(640,layout.width-48)}px;height:${bottom-top}px"><header class="map-section-header"><div class="map-path-lane-title"><span class="map-section-number">SEÇÃO ${String(index+1).padStart(2,'0')}</span><strong>${escapeHtml(path?.name||pageDefinition.label)}</strong><span>${path?.engine==='chrome'?'Chrome · extensão':'Desktop'} · ${nodes.length} blocos</span></div><button type="button" data-map-section-action="connect" data-map-section-sequence="${escapeHtml(sequence)}">Conectar blocos ↗</button></header></section>`;
+          return `<section class="map-canvas-section" data-map-section="${escapeHtml(sequence)}" aria-label="${escapeHtml(path?.name||pageDefinition.label)}" style="left:24px;top:${top}px;width:${Math.max(640,layout.width-48)}px;height:${bottom-top}px"><header class="map-section-header"><div class="map-path-lane-title"><span class="map-section-number">SEÇÃO ${String(index+1).padStart(2,'0')}</span><strong>${escapeHtml(path?.name||pageDefinition.label)}</strong><span>${path?.engine==='chrome'?'Chrome · extensão':'Desktop'} · ${nodes.length} blocos</span></div><div class="map-section-actions"><button type="button" data-map-section-action="connect" data-map-section-sequence="${escapeHtml(sequence)}">Conectar blocos ↗</button><button type="button" class="map-section-delete" data-map-section-action="delete" data-map-section-sequence="${escapeHtml(sequence)}" aria-label="Apagar seção ${escapeHtml(path?.name||pageDefinition.label)}" title="Apagar seção"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></header></section>`;
         }).join("")}
         ${layout.edges.map((edge) => renderCommandMapTreeStageEdgeLabel(edge)).join("")}
         ${layout.terminals.map((terminal) => renderCommandMapTreeStageTerminal(terminal)).join("")}
@@ -22267,7 +22487,7 @@ function renderCommandMap(options = {}) {
   syncCommandMapViewModeControls();
   if (!events.length) {
     state.expandedTreeCardOrder = null;
-    commandMapList.innerHTML = renderEmptyCommandMapStarter()+'<button class="map-section-empty-add" data-map-section-action="create" type="button">＋ Adicionar seção</button>';
+    commandMapList.innerHTML = renderEmptyCommandMapStarter();
     applyCommandMapZoom();
     updateCommandMapNavButtons();
     return;
@@ -24669,7 +24889,7 @@ composerWorkbookSelect.addEventListener("change", () => {
 
 editorTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
 initIntegrations();
-initMapPaths({invoke,chooseFile:()=>openNativeFileDialog({multiple:false,filters:[{name:'Automação FlowDetect',extensions:['json','zip']}]}),getRoadmap:()=>state.roadmap,getLibrary:()=>state.library.items,getPage:()=>state.commandMapPageSequence,beforeChange:()=>persistCommandMapDraftsForExecution(),apply:(roadmap,action)=>{state.commandMapViewMode='tree';applyPersistedRoadmap(roadmap);if(action!=='connect')requestAnimationFrame(frameCommandMapPaths);}});
+initMapPaths({invoke,chooseFile:()=>openNativeFileDialog({multiple:false,filters:[{name:'Automação FlowDetect',extensions:['json','zip']}]}),getRoadmap:()=>state.roadmap,getLibrary:()=>state.library.items,getPage:()=>state.commandMapPageSequence,beforeChange:()=>persistCommandMapDraftsForExecution(),apply:(roadmap,action)=>{state.commandMapViewMode='tree';applyPersistedRoadmap(roadmap);if(action!=='connect'&&action!=='delete')requestAnimationFrame(frameCommandMapPaths);}});
 document.getElementById('mapPathsFit')?.addEventListener('click',frameCommandMapPaths);
 chainWorkspace = initAutomationChain({
   listAgents: () => state.agents.items.map(normalizeAgent).filter(agent => agent.address)
