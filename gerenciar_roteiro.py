@@ -595,6 +595,11 @@ def contar_sequencias_payload(payload):
     return len({normalizar_nome_sequencia(evento.get("sequencia")) for evento in eventos}) or 1
 
 
+def contar_secoes_payload(payload):
+    """Count the nonempty lanes rendered as sections in the command map."""
+    return len({normalizar_nome_sequencia(e.get("sequencia")) for e in (payload or {}).get("eventos", [])})
+
+
 def exportar_automacao_para_zip(automacao_id, item, destino_zip=None):
     origem = diretorio_automacao(automacao_id)
     if not origem.exists():
@@ -3182,11 +3187,6 @@ def mesclar_caminho_mapa(payload, origem, nome, pagina, pasta_origem=None):
     payload.setdefault("map_paths", []).append(caminho)
     payload["map_paths"].extend(filhos)
     return caminho
-
-
-def contar_secoes_payload(payload):
-    """Count the nonempty lanes rendered as sections in the command map."""
-    return len({normalizar_nome_sequencia(e.get("sequencia")) for e in (payload or {}).get("eventos", [])})
 
 
 def remover_secao_mapa(payload, sequencia):

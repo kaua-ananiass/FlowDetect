@@ -1782,42 +1782,6 @@ function commandMapSectionReturnPath(source, target, laneY, laneIndex = 0) {
   return {d,startX,endX};
 }
 
-function fitCommandMapSectionBounds(stage) {
-  if (!stage || state.commandMapTreeNodeDrag) return;
-  const scale = stage.offsetWidth ? stage.getBoundingClientRect().width / stage.offsetWidth : 0;
-  if (!scale) return;
-  let previousBottom = 16;
-  let firstSection = true;
-  for (const section of stage.querySelectorAll('.map-canvas-section')) {
-    const slots = Array.from(stage.querySelectorAll('[data-tree-node-sequence]'))
-      .filter(slot => slot.dataset.treeNodeSequence === section.dataset.mapSection);
-    if (!slots.length) continue;
-    const stageTop = stage.getBoundingClientRect().top;
-    const cards = slots.map(slot => slot.querySelector('.command-tree-card') || slot);
-    const top = Math.min(...cards.map(card => (card.getBoundingClientRect().top - stageTop) / scale));
-    const bottom = Math.max(...cards.map(card => (card.getBoundingClientRect().bottom - stageTop) / scale));
-    const shift = firstSection ? 0 : Math.max(0, previousBottom + 140 - top);
-    firstSection = false;
-    if (shift) {
-      const orders = new Set(slots.map(slot => slot.dataset.treeNodeOrder));
-      slots.forEach(slot => slot.style.top = `${parseFloat(slot.style.top) + shift}px`);
-      stage.querySelectorAll('[data-tree-edge-source-order]').forEach(label => {
-        if (!orders.has(label.dataset.treeEdgeSourceOrder)) return;
-        label.style.top = `${parseFloat(label.style.top) + shift}px`;
-        label.dataset.treeEdgeLaneY = String(Number(label.dataset.treeEdgeLaneY || 0) + shift);
-      });
-    }
-    const sectionTop = Math.max(16, top + shift - 140);
-    previousBottom = bottom + shift + 240;
-    section.style.top = `${sectionTop}px`;
-    section.style.height = `${previousBottom - sectionTop}px`;
-    previousBottom += 48;
-  }
-  const footer = stage.querySelector('.map-section-add');
-  if (footer) footer.style.top = `${previousBottom}px`;
-  stage.style.height = `${Math.max(parseFloat(stage.style.height) || 0, previousBottom + 110)}px`;
-}
-
 function reserveCommandMapConnectionLane(occupied, left, right, preferred, direction = 1) {
   const start = Math.min(left, right) - 40;
   const end = Math.max(left, right) + 40;
@@ -1894,6 +1858,42 @@ function routeCommandMapThroughLabel(from, to, obstacles, marker, terminal = fal
 function commandMapBranchPort(rect, index, count, top = true) {
   const ratio = (index + 1) / (count + 1);
   return {x:rect.left + 24 + Math.max(0,rect.width - 48) * ratio, y:top ? rect.top : rect.bottom};
+}
+
+function fitCommandMapSectionBounds(stage) {
+  if (!stage || state.commandMapTreeNodeDrag) return;
+  const scale = stage.offsetWidth ? stage.getBoundingClientRect().width / stage.offsetWidth : 0;
+  if (!scale) return;
+  let previousBottom = 16;
+  let firstSection = true;
+  for (const section of stage.querySelectorAll('.map-canvas-section')) {
+    const slots = Array.from(stage.querySelectorAll('[data-tree-node-sequence]'))
+      .filter(slot => slot.dataset.treeNodeSequence === section.dataset.mapSection);
+    if (!slots.length) continue;
+    const stageTop = stage.getBoundingClientRect().top;
+    const cards = slots.map(slot => slot.querySelector('.command-tree-card') || slot);
+    const top = Math.min(...cards.map(card => (card.getBoundingClientRect().top - stageTop) / scale));
+    const bottom = Math.max(...cards.map(card => (card.getBoundingClientRect().bottom - stageTop) / scale));
+    const shift = firstSection ? 0 : Math.max(0, previousBottom + 140 - top);
+    firstSection = false;
+    if (shift) {
+      const orders = new Set(slots.map(slot => slot.dataset.treeNodeOrder));
+      slots.forEach(slot => slot.style.top = `${parseFloat(slot.style.top) + shift}px`);
+      stage.querySelectorAll('[data-tree-edge-source-order]').forEach(label => {
+        if (!orders.has(label.dataset.treeEdgeSourceOrder)) return;
+        label.style.top = `${parseFloat(label.style.top) + shift}px`;
+        label.dataset.treeEdgeLaneY = String(Number(label.dataset.treeEdgeLaneY || 0) + shift);
+      });
+    }
+    const sectionTop = Math.max(16, top + shift - 140);
+    previousBottom = bottom + shift + 240;
+    section.style.top = `${sectionTop}px`;
+    section.style.height = `${previousBottom - sectionTop}px`;
+    previousBottom += 48;
+  }
+  const footer = stage.querySelector('.map-section-add');
+  if (footer) footer.style.top = `${previousBottom}px`;
+  stage.style.height = `${Math.max(parseFloat(stage.style.height) || 0, previousBottom + 110)}px`;
 }
 
 function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive = false) {
@@ -11465,10 +11465,10 @@ function typeChipLabel(type) {
 }
 
 const COMMAND_PAGE_DEFINITIONS = Object.freeze([
-  { sequence: "principal", label: "Pagina 1", shortLabel: "1", number: 1, theme: "principal" },
-  { sequence: "pagina_2", label: "Pagina 2", shortLabel: "2", number: 2, theme: "pagina_2" },
-  { sequence: "pagina_3", label: "Pagina 3", shortLabel: "3", number: 3, theme: "pagina_3" },
-  { sequence: "pagina_4", label: "Pagina 4", shortLabel: "4", number: 4, theme: "pagina_4" },
+  { sequence: "principal", label: "Página 1", shortLabel: "1", number: 1, theme: "principal" },
+  { sequence: "pagina_2", label: "Página 2", shortLabel: "2", number: 2, theme: "pagina_2" },
+  { sequence: "pagina_3", label: "Página 3", shortLabel: "3", number: 3, theme: "pagina_3" },
+  { sequence: "pagina_4", label: "Página 4", shortLabel: "4", number: 4, theme: "pagina_4" },
 ]);
 
 function sequenceLabel(sequenceName) {
@@ -24889,7 +24889,7 @@ composerWorkbookSelect.addEventListener("change", () => {
 
 editorTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
 initIntegrations();
-initMapPaths({invoke,chooseFile:()=>openNativeFileDialog({multiple:false,filters:[{name:'Automação FlowDetect',extensions:['json','zip']}]}),getRoadmap:()=>state.roadmap,getLibrary:()=>state.library.items,getPage:()=>state.commandMapPageSequence,beforeChange:()=>persistCommandMapDraftsForExecution(),apply:(roadmap,action)=>{state.commandMapViewMode='tree';applyPersistedRoadmap(roadmap);if(action!=='connect')requestAnimationFrame(frameCommandMapPaths);}});
+initMapPaths({invoke,chooseFile:()=>openNativeFileDialog({multiple:false,filters:[{name:'Automação FlowDetect',extensions:['json','zip']}]}),getRoadmap:()=>state.roadmap,getLibrary:()=>state.library.items,getPage:()=>state.commandMapPageSequence,beforeChange:()=>persistCommandMapDraftsForExecution(),apply:(roadmap,action)=>{state.commandMapViewMode='tree';applyPersistedRoadmap(roadmap);if(action!=='connect'&&action!=='delete')requestAnimationFrame(frameCommandMapPaths);}});
 document.getElementById('mapPathsFit')?.addEventListener('click',frameCommandMapPaths);
 chainWorkspace = initAutomationChain({
   listAgents: () => state.agents.items.map(normalizeAgent).filter(agent => agent.address)

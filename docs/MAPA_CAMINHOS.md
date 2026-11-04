@@ -31,8 +31,13 @@ regras individuais de OCR já configuradas têm precedência.
 
 As importações copiam os blocos e recursos para o projeto atual, com novos IDs,
 sequências isoladas e referências de destino ajustadas. A automação da biblioteca
-permanece independente. O JSON precisa ser o projeto original do Studio, contendo
-`eventos`; o JSON convertido para a extensão não é um projeto editável.
+permanece independente. Aceita projetos originais do Studio (`eventos`) e JSONs
+exportados para a extensão (`flowdetect_chrome_automation`, com `steps`). O JSON
+Chrome é recuperado como seção Chrome: OCR, imagem, seletor CSS de clique/verificação,
+teclado, texto, URL, dados, marcadores de loop e relatório. As imagens incorporadas
+são copiadas e os valores/linhas viram uma planilha própria. Tipos não suportados
+são recusados sem importar parte da automação. Configurações que não existem no
+JSON Chrome exigem o projeto original do Studio.
 Referências externas ou recursos ausentes são recusados para evitar caminhos quebrados.
 
 Para caminhos Chrome, execute o mapa pelo **Agente atualizado**, com a extensão
