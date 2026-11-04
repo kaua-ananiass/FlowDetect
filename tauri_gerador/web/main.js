@@ -1767,14 +1767,18 @@ function createCommandMapTreeLinkEnergy(pathData, kind = "success") {
 }
 
 function commandMapSectionReturnPath(source, target, laneY, laneIndex = 0) {
+  const down = target.top > source.bottom;
+  const startY = down ? source.bottom : source.top;
+  const endY = down ? target.top : target.bottom;
+  const vertical = down ? 1 : -1;
   const offset=(laneIndex % 3 - 1) * 22;
   const startX=Math.max(source.left+24,Math.min(source.right-24,source.centerX+offset));
   const endX=Math.max(target.left+24,Math.min(target.right-24,target.centerX+offset));
   const direction=endX>=startX?1:-1;
-  const radius=Math.min(20,Math.abs(endX-startX)/2,Math.max(0,(source.top-target.bottom)/4));
+  const radius=Math.min(20,Math.abs(endX-startX)/2,Math.abs(endY-startY)/4);
   const d=radius<1
-    ? `M ${startX} ${source.top} L ${endX} ${target.bottom}`
-    : [`M ${startX} ${source.top}`,`L ${startX} ${laneY+radius}`,`Q ${startX} ${laneY} ${startX+direction*radius} ${laneY}`,`L ${endX-direction*radius} ${laneY}`,`Q ${endX} ${laneY} ${endX} ${laneY-radius}`,`L ${endX} ${target.bottom}`].join(' ');
+    ? `M ${startX} ${startY} L ${endX} ${endY}`
+    : [`M ${startX} ${startY}`,`L ${startX} ${laneY-vertical*radius}`,`Q ${startX} ${laneY} ${startX+direction*radius} ${laneY}`,`L ${endX-direction*radius} ${laneY}`,`Q ${endX} ${laneY} ${endX} ${laneY+vertical*radius}`,`L ${endX} ${endY}`].join(' ');
   return {d,startX,endX};
 }
 
@@ -1814,6 +1818,84 @@ function fitCommandMapSectionBounds(stage) {
   stage.style.height = `${Math.max(parseFloat(stage.style.height) || 0, previousBottom + 110)}px`;
 }
 
+function reserveCommandMapConnectionLane(occupied, left, right, preferred, direction = 1) {
+  const start = Math.min(left, right) - 40;
+  const end = Math.max(left, right) + 40;
+  let y = preferred;
+  while (occupied.some(lane => start < lane.right && end > lane.left && Math.abs(y - lane.y) < 56)) {
+    y += direction * 56;
+  }
+  occupied.push({left:start, right:end, y});
+  return y;
+}
+
+function routeCommandMapAroundCards(start, end, obstacles, waypoint = null) {
+  const blocked = point => obstacles.some(r => point.x > r.left && point.x < r.right && point.y > r.top && point.y < r.bottom);
+  const clear = (a, b) => !obstacles.some(r => a.x === b.x
+    ? a.x > r.left && a.x < r.right && Math.max(a.y,b.y) > r.top && Math.min(a.y,b.y) < r.bottom
+    : a.y > r.top && a.y < r.bottom && Math.max(a.x,b.x) > r.left && Math.min(a.x,b.x) < r.right);
+  function solve(from, to) {
+    if (blocked(from) || blocked(to)) return null;
+    const xs = [...new Set([from.x,to.x,...obstacles.flatMap(r=>[r.left,r.right])])].sort((a,b)=>a-b);
+    const ys = [...new Set([from.y,to.y,...obstacles.flatMap(r=>[r.top,r.bottom])])].sort((a,b)=>a-b);
+    const width = xs.length, count = width * ys.length;
+    const origin = ys.indexOf(from.y)*width+xs.indexOf(from.x), goal = ys.indexOf(to.y)*width+xs.indexOf(to.x);
+    const point = i => ({x:xs[i%width],y:ys[Math.floor(i/width)]});
+    const queue = [], costs = new Map(), previous = new Map();
+    const push = item => { queue.push(item); let i=queue.length-1; while(i){const p=(i-1)>>1;if(queue[p].score<=item.score)break;queue[i]=queue[p];i=p;}queue[i]=item; };
+    const pop = () => {const first=queue[0],last=queue.pop();if(queue.length){let i=0;while(i*2+1<queue.length){let child=i*2+1;if(child+1<queue.length&&queue[child+1].score<queue[child].score)child++;if(queue[child].score>=last.score)break;queue[i]=queue[child];i=child;}queue[i]=last;}return first;};
+    const initial = origin*3;
+    costs.set(initial,0);push({key:initial,cost:0,score:Math.abs(from.x-to.x)+Math.abs(from.y-to.y)});
+    while(queue.length){
+      const current=pop();if(costs.get(current.key)!==current.cost)continue;
+      const index=Math.floor(current.key/3),direction=current.key%3,a=point(index);
+      if(index===goal){const result=[];let key=current.key;while(key!==undefined){result.push(point(Math.floor(key/3)));key=previous.get(key);}return result.reverse();}
+      for(const [next,axis] of [[index-1,1],[index+1,1],[index-width,2],[index+width,2]]){
+        if(next<0||next>=count||(axis===1&&Math.floor(next/width)!==Math.floor(index/width)))continue;
+        const b=point(next);if(blocked(b)||!clear(a,b))continue;
+        const cost=current.cost+Math.abs(a.x-b.x)+Math.abs(a.y-b.y)+(direction&&direction!==axis?32:0),key=next*3+axis;
+        if(cost>=(costs.get(key)??Infinity))continue;
+        costs.set(key,cost);previous.set(key,current.key);push({key,cost,score:cost+Math.abs(b.x-to.x)+Math.abs(b.y-to.y)});
+      }
+    }
+    return null;
+  }
+  const first=solve(start,waypoint||end);
+  if(!first)return null;
+  const second=waypoint?solve(waypoint,end):[];
+  if(waypoint&&!second)return null;
+  const points=first.concat(waypoint?second.slice(1):[]);
+  return points.filter((p,i)=>i===0||i===points.length-1||(waypoint&&p.x===waypoint.x&&p.y===waypoint.y)||!((points[i-1].x===p.x&&p.x===points[i+1].x)||(points[i-1].y===p.y&&p.y===points[i+1].y)));
+}
+
+function commandMapRoundedRoute(points) {
+  if(!points?.length)return '';
+  let d=`M ${points[0].x} ${points[0].y}`;
+  for(let i=1;i<points.length-1;i++){
+    const a=points[i-1],b=points[i],c=points[i+1];
+    const before=Math.hypot(b.x-a.x,b.y-a.y),after=Math.hypot(c.x-b.x,c.y-b.y),r=Math.min(14,before/2,after/2);
+    if(!r)continue;
+    d+=` L ${b.x+(a.x-b.x)*r/before} ${b.y+(a.y-b.y)*r/before} Q ${b.x} ${b.y} ${b.x+(c.x-b.x)*r/after} ${b.y+(c.y-b.y)*r/after}`;
+  }
+  return d+` L ${points.at(-1).x} ${points.at(-1).y}`;
+}
+
+function routeCommandMapThroughLabel(from, to, obstacles, marker, terminal = false) {
+  const direction=to.x>=from.x?1:-1;
+  const entry={x:direction>0?marker.left-18:marker.right+18,y:marker.centerY};
+  const exit=terminal?{x:marker.centerX,y:marker.centerY}:{x:direction>0?marker.right+18:marker.left-18,y:marker.centerY};
+  const before=routeCommandMapAroundCards(from,entry,obstacles);
+  const across=routeCommandMapAroundCards(entry,exit,obstacles);
+  const after=terminal?[]:routeCommandMapAroundCards(exit,to,obstacles);
+  if(!before||!across||!after)return null;
+  return [...before,...across.slice(1),...after.slice(1)];
+}
+
+function commandMapBranchPort(rect, index, count, top = true) {
+  const ratio = (index + 1) / (count + 1);
+  return {x:rect.left + 24 + Math.max(0,rect.width - 48) * ratio, y:top ? rect.top : rect.bottom};
+}
+
 function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive = false) {
   if (!root || (!allowInactive && state.activeTab !== "commands")) {
     return;
@@ -1844,6 +1926,11 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
 
     const toStageRect = (element) => {
       const rect = element.getBoundingClientRect();
+      const drag=state.commandMapTreeNodeDrag;
+      if(drag?.nodeSlot===element){
+        const width=rect.width/stageZoom,height=rect.height/stageZoom;
+        return {left:drag.latestX,right:drag.latestX+width,top:drag.latestY,bottom:drag.latestY+height,width,height,centerX:drag.latestX+width/2,centerY:drag.latestY+height/2};
+      }
       return {
         left: (rect.left - stageRect.left) / stageZoom,
         right: (rect.right - stageRect.left) / stageZoom,
@@ -1856,6 +1943,13 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
       };
     };
     let dynamicStageHeight = stageHeight;
+    let dynamicStageWidth = stageWidth;
+    const occupiedLanes = [];
+    const sectionHeaderRects = Array.from(stage.querySelectorAll('.map-path-lane-title, .map-section-actions')).map(toStageRect);
+    const cardRects = Array.from(stage.querySelectorAll('[data-tree-node-sequence]')).map(slot => ({
+      section: slot.dataset.treeNodeSequence,
+      rect: toStageRect(slot.querySelector('.command-tree-card') || slot),
+    }));
 
     edgeLabels.forEach((label, index) => {
       const sourceOrder = Number(label.dataset.treeEdgeSourceOrder || 0);
@@ -1884,6 +1978,8 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
       const sourceSection=sourceCard.closest('[data-tree-node-sequence]')?.dataset.treeNodeSequence;
       const targetSection=targetElement.closest('[data-tree-node-sequence]')?.dataset.treeNodeSequence;
       const isSectionReturn=!isTerminal && sourceSection && targetSection && sourceSection!==targetSection && targetRect.bottom<sourceRect.top;
+      const isSectionForward=!isTerminal && sourceSection && targetSection && sourceSection!==targetSection && targetRect.top>sourceRect.bottom;
+      const isSectionLink=isSectionReturn||isSectionForward;
       const labelRect = toStageRect(label);
       const hasManualLabelPosition = label.dataset.treeLayoutManual === "true";
       const branchLaneIndex = Math.max(0, Number(label.dataset.treeEdgeBranchLane || 0));
@@ -1891,16 +1987,21 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
       const isUpperBranch = branchSide === "upper";
       let laneY = Number(label.dataset.treeEdgeLaneY || 0) || sourceRect.centerY;
       label.classList.toggle('is-section-return',Boolean(isSectionReturn));
-      label.dataset.treeEdgeDirection=isSectionReturn?'up':branchSide;
-      if (isSectionReturn) {
-        const gap=sourceRect.top-targetRect.bottom;
+      label.dataset.treeEdgeDirection=isSectionReturn?'up':isSectionForward?'down':branchSide;
+      if (isSectionLink) {
+        const upper=isSectionReturn?targetRect:sourceRect;
+        const lower=isSectionReturn?sourceRect:targetRect;
+        const gap=lower.top-upper.bottom;
         const padding=Math.min(36,gap/3);
-        const preferred=hasManualLabelPosition?labelRect.centerY:(sourceRect.top+targetRect.bottom)/2-branchLaneIndex*24;
-        laneY=Math.max(targetRect.bottom+padding,Math.min(sourceRect.top-padding,preferred));
+        const preferred=hasManualLabelPosition?labelRect.centerY:(lower.top+upper.bottom)/2;
+        laneY=hasManualLabelPosition?preferred:reserveCommandMapConnectionLane(occupiedLanes,sourceRect.centerX,targetRect.centerX,preferred,isSectionReturn?-1:1);
+        if(!hasManualLabelPosition)laneY=Math.max(upper.bottom+padding,Math.min(lower.top-padding,laneY));
         const route=commandMapSectionReturnPath(sourceRect,targetRect,laneY,branchLaneIndex);
         const labelX=hasManualLabelPosition?labelRect.left:(route.startX+route.endX-labelRect.width)/2;
-        label.style.left=`${Math.max(8,Math.round(labelX))}px`;
-        label.style.top=`${Math.round(laneY-labelRect.height/2)}px`;
+        if(!hasManualLabelPosition){
+          label.style.left=`${Math.max(8,Math.round(labelX))}px`;
+          label.style.top=`${Math.round(laneY-labelRect.height/2)}px`;
+        }
       } else if (isPrimaryNext) {
         if (!hasManualLabelPosition) {
           const gap = targetRect.left - sourceRect.right;
@@ -1908,14 +2009,17 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
             ? sourceRect.right + (gap - labelRect.width) / 2
             : sourceRect.right + 18;
           label.style.left = `${Math.round(labelX)}px`;
-          label.style.top = `${Math.round(((sourceRect.centerY + targetRect.centerY) / 2) - (labelRect.height / 2))}px`;
+          const commonY=(Math.max(sourceRect.top,targetRect.top)+Math.min(sourceRect.bottom,targetRect.bottom))/2;
+          label.style.top = `${Math.round(commonY - labelRect.height / 2)}px`;
         }
       } else if (isUpperBranch) {
         if (hasManualLabelPosition) {
           laneY = labelRect.centerY;
         } else {
-          const upperGap = 48 + branchLaneIndex * 58;
-          laneY = Math.max(54 + branchLaneIndex * 10, Math.min(sourceRect.top, isTerminal ? sourceRect.top : targetRect.top) - upperGap);
+          const spanLeft=Math.min(sourceRect.left,targetRect.left),spanRight=Math.max(sourceRect.right,targetRect.right);
+          const obstacles=cardRects.filter(card=>card.section===sourceSection&&card.rect.right>=spanLeft&&card.rect.left<=spanRight);
+          const top=Math.min(sourceRect.top,...obstacles.map(card=>card.rect.top));
+          laneY = reserveCommandMapConnectionLane(occupiedLanes,spanLeft,spanRight,top-52,-1);
           const upperLabelCenterX = isTerminal
             ? sourceRect.centerX
             : (sourceRect.centerX + targetRect.centerX) / 2;
@@ -1924,7 +2028,6 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
           label.style.top = `${Math.round(laneY - (labelRect.height / 2))}px`;
         }
       } else {
-        const compactLaneOffset = branchLaneIndex * 46 + ((Math.abs(sourceOrder) + index) % 4) * 18;
         const branchPortOffsetX = (branchLaneIndex - 0.5) * 44;
         const lowerFailureAnchorX = sourceRect.left + Math.min(
           sourceRect.width - 76,
@@ -1947,7 +2050,13 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
         laneY = Math.max(
           sourceRect.bottom,
           isTerminal ? sourceRect.bottom : targetRect.bottom
-        ) + 46 + compactLaneOffset;
+        ) + 52;
+        if (!hasManualLabelPosition) {
+          const spanLeft=Math.min(sourceRect.left,targetRect.left),spanRight=Math.max(sourceRect.right,targetRect.right);
+          const obstacles=cardRects.filter(card=>card.section===sourceSection&&card.rect.right>=spanLeft&&card.rect.left<=spanRight);
+          laneY=Math.max(laneY,...obstacles.map(card=>card.rect.bottom+52));
+          laneY=reserveCommandMapConnectionLane(occupiedLanes,spanLeft,spanRight,laneY);
+        }
         const lowerTargetAnchorX = isTerminal
           ? terminalAnchorX
           : isOcrAction
@@ -1980,9 +2089,9 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("id", pathId);
 
-      if (isSectionReturn) {
+      if (isSectionLink) {
         path.setAttribute('d',commandMapSectionReturnPath(sourceRect,targetRect,laneY,branchLaneIndex).d);
-        path.dataset.treeEdgeDirection='up';
+        path.dataset.treeEdgeDirection=isSectionReturn?'up':'down';
       } else if (!isPrimaryNext && isUpperBranch) {
         const upperDirection = branchLaneIndex % 2 === 0 ? -1 : 1;
         const upperStep = Math.floor(branchLaneIndex / 2) + 1;
@@ -2079,9 +2188,11 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
         ].join(" "));
       } else if (isPrimaryNext && isForward) {
         const startX = sourceRect.right;
-        const startY = sourceRect.centerY;
+        const commonY=(Math.max(sourceRect.top,targetRect.top)+Math.min(sourceRect.bottom,targetRect.bottom))/2;
+        const aligned=Math.max(sourceRect.top,targetRect.top)<Math.min(sourceRect.bottom,targetRect.bottom);
+        const startY = aligned ? commonY : sourceRect.centerY;
         const endX = targetRect.left;
-        const endY = targetRect.centerY;
+        const endY = aligned ? commonY : targetRect.centerY;
         if (hasManualLabelPosition) {
           const labelX = labelRect.centerX;
           const labelY = labelRect.centerY;
@@ -2126,6 +2237,55 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
         ].join(" "));
       }
 
+      if(!isPrimaryNext || hasManualLabelPosition){
+        // Route in both dimensions around every card, including intervening sections.
+        const obstacles=[
+          ...cardRects.map(({rect})=>({left:rect.left-18,right:rect.right+18,top:rect.top-18,bottom:rect.bottom+18})),
+          ...sectionHeaderRects.map(rect=>({left:rect.left-12,right:rect.right+12,top:rect.top-12,bottom:rect.bottom+12})),
+        ];
+        let marker=toStageRect(label);
+        if(!hasManualLabelPosition){
+          for(let attempt=0;attempt<obstacles.length+1;attempt++){
+            const collisions=obstacles.filter(r=>marker.right+8>r.left&&marker.left-8<r.right&&marker.bottom+8>r.top&&marker.top-8<r.bottom);
+            if(!collisions.length)break;
+            label.style.top=`${Math.max(...collisions.map(r=>r.bottom))+12}px`;
+            marker=toStageRect(label);
+          }
+        }
+        let start,end,from,to;
+        if(isSectionLink){
+          const route=commandMapSectionReturnPath(sourceRect,targetRect,laneY,branchLaneIndex),v=isSectionForward?1:-1;
+          start={x:route.startX,y:isSectionForward?sourceRect.bottom:sourceRect.top};
+          end={x:route.endX,y:isSectionForward?targetRect.top:targetRect.bottom};
+          from={x:start.x,y:start.y+v*26};to={x:end.x,y:end.y-v*26};
+        }else if(isPrimaryNext){
+          start={x:sourceRect.right,y:sourceRect.centerY};end={x:targetRect.left,y:targetRect.centerY};
+          from={x:start.x+26,y:start.y};to={x:end.x-26,y:end.y};
+        }else{
+          const v=isUpperBranch?-1:1;
+          start={x:sourceRect.centerX+(kind==='failure'?-sourceRect.width*.22:0),y:isUpperBranch?sourceRect.top:sourceRect.bottom};
+          end=isTerminal?{x:marker.centerX,y:marker.centerY}:{x:targetRect.centerX,y:isUpperBranch?targetRect.top:targetRect.bottom};
+          from={x:start.x,y:start.y+v*26};to=isTerminal?end:{x:end.x,y:end.y+v*26};
+        }
+        if(!isTerminal&&!isPrimaryNext){
+          const incoming=edgeLabels.filter(item=>!item.classList.contains('is-primary-next')&&item.dataset.treeEdgeTargetOrder===String(targetOrder)&&item.dataset.treeEdgeTerminalRoute!=='true');
+          const top=isSectionForward||(!isSectionReturn&&isUpperBranch);
+          end=commandMapBranchPort(targetRect,incoming.indexOf(label),incoming.length,top);
+          to={x:end.x,y:end.y+(top?-42:42)};
+          const outgoing=edgeLabels.filter(item=>!item.classList.contains('is-primary-next')&&item.dataset.treeEdgeSourceOrder===String(sourceOrder));
+          const sourceTop=isSectionReturn||(!isSectionForward&&isUpperBranch);
+          start=commandMapBranchPort(sourceRect,outgoing.indexOf(label),outgoing.length,sourceTop);
+          from={x:start.x,y:start.y+(sourceTop?-26:26)};
+        }
+        const points=routeCommandMapThroughLabel(from,to,obstacles,marker,isTerminal)
+          || routeCommandMapAroundCards(from,to,obstacles);
+        if(points){
+          path.setAttribute('d',commandMapRoundedRoute([start,...points,end]));
+          path.dataset.obstacleRouted='true';
+          dynamicStageHeight=Math.max(dynamicStageHeight,...points.map(p=>p.y+60));
+          dynamicStageWidth=Math.max(dynamicStageWidth,...points.map(p=>p.x+36));
+        }
+      }
       path.setAttribute("class", `command-map-tree-link-path is-${kind} ${ocrColor ? `is-ocr-${ocrColor}` : ""} ${isPrimaryNext ? "is-primary-next" : "is-branch-route"} is-${branchSide}`);
       svg.appendChild(path);
       const energy = createCommandMapTreeLinkEnergy(path.getAttribute("d"), kind);
@@ -2136,9 +2296,12 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
     });
 
     const finalStageHeight = Math.ceil(dynamicStageHeight);
+    const finalStageWidth = Math.ceil(dynamicStageWidth);
     stage.style.height = `${finalStageHeight}px`;
+    stage.style.width = `${finalStageWidth}px`;
     layer.style.height = `${finalStageHeight}px`;
-    svg.setAttribute("viewBox", `0 0 ${Math.ceil(stageWidth)} ${finalStageHeight}`);
+    layer.style.width = `${finalStageWidth}px`;
+    svg.setAttribute("viewBox", `0 0 ${finalStageWidth} ${finalStageHeight}`);
     energyLayers.forEach((energy) => svg.appendChild(energy));
     layer.appendChild(svg);
     stage.prepend(layer);
