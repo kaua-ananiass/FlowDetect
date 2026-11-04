@@ -1,7 +1,7 @@
 {
   "name": "gerador-automacao-ui",
   "private": true,
-  "version": "3.0.2",
+  "version": "3.1.1",
   "type": "module",
   "scripts": {
     "mac:check": "node ../scripts/macos/check-environment.cjs",
