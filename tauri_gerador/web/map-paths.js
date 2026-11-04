@@ -3,6 +3,15 @@ export function initMapPaths({invoke,chooseFile,getRoadmap,getLibrary,getPage,be
   if(!dialog)return;
   let busy=false,sourceSequence='';
   const message=(text,error=false)=>{ $('mapPathFeedback').textContent=String(text||'');$('mapPathFeedback').dataset.error=String(error); };
+  function syncExecutionFields(){
+    const chrome=$('mapPathEngine').value==='chrome';
+    $('mapPathChromePageField').hidden=!chrome;
+    $('mapPathEngineHelp').textContent=chrome
+      ? 'Executa na aba vinculada à extensão, no computador que roda a automação.'
+      : 'Usa mouse e teclado nos programas do computador que roda a automação, como o Alterdata.';
+  }
+  $('mapPathEngine').addEventListener('change',syncExecutionFields);
+  syncExecutionFields();
   function refresh(){
     const roadmap=getRoadmap()||{},events=roadmap.events||[],paths=roadmap.map_paths||[];
     $('mapPathLibrary').replaceChildren(new Option('Selecione a automação',''),...getLibrary().map(item=>new Option(item.nome||item.name,item.id)));
@@ -16,17 +25,31 @@ export function initMapPaths({invoke,chooseFile,getRoadmap,getLibrary,getPage,be
     try{
       await beforeChange();
       const result=await invoke('map_paths_action',{request:{parent:getPage(),name:$('mapPathName').value.trim(),engine:$('mapPathEngine').value,pageId:$('mapPathChromePage').value,...request}});
+      if(request.action==='delete'){
+        dialog.close();
+        const stage=$('commandMapList'),orders=new Set();
+        const elements=[...stage.querySelectorAll('[data-tree-node-sequence]')].filter(node=>node.dataset.treeNodeSequence===request.sequence);
+        elements.forEach(node=>orders.add(node.dataset.treeNodeOrder));
+        elements.push(...[...stage.querySelectorAll('[data-map-section]')].filter(node=>node.dataset.mapSection===request.sequence));
+        elements.push(...[...stage.querySelectorAll('[data-tree-edge-source-order]')].filter(node=>orders.has(node.dataset.treeEdgeSourceOrder)||orders.has(node.dataset.treeEdgeTargetOrder)));
+        if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches){
+          await Promise.all(elements.map(node=>node.animate([{opacity:1},{opacity:0,translate:'0 8px'}],{duration:180,easing:'cubic-bezier(.23,1,.32,1)',fill:'forwards'}).finished.catch(()=>{})));
+        }
+      }
       apply(result,request.action);refresh();message('Seções atualizadas.');dialog.close();
     }catch(error){message(error?.message||error,true);}finally{busy=false;for(const button of dialog.querySelectorAll('button'))button.disabled=false;}
   }
   function open(mode,sequence=''){
     if(busy)return;
     sourceSequence=mode==='connect'?sequence:'';
-    refresh();message('');
-    $('mapSectionCreatePanel').hidden=mode==='connect';
+    refresh();syncExecutionFields();message('');
+    $('mapSectionCreatePanel').hidden=mode!=='create';
     $('mapSectionConnectPanel').hidden=mode!=='connect';
-    $('mapPathsTitle').textContent=mode==='connect'?'Conectar seções':'Nova seção';
-    $('mapPathsIntro').textContent=mode==='connect'?'Escolha um bloco desta seção e o destino da ligação.':'A nova seção aparece abaixo das existentes. Crie do zero ou importe uma automação.';
+    $('mapSectionDeletePanel').hidden=mode!=='delete';
+    $('mapPathsTitle').textContent=mode==='delete'?'Apagar seção':mode==='connect'?'Conectar seções':'Nova seção';
+    const count=(getRoadmap()?.events||[]).filter(event=>event.sequence===sequence).length;
+    $('mapPathsIntro').textContent=mode==='delete'?`Os ${count} blocos desta seção serão removidos. As ligações que chegam nela serão encerradas. As outras seções serão mantidas.`:mode==='connect'?'Escolha um bloco desta seção e o destino da ligação.':'Adicione um caminho abaixo do atual e conecte os blocos para usá-lo.';
+    if(mode==='delete')sourceSequence=sequence;
     if(mode!=='connect')$('mapPathName').value='';
     dialog.showModal();
   }
@@ -37,6 +60,8 @@ export function initMapPaths({invoke,chooseFile,getRoadmap,getLibrary,getPage,be
     open(button.dataset.mapSectionAction,button.dataset.mapSectionSequence||'');
   });
   $('mapPathsClose').onclick=()=>dialog.close();
+  $('mapPathDeleteCancel').onclick=()=>dialog.close();
+  $('mapPathDelete').onclick=()=>action({action:'delete',sequence:sourceSequence});
   $('mapPathCreate').onclick=()=>action({action:'create'});
   $('mapPathImport').onclick=()=>{const id=$('mapPathLibrary').value;if(!id){message('Escolha uma automação da biblioteca.',true);return;}action({action:'import',id});};
   $('mapPathFile').onclick=async()=>{try{const file=await chooseFile();if(file)await action({action:'importFile',file});}catch(error){message(error?.message||error,true);}};

@@ -820,12 +820,19 @@
           <dialog id="mapPathsDialog" class="map-path-dialog" aria-labelledby="mapPathsTitle">
             <header><div><small>MAPA DOS COMANDOS</small><h2 id="mapPathsTitle">Nova seção</h2></div><button id="mapPathsClose" type="button" aria-label="Fechar">×</button></header>
             <p id="mapPathsIntro">A nova seção aparece abaixo das existentes. Ligue os blocos para definir quando ela executa.</p>
-            <section id="mapSectionCreatePanel"><h3>Conteúdo da seção</h3><label>Nome<input id="mapPathName" placeholder="Ex.: recuperar falha no portal" maxlength="120" /></label>
-              <div class="map-path-fields"><label>Executar em<select id="mapPathEngine"><option value="desktop">Desktop</option><option value="chrome">Chrome · extensão do agente</option></select></label><label>Página no Chrome<input id="mapPathChromePage" type="number" min="1" value="1" /></label></div>
-              <label>Copiar automação da biblioteca<select id="mapPathLibrary"></select></label>
-              <div class="map-path-buttons"><button id="mapPathCreate" type="button">Criar vazio</button><button id="mapPathImport" type="button">Importar da biblioteca</button><button id="mapPathFile" type="button">Importar JSON / ZIP</button></div>
+            <section id="mapSectionCreatePanel">
+              <label>Nome da seção<input id="mapPathName" placeholder="Ex.: recuperar falha no portal" maxlength="120" /></label>
+              <label>Onde esta seção funciona<select id="mapPathEngine" aria-describedby="mapPathEngineHelp"><option value="desktop">Programas do computador</option><option value="chrome">Navegador Chrome</option></select></label>
+              <p id="mapPathEngineHelp" class="map-path-help"></p>
+              <label id="mapPathChromePageField" hidden>Página vinculada na extensão<input id="mapPathChromePage" type="number" min="1" value="1" aria-describedby="mapPathChromePageHelp" /><span id="mapPathChromePageHelp" class="map-path-help">Número da página na extensão que está vinculada à aba do site.</span></label>
+              <button id="mapPathCreate" class="map-path-primary" type="button">Criar seção</button>
+              <div class="map-path-import-area">
+                <label>Ou copiar uma automação<select id="mapPathLibrary"></select></label>
+                <div class="map-path-buttons"><button id="mapPathImport" type="button">Usar da biblioteca</button><button id="mapPathFile" type="button">Importar JSON / ZIP</button></div>
+              </div>
             </section>
             <section id="mapSectionConnectPanel" hidden><h3>Ligação entre blocos</h3><label>Bloco de origem<select id="mapPathSource"></select></label><div class="map-path-fields"><label>Saída<select id="mapPathRoute"><option value="success">Depois / sucesso</option><option value="failure">Não encontrou / falha</option></select></label><label>Seção ou bloco de destino<select id="mapPathTarget"></select></label></div><button id="mapPathConnect" type="button">Criar ligação</button><p>A ligação substitui a rota escolhida desse bloco. Você também pode retornar a um bloco específico de outra seção.</p></section>
+            <section id="mapSectionDeletePanel" hidden><div class="map-path-buttons"><button id="mapPathDeleteCancel" type="button">Cancelar</button><button id="mapPathDelete" class="map-path-danger" type="button">Apagar seção</button></div></section>
             <p id="mapPathFeedback" role="status" aria-live="polite"></p>
           </dialog>
         </section>
