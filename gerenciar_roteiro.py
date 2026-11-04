@@ -17,7 +17,7 @@ from html.parser import HTMLParser
 from datetime import datetime
 from pathlib import Path
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 
 ARQUIVO_SAIDA = Path("mapeamento_teclado.json")
@@ -886,6 +886,18 @@ def passo_chrome_base(evento, tipo, detalhes):
 
 
 def converter_evento_para_chrome(evento, colunas_relatorio=None, pasta_automacao=None):
+    passo, aviso = _converter_evento_para_chrome(evento, colunas_relatorio, pasta_automacao)
+    detalhes = (evento or {}).get("detalhes") or {}
+    if passo:
+        passo.update(detalhes.get("chrome_import_extras") or {})
+        for route in ("success", "failure"):
+            delay = detalhes.get("chrome_" + route + "_delay_ms")
+            if delay is not None:
+                passo["on_" + route]["delay_ms"] = delay
+    return passo, aviso
+
+
+def _converter_evento_para_chrome(evento, colunas_relatorio=None, pasta_automacao=None):
     """Converte os blocos que fazem sentido dentro de uma pagina Chrome."""
     tipo = str((evento or {}).get("tipo") or "").strip()
     detalhes = (evento or {}).get("detalhes") or {}
@@ -998,7 +1010,7 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None, pasta_automacao
                 "timeout_ms": max(500, round(float(detalhes.get("timeout") or 8) * 1000)),
                 "confidence": max(0.35, min(1.0, float(detalhes.get("confianca") or 0.72))),
                 "action": str(detalhes.get("acao_ocr") or "clicar").strip().lower(),
-                "click": str(detalhes.get("acao_ocr") or "clicar").strip().lower() == "clicar",
+                "click": bool(detalhes.get("clicar", True)) and str(detalhes.get("acao_ocr") or "clicar").strip().lower() == "clicar",
                 "clicks": max(1, int(detalhes.get("cliques") or 1)),
                 "offset_x": offset_x,
                 "offset_y": offset_y,
@@ -3236,6 +3248,85 @@ def remover_secao_mapa(payload, sequencia):
     remapear_referencias_de_blocos(payload, ordens_anteriores)
 
 
+def converter_projeto_chrome_importado(projeto, pasta):
+    """Recover editable Studio blocks from a Chrome export without executing it."""
+    passos = projeto.get("steps")
+    if projeto.get("schema") != "flowdetect_chrome_automation" or not isinstance(passos, list) or not passos or not all(isinstance(p, dict) for p in passos):
+        raise ValueError("Escolha um JSON ou ZIP de automacao FlowDetect valido.")
+    tipos = {"ocr_text", "key_sequence", "data_source", "report_result", "navigate", "focused_text", "loop_start", "loop_end", "visual_match", "element_action"}
+    desconhecidos = sorted({str(p.get("type")) for p in passos if p.get("type") not in tipos})
+    if desconhecidos:
+        raise ValueError("Este JSON Chrome possui tipos ainda nao importaveis: " + ", ".join(desconhecidos) + ". Use o ZIP original do Studio para esses blocos.")
+    pasta = Path(pasta)
+
+    def imagem(recurso, indice):
+        if not recurso:
+            return ""
+        data = recurso.get("data_url", "") if isinstance(recurso, dict) else str(recurso)
+        match = re.fullmatch(r"data:image/(png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=\r\n]+)", data)
+        if not match:
+            raise ValueError(f"Bloco {indice}: imagem precisa estar incorporada ao JSON Chrome.")
+        destino = pasta / "imagens" / f"chrome_{indice}.{match[1]}"
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_bytes(base64.b64decode(match[2], validate=True))
+        return str(destino.relative_to(pasta)).replace("\\", "/")
+
+    eventos = []
+    for indice, passo in enumerate(passos, 1):
+        tipo = passo["type"]
+        detalhes = {}
+        evento = {"ordem": int(passo.get("source_order") or indice), "sequencia": normalizar_nome_sequencia(passo.get("sequence")), "intervalo_antes": float(passo.get("delay_ms") or 0) / 1000, "texto": "", "teclas": [], "detalhes": detalhes}
+        for route, sufixo in (("success", "sucesso"), ("failure", "nao_encontrar")):
+            fluxo = passo.get("on_" + route) or {}
+            detalhes.update({"ao_" + sufixo: fluxo.get("action") or "continuar", "bloco_" + sufixo: fluxo.get("block") or "", "sequencia_" + sufixo: fluxo.get("sequence") or ""})
+            if "delay_ms" in fluxo:
+                detalhes["chrome_" + route + "_delay_ms"] = fluxo["delay_ms"]
+        extras = {key: passo[key] for key in ("rows", "click_anchor", "ocr_targets", "visual_fallback", "editable_ocr") if key in passo}
+        if extras:
+            detalhes["chrome_import_extras"] = extras
+        if tipo in {"ocr_text", "visual_match"}:
+            evento["tipo"] = "clicar_imagem"
+            detalhes.update(clicar=passo.get("click", True), timeout=float(passo.get("timeout_ms") or 8000)/1000, confianca=passo.get("confidence", .72), cliques=passo.get("clicks", 1), offset_x=passo.get("offset_x", 0), offset_y=passo.get("offset_y", 0), quantidade_tentativas=passo.get("attempts", 1), intervalo_tentativas=float(passo.get("interval_ms") or 0)/1000)
+            if tipo == "ocr_text":
+                detalhes.update(modo_reconhecimento="texto_ocr", fonte_ocr="legado" if passo.get("visual_fallback") else "chrome", texto_ocr_busca=passo.get("text", ""), acao_ocr=passo.get("action") or ("clicar" if passo.get("click", True) else "continuar"))
+                detalhes["imagem"] = imagem(passo.get("visual_fallback") or passo.get("preview_image"), indice)
+            else:
+                detalhes.update(modo_reconhecimento="imagem", imagem=imagem(passo.get("image"), indice), clicar=passo.get("click", True))
+        elif tipo == "data_source":
+            evento["tipo"] = "sequencia_planilha"
+            nome = str(passo.get("name") or "valor")
+            valores, linhas = passo.get("values") or [], passo.get("rows") or []
+            if linhas and len(linhas) != len(valores):
+                raise ValueError(f"Bloco {indice}: dados e linhas da planilha possuem tamanhos diferentes.")
+            colunas = list(dict.fromkeys([nome] + [str(k) for linha in linhas for k in linha]))
+            workbook = Workbook(); sheet = workbook.active; sheet.title = "Dados"; sheet.append(colunas)
+            for i, valor in enumerate(valores):
+                linha = dict(linhas[i]) if linhas else {}; linha[nome] = valor
+                sheet.append([json.dumps(linha[c], ensure_ascii=False) if isinstance(linha.get(c), (dict, list)) else linha.get(c) for c in colunas])
+            arquivo = pasta / f"chrome_dados_{indice}.xlsx"; workbook.save(arquivo); workbook.close()
+            detalhes.update(arquivo=arquivo.name, aba="Dados", coluna=nome, valores=valores, intervalo_entre_itens=float(passo.get("interval_ms") or 0)/1000)
+        elif tipo == "report_result":
+            evento["tipo"] = "resultado_relatorio"
+            for original, destino in {"status":"status", "tone":"tom", "result":"resultado", "confirmation":"confirmacao", "report_column":"coluna_relatorio", "result_column":"coluna_resultado", "confirmation_column":"coluna_confirmacao"}.items():
+                detalhes[destino] = passo.get(original, "")
+        elif tipo == "key_sequence":
+            evento.update(tipo="atalho" if len(passo.get("keys") or []) > 1 else "tecla", teclas=passo.get("keys") or [])
+            detalhes["repeticoes"] = passo.get("repetitions", 1)
+        elif tipo == "focused_text":
+            evento.update(tipo="texto_livre", texto=passo.get("text", "")); detalhes["limpar_antes"] = passo.get("clear_before", False)
+        elif tipo == "navigate":
+            evento["tipo"] = "abrir_url"; detalhes.update(url=passo.get("url", ""), aguardar_segundos=float(passo.get("timeout_ms") or 10000)/1000)
+        elif tipo == "element_action":
+            selector = passo.get("selector") or {}; acao = passo.get("action") or {}
+            if selector.get("method", "css") != "css" or acao.get("type") not in {"clicar", "verificar_existe"}:
+                raise ValueError(f"Bloco {indice}: use o projeto Studio para importar esse seletor ou acao de elemento.")
+            evento["tipo"] = "procurar_texto_ocr"; detalhes.update(fonte_ocr="elemento", texto=selector.get("value", ""), clicar=acao["type"]=="clicar", acao="clicar" if acao["type"]=="clicar" else "continuar", cliques=passo.get("clicks", 1), timeout=float(passo.get("timeout_ms") or 8000)/1000)
+        else:
+            evento["tipo"] = "inicio_loop" if tipo == "loop_start" else "fim_loop"
+        eventos.append(evento)
+    return {"sequencia_inicial": normalizar_nome_sequencia(projeto.get("initial_sequence")), "eventos": eventos}
+
+
 def comando_caminhos_mapa(args):
     pedido = json.loads(args.request)
     payload = carregar_e_normalizar()
@@ -3257,10 +3348,15 @@ def comando_caminhos_mapa(args):
                     pasta = arquivo.parent
                 else:
                     raise ValueError("Escolha um projeto JSON ou ZIP FlowDetect.")
-                if "eventos" not in origem:
-                    raise ValueError("Use o JSON original do Studio ou seu ZIP. O JSON convertido da extensao nao e um projeto editavel.")
+                chrome_importado = "eventos" not in origem and origem.get("schema") == "flowdetect_chrome_automation"
+                if chrome_importado:
+                    pasta = Path(temp) / "chrome_convertido"
+                    pasta.mkdir(parents=True, exist_ok=True)
+                    origem = converter_projeto_chrome_importado(origem, pasta)
+                elif "eventos" not in origem:
+                    raise ValueError("Arquivo sem blocos reconhecidos. Escolha um projeto JSON ou ZIP FlowDetect.")
                 caminho = mesclar_caminho_mapa(payload, origem, pedido.get("name") or arquivo.stem, pedido.get("parent") or "principal", pasta)
-                caminho.update(engine="chrome" if pedido.get("engine") == "chrome" else "desktop", page_id=str(pedido.get("pageId") or ""))
+                caminho.update(engine="chrome" if chrome_importado or pedido.get("engine") == "chrome" else "desktop", page_id=str(pedido.get("pageId") or "1"))
             return salvar_e_retornar(payload)
         if acao == "import":
             automacao_id = str(pedido.get("id") or "")

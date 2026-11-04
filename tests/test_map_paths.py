@@ -13,6 +13,44 @@ from executar_automacao import ExecutorAutomacao
 
 
 class MapPathsTests(unittest.TestCase):
+    def test_chrome_json_recovers_editable_blocks_routes_images_and_data(self):
+        project = {'schema': 'flowdetect_chrome_automation', 'initial_sequence': 'principal', 'steps': [
+            {'type': 'ocr_text', 'source_order': 2, 'sequence': 'principal', 'text': 'Pesquisar', 'action': 'clicar', 'click': False, 'offset_x': 20, 'click_anchor': {'from_text_left': 22}, 'preview_image': {'data_url': 'data:image/png;base64,aW1hZ2U='}, 'on_failure': {'action': 'ir_para_bloco', 'block': 8, 'delay_ms': 300}},
+            {'type': 'data_source', 'source_order': 4, 'sequence': 'principal', 'name': 'Codigo', 'values': ['330'], 'rows': [{'Empresa': 'Teste'}]},
+            {'type': 'key_sequence', 'source_order': 6, 'sequence': 'principal', 'keys': ['enter'], 'repetitions': 2},
+            {'type': 'report_result', 'source_order': 8, 'sequence': 'principal', 'status': 'OK', 'result': 'Finalizado'}]}
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory); source = base / 'source'; source.mkdir()
+            recovered = helper.converter_projeto_chrome_importado(project, source)
+            current = {'eventos': [{'ordem': 1, 'sequencia': 'principal', 'tipo': 'texto_livre', 'texto': 'Antes'}]}
+            with patch.object(helper, 'PASTA_IMAGENS', base / 'images'), patch.object(helper, 'DIRETORIO_PLANILHAS', base / 'sheets'):
+                helper.mesclar_caminho_mapa(current, recovered, 'Chrome', 'principal', source)
+            ocr = current['eventos'][1]
+            self.assertEqual(ocr['detalhes']['bloco_nao_encontrar'], 5)
+            self.assertTrue(Path(ocr['detalhes']['imagem']).is_file())
+            exported, warning = helper.converter_evento_para_chrome(ocr)
+            self.assertIsNone(warning)
+            self.assertEqual(exported['on_failure'], {'action': 'ir_para_bloco', 'block': 5, 'sequence': '', 'delay_ms': 300})
+            self.assertEqual(exported['click_anchor'], project['steps'][0]['click_anchor'])
+            self.assertFalse(exported['click'])
+            data = current['eventos'][2]
+            self.assertTrue(Path(data['detalhes']['arquivo']).is_file())
+            exported, warning = helper.converter_evento_para_chrome(data)
+            self.assertEqual(exported['values'], ['330'])
+            self.assertEqual(exported['rows'], [{'Empresa': 'Teste'}])
+            with self.assertRaisesRegex(ValueError, 'ainda nao importaveis'):
+                helper.converter_projeto_chrome_importado({'schema': project['schema'], 'steps': [{'type': 'unknown'}]}, source)
+
+    def test_section_count_matches_nonempty_map_lanes_and_library_summary(self):
+        payload = {'eventos': [{'sequencia': 'principal'}, {'sequencia': 'principal'}, {'sequencia': 'web'}],
+                   'map_paths': [{'sequences': ['web', 'empty']}]}
+        self.assertEqual(helper.contar_secoes_payload(payload), 2)
+        self.assertEqual(helper.contar_secoes_payload({'eventos': []}), 0)
+        with patch.object(helper, 'carregar_biblioteca', return_value={'items': [{'id': 'test'}]}), \
+             patch.object(helper, 'obter_automacao_ativa_id', return_value='test'), \
+             patch.object(helper, 'carregar_payload_da_automacao', return_value=payload):
+            self.assertEqual(helper.listar_automacoes_resumidas()['items'][0]['section_count'], 2)
+
     def test_delete_section_clears_incoming_routes_and_preserves_other_sections(self):
         payload = {'sequencia_inicial': 'principal', 'eventos': [
             {'ordem': 1, 'sequencia': 'principal', 'detalhes': {'ao_sucesso': 'ir_para_bloco', 'bloco_sucesso': 2, 'ocr_targets': [{'falha': {'action': 'ir_para_sequencia', 'sequencia': 'web'}}]}},
@@ -32,16 +70,6 @@ class MapPathsTests(unittest.TestCase):
         self.assertEqual(payload['configuracoes_sequencia']['principal']['after_loop_sequence'], '')
         with self.assertRaises(ValueError):
             helper.remover_secao_mapa(payload, 'web')
-
-    def test_section_count_matches_nonempty_map_lanes_and_library_summary(self):
-        payload = {'eventos': [{'sequencia': 'principal'}, {'sequencia': 'principal'}, {'sequencia': 'web'}],
-                   'map_paths': [{'sequences': ['web', 'empty']}]}
-        self.assertEqual(helper.contar_secoes_payload(payload), 2)
-        self.assertEqual(helper.contar_secoes_payload({'eventos': []}), 0)
-        with patch.object(helper, 'carregar_biblioteca', return_value={'items': [{'id': 'test'}]}), \
-             patch.object(helper, 'obter_automacao_ativa_id', return_value='test'), \
-             patch.object(helper, 'carregar_payload_da_automacao', return_value=payload):
-            self.assertEqual(helper.listar_automacoes_resumidas()['items'][0]['section_count'], 2)
 
     def test_import_remaps_nested_routes_and_isolates_resources(self):
         with tempfile.TemporaryDirectory() as directory:
