@@ -13644,28 +13644,26 @@ function renderLauncherCreateCard() {
             <div class="automation-library-top automation-library-top--create">
               <div>
                 <p class="panel-kicker">Novo projeto</p>
-                <h3>Novo card de automacao</h3>
+                <h3>Nova automação</h3>
               </div>
-              <button class="launcher-flip-trigger" type="button" data-library-action="create-cancel">Cancelar</button>
             </div>
             <div class="automation-library-create-form">
               <label class="automation-library-create-field">
                 <span>Nome</span>
-                <input data-create-field="nome" type="text" placeholder="Ex.: Cadastro de Cliente Alterdata" value="${escapeHtml(draft.nome || "")}" />
+                <input data-create-field="nome" type="text" placeholder="Ex.: Cadastro de cliente" value="${escapeHtml(draft.nome || "")}" />
               </label>
               <label class="automation-library-create-field">
                 <span>Categoria</span>
                 <input data-create-field="categoria" type="text" list="launcherCategorySuggestions" placeholder="Alterdata" value="${escapeHtml(draft.categoria || "")}" />
               </label>
               <label class="automation-library-create-field automation-library-create-field--full">
-                <span>Descricao</span>
-                <textarea data-create-field="descricao" rows="4" placeholder="Explique rapidamente o objetivo da automacao">${escapeHtml(draft.descricao || "")}</textarea>
+                <span>Descrição</span>
+                <textarea data-create-field="descricao" rows="4" placeholder="Objetivo da automação">${escapeHtml(draft.descricao || "")}</textarea>
               </label>
             </div>
             <div class="automation-library-actions automation-library-actions--create">
-              <button class="ghost-button secondary-inline-action" data-library-action="import">Importar ZIP</button>
               <button class="ghost-button secondary-inline-action" data-library-action="create-cancel">Cancelar</button>
-              <button class="primary-button primary-inline-action" data-library-action="create-confirm">Criar automacao</button>
+              <button class="primary-button primary-inline-action" data-library-action="create-confirm">Criar automação</button>
             </div>
           </section>
         </div>
@@ -13677,11 +13675,14 @@ function renderLauncherCreateCard() {
     <article class="automation-library-card automation-library-card--create" data-automation-id="__new__">
       <div class="automation-library-card-stage">
         <section class="automation-library-card-face automation-library-card-front automation-library-create-face">
+          <div class="automation-library-create-symbol" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+          </div>
           <p class="panel-kicker">Novo projeto</p>
-          <h3>Criar automacao</h3>
-          <p class="automation-library-description">Inicie outra automacao sem sair da biblioteca.</p>
+          <h3>Criar automação</h3>
+          <p class="automation-library-description">Inicie outra automação sem sair da biblioteca.</p>
           <div class="automation-library-actions">
-            <button class="primary-button primary-inline-action" data-library-action="create">+ Nova automacao</button>
+            <button class="primary-button primary-inline-action" data-library-action="create">+ Nova automação</button>
             <button class="ghost-button secondary-inline-action" data-library-action="import">Importar ZIP</button>
           </div>
         </section>
@@ -13910,7 +13911,7 @@ function renderLauncherLibrary() {
             descricao: item.descricao || "",
           };
       return `
-        <article class="automation-library-card${activeClass}${editingClass}${flippedClass}" data-automation-id="${escapeHtml(item.id)}">
+        <article class="automation-library-card${activeClass}${editingClass}${flippedClass}" data-library-theme="${String(item.categoria||'').toLowerCase().includes('alterdata')?'violet':String(item.categoria||'').toLowerCase().includes('chrome')?'cyan':'blue'}" data-automation-id="${escapeHtml(item.id)}">
           <div class="automation-library-card-stage">
             <section class="automation-library-card-face automation-library-card-front">
               <div class="automation-library-top">
@@ -13934,6 +13935,10 @@ function renderLauncherLibrary() {
                   <span>
                     <small>Sequencias</small>
                     <strong>${escapeHtml(item.sequence_count ?? 1)}</strong>
+                  </span>
+                  <span>
+                    <small>Seções</small>
+                    <strong>${escapeHtml(item.section_count ?? (item.command_count ? item.sequence_count ?? 1 : 0))}</strong>
                   </span>
                   <span>
                     <small>Execucoes</small>
@@ -13979,7 +13984,7 @@ function renderLauncherLibrary() {
                           <input type="text" value="${escapeHtml(String(editDraft.categoria || ""))}" list="launcherCategorySuggestions" data-library-edit-field="categoria" />
                         </label>
                         <label class="automation-library-card-edit-field automation-library-card-edit-field--full">
-                          <span>Descricao</span>
+                          <span>Descrição</span>
                           <textarea rows="5" data-library-edit-field="descricao">${escapeHtml(String(editDraft.descricao || ""))}</textarea>
                         </label>
                         <div class="automation-library-id">ID: ${escapeHtml(item.id)}</div>
