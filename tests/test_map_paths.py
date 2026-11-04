@@ -13,6 +13,16 @@ from executar_automacao import ExecutorAutomacao
 
 
 class MapPathsTests(unittest.TestCase):
+    def test_section_count_matches_nonempty_map_lanes_and_library_summary(self):
+        payload = {'eventos': [{'sequencia': 'principal'}, {'sequencia': 'principal'}, {'sequencia': 'web'}],
+                   'map_paths': [{'sequences': ['web', 'empty']}]}
+        self.assertEqual(helper.contar_secoes_payload(payload), 2)
+        self.assertEqual(helper.contar_secoes_payload({'eventos': []}), 0)
+        with patch.object(helper, 'carregar_biblioteca', return_value={'items': [{'id': 'test'}]}), \
+             patch.object(helper, 'obter_automacao_ativa_id', return_value='test'), \
+             patch.object(helper, 'carregar_payload_da_automacao', return_value=payload):
+            self.assertEqual(helper.listar_automacoes_resumidas()['items'][0]['section_count'], 2)
+
     def test_import_remaps_nested_routes_and_isolates_resources(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)

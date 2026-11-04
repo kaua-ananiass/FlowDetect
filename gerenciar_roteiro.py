@@ -1205,6 +1205,7 @@ def listar_automacoes_resumidas():
                 **item,
                 "active": str(item["id"]) == str(ativos),
                 "command_count": contar_blocos_payload(payload),
+                "section_count": contar_secoes_payload(payload),
                 "sequence_count": len({normalizar_nome_sequencia(evento.get("sequencia")) for evento in payload.get("eventos", [])}) or 1,
             }
         )
@@ -2945,6 +2946,7 @@ def payload_para_resposta(payload):
             "spreadsheet_blocks": sum(1 for evento in eventos if evento.get("tipo") == "sequencia_planilha"),
             "unknown_blocks": sum(1 for evento in eventos if str(evento.get("tipo") or "").strip() not in TIPOS_SUPORTADOS_RUNTIME),
             "sequence_count": len({normalizar_nome_sequencia(evento.get("sequencia")) for evento in eventos}) or 1,
+            "section_count": contar_secoes_payload(payload),
         },
         "events": [card_do_evento(evento) for evento in eventos],
         "map_paths": payload.get("map_paths", []),
@@ -3168,6 +3170,11 @@ def mesclar_caminho_mapa(payload, origem, nome, pagina, pasta_origem=None):
     payload.setdefault("map_paths", []).append(caminho)
     payload["map_paths"].extend(filhos)
     return caminho
+
+
+def contar_secoes_payload(payload):
+    """Count the nonempty lanes rendered as sections in the command map."""
+    return len({normalizar_nome_sequencia(e.get("sequencia")) for e in (payload or {}).get("eventos", [])})
 
 
 def comando_caminhos_mapa(args):
