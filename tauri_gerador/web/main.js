@@ -1778,6 +1778,42 @@ function commandMapSectionReturnPath(source, target, laneY, laneIndex = 0) {
   return {d,startX,endX};
 }
 
+function fitCommandMapSectionBounds(stage) {
+  if (!stage || state.commandMapTreeNodeDrag) return;
+  const scale = stage.offsetWidth ? stage.getBoundingClientRect().width / stage.offsetWidth : 0;
+  if (!scale) return;
+  let previousBottom = 16;
+  let firstSection = true;
+  for (const section of stage.querySelectorAll('.map-canvas-section')) {
+    const slots = Array.from(stage.querySelectorAll('[data-tree-node-sequence]'))
+      .filter(slot => slot.dataset.treeNodeSequence === section.dataset.mapSection);
+    if (!slots.length) continue;
+    const stageTop = stage.getBoundingClientRect().top;
+    const cards = slots.map(slot => slot.querySelector('.command-tree-card') || slot);
+    const top = Math.min(...cards.map(card => (card.getBoundingClientRect().top - stageTop) / scale));
+    const bottom = Math.max(...cards.map(card => (card.getBoundingClientRect().bottom - stageTop) / scale));
+    const shift = firstSection ? 0 : Math.max(0, previousBottom + 140 - top);
+    firstSection = false;
+    if (shift) {
+      const orders = new Set(slots.map(slot => slot.dataset.treeNodeOrder));
+      slots.forEach(slot => slot.style.top = `${parseFloat(slot.style.top) + shift}px`);
+      stage.querySelectorAll('[data-tree-edge-source-order]').forEach(label => {
+        if (!orders.has(label.dataset.treeEdgeSourceOrder)) return;
+        label.style.top = `${parseFloat(label.style.top) + shift}px`;
+        label.dataset.treeEdgeLaneY = String(Number(label.dataset.treeEdgeLaneY || 0) + shift);
+      });
+    }
+    const sectionTop = Math.max(16, top + shift - 140);
+    previousBottom = bottom + shift + 240;
+    section.style.top = `${sectionTop}px`;
+    section.style.height = `${previousBottom - sectionTop}px`;
+    previousBottom += 48;
+  }
+  const footer = stage.querySelector('.map-section-add');
+  if (footer) footer.style.top = `${previousBottom}px`;
+  stage.style.height = `${Math.max(parseFloat(stage.style.height) || 0, previousBottom + 110)}px`;
+}
+
 function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive = false) {
   if (!root || (!allowInactive && state.activeTab !== "commands")) {
     return;
@@ -1788,6 +1824,7 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
   }
   clearCommandMapTreeReferenceLayer(tree);
   const stage = tree.querySelector(".command-map-tree-stage");
+  fitCommandMapSectionBounds(stage);
   const edgeLabels = stage ? Array.from(stage.querySelectorAll("[data-tree-edge-source-order]")) : [];
   if (stage && edgeLabels.length) {
     const stageRect = stage.getBoundingClientRect();
@@ -21691,6 +21728,15 @@ function buildCommandMapTreeStageLayout(events, pageDefinition, { includeInsertP
       node.x = Math.max(16, manualX);
       node.y = Math.max(24, manualY);
     }
+  });
+  // Old manually saved positions must not pull a section over the previous one.
+  let nextLaneTop = constants.rowTop;
+  lanes.forEach(sequence => {
+    const laneNodes = nodes.filter(node => normalizeSequenceName(node.event.sequence) === sequence);
+    const top = Math.min(...laneNodes.map(node => node.y));
+    const shift = lanes.indexOf(sequence) === 0 ? 0 : Math.max(0, nextLaneTop - top);
+    laneNodes.forEach(node => node.y += shift);
+    nextLaneTop = Math.max(...laneNodes.map(node => node.y)) + 850;
   });
   const insertPreview = includeInsertPreview ? getCommandMapTreeInsertPreview(events, nodes, constants) : null;
   if (insertPreview) {
