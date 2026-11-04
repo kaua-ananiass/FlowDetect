@@ -60,7 +60,15 @@ const COMMAND_MAP_TREE_LAYOUT_STORAGE_KEY = "flowdetect_command_map_tree_layout_
 function loadCommandMapTreeLayouts() {
   try {
     const parsed = JSON.parse(window.localStorage?.getItem(COMMAND_MAP_TREE_LAYOUT_STORAGE_KEY) || "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    let migrated=false;
+    for(const [page,positions] of Object.entries(parsed)){
+      if(positions&&typeof positions==='object'&&Object.keys(positions).some(key=>key.startsWith('section:'))){
+        delete parsed[page];migrated=true;
+      }
+    }
+    if(migrated)window.localStorage?.setItem(COMMAND_MAP_TREE_LAYOUT_STORAGE_KEY,JSON.stringify(parsed));
+    return parsed;
   } catch {
     return {};
   }
@@ -239,7 +247,7 @@ const state = {
   },
   commandMapZoom: 1,
   commandMapRequestedZoom: 1,
-  commandMapViewMode: "sequence",
+  commandMapViewMode: "tree",
   commandMapPageSequence: "principal",
   commandMapPageSequenceLock: null,
   commandMapFocusOrder: null,
@@ -20716,8 +20724,8 @@ function renderTimeline() {
 }
 
 
-function normalizeCommandMapViewMode(mode = "sequence") {
-  return String(mode || "sequence").trim().toLowerCase() === "tree" ? "tree" : "sequence";
+function normalizeCommandMapViewMode() {
+  return "tree";
 }
 
 function commandMapTreeLayoutPageKey(pageSequence = state.commandMapPageSequence) {
@@ -22272,7 +22280,7 @@ function renderCommandMap(options = {}) {
   syncCommandMapViewModeControls();
   if (!events.length) {
     state.expandedTreeCardOrder = null;
-    commandMapList.innerHTML = renderEmptyCommandMapStarter()+'<button class="map-section-empty-add" data-map-section-action="create" type="button">＋ Adicionar seção</button>';
+    commandMapList.innerHTML = renderEmptyCommandMapStarter();
     applyCommandMapZoom();
     updateCommandMapNavButtons();
     return;

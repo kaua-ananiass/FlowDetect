@@ -50,7 +50,8 @@ test('map imports an editable lower lane and draws a failure connection inside t
     await page.addStyleTag({content:'#loginOverlay{display:none!important}.builder-shell{visibility:visible!important;pointer-events:auto!important;filter:none!important}'});
     await page.locator('#commandTabButton').click();
     assert.equal(await page.locator('#mapPathsButton').count(),0);
-    await page.locator('[data-command-map-view=tree]').click();
+    assert.equal(await page.locator('.map-view-controls').count(),0);
+    await page.waitForFunction(()=>document.querySelector('.command-map-shell')?.dataset.commandMapView==='tree');
     await page.locator('#mapPathsFit').click();
     await page.locator('.map-section-add').click();
     assert.equal(await page.locator('#mapSectionConnectPanel').isVisible(),false);
