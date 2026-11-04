@@ -3177,6 +3177,65 @@ def contar_secoes_payload(payload):
     return len({normalizar_nome_sequencia(e.get("sequencia")) for e in (payload or {}).get("eventos", [])})
 
 
+def remover_secao_mapa(payload, sequencia):
+    sequencia = str(sequencia or "").strip()
+    eventos = payload.get("eventos", [])
+    removidos = [e for e in eventos if normalizar_nome_sequencia(e.get("sequencia")) == sequencia]
+    if not sequencia or not removidos:
+        raise ValueError("A secao nao possui blocos ou ja foi removida.")
+    ordens_removidas = {int(e["ordem"]) for e in removidos}
+    ordens_anteriores = mapa_ordens_eventos_existentes(eventos)
+    payload["eventos"] = [e for e in eventos if e not in removidos]
+
+    def limpar_rotas(valor):
+        if isinstance(valor, list):
+            for item in valor:
+                limpar_rotas(item)
+        elif isinstance(valor, dict):
+            for campo, destino in list(valor.items()):
+                if isinstance(destino, (dict, list)):
+                    limpar_rotas(destino)
+                    continue
+                bloco = campo.startswith("bloco_") or campo in {"bloco", "block"}
+                seq = campo.startswith("sequencia_") or campo in {"sequencia", "sequence", "after_loop_sequence"}
+                invalido = (bloco and str(destino).isdigit() and int(destino) in ordens_removidas) or (seq and destino == sequencia)
+                if not invalido:
+                    continue
+                valor[campo] = ""
+                if campo.startswith(("bloco_", "sequencia_")):
+                    sufixo = campo.split("_", 1)[1]
+                    valor["ao_" + sufixo] = "parar"
+                    valor["bloco_" + sufixo] = ""
+                    valor["sequencia_" + sufixo] = ""
+                else:
+                    for acao in ("acao", "action"):
+                        if acao in valor:
+                            valor[acao] = "parar"
+
+    for evento in payload["eventos"]:
+        limpar_rotas(evento.get("detalhes", {}))
+    configs = payload.get("configuracoes_sequencia", {})
+    configs.pop(sequencia, None)
+    limpar_rotas(configs)
+    paths = payload.get("map_paths", [])
+    dono = next((p for p in paths if sequencia in p.get("sequences", [])), {})
+    pai = dono.get("parent") or "principal"
+    restantes = []
+    for path in paths:
+        path["sequences"] = [s for s in path.get("sequences", []) if s != sequencia]
+        if not path["sequences"]:
+            continue
+        if path.get("entry_sequence") == sequencia:
+            path["entry_sequence"] = path["sequences"][0]
+        if path.get("parent") == sequencia:
+            path["parent"] = pai
+        restantes.append(path)
+    payload["map_paths"] = restantes
+    if payload.get("sequencia_inicial") == sequencia:
+        payload["sequencia_inicial"] = pai
+    remapear_referencias_de_blocos(payload, ordens_anteriores)
+
+
 def comando_caminhos_mapa(args):
     pedido = json.loads(args.request)
     payload = carregar_e_normalizar()
@@ -3215,6 +3274,8 @@ def comando_caminhos_mapa(args):
         caminho = mesclar_caminho_mapa(payload, origem, pedido.get("name") or item["nome"], pedido.get("parent") or "principal", pasta)
         caminho["engine"] = "chrome" if pedido.get("engine") == "chrome" else "desktop"
         caminho["page_id"] = str(pedido.get("pageId") or "")
+    elif acao == "delete":
+        remover_secao_mapa(payload, pedido.get("sequence"))
     elif acao == "connect":
         _, evento = localizar_evento(payload, int(pedido["source"]))
         alvo = str(pedido.get("sequence") or "")

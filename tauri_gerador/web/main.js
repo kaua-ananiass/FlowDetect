@@ -21969,7 +21969,7 @@ function renderCommandMapTreeView(events, pageDefinition) {
   const sections=sequences.map((sequence,index)=>{
     const nodes=layout.nodes.filter(node=>normalizeSequenceName(node.event.sequence)===sequence);
     const path=(state.roadmap?.map_paths||[]).find(path=>path.sequences.includes(sequence));
-    return {sequence,index,nodes,path,top:Math.max(16,Math.min(...nodes.map(node=>node.y))-100),bottom:Math.max(...nodes.map(node=>node.y+700))};
+    return {sequence,index,nodes,path,top:Math.max(16,Math.min(...nodes.map(node=>node.y))-140),bottom:Math.max(...nodes.map(node=>node.y+700))};
   });
   const footerY=Math.max(...sections.map(section=>section.bottom))+36;
   const stageHeight=Math.max(layout.height,footerY+110);
@@ -21980,7 +21980,7 @@ function renderCommandMapTreeView(events, pageDefinition) {
         style="width:${Math.ceil(layout.width)}px;height:${Math.ceil(stageHeight)}px"
       >
         ${sections.map(({sequence,index,nodes,path,top,bottom})=>{
-          return `<section class="map-canvas-section" data-map-section="${escapeHtml(sequence)}" aria-label="${escapeHtml(path?.name||pageDefinition.label)}" style="left:24px;top:${top}px;width:${Math.max(640,layout.width-48)}px;height:${bottom-top}px"><header class="map-section-header"><div class="map-path-lane-title"><span class="map-section-number">SEÇÃO ${String(index+1).padStart(2,'0')}</span><strong>${escapeHtml(path?.name||pageDefinition.label)}</strong><span>${path?.engine==='chrome'?'Chrome · extensão':'Desktop'} · ${nodes.length} blocos</span></div><button type="button" data-map-section-action="connect" data-map-section-sequence="${escapeHtml(sequence)}">Conectar blocos ↗</button></header></section>`;
+          return `<section class="map-canvas-section" data-map-section="${escapeHtml(sequence)}" aria-label="${escapeHtml(path?.name||pageDefinition.label)}" style="left:24px;top:${top}px;width:${Math.max(640,layout.width-48)}px;height:${bottom-top}px"><header class="map-section-header"><div class="map-path-lane-title"><span class="map-section-number">SEÇÃO ${String(index+1).padStart(2,'0')}</span><strong>${escapeHtml(path?.name||pageDefinition.label)}</strong><span>${path?.engine==='chrome'?'Chrome · extensão':'Desktop'} · ${nodes.length} blocos</span></div><div class="map-section-actions"><button type="button" data-map-section-action="connect" data-map-section-sequence="${escapeHtml(sequence)}">Conectar blocos ↗</button><button type="button" class="map-section-delete" data-map-section-action="delete" data-map-section-sequence="${escapeHtml(sequence)}" aria-label="Apagar seção ${escapeHtml(path?.name||pageDefinition.label)}" title="Apagar seção"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div></header></section>`;
         }).join("")}
         ${layout.edges.map((edge) => renderCommandMapTreeStageEdgeLabel(edge)).join("")}
         ${layout.terminals.map((terminal) => renderCommandMapTreeStageTerminal(terminal)).join("")}

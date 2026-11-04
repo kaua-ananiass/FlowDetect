@@ -13,6 +13,26 @@ from executar_automacao import ExecutorAutomacao
 
 
 class MapPathsTests(unittest.TestCase):
+    def test_delete_section_clears_incoming_routes_and_preserves_other_sections(self):
+        payload = {'sequencia_inicial': 'principal', 'eventos': [
+            {'ordem': 1, 'sequencia': 'principal', 'detalhes': {'ao_sucesso': 'ir_para_bloco', 'bloco_sucesso': 2, 'ocr_targets': [{'falha': {'action': 'ir_para_sequencia', 'sequencia': 'web'}}]}},
+            {'ordem': 2, 'sequencia': 'web', 'detalhes': {}},
+            {'ordem': 3, 'sequencia': 'other', 'detalhes': {'ao_sucesso': 'ir_para_bloco', 'bloco_sucesso': 1}}],
+            'map_paths': [{'id': 'p', 'parent': 'principal', 'entry_sequence': 'web', 'sequences': ['web', 'other']}, {'id': 'child', 'parent': 'web', 'entry_sequence': 'child', 'sequences': ['child']}],
+            'configuracoes_sequencia': {'web': {}, 'principal': {'after_loop_sequence': 'web'}}}
+        helper.remover_secao_mapa(payload, 'web')
+        self.assertEqual([e['sequencia'] for e in payload['eventos']], ['principal', 'other'])
+        self.assertEqual(payload['eventos'][0]['detalhes']['ao_sucesso'], 'parar')
+        self.assertEqual(payload['eventos'][0]['detalhes']['bloco_sucesso'], '')
+        self.assertEqual(payload['eventos'][0]['detalhes']['ocr_targets'][0]['falha']['action'], 'parar')
+        self.assertEqual(payload['eventos'][1]['detalhes']['bloco_sucesso'], 1)
+        self.assertEqual(payload['map_paths'][0]['entry_sequence'], 'other')
+        self.assertEqual(payload['map_paths'][1]['parent'], 'principal')
+        self.assertNotIn('web', payload['configuracoes_sequencia'])
+        self.assertEqual(payload['configuracoes_sequencia']['principal']['after_loop_sequence'], '')
+        with self.assertRaises(ValueError):
+            helper.remover_secao_mapa(payload, 'web')
+
     def test_section_count_matches_nonempty_map_lanes_and_library_summary(self):
         payload = {'eventos': [{'sequencia': 'principal'}, {'sequencia': 'principal'}, {'sequencia': 'web'}],
                    'map_paths': [{'sequences': ['web', 'empty']}]}
@@ -81,9 +101,17 @@ class MapPathsTests(unittest.TestCase):
                 return json.loads(run.stdout)
             result = call({'action': 'create', 'name': 'Recuperar', 'parent': 'principal'})
             sequence = result['map_paths'][0]['entry_sequence']
+            self.assertEqual(result['summary']['section_count'], 2)
             result = call({'action': 'connect', 'source': 1, 'route': 'failure', 'sequence': sequence})
             self.assertEqual(result['events'][0]['details']['sequencia_nao_encontrar'], sequence)
             self.assertTrue(list((base / '.flowdetect_roteiro_history').glob('*.json')))
+            result = call({'action': 'delete', 'sequence': sequence})
+            self.assertEqual(len(result['events']), 1)
+            self.assertEqual(result['map_paths'], [])
+            self.assertEqual(result['summary']['section_count'], 1)
+            self.assertEqual(result['events'][0]['details']['ao_nao_encontrar'], 'parar')
+            result = call({'action': 'delete', 'sequence': 'principal'})
+            self.assertEqual(result['events'], [])
 
     def test_chrome_lane_mailbox_passes_entry_and_returns_desktop_route(self):
         executor = ExecutorAutomacao.__new__(ExecutorAutomacao)
