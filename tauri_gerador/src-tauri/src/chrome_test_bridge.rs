@@ -15,7 +15,7 @@ use std::{
 };
 
 const ADDRESS: &str = "127.0.0.1:18453";
-const EXTENSION_VERSION: &str = "0.2.72";
+const EXTENSION_VERSION: &str = "0.2.75";
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static BRIDGE: OnceLock<Arc<(Mutex<BridgeState>, Condvar)>> = OnceLock::new();
 
@@ -138,8 +138,14 @@ pub fn pair_chrome_extension(code: String) -> Result<Value, String> {
 pub async fn test_chrome_extension_recognition(
     textos: Vec<String>,
     selector: Option<String>,
+    capture: Option<Value>,
 ) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || wait_for_extension_test(textos, selector))
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(capture) = capture.filter(|value| value["enabled"] == true) {
+            return wait_for_job(json!({"type":"test_recognition","texts":textos,"selector":selector,"capture":capture}));
+        }
+        wait_for_extension_test(textos, selector)
+    })
         .await
         .map_err(|error| format!("Falha ao aguardar a extensao: {error}"))?
 }
