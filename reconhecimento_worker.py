@@ -4,16 +4,76 @@ import json
 import sys
 from pathlib import Path
 
+# The embedded Windows Python deliberately excludes the script directory from
+# sys.path. Load our sibling executor from this trusted runtime directory.
+ROOT = Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 from executar_automacao import ExecutorAutomacao
 
 
-ROOT = Path(__file__).resolve().parent
 ORIGINAL_STDOUT = sys.stdout
 
 
 def responder(payload):
     ORIGINAL_STDOUT.write(json.dumps(payload, ensure_ascii=True) + "\n")
     ORIGINAL_STDOUT.flush()
+
+
+def testar_variavel_na_tela(executor, request):
+    """Read-only screen probe. No click, typing, scrolling or saved-value writes."""
+    text = str(request.get("reference") or "").strip()
+    config = request.get("capture") or {}
+    executor._ultima_captura_variavel = {}
+    if not text:
+        return {"ok": False, "error": "Configure o primeiro texto OCR como referência."}
+    if not config.get("enabled"):
+        return {"ok": False, "error": "Ative Salvar uma informação para testar."}
+    results = []
+    markers = []
+    variable = None
+    texts = request.get("texts") or [text]
+    # Same first confirmed candidate used by the regular screen OCR test.
+    # Never run a second independent anchor lookup for the variable.
+    for index, target in enumerate(texts):
+        candidates = executor.localizar_texto_por_ocr_screenshot(
+            target, confianca=.72, janela_alvo=None,
+            retornar_candidatos=True, marcar_candidatos=False, limite_candidatos=1,
+        ) or []
+        found = bool(candidates)
+        marker = False
+        if found:
+            anchor = candidates[0]
+        results.append({"text": target, "found": found, "markerShown": bool(marker),
+                        "matched": str(candidates[0].get("text", "")) if found else ""})
+        if index == 0:
+            try:
+                if not found:
+                    raise ValueError("Refer\u00eancia n\u00e3o encontrada na tela.")
+                executor.capturar_variavel_ocr(anchor, config)
+                reading = executor._ultima_captura_variavel
+                variable = {"found": True, "name": config.get("name"), **reading}
+            except Exception as error:
+                variable = {"found": False, "name": config.get("name"),
+                            **getattr(executor, "_ultima_captura_variavel", {}), "error": str(error)}
+        if found:
+            markers.append((len(results)-1, dict(anchor), "ocr", f"OCR {index+1}"))
+    if variable and variable["found"]:
+        markers.append((None, dict(zip(("left", "top", "width", "height"), variable["region"])),
+                        "variavel", "Vari\u00e1vel"))
+    # Read all pixels before drawing. Reuse the same renderer, dimensions,
+    # timing and spacing for OCR and variable, presenting one marker at a time.
+    for index, bounds, theme, label in markers:
+        try:
+            shown = bool(executor.marcar_area_reconhecida(bounds,
+                tema=theme, etiqueta=label, duracao=1.5, bloqueante=True, margem=8))
+        except Exception:
+            shown = False
+        if index is not None:
+            results[index]["markerShown"] = shown
+    return {"ok": all(item["found"] for item in results) and bool(variable and variable["found"]),
+            "results": results, "variable": variable, **{k:v for k,v in (variable or {}).items() if k != "found"}}
+
 
 
 def main():
@@ -23,6 +83,16 @@ def main():
         arquivo_cancelamento=ROOT / ".parar_automacao.flag",
         modo_teste_reconhecimento=True,
     )
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--test-variable":
+        logs = io.StringIO()
+        with contextlib.redirect_stdout(logs):
+            try:
+                result = testar_variavel_na_tela(executor, json.loads(sys.argv[2]))
+            except Exception as error:
+                result = {"ok": False, "error": str(error)}
+        responder(result)
+        return
 
     for linha in sys.stdin:
         linha = linha.strip()

@@ -49,6 +49,7 @@ test("Studio salva a marcacao editavel do alvo OCR escolhido", () => {
   const found = studio.match(/^function ocrTargetLayoutsFromContainer\(.*?^}/ms);
   assert.ok(found);
   const studioContext = vm.createContext({
+    readCapture: (_container, fallback = {}) => fallback,
     parseNumber: (value, fallback) => Number(value) || fallback,
     normalizeOcrTargetAction: (value) => value || "continuar",
     normalizeOcrTargetFailureAction: (value) => value || "continuar",

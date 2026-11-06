@@ -15,8 +15,8 @@ async function updatePageOutline(tabId, page) {
 }
 
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.72";
-const CONTENT_RUNTIME_VERSION = "0.2.72";
+const RUNTIME_VERSION = "0.2.75";
+const CONTENT_RUNTIME_VERSION = "0.2.75";
 const STUDIO_TEST_BRIDGE = "http://127.0.0.1:18453";
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const PAIR_CODE_KEY = "flowdetectStudioPairCode";
@@ -104,6 +104,7 @@ async function runStudioRecognitionTest(job) {
         type: "flowdetect-test-recognition-v1",
         texts: job.texts,
         selector: job.selector,
+        capture: job.capture,
       }),
       sleep(10000).then(() => { throw new Error("A aba nao respondeu ao teste em 10 segundos."); }),
     ]);
@@ -178,7 +179,7 @@ async function handleStudioChainJob(job) {
     const run = activeRuns.get(id) || chainRuns.get(id);
     if (!run) return { ok: false, error: "Execução não encontrada. A extensão pode ter reiniciado; confira a aba antes de repetir." };
     if (job.type === "chain_stop" && activeRuns.has(id)) run.cancelled = true;
-    return { ok: true, run: { id: run.id, status: run.status, currentStep: run.currentStep, totalSteps: run.totalSteps, message: run.lastMessage, mapExit:run.mapExit || null } };
+    return { ok: true, run: { id: run.id, status: run.status, currentStep: run.currentStep, totalSteps: run.totalSteps, message: run.lastMessage, mapExit:run.mapExit || null, capturedVariables:run.capturedVariables || {} } };
   }
   if (job.type !== "chain_start") return { ok: false, error: "Comando de encadeamento desconhecido." };
   if (!chainReservation || chainReservation !== job.chainId) throw new Error("A reserva do Chrome foi perdida. Confira a aba antes de reiniciar.");
@@ -600,6 +601,8 @@ function replaceVariables(value, variables) {
 
 function setSpreadsheetRowVariables(run, source, row) {
   if (!run.variables) run.variables = {};
+  for (const name of Object.keys(run.capturedVariables || {})) delete run.variables[name];
+  run.capturedVariables = {};
   const value = String(source?.values?.[row] ?? "");
   const sourceName = String(source?.name || "valor").trim() || "valor";
   const rowData = spreadsheetRowData(source, row);
@@ -900,6 +903,13 @@ async function executePageStep(run, step) {
     run_id: `${run.id}:${run.spreadsheetLoop?.row ?? ""}`,
   });
   if (!response?.ok) throw new Error(response?.error || "A etapa não foi concluída.");
+  if (response.capture) {
+    const {name,value} = response.capture;
+    if (name !== step.variable_capture?.name || !/^[A-Za-z_][A-Za-z0-9_]{0,47}$/.test(name) || typeof value!=='string') throw Error('Resposta de captura inválida.');
+    run.variables[name]=value;
+    (run.capturedVariables ||= {})[name]=value;
+    await addLog(run, `Variável {{${name}}} capturada: ${value}`, 'info');
+  }
   await aguardarTransicaoDaPagina(run.tabId, step.timeout_ms || 12000);
   return response.message || "Etapa concluída.";
 }
@@ -963,6 +973,7 @@ async function executeOcrTargets(run, step) {
       ...step,
       ...target,
       type: "ocr_text",
+      variable_capture: targetIndex === 0 ? step.variable_capture : undefined,
       text: String(target.text || "").trim(),
       click: Boolean(target.click),
       clicks: Math.max(1, Number(target.clicks || 1)),
@@ -1009,6 +1020,16 @@ async function executeOcrTargets(run, step) {
 }
 
 async function executeStep(run, rawStep) {
+  if(rawStep.variable_capture?.enabled) {
+    delete run.variables[rawStep.variable_capture.name];
+    if(run.capturedVariables) delete run.capturedVariables[rawStep.variable_capture.name];
+  }
+  if(rawStep.type==='focused_text' || rawStep.type==='element_action') {
+    const declared=(run.automationSnapshot?.steps||[]).map(s=>s.variable_capture).filter(c=>c?.enabled).map(c=>c.name);
+    for(const token of JSON.stringify(rawStep).matchAll(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g)) {
+      if(declared.includes(token[1]) && !Object.hasOwn(run.variables,token[1])) throw Error(`A variável ${token[1]} ainda não foi capturada nesta linha.`);
+    }
+  }
   const step = replaceVariables(rawStep, run.variables);
   if (step.delay_ms) await sleep(Number(step.delay_ms));
   if (step.type === "navigate") {

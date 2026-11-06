@@ -895,6 +895,14 @@ def converter_evento_para_chrome(evento, colunas_relatorio=None, pasta_automacao
     detalhes = (evento or {}).get("detalhes") or {}
     if passo:
         passo.update(detalhes.get("chrome_import_extras") or {})
+        layouts_captura = detalhes.get("ocr_target_layouts") or []
+        captura = layouts_captura[0].get("capture") if layouts_captura and isinstance(layouts_captura[0], dict) else None
+        if captura is not None:
+            passo.pop("variable_capture", None)
+        if captura and captura.get("enabled"):
+            if passo.get("type") != "ocr_text":
+                return None, "Captura de variável exige OCR com texto de referência, no modo Atual ou Chrome."
+            passo["variable_capture"] = dict(captura)
         for route in ("success", "failure"):
             delay = detalhes.get("chrome_" + route + "_delay_ms")
             if delay is not None:
@@ -3281,7 +3289,9 @@ def converter_projeto_chrome_importado(projeto, pasta):
             detalhes.update({"ao_" + sufixo: fluxo.get("action") or "continuar", "bloco_" + sufixo: fluxo.get("block") or "", "sequencia_" + sufixo: fluxo.get("sequence") or ""})
             if "delay_ms" in fluxo:
                 detalhes["chrome_" + route + "_delay_ms"] = fluxo["delay_ms"]
-        extras = {key: passo[key] for key in ("rows", "click_anchor", "ocr_targets", "visual_fallback", "editable_ocr") if key in passo}
+        extras = {key: passo[key] for key in ("rows", "click_anchor", "ocr_targets", "visual_fallback", "editable_ocr", "variable_capture") if key in passo}
+        if passo.get("variable_capture"):
+            detalhes["ocr_target_layouts"] = [{"capture": dict(passo["variable_capture"])}]
         if extras:
             detalhes["chrome_import_extras"] = extras
         if tipo in {"ocr_text", "visual_match"}:
