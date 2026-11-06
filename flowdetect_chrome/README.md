@@ -1,5 +1,12 @@
 # FlowDetect para Chrome
 
+Versão 0.2.74: marque visualmente a área da variável na imagem do OCR,
+arrastando e redimensionando pelos cantos. [Como configurar](../docs/VARIAVEIS_OCR.md).
+
+Versão 0.2.73: captura de variáveis no bloco OCR, com validação e retorno ao
+desktop pelo agente. Exige Studio e Agent com esta implementação.
+[Como configurar](../docs/VARIAVEIS_OCR.md).
+
 Versão 0.2.72: caminhos Chrome integrados à árvore do mapa, com retorno para
 blocos desktop. Exige Agente e Studio atualizados. [Como usar](../docs/MAPA_CAMINHOS.md).
 

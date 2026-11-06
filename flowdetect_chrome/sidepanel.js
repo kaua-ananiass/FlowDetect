@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.72";
+const REQUIRED_RUNTIME_VERSION = "0.2.75";
 const PAGES_KEY = "flowdetectChromeExecutionPages";
 const PAGE_RUN_PREFIX = "flowdetectChromePageRun:";
 let executionPages = [];
