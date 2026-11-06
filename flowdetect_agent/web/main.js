@@ -37,6 +37,8 @@ const state = {
   remotePollTimer: null,
   remoteStatusRefreshing: false,
   remoteConnected: false,
+  agentAddress: "127.0.0.1:18452",
+  serverReady: true,
   lowPowerMode: true,
   mouseControlEnabled: false,
   lastProgressSignature: "",
@@ -619,6 +621,8 @@ async function loadAgentConnectionInfo() {
   try {
     const info = await invoke("get_agent_connection_info");
     const address = String(info?.address || info?.local || "127.0.0.1:18452").trim();
+    state.agentAddress = address;
+    state.serverReady = info?.remote_server_ok !== false;
     const code = String(info?.pairing?.code || "").trim();
     const codeBox = document.getElementById("agentPairCode");
     if (codeBox) codeBox.textContent = code || "Sem código";
@@ -627,16 +631,54 @@ async function loadAgentConnectionInfo() {
     if (codeBox && info?.pairing?.expires_at) codeBox.title = "Válido até " + new Date(Number(info.pairing.expires_at) * 1000).toLocaleTimeString("pt-BR");
     elements.agentConnectionAddress.textContent = info?.remote_server_ok === false
       ? "Falha no servidor local TCP 18452. Reinicie o Agent."
-      : `Aguardando Studio: ${address}`;
+      : `${state.remoteConnected ? "Conectado ao Studio" : "Aguardando Studio"}: ${address}`;
+    const help = document.getElementById("agentConnectionHelp");
+    if (help) {
+      help.textContent = info?.remote_server_ok === false
+        ? String(info.server_error || "A porta TCP 18452 está ocupada. Feche a outra instância do Agent e abra novamente.")
+        : "No Studio, abra Agentes → Físico e informe o código acima. Os dois PCs devem estar na mesma rede privada; o firewall precisa permitir TCP 18452 e UDP 18453 para o Agent.";
+      help.classList.toggle("is-error", info?.remote_server_ok === false);
+    }
+    if (info?.chrome) renderChromeConnection(info.chrome);
     setElementText(elements.observerConnectionAddress, address);
     setElementText(elements.observerAgentName, info?.agent_name || info?.agentName || "AGENTE PRINCIPAL");
     elements.agentConnectionAddress.title = info?.remote_server_ok === false ? "A porta TCP 18452 pode estar ocupada." : `Endereço local para diagnóstico: ${address}`;
-    elements.agentConnectionAddress.classList.remove("is-online");
+    elements.agentConnectionAddress.classList.toggle("is-online", state.serverReady && state.remoteConnected);
   } catch (error) {
-    elements.agentConnectionAddress.textContent = "Aguardando conexao: 127.0.0.1:18452";
-    setElementText(elements.observerConnectionAddress, "127.0.0.1:18452");
-    elements.agentConnectionAddress.title = "Use este endereco se o Control estiver no mesmo computador.";
+    elements.agentConnectionAddress.textContent = "Não foi possível verificar a conexão do agente.";
+    elements.agentConnectionAddress.title = String(error);
     elements.agentConnectionAddress.classList.remove("is-online");
+  }
+}
+
+function renderChromeConnection(info) {
+  setElementText(document.getElementById("agentChromeStatus"), info.connected
+    ? "Extensão conectada neste PC"
+    : info.bridgeActive === false
+      ? "Ponte indisponível. Feche o Studio neste PC e reinicie o Agent."
+      : info.paired
+        ? "Pareado. Abra o Chrome e mantenha a extensão ativada."
+        : "Abra a extensão neste PC e informe o código de seis dígitos.");
+}
+
+async function pairAgentChrome(event) {
+  event.preventDefault();
+  const input = document.getElementById("agentChromePairCode");
+  const button = document.getElementById("agentChromePairButton");
+  const code = String(input?.value || "").trim();
+  if (!/^\d{6}$/.test(code)) {
+    setElementText(document.getElementById("agentChromeStatus"), "Informe os seis dígitos exibidos na extensão.");
+    return;
+  }
+  if (button) button.disabled = true;
+  try {
+    await invoke("pair_chrome_extension", { code });
+    if (input) input.value = "";
+    renderChromeConnection(await invoke("chrome_extension_connection_status"));
+  } catch (error) {
+    setElementText(document.getElementById("agentChromeStatus"), String(error));
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -697,12 +739,13 @@ function renderAgentConnectionState(snapshot = {}) {
   }
   const connection = snapshot.remote_connection || snapshot.remoteConnection || {};
   const connected = Boolean(connection.connected);
-  const currentText = elements.agentConnectionAddress.textContent || "";
-  const address = currentText.includes(": ")
-    ? currentText.split(": ").slice(1).join(": ").trim()
-    : currentText.replace(/^Conectado:\s*/i, "").replace(/^Aguardando Studio:\s*/i, "").trim();
-  const safeAddress = address || "127.0.0.1:18452";
+  const safeAddress = state.agentAddress;
   state.remoteConnected = connected;
+  if (!state.serverReady) {
+    elements.agentConnectionAddress.classList.remove("is-online");
+    setElementText(elements.observerConnectionStatus, "INDISPONÍVEL");
+    return;
+  }
   elements.agentConnectionAddress.classList.toggle("is-online", connected);
   elements.agentConnectionAddress.textContent = connected
     ? `Conectado ao Studio: ${safeAddress}`
@@ -1730,9 +1773,10 @@ function handleAssistMapKeydown(event) {
 }
 
 async function boot() {
-  document.body.classList.add("agent-service-mode", "agent-lite-mode");
+  document.body.classList.add("agent-lite-mode");
   await loadAgentConnectionInfo();
-  window.setInterval(() => { void loadAgentConnectionInfo().catch(() => {}); }, 30000);
+  window.setInterval(() => { void loadAgentConnectionInfo().catch(() => {}); }, 5000);
+  document.getElementById("agentChromePairForm")?.addEventListener("submit", pairAgentChrome);
   document.getElementById("agentRenewPairCode")?.addEventListener("click", async () => {
     try {
       await invoke("agent_pairing_renew");
@@ -1767,6 +1811,7 @@ async function boot() {
     if (elements.toggleAgentPanelButton) elements.toggleAgentPanelButton.textContent = "Ocultar";
   };
   await safeListen("agent-overlay-toggle-request", () => { void toggleOverlayMode(); });
+  await safeListen("agent-panel-open-request", () => { void toggleOverlayMode(); });
   await safeListen("agent-identity-updated", (event) => {
     setElementText(elements.observerAgentName, event.payload?.name || "AGENTE PRINCIPAL");
   });
@@ -1786,8 +1831,7 @@ async function boot() {
     await tauriWindow?.getCurrentWindow?.()?.hide?.().catch(() => {});
   });
   elements.minimizeAgentButton?.addEventListener("click", () => {
-    document.body.classList.add("agent-service-mode");
-    tauriWindow?.getCurrentWindow?.()?.hide?.().catch(() => {});
+    tauriWindow?.getCurrentWindow?.()?.minimize?.().catch(() => {});
   });
   elements.refreshLibraryButton?.addEventListener("click", async () => {
     try {
@@ -1918,19 +1962,27 @@ async function boot() {
     applyFinishedState(Boolean(payload.success), Number(payload.code || 0));
   });
 
-  try {
-    await refreshLibrary({ silent: true });
-    await refreshWindows();
-    const executionState = await invoke("get_test_execution_state");
+  // Start polling independently: a transient Python/library/window error must
+  // not disable incoming execution updates until the application is restarted.
+  startRemoteAgentPolling();
+  const startup = await Promise.allSettled([
+    refreshLibrary({ silent: true }),
+    refreshWindows(),
+    invoke("get_test_execution_state"),
+  ]);
+  const failures = startup.filter((result) => result.status === "rejected");
+  if (startup[2].status === "fulfilled") {
+    const executionState = startup[2].value;
     state.running = Boolean(executionState?.running);
-    renderProgress();
-    renderAssistMap();
-    updateButtons();
-    setStatusChip(state.running ? "Executando" : "Pronto", state.running ? "running" : "idle");
-    startRemoteAgentPolling();
+  }
+  renderProgress();
+  renderAssistMap();
+  updateButtons();
+  setStatusChip(state.running ? "Executando" : "Pronto", state.running ? "running" : "idle");
+  if (!failures.length) {
     pushLog("FlowDetect Agent pronto para uso.", "success", "Inicializacao");
-  } catch (error) {
-    pushLog(String(error), "error", "Inicializacao");
+  } else {
+    failures.forEach((result) => pushLog(String(result.reason), "error", "Inicializacao"));
     setStatusChip("Falha", "error");
   }
 }

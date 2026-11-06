@@ -1,6 +1,6 @@
 [package]
 name = "flowdetect_agent"
-version = "3.0.0"
+version = "3.1.1"
 description = "Executor dedicado das automacoes do FlowDetect"
 authors = ["OpenAI Codex"]
 edition = "2021"
