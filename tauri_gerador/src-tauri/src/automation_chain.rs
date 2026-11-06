@@ -622,7 +622,7 @@ pub(crate) fn serve_map_bridge(root: &PathBuf, folder: &PathBuf, finished: Arc<A
                         }
                         match status["run"]["status"].as_str().unwrap_or("") {
                             "completed" if stopping.is_none() => {
-                                return Ok(json!({"ok":true,"exit":status["run"]["mapExit"]}))
+                                return Ok(json!({"ok":true,"exit":status["run"]["mapExit"],"variables":status["run"]["capturedVariables"]}))
                             }
                             "completed" | "failed" | "stopped" => {
                                 return Err("O caminho Chrome falhou ou foi interrompido.".into())
