@@ -15,6 +15,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 
 PALETAS = {
+    "variavel": {"acento": (251, 191, 36), "claro": (254, 243, 199), "fundo": (36, 27, 10)},
     "ocr": {"acento": (56, 189, 248), "claro": (186, 230, 253), "fundo": (7, 22, 37)},
     "visual": {"acento": (46, 204, 113), "claro": (187, 247, 208), "fundo": (7, 26, 22)},
 }
@@ -78,7 +79,7 @@ def _fonte(tamanho):
 def desenhar_marcador(largura, altura, etiqueta, tema="visual", progresso=1.0):
     """Gera um frame RGBA; também permite conferir o desenho sem abrir janela."""
     largura, altura = max(16, int(largura)), max(16, int(altura))
-    cor = PALETAS["ocr" if str(tema).startswith("ocr") else "visual"]
+    cor = PALETAS["variavel" if tema == "variavel" else "ocr" if str(tema).startswith("ocr") else "visual"]
     acento, claro, fundo = cor["acento"], cor["claro"], cor["fundo"]
     escala = 2 if largura * altura <= 320_000 else 1
     fonte = _fonte(11 * escala)

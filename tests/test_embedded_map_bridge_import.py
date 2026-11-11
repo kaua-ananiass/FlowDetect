@@ -9,6 +9,26 @@ PYTHON = ROOT / 'tauri_gerador/src-tauri/installer_support/python_runtime_prebui
 
 @unittest.skipUnless(PYTHON.exists(), 'Requer runtime portatil Windows')
 class EmbeddedMapImportTest(unittest.TestCase):
+    def test_screen_capture_probe_returns_json_in_embedded_runtime(self):
+        import json
+        result = subprocess.run(
+            [str(PYTHON), '-I', str(ROOT / 'reconhecimento_worker.py'), '--test-variable', '{"reference":"","capture":{"enabled":true}}'],
+            cwd=ROOT, capture_output=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
+        payload=json.loads(result.stdout)
+        self.assertFalse(payload['ok'])
+        self.assertIn('error', payload)
+
+    def test_recognition_worker_imports_sibling_with_isolated_runtime(self):
+        # EOF lets the actual worker initialize and exit without screenshots,
+        # clicks, OCR or modifying the active automation.
+        result = subprocess.run(
+            [str(PYTHON), '-I', str(ROOT / 'reconhecimento_worker.py')],
+            input=b'', cwd=ROOT, capture_output=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
+
     def test_map_converter_loads_with_embedded_isolated_sys_path(self):
         code = r'''
 import importlib.util,sys,os,json,threading,time,tempfile

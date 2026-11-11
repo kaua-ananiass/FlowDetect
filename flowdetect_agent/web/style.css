@@ -2180,3 +2180,17 @@ body.agent-lite-mode .agent-runtime-card {
 .agent-pairing-code button:focus-visible { outline: 2px solid #ffb05d; }
 body.agent-service-mode .agent-pairing-code { display: none; }
 @media (max-width: 970px) { .agent-pairing-code { flex-wrap: wrap; } }
+
+.agent-chrome-setup {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px;
+  margin: 0 0 16px; padding: 14px 18px; border: 1px solid #224453;
+  border-radius: 16px; background: #0b1c29;
+}
+.agent-chrome-setup strong, .agent-chrome-setup small { display: block; }
+.agent-chrome-setup small, .agent-chrome-setup label, .agent-chrome-setup p { font-size: 12px; color: #a5c2d0; }
+.agent-chrome-setup small { margin-top: 5px; }
+.agent-chrome-setup form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.agent-chrome-setup input { width: 110px; min-width: 0; padding: 9px 12px; letter-spacing: 3px; border: 1px solid #315267; border-radius: 10px; background: #112737; color: var(--text); outline: none; }
+.agent-chrome-setup input:focus-visible { border-color: var(--theme-accent); box-shadow: 0 0 0 3px var(--theme-accent-surface); }
+.agent-chrome-setup p { flex-basis: 100%; margin: 0; line-height: 1.5; }
+.agent-chrome-setup .is-error { color: #ffb3b3; }

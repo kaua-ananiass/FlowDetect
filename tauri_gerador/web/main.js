@@ -5,6 +5,7 @@ import { initIntegrations } from "./integrations.js";
 import { initAlterdata, resolveAlterdataTexts } from "./alterdata.js";
 import { initAutomationChain } from "./automation-chain.js";
 import { initMapPaths } from "./map-paths.js";
+import { renderTextVariableLibrary, insertTextVariable, renderCaptureEditor, readCapture, renderVariablesPanel, captureFromDetails, renderVariableOverlay, syncVariableOverlays, moveVariableRegion } from "./ocr-variables.js";
 let alterdataWorkspace = null;
 let chainWorkspace = null;
 const tauriDialog = window.__TAURI__?.dialog ?? null;
@@ -3939,6 +3940,10 @@ async function runScreenOcrDiagnostic({ values, texts, options }) {
     const ok = await runImageRecognitionTest({ ...values, recognitionMode: "imagem" }, testOptions);
     return { ok: Boolean(ok), results: [{ text: "Imagem de referência", found: Boolean(ok) }] };
   }
+  const capture = values.ocrTargetLayouts?.[0]?.capture;
+  if (capture?.enabled) {
+    return invoke("test_screen_variable_capture", {reference: texts[0], texts, capture: {...capture, referenceImage: values.imagePath || "", referenceText: texts[0]}});
+  }
   const results = [];
   for (const text of texts) {
     const diagnostic = await runImageRecognitionTest({
@@ -3974,6 +3979,7 @@ async function runChosenOcrTest(mode) {
       ? await invoke("test_chrome_extension_recognition", {
           textos: context.texts,
           selector: context.selector || null,
+          capture: context.values.ocrTargetLayouts?.[0]?.capture || null,
         })
       : await runScreenOcrDiagnostic(context);
     ocrTestResult.replaceChildren();
@@ -4006,7 +4012,16 @@ async function runChosenOcrTest(mode) {
       row.textContent = `${item.found ? "✓" : "✕"} ${item.text}${item.matched ? ` — ${item.matched}` : ""}`;
       ocrTestResult.append(row);
     }
-    if (result.error) {
+    if (result.variable) {
+      const variable = result.variable;
+      const row = document.createElement("p");
+      row.className = variable.found ? "is-found-variable" : "is-missing";
+      row.textContent = variable.found
+        ? `Vari\u00e1vel encontrada: ${variable.value} \u2192 {{${variable.name}}}`
+        : `Vari\u00e1vel n\u00e3o encontrada: ${variable.error || "ajuste a \u00e1rea amarela."}${variable.raw_text ? ` Texto lido: ${variable.raw_text}` : " Nenhum texto foi lido na regi\u00e3o calculada."}`;
+      ocrTestResult.append(row);
+    }
+    if (result.error && !result.variable) {
       const error = document.createElement("p");
       error.className = "is-missing";
       error.textContent = result.error;
@@ -9053,6 +9068,7 @@ function normalizeRecognitionTreeTab(tabName) {
 
 function normalizeRecognitionDetailTab(tabName) {
   const normalized = String(tabName || "visual").trim().toLowerCase();
+  if (normalized === "variable") return "variable";
   if (["base", "preview", "visual"].includes(normalized)) {
     return "visual";
   }
@@ -9091,6 +9107,10 @@ function recognitionClickTargetDetails(details = {}) {
 }
 
 function relativeOcrInvokeArgs(values = {}) {
+  const capture = values.ocrTargetLayouts?.[0]?.capture;
+  if (capture?.enabled && (!/^[A-Za-z_][A-Za-z0-9_]{0,47}$/.test(capture.name || '') || capture.name.startsWith('__') || ['constructor','prototype'].includes(capture.name))) throw Error('Dê à variável um nome simples, como valor_nota.');
+  if (capture?.enabled && ['visual','elemento'].includes(values.ocrSource)) throw Error('Para capturar uma variável, use OCR Atual ou Chrome com um texto de referência.');
+  if (capture?.enabled && capture.region && !capture.anchor) throw Error('Carregue a imagem de referência e posicione o primeiro OCR antes de salvar a variável.');
   return {
     ocrTargetLayouts: JSON.stringify(values.ocrTargetLayouts ?? []),
     leituraRelativaAtiva: Boolean(values.relativeOcrEnabled),
@@ -9250,11 +9270,13 @@ function renderRelativeOcrPreviewOverlay(relativeOcr = {}, clickTarget = {}, tar
         class="recognition-click-target-point"
         data-click-target-point="true"
         data-recognition-drag-target="click"
+        ${targetLayouts.length && !targetLayouts.some(layout => ['clicar','clicar_ir_para_bloco'].includes(layout.action)) ? 'hidden' : ''}
         style="${escapeHtml(clickTargetOverlayStyle(clickTarget))}"
       >
         <span>Clique</span>
       </div>
       ${ocrTargets}
+      ${renderVariableOverlay(targetLayouts?.[0]?.capture || {})}
     </div>
   `;
 }
@@ -9365,6 +9387,7 @@ function updateRelativeOcrPreviewOverlay(container) {
   };
   const targetCount = ocrTargetCountFromContainer(container);
   const targetLayouts = ocrTargetLayoutsFromContainer(container);
+  syncVariableOverlays(container);
   const overlayMarkup = renderRelativeOcrPreviewOverlay(
     relativeOcr,
     clickData,
@@ -9407,6 +9430,7 @@ function updateRelativeOcrPreviewOverlay(container) {
     .filter((clickTarget) => !clickTarget.closest(".ocr-target-action-preview"))
     .forEach((clickTarget) => {
       const metrics = recognitionPreviewImageMetrics(clickTarget);
+      clickTarget.hidden = targetLayouts.length > 0 && !targetLayouts.some(layout => ["clicar", "clicar_ir_para_bloco"].includes(layout.action));
       clickTarget.setAttribute("style", clickTargetOverlayStyle(clickData, metrics));
     });
 
@@ -9422,6 +9446,7 @@ function updateRelativeOcrPreviewOverlay(container) {
     }
     if (previewClick) {
       const metrics = recognitionPreviewImageMetrics(previewClick);
+      previewClick.hidden = !["clicar", "clicar_ir_para_bloco"].includes(targetLayouts[index]?.action);
       previewClick.setAttribute("style", clickTargetOverlayStyle(clickData, metrics));
     }
   });
@@ -9430,6 +9455,11 @@ function updateRelativeOcrPreviewOverlay(container) {
 
 function setRecognitionVisualOffsetFromPointer(container, dragTarget, clientX, clientY) {
   if (!container || !dragTarget) {
+    return;
+  }
+  if (dragTarget.dataset.recognitionDragTarget?.startsWith('variable')) {
+    moveVariableRegion(container, dragTarget, clientX, clientY);
+    syncCommandMapDraftFromCard(container);
     return;
   }
   const imageMap = dragTarget.closest("[data-recognition-preview-image-map]");
@@ -10234,7 +10264,13 @@ function ocrTargetLayoutsFromContainer(container) {
   if (!rows.length) {
     try {
       const saved = JSON.parse(container?.querySelector("[data-ocr-target-layouts]")?.value || "[]");
-      return Array.isArray(saved) ? saved : [];
+      const result = Array.isArray(saved) ? saved : [];
+      const capture = readCapture(container, result[0]?.capture || {});
+      if (capture.enabled || result[0]?.capture) {
+        if (!result.length) result.push({});
+        result[0] = {...result[0], capture};
+      }
+      return result;
     } catch {
       return [];
     }
@@ -10252,6 +10288,7 @@ function ocrTargetLayoutsFromContainer(container) {
     const hasSize = String(widthField?.value ?? "").trim() !== "" || String(heightField?.value ?? "").trim() !== "";
     return {
       index,
+      ...(index === 0 ? {capture: readCapture(container, JSON.parse(row.querySelector('[data-ocr-target-capture]')?.value || '{}'))} : {}),
       offsetX: hasOffset ? parseNumber(offsetXField?.value, 0) : null,
       offsetY: hasOffset ? parseNumber(offsetYField?.value, 0) : null,
       width: hasSize ? parseNumber(widthField?.value, 140) : null,
@@ -10281,6 +10318,7 @@ function renderOcrTargetRows(fieldAttr, actionAttr, text = "", layouts = []) {
         const color = OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length];
         return `
           <div class="ocr-target-row" data-ocr-target-row data-ocr-target-color="${escapeHtml(color)}">
+            <input data-ocr-target-capture type="hidden" value="${escapeHtml(JSON.stringify(layouts?.[index]?.capture || {}))}" />
             <span class="ocr-target-color-dot" aria-hidden="true"></span>
             <label class="ocr-target-text-label">
               <span>Texto alvo ${index + 1}</span>
@@ -10415,7 +10453,7 @@ function renderOcrTargetOnlyPreview(relativeOcr = {}, clickTarget = {}, layouts 
         data-ocr-target-color="${escapeHtml(color)}"
         style="${escapeHtml(relativeOcrOverlayStyle(target))}"
       ></div>
-      <div class="recognition-click-target-point recognition-static-ocr-click" data-click-target-point="true" style="${escapeHtml(clickTargetOverlayStyle(clickTarget))}">
+      <div class="recognition-click-target-point recognition-static-ocr-click" data-click-target-point="true" ${['clicar','clicar_ir_para_bloco'].includes(layouts[index]?.action) ? '' : 'hidden'} style="${escapeHtml(clickTargetOverlayStyle(clickTarget))}">
         <span>Clique</span>
       </div>
     </div>
@@ -10629,6 +10667,7 @@ function syncOcrTargetActionControlToSource(target) {
   if (changed) destination.value = nextValue;
   if (["action", "failureAction"].includes(control)) {
     applyOcrTargetActionVisibility(actionRow);
+    updateRelativeOcrPreviewOverlay(container);
   }
   if (container.classList.contains("command-tree-card")) {
     if (changed) {
@@ -10786,6 +10825,7 @@ function renderOcrTextFields(fieldAttr, details = {}, currentOrder = null, optio
       `}
       ${hiddenDefaults}
       ${hiddenStandaloneFlow}
+      ${!embeddedHybrid && fieldAttr === 'data-tree-field' ? renderCaptureEditor(details, renderRecognitionPreviewPanel(details.imagem_ocr || details.imagem || '', {overlay:renderRelativeOcrPreviewOverlay({side:'livre',width:140,height:40,...captureFromDetails(details).reference}, {}, 1, details.ocr_target_layouts || [])}), true) : ''}
       ${embeddedHybrid ? "" : `<button class="tree-open-button recognition-test-inline ocr-source-default-test" ${actionAttr}="test-ocr-recognition" type="button">Testar reconhecimento</button>`}
       <p class="recognition-card-helper">${embeddedHybrid
         ? ocrSource === "elemento"
@@ -11167,6 +11207,7 @@ function renderRecognitionExpandedTreeEditor(event) {
     <div class="field-stack field-stack-recognition recognition-expanded-editor">
       <div class="recognition-card-tabs has-preview ${recognitionMode === "texto_ocr" ? "is-ocr-hybrid" : ""}" role="tablist" aria-label="Configuracoes do reconhecimento visual">
         <button class="recognition-card-tab ${activeRecognitionTab === "visual" ? "is-active" : ""}" data-recognition-tab-target="visual" type="button" aria-pressed="${activeRecognitionTab === "visual" ? "true" : "false"}">Busca</button>
+        ${recognitionMode === "texto_ocr" ? `<button class="recognition-card-tab ${activeRecognitionTab === "variable" ? "is-active" : ""}" data-recognition-tab-target="variable" type="button">Variável</button>` : ''}
         ${recognitionMode === "texto_ocr" && !["visual", "elemento"].includes(details.fonte_ocr) ? `<button class="recognition-card-tab ${activeRecognitionTab === "ocr_actions" ? "is-active" : ""}" data-recognition-tab-target="ocr_actions" type="button" aria-pressed="${activeRecognitionTab === "ocr_actions" ? "true" : "false"}">Acoes por OCR</button>` : ""}
         ${recognitionMode !== "texto_ocr" || ["visual", "elemento"].includes(details.fonte_ocr) ? `<button class="recognition-card-tab ${activeRecognitionTab === "behavior" ? "is-active" : ""}" data-recognition-tab-target="behavior" type="button" aria-pressed="${activeRecognitionTab === "behavior" ? "true" : "false"}">Clique e ajustes</button>` : ""}
       </div>
@@ -11232,6 +11273,7 @@ function renderRecognitionExpandedTreeEditor(event) {
         </div>
       </div>
 
+      <div class="recognition-card-panel ${activeRecognitionTab === 'variable' ? 'is-active' : ''}" data-recognition-tab-panel="variable" ${activeRecognitionTab === 'variable' ? '' : 'hidden'}>${renderCaptureEditor(details, renderRecognitionPreviewPanel(details.imagem ?? '', {overlay: renderRelativeOcrPreviewOverlay(relativeOcr, clickTarget, ocrTargetCountFromText(details.texto_ocr_busca ?? ''), details.ocr_target_layouts ?? [])}))}</div>
       <div class="recognition-card-panel recognition-ocr-actions-panel ${activeRecognitionTab === "ocr_actions" ? "is-active" : ""}" data-recognition-tab-panel="ocr_actions" ${activeRecognitionTab === "ocr_actions" && details.fonte_ocr !== "visual" ? "" : "hidden"}>
         ${recognitionMode === "texto_ocr" ? `
           <section class="ocr-target-actions-card">
@@ -19776,6 +19818,7 @@ function renderTreeEditorFields(event) {
           <span>Texto do bloco</span>
           <textarea data-tree-field="text" rows="3">${escapeHtml(event.text)}</textarea>
         </label>
+        ${renderTextVariableLibrary((state.roadmap?.events || []).map(item => applyCommandMapDraftToEvent(item)))}
         <label class="runtime-edit-name">
           <span>Nome do bloco</span>
           <input data-tree-field="runtimeLabel" type="text" value="${escapeHtml(event.details?.rotulo_execucao ?? "")}" placeholder="Ex.: Competencia" />
@@ -22463,6 +22506,19 @@ function handleCommandMapTreeWheelZoom(event) {
 }
 
 function renderCommandMap(options = {}) {
+  let variablesHost = document.getElementById('mapVariablesHost');
+  if (!variablesHost) {
+    variablesHost = document.createElement('div');
+    variablesHost.id = 'mapVariablesHost';
+    commandMapList.parentElement.append(variablesHost);
+    variablesHost.addEventListener('click', async event => {
+      const button = event.target.closest('[data-copy-variable]');
+      if (!button) return;
+      try { await navigator.clipboard.writeText(`{{${button.dataset.copyVariable}}}`); setMessage('Variável copiada. Cole no campo de texto desejado.', 'success'); }
+      catch { setMessage(`Use {{${button.dataset.copyVariable}}} no campo de texto.`, 'info'); }
+    });
+  }
+  variablesHost.innerHTML = renderVariablesPanel((state.roadmap?.events || []).map(event => applyCommandMapDraftToEvent(event)));
   const {
     layoutSnapshot = null,
     layoutAnimationMode = "arc",
@@ -27145,6 +27201,18 @@ timelineList.addEventListener("click", (event) => {
 
 commandMapList.addEventListener("change", (event) => {
   const target = event.target;
+  if (target.matches('[data-capture]')) {
+    const card = target.closest('.command-tree-card');
+    const editor = target.closest('[data-variable-editor]');
+    const capture = readCapture(card);
+    editor.querySelector('.ocr-variable-fields').hidden = !capture.enabled;
+    if (capture.enabled && !capture.region && !capture.side) editor.querySelector('[data-capture-region]').value = JSON.stringify({x:.55,y:.55,width:.3,height:.2});
+    syncVariableOverlays(card);
+    editor.querySelector('[data-variable-token]').textContent = `Use depois: {{${capture.name || 'valor_nota'}}}`;
+    syncCommandMapDraftFromCard(card);
+    document.getElementById('mapVariablesHost').innerHTML = renderVariablesPanel((state.roadmap?.events || []).map(item => applyCommandMapDraftToEvent(item)));
+    return;
+  }
   if (syncOcrTargetActionControlToSource(target)) {
     return;
   }
@@ -27601,7 +27669,29 @@ commandMapList.addEventListener("click", (event) => {
   toggleCommandMapCardSelection(key, !state.commandMapSelectedCardKeys?.has(key));
 });
 
+commandMapList.addEventListener("pointerdown", (event) => {
+  // Keep the textarea selection when a variable chip is pressed.
+  if (event.target.closest('[data-insert-text-variable]')) event.preventDefault();
+});
 commandMapList.addEventListener("click", async (event) => {
+  const variableChip = event.target.closest('[data-insert-text-variable]');
+  if (variableChip) {
+    event.preventDefault();
+    event.stopPropagation();
+    const card = variableChip.closest('.command-tree-card');
+    if (insertTextVariable(card?.querySelector('[data-tree-field="text"]'), variableChip.dataset.insertTextVariable)) {
+      syncCommandMapDraftFromCard(card);
+    }
+    return;
+  }
+  const captureTest = event.target.closest('[data-variable-test]');
+  if (captureTest) {
+    const card = captureTest.closest('.command-tree-card');
+    const values = treeValuesFromCard(card);
+    openOcrTestChoice(values, {recognitionOrder: Number(card.dataset.order)});
+    await runChosenOcrTest(captureTest.dataset.variableTest === 'chrome' ? 'chrome' : 'screen');
+    return;
+  }
   const detailsButton = event.target.closest('button[data-tree-action="open-card-details"]');
   if (!detailsButton) {
     return;

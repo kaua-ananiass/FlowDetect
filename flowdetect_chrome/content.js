@@ -1,5 +1,5 @@
 (() => {
-const CONTENT_RUNTIME_VERSION = "0.2.72";
+const CONTENT_RUNTIME_VERSION = "0.2.75";
 if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   const previousListener = globalThis.__flowDetectChromeRunnerListener;
   if (previousListener) chrome.runtime.onMessage.removeListener(previousListener);
@@ -748,6 +748,61 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     return "Clique executado.";
   }
 
+  function readVariableNearAnchor(rect, config) {
+    const name = String(config.name || '').trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,47}$/.test(name) || name.startsWith('__') || ['constructor','prototype'].includes(name)) throw Error('Nome de variável inválido.');
+    let width = Math.max(20,Math.min(1200,Number(config.width)||180));
+    let height = Math.max(16,Math.min(600,Number(config.height)||40));
+    const gap = Math.max(0,Math.min(400,Number(config.gap??8)));
+    const side = config.side || 'right';
+    let left = side==='right' ? rect.left+rect.width+gap : side==='left' ? rect.left-gap-width : rect.left;
+    let top = side==='below' ? rect.top+rect.height+gap : side==='above' ? rect.top-gap-height : rect.top+(rect.height-height)/2;
+    if(config.region) {
+      const r=config.region,a=config.anchor;
+      if(!a?.width || !a?.height || !['x','y','width','height'].every(k=>Number.isFinite(r[k])&&Number.isFinite(a[k])) || r.width<=0 || r.height<=0 || r.x<0 || r.y<0 || r.x+r.width>1.001 || r.y+r.height>1.001) throw Error('Marque uma área válida para a variável e o primeiro OCR na imagem.');
+      const sx=rect.width/a.width,sy=rect.height/a.height;
+      left=rect.left+(r.x-a.x)*sx;top=rect.top+(r.y-a.y)*sy;
+      width=r.width*sx;height=r.height*sy;
+    }
+    const region = {left,top,width,height};
+    if (left<0 || top<0 || left+width>innerWidth || top+height>innerHeight) throw Error('Área da variável fora da tela. Ajuste a posição ou o tamanho.');
+    const inRegion = r => r.width>0 && r.height>0 && r.left+r.width/2>=left && r.left+r.width/2<=left+width && r.top+r.height/2>=top && r.top+r.height/2<=top+height;
+    const fragments=[];
+    const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node=walker.nextNode())) {
+      const parent=node.parentElement;
+      if (!node.textContent.trim() || !parent || parent.closest('script,style,[data-flowdetect-overlay],.flowdetect-highlight') || !isVisible(parent)) continue;
+      const range=document.createRange(); range.selectNodeContents(node);
+      const r=range.getBoundingClientRect();
+      if (inRegion(r)) fragments.push({text:node.textContent.trim(),left:r.left,top:r.top});
+    }
+    for (const element of document.querySelectorAll('input,textarea,select')) {
+      const r=element.getBoundingClientRect();
+      if (isVisible(element) && inRegion(r) && element.value) fragments.push({text:element.value,left:r.left,top:r.top});
+    }
+    const raw=fragments.sort((a,b)=>Math.abs(a.top-b.top)>8?a.top-b.top:a.left-b.left).map(item=>item.text).join(' ').trim();
+    if (!raw) throw Error('A área da variável está vazia. Ajuste a região de leitura.');
+    let value=raw.replace(/\s+/g,' ');
+    if (config.kind==='date') {
+      const dates=raw.match(/\b\d{2}\/\d{2}\/\d{4}\b/g)||[];
+      if(dates.length!==1) throw Error('A área deve conter uma única data DD/MM/AAAA.');
+      const [day,month,year]=dates[0].split('/').map(Number), d=new Date(year,month-1,day);
+      if(d.getFullYear()!==year||d.getMonth()!==month-1||d.getDate()!==day) throw Error('Data inválida.');
+      value=dates[0];
+    } else if(config.kind!=='text') {
+      const numbers=raw.match(/[-+]?\d+(?:[.,]\d+)*/g)||[];
+      if(numbers.length!==1) throw Error('A área deve conter um único valor. Ajuste a região de leitura.');
+      value=numbers[0];
+      if((config.kind||'money')==='money') {
+        if(!/^[-+]?(?:\d+|\d{1,3}(?:\.\d{3})+),\d{2}$/.test(value)) throw Error('Valor monetário inválido. Esperado: 1.250,90.');
+        value=value.replace(/\./g,'');
+      } else if(!/^[-+]?\d+(?:[.,]\d+)?$/.test(value)) throw Error('Número ambíguo.');
+    }
+    highlightRect(region,{color:'#fbbf24',label:'Variável encontrada'});
+    return {name,value};
+  }
+
   async function executeOcrText(step) {
     const shouldClick = Boolean(step.click) && !["confirmar", "esperar", "verificar"].includes(String(step.action || "").toLowerCase());
     const target = await waitForTextTarget(step.text, step.timeout_ms, step.attempts, step.interval_ms, {
@@ -757,6 +812,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     await sleep(180);
     const refreshedTarget = findTextTarget(step.text, { allowDocumentText: !shouldClick }) || target;
     const rect = refreshedTarget.rect || refreshedTarget.element.getBoundingClientRect();
+    const capture = step.variable_capture?.enabled ? readVariableNearAnchor(rect,step.variable_capture) : null;
     const color = /^#[0-9a-f]{6}$/i.test(step.highlight_color || "") ? step.highlight_color : "#12b5cb";
     highlightRect(rect, { color, label: "OCR" });
     if (shouldClick) {
@@ -780,9 +836,11 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       await clickAndConfirm(clickable, step.clicks, finalPoint, Boolean(precise));
       const checked = checkboxState(checkboxControl(clickable));
       const selection = checked === null ? "" : ` Caixa de selecao confirmada: ${checked ? "marcada" : "desmarcada"}.`;
-      return `OCR encontrou "${String(step.text).slice(0, 80)}" e clicou em ${Math.round(finalPoint.x)}, ${Math.round(finalPoint.y)} (${String(clickable.tagName || "elemento").toLowerCase()}).${selection}`;
+      const message = `OCR encontrou "${String(step.text).slice(0, 80)}" e clicou em ${Math.round(finalPoint.x)}, ${Math.round(finalPoint.y)} (${String(clickable.tagName || "elemento").toLowerCase()}).${selection}`;
+      return capture ? {message,capture} : message;
     }
-    return `OCR encontrou “${String(step.text).slice(0, 80)}”${shouldClick ? " e clicou" : ""}.`;
+    const message = `OCR encontrou “${String(step.text).slice(0, 80)}”.`;
+    return capture ? {message,capture} : message;
   }
 
   async function visualCoordinate(request) {
@@ -805,6 +863,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     }
     if (request?.type === "flowdetect-test-recognition-v1") {
       try {
+        let firstAnchor = null;
         const selector = String(request.selector || "").trim();
         const results = selector
           ? (() => {
@@ -812,12 +871,25 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
               if (matches[0]) highlightRect(matches[0].getBoundingClientRect(), { color: "#22c55e", label: "Teste Chrome" });
               return [{ text: selector, found: matches.length === 1, matched: `${matches.length} elemento(s) visível(is)` }];
             })()
-          : (Array.isArray(request.texts) ? request.texts : []).map((text) => {
+          : (Array.isArray(request.texts) ? request.texts : []).map((text, index) => {
               const target = findTextTarget(text);
+              if (index === 0) firstAnchor = target;
               if (target?.rect) highlightRect(target.rect, { color: "#22c55e", label: "Teste Chrome" });
               return { text: String(text), found: Boolean(target), matched: String(target?.text || "").trim().slice(0, 160) };
             });
-        sendResponse({ ok: results.length > 0 && results.every((item) => item.found), url: location.href, results });
+        let variable = null;
+        if (request.capture?.enabled) {
+          try {
+            if (!firstAnchor) throw Error('Texto de refer\u00eancia n\u00e3o encontrado na aba ativa.');
+            const reading = readVariableNearAnchor(firstAnchor.rect || firstAnchor.element.getBoundingClientRect(), request.capture);
+            variable = {found: true, ...reading};
+          } catch (error) {
+            variable = {found: false, name: request.capture.name, error: String(error?.message || error)};
+          }
+        }
+        sendResponse({ ok: results.length > 0 && results.every((item) => item.found) && (!variable || variable.found),
+          url: location.href, results, variable, ...(variable?.found ? {value:variable.value,name:variable.name} : {}),
+          ...(variable && !variable.found ? {error:variable.error} : {}) });
       } catch (error) {
         sendResponse({ ok: false, url: location.href, error: String(error?.message || error), results: [] });
       }
@@ -861,7 +933,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       allowDocumentText: true
     }).then(() => `Texto confirmado: ${step.text}.`);
     else execute = executeElementAction(step);
-    execute.then((message) => sendResponse({ ok: true, message })).catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    execute.then((result) => sendResponse(typeof result==='object' ? {ok:true,...result} : {ok:true,message:result})).catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
   };
   chrome.runtime.onMessage.addListener(flowDetectMessageListener);

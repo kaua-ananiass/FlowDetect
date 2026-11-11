@@ -10,6 +10,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class RuntimePackageLayoutTest(unittest.TestCase):
+    def test_agent_has_separate_installer_hooks(self):
+        config = PROJECT_ROOT / 'flowdetect_agent/src-tauri/tauri.conf.json'
+        hook = json.loads(config.read_text(encoding='utf-8'))['bundle']['windows']['nsis']['installerHooks']
+        source = (config.parent / hook).read_text(encoding='utf-8')
+        self.assertEqual(hook, 'agent_hooks.nsh')
+        self.assertIn('import openpyxl, pyautogui, cv2, PIL, pytesseract, reportlab, uiautomation', source)
+        self.assertNotIn('RMDir /r', source)
+        self.assertNotIn('FLOWDETECT_REMOVE_DIR', source)
+        self.assertNotIn('FlowDetect.exe', source)
+
     def test_launchers_are_exported_at_the_package_root(self):
         spec = importlib.util.spec_from_file_location(
             "roadmap_runtime_package_test", PROJECT_ROOT / "gerenciar_roteiro.py"

@@ -1553,8 +1553,8 @@ class ExecutorAutomacao:
             altura_janela = altura + 39
             magenta = 0x00FF00FF
             # COLORREF usa BGR; acompanha as cores dos temas Tk do Studio.
-            cor_borda = 0x00F8BD38 if tema == "ocr" else 0x0071CC2E
-            cor_linha = 0x007D5030 if tema == "ocr" else 0x00425B27
+            cor_borda = 0x0024BFFB if tema == "variavel" else 0x00F8BD38 if tema == "ocr" else 0x0071CC2E
+            cor_linha = 0x0024BFFB if tema == "variavel" else 0x007D5030 if tema == "ocr" else 0x00425B27
             cor_painel = 0x0021140B
             cor_texto = 0x00FFEEE1
             pincel_fundo = gdi32.CreateSolidBrush(magenta)
@@ -1755,6 +1755,11 @@ class ExecutorAutomacao:
         largura = max(1, int(largura))
         altura = max(1, int(altura))
         tema_config = {
+            "variavel": {
+                "cor_borda": "#FBBF24", "cor_flash": "#FDE68A",
+                "cor_texto": "#FEF3C7", "cor_fundo_etiqueta": "#241B0A",
+                "cor_linha": "#FBBF24", "etiqueta": "Vari\u00e1vel encontrada",
+            },
             "visual": {
                 "cor_borda": "#2ecc71",
                 "cor_flash": "#9bffbf",
@@ -1995,7 +2000,7 @@ class ExecutorAutomacao:
                     fill="",
                     width=espessura,
                 )
-                if tema in {"visual", "ocr"}:
+                if tema in {"visual", "ocr", "variavel"}:
                     tamanho_canto = min(15, max(5, min(retangulo_x2 - retangulo_x1, retangulo_y2 - retangulo_y1) // 3))
                     for x1, y1, x2, y2 in (
                         (retangulo_x1 + raio, retangulo_y1, retangulo_x1 + tamanho_canto, retangulo_y1),
@@ -3237,7 +3242,7 @@ class ExecutorAutomacao:
             config = leitura.get("ocr_target_action") if isinstance(leitura.get("ocr_target_action"), dict) else {}
         regra = self.regra_acao_individual_ocr(config)
         acao = regra["acao"]
-        if acao not in {"clicar", "clicar_ir_para_bloco", "confirmar_ir_para_bloco"}:
+        if acao not in {"continuar", "clicar", "clicar_ir_para_bloco", "confirmar_ir_para_bloco"}:
             return None
         return {
             "acao": acao,
@@ -3251,6 +3256,9 @@ class ExecutorAutomacao:
         acao = self.acao_individual_ocr_configurada(local, leitura_relativa)
         if not acao:
             return None
+        if acao["acao"] == "continuar":
+            local["ocr_target_action_applied"] = "confirmar"
+            return "confirmar"
         if acao["acao"] == "confirmar_ir_para_bloco":
             if not acao["bloco"]:
                 safe_print("OCR individual encontrou a regra de salto sem bloco de destino; mantendo o fluxo normal.", flush=True)
@@ -6415,6 +6423,207 @@ class ExecutorAutomacao:
         self.contexto_variaveis[chave] = value = "" if valor is None else str(valor)
         safe_print(f"Variavel de contexto atualizada: {chave}={value}", flush=True)
 
+    def configuracao_captura_variavel(self, detalhes):
+        layouts = (detalhes or {}).get("ocr_target_layouts") or []
+        config = dict((layouts[0].get("capture") or {}) if layouts and isinstance(layouts[0], dict) else {})
+        if config.get("enabled"):
+            config["referenceImage"] = detalhes.get("imagem") or detalhes.get("imagem_ocr") or ""
+            config["referenceText"] = layouts[0].get("texto") or detalhes.get("texto_ocr_busca") or detalhes.get("texto") or ""
+        return config
+
+    def nomes_variaveis_capturadas(self):
+        return {c.get("name") for evento in getattr(self, "eventos", [])
+                for c in [self.configuracao_captura_variavel(evento.get("detalhes", {}))]
+                if c.get("enabled") and c.get("name")}
+
+    def preparar_escopo_variaveis(self, contexto_loop=None):
+        # Per-row values never leak into another company/note. Preserve values
+        # while walking between sections of the same row.
+        row = self.obter_contexto_linha_loop(contexto_loop) if contexto_loop else {}
+        scope = (self.obter_linha_atual_contexto(contexto_loop), row.get("__arquivo__"), row.get("__aba__"))
+        previous = getattr(self, "_escopo_captura", None)
+        if previous is not None and scope != previous:
+            for name in self.nomes_variaveis_capturadas():
+                self.contexto_variaveis.pop(name, None)
+        self._escopo_captura = scope
+
+    @staticmethod
+    def validar_valor_capturado(texto, tipo="money"):
+        from datetime import datetime
+        raw = str(texto or "").strip()
+        if not raw:
+            raise ValueError("A área da variável está vazia.")
+        if tipo == "text":
+            return re.sub(r"\s+", " ", raw)
+        if tipo == "date":
+            dates = re.findall(r"(?<!\d)\d{2}/\d{2}/\d{4}(?!\d)", raw)
+            if len(dates) != 1:
+                raise ValueError("A área deve conter uma única data DD/MM/AAAA.")
+            datetime.strptime(dates[0], "%d/%m/%Y")
+            return dates[0]
+        numbers = re.findall(r"(?<![\w])[-+]?\d+(?:[.,]\d+)*(?![\w])", raw)
+        if len(numbers) != 1:
+            raise ValueError("A área deve conter um único valor. Ajuste a região de leitura.")
+        number = numbers[0]
+        if tipo == "money":
+            if not re.fullmatch(r"[-+]?(?:\d+|\d{1,3}(?:\.\d{3})+),\d{2}", number):
+                raise ValueError("Valor monetário inválido. Esperado: 1.250,90.")
+            return number.replace(".", "")
+        if not re.fullmatch(r"[-+]?\d+(?:[.,]\d+)?", number):
+            raise ValueError("Número ambíguo. Ajuste a região de leitura.")
+        return number
+
+    def calibrar_ancora_variavel(self, config):
+        """Measure text in the saved reference, not the padded editor rectangle.
+
+        This never searches the live screen again or reads a saved value.
+        """
+        image_path = str(config.get("referenceImage") or "").strip()
+        text = str(config.get("referenceText") or "").strip()
+        if not image_path or not text or not config.get("region"):
+            return config
+        path = Path(image_path)
+        if not path.is_absolute():
+            path = APP_ROOT / path
+        if not path.is_file():
+            raise ValueError("Imagem de refer\u00eancia da vari\u00e1vel n\u00e3o encontrada. Troque a imagem do bloco.")
+        key = (str(path), path.stat().st_mtime_ns, text, json.dumps(config.get("anchor"), sort_keys=True))
+        cache = getattr(self, "_cache_ancoras_variaveis", {})
+        if key not in cache:
+            with Image.open(path) as source:
+                image = source.convert("RGB")
+            scale = 3
+            data = pytesseract.image_to_data(image.resize((image.width*scale,image.height*scale)),
+                config="--psm 6", output_type=pytesseract.Output.DICT)
+            words = [i for i, value in enumerate(data["text"]) if self.normalizar_texto_ocr(value)]
+            expected = self.normalizar_texto_ocr(text)
+            matches = []
+            for start in range(len(words)):
+                for count in range(1, min(12, len(words)-start)+1):
+                    group = words[start:start+count]
+                    if self.normalizar_texto_ocr(" ".join(data["text"][i] for i in group)) != expected:
+                        continue
+                    x = min(data["left"][i] for i in group)/scale
+                    y = min(data["top"][i] for i in group)/scale
+                    right = max(data["left"][i]+data["width"][i] for i in group)/scale
+                    bottom = max(data["top"][i]+data["height"][i] for i in group)/scale
+                    matches.append(dict(x=x/image.width,y=y/image.height,width=(right-x)/image.width,height=(bottom-y)/image.height, imageWidth=image.width, imageHeight=image.height))
+            if not matches:
+                raise ValueError("N\u00e3o foi poss\u00edvel calibrar o OCR 1 na imagem salva. Use uma imagem com o texto completo e leg\u00edvel.")
+            marked = config.get("anchor") or {}
+            cx = marked.get("x",0)+marked.get("width",1)/2
+            cy = marked.get("y",0)+marked.get("height",1)/2
+            cache[key] = min(matches,key=lambda a:(a["x"]+a["width"]/2-cx)**2+(a["y"]+a["height"]/2-cy)**2)
+            self._cache_ancoras_variaveis = cache
+        return {**config, "anchor":cache[key], "calibrated":True}
+
+    def capturar_variavel_ocr(self, local, config):
+        self._ultima_captura_variavel = {}
+        if not config.get("enabled"):
+            return True
+        name = str(config.get("name") or "").strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,47}", name) or name.startswith("__"):
+            raise ValueError("Use um nome de variável com letras, números e sublinhado.")
+        self.contexto_variaveis.pop(name, None)
+        related = local.get("ocr_related_bounds") if isinstance(local, dict) else None
+        anchor = related[0] if related else local.get("ocr_bounds") if isinstance(local, dict) else None
+        x, y, w, h = self.bounds_reconhecimento(anchor or local)
+        width = max(20, min(1200, int(config.get("width") or 180)))
+        height = max(16, min(600, int(config.get("height") or 40)))
+        gap = max(0, min(400, int(config.get("gap", 8))))
+        side = config.get("side", "right")
+        left = x + w + gap if side == "right" else x - gap - width if side == "left" else x
+        top = y + h + gap if side == "below" else y - gap - height if side == "above" else y + (h-height)//2
+        region = (int(left), int(top), width, height)
+        if config.get("region"):
+            # OCR anchors follow the detected text; an image-only match uses
+            # the reference image bounds directly. No screen coordinates persist.
+            image_match = not anchor and not (isinstance(local, dict) and (local.get("source") or local.get("text")))
+            region = self.regiao_visual_variavel(config if image_match else self.calibrar_ancora_variavel(config), anchor or local, image_match)
+        image, _, _ = self.capturar_tela_pil(region=region)
+        variants = self.ler_textos_variavel_ocr(image)
+        self._ultima_captura_variavel = {"region": list(region), "raw_text": str(next(iter(variants), "")), "readings": list(variants)}
+        values = set()
+        for text in variants:
+            try:
+                values.add(self.validar_valor_capturado(text, config.get("kind", "money")))
+            except ValueError:
+                pass
+        if len(values) != 1:
+            raise ValueError(f"Variável {name}: leitura vazia, inválida ou ambígua. Ajuste a área.")
+        value = values.pop()
+        self._ultima_captura_variavel["value"] = value
+        self.salvar_variavel_contexto(name, value)
+        safe_print(f"Captura confirmada: {{{{{name}}}}} = {value}", flush=True)
+        return True
+
+    def ler_textos_variavel_ocr(self, imagem):
+        # Recognition normalizes punctuation to compare labels. A captured
+        # value must preserve commas, decimal points, dates and original case.
+        if not OCR_DISPONIVEL or pytesseract is None:
+            raise ValueError("O motor OCR local não está disponível neste computador.")
+        base = self.ampliar_imagem_para_ocr(imagem.convert("RGB"), fator=3)
+        gray = base.convert("L")
+        variants = [base, gray.point(lambda pixel: 255 if pixel >= 150 else 0)]
+        # Keep both segmentation modes and both image variants for validation,
+        # but run at most two independent Tesseract processes concurrently.
+        from concurrent.futures import ThreadPoolExecutor
+        jobs = [(variant, psm) for variant in variants for psm in (7, 6)]
+        def read(job):
+            variant, psm = job
+            return str(pytesseract.image_to_string(variant, config=f"--psm {psm}") or "").strip()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            raw_readings = list(pool.map(read, jobs))
+        readings = list(dict.fromkeys(raw for raw in raw_readings if raw))
+        return readings
+
+    @staticmethod
+    def regiao_visual_variavel(config, bounds, imagem=False):
+        r, a = config.get("region") or {}, config.get("anchor") or {}
+        if not all(isinstance(r.get(k), (int,float)) and math.isfinite(r[k]) for k in ("x","y","width","height")):
+            raise ValueError("Marque uma área válida para a variável na imagem.")
+        if r["width"] <= 0 or r["height"] <= 0 or r["x"] < 0 or r["y"] < 0 or r["x"]+r["width"] > 1.001 or r["y"]+r["height"] > 1.001:
+            raise ValueError("A área da variável deve ficar dentro da imagem.")
+        if not imagem and (not a.get("width") or not a.get("height")):
+            raise ValueError("Posicione o primeiro OCR na imagem de referência.")
+        x,y,w,h = [float(bounds.get(k,0)) for k in ("left","top","width","height")] if isinstance(bounds,dict) else [float(getattr(bounds,k,0)) for k in ("left","top","width","height")]
+        sx,sy = (w,h) if imagem else (w/a["width"],h/a["height"])
+        if config.get("calibrated"):
+            # OCR may pad a short text line vertically. Font scaling is uniform.
+            sy = sx * a["imageHeight"] / a["imageWidth"]
+        left,top = (x+r["x"]*sx,y+r["y"]*sy) if imagem else (x+(r["x"]-a["x"])*sx,y+(r["y"]-a["y"])*sy)
+        return (round(left),round(top),max(1,round(r["width"]*sx)),max(1,round(r["height"]*sy)))
+
+    def capturar_variavel_chrome(self, pagina, alvo, config):
+        if not config.get("enabled"):
+            return
+        name = str(config.get("name") or "")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,47}", name) or name.startswith("__"):
+            raise ValueError("Nome de variável inválido.")
+        self.contexto_variaveis.pop(name, None)
+        raw = alvo.evaluate("""(anchor,c) => {
+            const r=anchor.getBoundingClientRect(), w=Number(c.width)||180,h=Number(c.height)||40,g=Number(c.gap??8);
+            let x=c.side==='left'?r.left-g-w:c.side==='right'?r.right+g:r.left;
+            let y=c.side==='below'?r.bottom+g:c.side==='above'?r.top-g-h:r.top+(r.height-h)/2;
+            let width=w,height=h;
+            if(c.region) {
+                if(!c.anchor?.width||!c.anchor?.height)throw Error('Posicione o primeiro OCR na imagem.');
+                const sx=r.width/c.anchor.width,sy=r.height/c.anchor.height;
+                x=r.left+(c.region.x-c.anchor.x)*sx;y=r.top+(c.region.y-c.anchor.y)*sy;
+                width=c.region.width*sx;height=c.region.height*sy;
+            }
+            const inside=b=>b.width&&b.height&&b.left+b.width/2>=x&&b.left+b.width/2<=x+width&&b.top+b.height/2>=y&&b.top+b.height/2<=y+height;
+            const out=[], walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT); let n;
+            while(n=walker.nextNode()) {
+                if(!n.textContent.trim()||n.parentElement.closest('script,style,[data-flowdetect-overlay]')||!n.parentElement.checkVisibility())continue;
+                const range=document.createRange();range.selectNodeContents(n);
+                if(inside(range.getBoundingClientRect()))out.push(n.textContent.trim());
+            }
+            for(const el of document.querySelectorAll('input,textarea,select')) if(inside(el.getBoundingClientRect())&&el.value)out.push(el.value);
+            return out.join(' ');
+        }""", config)
+        self.salvar_variavel_contexto(name, self.validar_valor_capturado(raw, config.get("kind", "money")))
+
     def montar_contexto_substituicao(self, contexto_loop=None):
         contexto = {}
         for chave, valor in (self.contexto_variaveis or {}).items():
@@ -6483,6 +6692,8 @@ class ExecutorAutomacao:
 
         def substituir(match):
             token = str(match.group(1) or "").strip()
+            if token in self.nomes_variaveis_capturadas() and token not in self.contexto_variaveis:
+                raise ValueError(f"A variável {token} ainda não foi capturada nesta linha.")
             valor = self.resolver_variavel_contexto(token, contexto)
             return "" if valor is None else str(valor)
 
@@ -8877,6 +9088,7 @@ class ExecutorAutomacao:
                     alvo = pagina.get_by_text(texto, exact=False).first
                     alvo.wait_for(state="visible", timeout=timeout_ms)
                     capturado = str(alvo.inner_text(timeout=timeout_ms) or texto).strip()
+                    self.capturar_variavel_chrome(pagina, alvo, self.configuracao_captura_variavel(detalhes))
                     self.salvar_variavel_contexto("ultimo_ocr", capturado)
                     self.salvar_variavel_contexto("ocr_tela", capturado)
                     self.salvar_variavel_contexto(f"ocr_bloco_{ordem}", capturado)
@@ -8970,6 +9182,11 @@ class ExecutorAutomacao:
                         resultado = candidatos[0] if isinstance(candidatos, list) and candidatos else None
                 if resultado:
                     ultimo_resultado = resultado
+                    try:
+                        self.capturar_variavel_ocr(resultado, self.configuracao_captura_variavel(detalhes))
+                    except ValueError as error:
+                        safe_print(f"Falha na captura da variável: {error}", flush=True)
+                        return self.resultado_falha_bloco_ocr(evento, texto)
                     capturado = str(resultado.get("text") or texto).strip()
                     self.salvar_variavel_contexto("ultimo_ocr", capturado)
                     self.salvar_variavel_contexto("ocr_tela", capturado)
@@ -9026,6 +9243,12 @@ class ExecutorAutomacao:
                     alvo = pagina.get_by_text(texto, exact=False).first
                     alvo.wait_for(state="visible", timeout=timeout_ms)
                     capturado = str(alvo.inner_text(timeout=timeout_ms) or texto).strip()
+                    if indice == 0:
+                        try:
+                            self.capturar_variavel_chrome(pagina, alvo, layout.get("capture") or {})
+                        except ValueError as error:
+                            safe_print(f"Falha na captura da variável: {error}", flush=True)
+                            return self.resultado_falha_bloco_ocr(evento, texto)
                     self.salvar_variavel_contexto("ultimo_ocr", capturado)
                     self.salvar_variavel_contexto("ocr_tela", capturado)
                     self.salvar_variavel_contexto(f"ocr_bloco_{ordem}", capturado)
@@ -9975,6 +10198,13 @@ class ExecutorAutomacao:
             return None
         fluxo_individual = local.get("ocr_target_flow") if isinstance(local, dict) else None
         if isinstance(fluxo_individual, dict) and str(fluxo_individual.get("acao") or "") in {"continuar", "parar", "ir_para_bloco"}:
+            config = self.configuracao_captura_variavel({**(leitura_relativa or {}), "imagem":str(caminho_imagem), "texto_ocr_busca":texto_ocr_esperado})
+            if config.get("enabled") and fluxo_individual.get("origem") != "falha_ocr" and local.get("visual_confirmed"):
+                try:
+                    self.capturar_variavel_ocr(local, config)
+                except ValueError as error:
+                    safe_print(f"Falha na captura da variável: {error}", flush=True)
+                    return None
             # A regra de falha de um OCR individual encerra a busca do bloco
             # antes da confirmacao visual/click padrao.
             return local
@@ -10065,10 +10295,17 @@ class ExecutorAutomacao:
                 flush=True,
             )
             return None
+        capture = self.configuracao_captura_variavel({**leitura, "imagem":str(caminho_imagem), "texto_ocr_busca":texto_ocr_esperado})
+        if capture.get("enabled"):
+            try:
+                self.capturar_variavel_ocr(local, capture)
+            except ValueError as error:
+                safe_print(f"Falha na captura da variável: {error}", flush=True)
+                return None
         acao_ocr_individual = self.aplicar_acao_individual_ocr(local, leitura_relativa=leitura)
         if acao_ocr_individual == "cancelado":
             return None
-        if acao_ocr_individual in {"clicar", "ir_para_bloco"}:
+        if acao_ocr_individual in {"confirmar", "clicar", "ir_para_bloco"}:
             return local
 
         # A borda verde continua informando a confirmacao, so que com uma
@@ -10583,6 +10820,10 @@ class ExecutorAutomacao:
         return self.resultado_sucesso_evento(evento)
 
     def executar_evento(self, evento, contexto_loop=None):
+        self.preparar_escopo_variaveis(contexto_loop)
+        capture = self.configuracao_captura_variavel(evento.get("detalhes", {}))
+        if capture.get("enabled"):
+            self.contexto_variaveis.pop(str(capture.get("name") or ""), None)
         tipo = evento.get("tipo")
 
         if tipo in TIPOS_MARCADORES_LOOP:
@@ -10596,7 +10837,7 @@ class ExecutorAutomacao:
 
         if tipo == "texto_livre":
             self.preparar_janela_para_acao()
-            return self.resultado_sucesso_evento(evento) if self.escrever_texto(evento.get("texto", "")) else self.resultado_fluxo("parar")
+            return self.resultado_sucesso_evento(evento) if self.escrever_texto(self.substituir_variaveis_texto(evento.get("texto", ""), contexto_loop)) else self.resultado_fluxo("parar")
 
         if tipo in TIPOS_SEQUENCIA_PLANILHA:
             detalhes = evento.get("detalhes", {})
@@ -10904,21 +11145,19 @@ class ExecutorAutomacao:
 
     def executar_caminho_chrome_mapa(self, caminho, evento, contexto_loop=None):
         """Delegate a whole lane to the extension through the agent-owned child mailbox."""
-        # Embedded Python does not add the script folder to sys.path.
-        module_name = "_flowdetect_roteiro_mapa"
-        roteiro = sys.modules.get(module_name)
-        if roteiro is None:
-            spec = importlib.util.spec_from_file_location(module_name, APP_ROOT / "gerenciar_roteiro.py")
-            if spec is None or spec.loader is None:
-                raise RuntimeError("Modulo gerenciar_roteiro.py ausente no pacote do Agente.")
-            roteiro = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(roteiro)
-            sys.modules[module_name] = roteiro
+        self.preparar_escopo_variaveis(contexto_loop)
+        spec = importlib.util.spec_from_file_location("flowdetect_map_converter", Path(__file__).resolve().parent / "gerenciar_roteiro.py")
+        roteiro = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(roteiro)
         pasta = os.environ.get("FLOWDETECT_MAP_BRIDGE_DIR", "")
         if not pasta:
             raise RuntimeError("Caminhos Chrome devem ser executados pelo Agente atualizado. Nao ha ponte Chrome nesta execucao.")
         passos = []
         sequencias = set(caminho.get("sequences") or [])
+        for item in self.eventos:
+            capture = self.configuracao_captura_variavel(item.get("detalhes", {}))
+            if item.get("sequencia", "principal") in sequencias and capture.get("enabled"):
+                getattr(self, "contexto_variaveis", {}).pop(capture.get("name"), None)
         for item in self.eventos:
             if item.get("sequencia", "principal") not in sequencias:
                 continue
@@ -10927,7 +11166,7 @@ class ExecutorAutomacao:
                 raise ValueError(f"Caminho Chrome incompativel: {aviso or item.get('tipo')}.")
             passos.append(passo)
         externos = [item for item in self.eventos if item.get("sequencia", "principal") not in sequencias]
-        contexto = self.obter_contexto_linha_loop(contexto_loop)
+        contexto = {**self.obter_contexto_linha_loop(contexto_loop), **getattr(self, "contexto_variaveis", {})}
         automacao = {"schema": "flowdetect_chrome_automation", "version": 3,
             "automation": {"id": caminho["id"], "nome": caminho["name"]},
             "initial_sequence": evento["sequencia"], "steps": passos,
@@ -10951,6 +11190,9 @@ class ExecutorAutomacao:
         result = json.loads(reply.read_text(encoding="utf-8"))
         if not result.get("ok"):
             raise RuntimeError(result.get("error") or "Caminho Chrome falhou.")
+        for name, value in (result.get("variables") or {}).items():
+            if name in self.nomes_variaveis_capturadas() and isinstance(value, str):
+                self.salvar_variavel_contexto(name, value)
         saida = result.get("exit") or {}
         if saida:
             return self.resultado_fluxo(saida["action"], saida.get("sequence", ""), bloco=saida.get("block", ""))

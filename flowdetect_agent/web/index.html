@@ -74,10 +74,20 @@
           <button id="toggleMouseControlButton" class="agent-mouse-control-button is-disabled" type="button" aria-pressed="false" title="Bloqueia movimentos e cliques remotos enviados pelo Studio">Mouse desligado</button>
           <button id="importZipButton" class="agent-primary-button" type="button">Importar ZIP</button>
           <button id="refreshLibraryButton" class="agent-secondary-button" type="button">Atualizar</button>
-          <button id="toggleAgentPanelButton" class="agent-secondary-button agent-panel-toggle" type="button">Detalhes</button>
+          <button id="toggleAgentPanelButton" class="agent-secondary-button agent-panel-toggle" type="button">Ocultar</button>
           <button id="minimizeAgentButton" class="agent-window-button" type="button" title="Minimizar">—</button>
           <input id="automationZipInput" type="file" accept=".zip,application/zip" hidden />
         </div>
+      </section>
+
+      <section class="agent-chrome-setup" aria-label="Conexão com o Chrome deste computador">
+        <div><strong>Chrome do agente</strong><small id="agentChromeStatus" role="status">Verificando conexão…</small></div>
+        <form id="agentChromePairForm">
+          <label for="agentChromePairCode">Código exibido na extensão</label>
+          <input id="agentChromePairCode" inputmode="numeric" autocomplete="off" maxlength="6" pattern="[0-9]{6}" placeholder="000000" required />
+          <button id="agentChromePairButton" class="agent-secondary-button" type="submit">Conectar</button>
+        </form>
+        <p id="agentConnectionHelp">No Studio, abra Agentes → Físico e informe o código acima. Para etapas web, abra a extensão no Chrome deste PC e conecte o código dela aqui.</p>
       </section>
 
       <section class="agent-overview-grid agent-overview-grid-compact" hidden>

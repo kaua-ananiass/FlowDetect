@@ -1,5 +1,25 @@
 # Histórico de versões
 
+## 0.2.75 ? 06/11/2026
+
+- Teste geral confirma os OCRs e lê a variável usando a mesma âncora do OCR 1.
+- Resultado e destaque de variável em amarelo, com o valor encontrado.
+- Removida a busca duplicada que rejeitava uma referência já confirmada pelo OCR.
+
+
+## 0.2.74 — 06/11/2026
+
+- Área Variável posicionada e redimensionada diretamente na imagem do bloco OCR.
+- Leitura da região acompanha a referência e sua escala na execução.
+- Compatibilidade com as variáveis configuradas antes do editor visual.
+
+## 0.2.73 — 06/11/2026
+
+- Captura de valores ao lado de uma referência OCR, com variáveis de texto, número, dinheiro ou data.
+- Teste de captura sem cliques e rejeição de leituras vazias ou ambíguas.
+- Valores disponíveis para os próximos blocos e para o desktop ao retornar de uma seção Chrome do mapa.
+- Limpeza das capturas entre linhas do loop para evitar reutilizar dados de outra empresa.
+
 ## 0.2.72 — 03/11/2026
 
 - Caminhos Chrome podem ser chamados pela árvore do mapa no Agente e devolver o fluxo ao bloco desktop indicado.

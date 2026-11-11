@@ -123,8 +123,10 @@ static MESHCENTRAL_LAST_MESSAGE: OnceLock<Arc<Mutex<String>>> = OnceLock::new();
 static WEBRTC_SIGNAL_STATE: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
 static NATIVE_REMOTE_STATUS: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
 static AGENT_REMOTE_MOUSE_ENABLED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+static AGENT_HTTP_SERVER_STATUS: OnceLock<Mutex<Value>> = OnceLock::new();
 static PYTHON_BOOTSTRAP_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 static PYTHON_DEPS_READY: AtomicBool = AtomicBool::new(false);
+static OCR_VARIABLE_TEST_BUSY: AtomicBool = AtomicBool::new(false);
 
 static TARGET_OVERLAY_CHILD: Mutex<Option<Child>> = Mutex::new(None);
 static SMART_RECORDER_CHILD: Mutex<Option<Child>> = Mutex::new(None);
@@ -2964,12 +2966,15 @@ fn agent_identity_name(root: &PathBuf) -> String {
 #[tauri::command]
 fn get_agent_connection_info(app: AppHandle) -> Result<Value, String> {
     let root = workspace_root(&app);
-    let remote_server_ok = TcpStream::connect_timeout(
-        &SocketAddr::from(([127, 0, 0, 1], 18452)),
-        Duration::from_millis(250),
-    ).is_ok();
+    // A listening port may belong to a different process. Report this Agent's
+    // actual listener instead of treating a successful TCP connection as health.
+    let server = agent_http_server_status().lock().map_err(|_| "Estado do servidor indisponível")?.clone();
+    let remote_server_ok = server["ready"].as_bool().unwrap_or(false);
     Ok(serde_json::json!({
         "remote_server_ok": remote_server_ok,
+        "server_error": server["error"],
+        "chrome": chrome_test_bridge::chrome_extension_connection_status(),
+        "version": app.package_info().version.to_string(),
         "port": 18452,
         "address": local_agent_address(),
         "local": "127.0.0.1:18452",
@@ -4231,16 +4236,29 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
     let _ = stream.flush();
 }
 
+fn agent_http_server_status() -> &'static Mutex<Value> {
+    AGENT_HTTP_SERVER_STATUS.get_or_init(|| Mutex::new(serde_json::json!({"ready":false,"error":null})))
+}
+
 fn start_agent_http_server(app: AppHandle, root: PathBuf) {
     automation_chain::initialize(&root);
-    thread::spawn(move || {
-        let listener = match TcpListener::bind("0.0.0.0:18452") {
-            Ok(listener) => listener,
-            Err(error) => {
-                eprintln!("FlowDetect Agent nao iniciou TCP 18452: {error}");
-                return;
+    // Bind before publishing readiness or opening the UI so startup errors are
+    // immediately visible and never masquerade as a healthy Agent.
+    let listener = match TcpListener::bind("0.0.0.0:18452") {
+        Ok(listener) => listener,
+        Err(error) => {
+            let message = format!("Não foi possível iniciar o Agent na porta TCP 18452: {error}");
+            if let Ok(mut status) = agent_http_server_status().lock() {
+                *status = serde_json::json!({"ready":false,"error":message});
             }
-        };
+            eprintln!("{message}");
+            return;
+        }
+    };
+    if let Ok(mut status) = agent_http_server_status().lock() {
+        *status = serde_json::json!({"ready":true,"error":null});
+    }
+    thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let root_clone = root.clone();
             let app_clone = app.clone();
@@ -9653,6 +9671,36 @@ fn test_ocr_recognition(
 }
 
 #[tauri::command]
+async fn test_screen_variable_capture(app: AppHandle, reference: String, capture: Value, texts: Option<Vec<String>>, state: State<'_, RuntimeState>) -> Result<Value, String> {
+    if *state.running.lock().map_err(|_| "Estado da execução indisponível")? || automation_chain::active() {
+        return Err("Pare a automação antes de testar a captura na tela.".into());
+    }
+    if reference.trim().is_empty() || reference.len() > 500 || capture["enabled"] != true {
+        return Err("Configure a referência OCR e ative a variável antes de testar.".into());
+    }
+    if OCR_VARIABLE_TEST_BUSY.swap(true, Ordering::SeqCst) {
+        return Err("Um teste de captura já está em andamento.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = workspace_root(&app);
+        let window = app.get_webview_window("main");
+        let result = (|| {
+            ensure_python_script_integrity(&root, "executar_automacao.py")?;
+            if let Some(window) = &window { let _ = window.minimize(); }
+            thread::sleep(Duration::from_millis(450));
+            let payload = serde_json::json!({"reference":reference,"capture":capture,"texts":texts}).to_string();
+            let raw = run_python_script(&root, "reconhecimento_worker.py", &["--test-variable".into(), payload])?;
+            serde_json::from_str::<Value>(&raw).map_err(|error| format!("Resposta do OCR local inválida: {error}"))
+        })();
+        if let Some(window) = &window {
+            let _ = window.unminimize(); let _ = window.show(); let _ = window.set_focus();
+        }
+        OCR_VARIABLE_TEST_BUSY.store(false, Ordering::SeqCst);
+        result
+    }).await.map_err(|error| { OCR_VARIABLE_TEST_BUSY.store(false, Ordering::SeqCst); error.to_string() })?
+}
+
+#[tauri::command]
 fn chrome_web_capture_element(
     app: AppHandle,
     url: Option<String>,
@@ -10326,11 +10374,13 @@ fn set_agent_service_window_hidden(app: &AppHandle, hidden: bool) {
     }
 }
 
-fn toggle_agent_service_window(app: &AppHandle) {
+fn toggle_agent_service_window(app: &AppHandle) -> bool {
     if let Some(window) = app.get_webview_window("main") {
         let visible = window.is_visible().unwrap_or(false);
         set_agent_service_window_hidden(app, visible);
+        return !visible;
     }
+    false
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -10349,9 +10399,22 @@ pub fn run() {
                 let _ = app_handle.path().app_data_dir().map(|p| fs::create_dir_all(p));
                 agent_pairing::serve_discovery(app_handle.path().app_data_dir().unwrap_or_else(|_|root.join(".credentials")),agent_identity_name(&root),app_handle.package_info().version.to_string());
                 start_agent_http_server(app_handle.clone(), root);
-                set_agent_service_window_hidden(&app_handle, true);
+                // Show the pairing code on launch. Running an automation still
+                // minimizes the Agent, without hiding initial setup from users.
+                set_agent_service_window_hidden(&app_handle, false);
                 #[cfg(windows)]
                 {
+                    let reopen_app = app_handle.clone();
+                    thread::spawn(move || unsafe {
+                        use windows::{core::w, Win32::{Foundation::WAIT_OBJECT_0, System::Threading::{CreateEventW, WaitForSingleObject}}};
+                        if let Ok(event) = CreateEventW(None, false, false, w!("Local\\FlowDetectAgent.OpenPanel")) {
+                            loop {
+                                if WaitForSingleObject(event, u32::MAX) != WAIT_OBJECT_0 { break; }
+                                set_agent_service_window_hidden(&reopen_app, false);
+                                let _ = reopen_app.emit("agent-panel-open-request", ());
+                            }
+                        }
+                    });
                     let hotkey_app = app_handle.clone();
                     thread::spawn(move || {
                         let mut pressed = false;
@@ -10362,8 +10425,9 @@ pub fn run() {
                                     && GetAsyncKeyState(VK_F12.0 as i32) < 0
                             };
                             if active && !pressed {
-                                toggle_agent_service_window(&hotkey_app);
-                                let _ = hotkey_app.emit("agent-overlay-toggle-request", ());
+                                if toggle_agent_service_window(&hotkey_app) {
+                                    let _ = hotkey_app.emit("agent-overlay-toggle-request", ());
+                                }
                             }
                             pressed = active;
                             thread::sleep(Duration::from_millis(90));
@@ -10523,6 +10587,7 @@ pub fn run() {
             chrome_web_open_site,
             test_image_recognition,
             test_ocr_recognition,
+            test_screen_variable_capture,
             get_test_loop_data,
             get_test_execution_state,
             launch_quick_test,
