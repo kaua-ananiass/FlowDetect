@@ -39,6 +39,12 @@
   }
   function block(event) {
     if (!runId || !event.isTrusted) return;
+    const nativeClick=globalThis.__flowDetectNativeClick;
+    if(nativeClick&&nativeClick.runId===runId&&Date.now()<=nativeClick.expiresAt&&nativeClick.target?.isConnected&&nativeClick.types.includes(event.type)&&(event.target===nativeClick.target||nativeClick.target.contains(event.target))){
+      nativeClick.types=nativeClick.types.filter(type=>type!==event.type);
+      if(event.type==='click')delete globalThis.__flowDetectNativeClick;
+      return;
+    }
     if (event.type === 'keydown' && event.ctrlKey && event.altKey && event.shiftKey && event.code === 'KeyL') {
       const id = runId;
       disable();

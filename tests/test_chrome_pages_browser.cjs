@@ -7,6 +7,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
 test('execution pages: distinct tabs, independent runs, deletion and responsive popup', async () => {
   const root = path.resolve(__dirname, '../flowdetect_chrome');
+  const runtimeVersion=JSON.parse(await fs.readFile(path.join(root,'manifest.json'),'utf8')).version;
   const server = http.createServer(async (req, res) => {
     try {
       const pathname = new URL(req.url, 'http://localhost').pathname;
@@ -23,7 +24,7 @@ test('execution pages: distinct tabs, independent runs, deletion and responsive 
     const page = await browser.newPage({viewport:{width:390,height:600}});
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
-    await page.addInitScript(() => {
+    await page.addInitScript(({runtimeVersion}) => {
       const pagesKey = 'flowdetectChromeExecutionPages', runPrefix = 'flowdetectChromePageRun:';
       const automation = {
         id:'demo', schema:'flowdetect_chrome_automation', version:3,
@@ -134,10 +135,10 @@ test('execution pages: distinct tabs, independent runs, deletion and responsive 
           if(message.type==='flowdetect-stop'){
             await finishRun(message.pageId,'stopped');return {ok:true};
           }
-          return {ok:true,ready:true,version:'0.2.72'};
+          return {ok:true,ready:true,version:runtimeVersion};
         }}
       };
-    });
+    },{runtimeVersion});
     await page.goto(`http://127.0.0.1:${server.address().port}/sidepanel.html`);
     const selected = () => page.locator('#executionPageTabs .execution-page-select[aria-current="page"]');
     await selected().waitFor();

@@ -1,6 +1,14 @@
 # Histórico de versões
 
-## 0.2.75 ? 06/11/2026
+## 0.2.76–0.2.95 — consolidação de 11/11/2026
+
+- Mapeamento de tabelas e botões por estrutura, com percurso por todas as linhas e páginas.
+- Captura da tabela interna, retorno à lista e consolidação dos resultados em planilha.
+- Diagnósticos de falhas por etapa e guia; integração com variáveis OCR.
+- Correções de localização de botões, tabelas repetidas e retorno de detalhes.
+- As alterações do período estão consolidadas nesta branch; nenhum ZIP é gerado por esta publicação.
+
+## 0.2.75 — 06/11/2026
 
 - Teste geral confirma os OCRs e lê a variável usando a mesma âncora do OCR 1.
 - Resultado e destaque de variável em amarelo, com o valor encontrado.

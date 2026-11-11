@@ -310,11 +310,11 @@ test("content runner can be reinjected into the same tab", () => {
 const workerSource = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/manifest.json"), "utf8"));
 
-test("service worker keeps the persistent content runner and limits fallback injection to page helpers", () => {
+test("service worker keeps the persistent content runner and only injects registered helper files", () => {
   assert.doesNotMatch(workerSource, /progress-overlay/);
-  const injections=[...workerSource.matchAll(/chrome\.scripting\.executeScript\(([^;]+)\);/g)];
-  assert.equal(injections.length,2);
-  for(const injection of injections) assert.match(injection[1],/files: \["(?:page-outline|input-lock)\.js"\]/);
+  const files=[...workerSource.matchAll(/files:\s*\[(['"])([^'"]+)\1\]/g)].map(match=>match[2]);
+  assert.deepEqual([...new Set(files)].sort(),['input-lock.js','page-outline.js','table-reader.js']);
+  assert.ok(!files.includes('content.js'),'The persistent runner must not be re-injected');
   assert.ok(manifest.permissions.includes("scripting"));
   assert.deepEqual(manifest.content_scripts, [{
     matches: ["http://*/*", "https://*/*"],

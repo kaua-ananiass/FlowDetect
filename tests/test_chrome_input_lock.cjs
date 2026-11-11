@@ -67,3 +67,17 @@ test('browser blocks real input, permits automation and releases on emergency, c
     assert.equal(await page.evaluate(() => clicks), 3);
   } finally { await browser.close(); }
 });
+
+
+test('native click exception is one-use, expires, and never unlocks another target or run',async()=>{
+ const browser=await chromium.launch({headless:true});try{
+  const page=await browser.newPage();await page.setContent('<button id="close" style="margin:40px">Close</button><button id="other">Other</button>');
+  await page.evaluate(()=>{window.clicks=[];for(const b of document.querySelectorAll('button'))b.onclick=()=>clicks.push(b.id);window.chrome={runtime:{onMessage:{addListener(){}},sendMessage:async()=>({locked:true,runId:'run-native'})}};});
+  await page.addScriptTag({path:path.join(root,'flowdetect_chrome/input-lock.js')});await page.waitForSelector('[data-flowdetect-input-lock]');
+  const grant=async(runId,expiresAt)=>page.evaluate(({runId,expiresAt})=>{globalThis.__flowDetectNativeClick={runId,target:document.querySelector('#close'),expiresAt,types:['pointerdown','mousedown','pointerup','mouseup','click']};},{runId,expiresAt});
+  await grant('another-run',Date.now()+2000);await page.locator('#close').click();
+  await grant('run-native',Date.now()-1);await page.locator('#close').click();
+  await grant('run-native',Date.now()+2000);await page.locator('#other').click();await page.locator('#close').click();await page.locator('#close').click();
+  assert.deepEqual(await page.evaluate(()=>clicks),['close']);
+ }finally{await browser.close();}
+});

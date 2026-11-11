@@ -1,6 +1,7 @@
 import { routeAvailable, activateDownloadRoute, deactivateDownloadRoute, clearDownloadRouteForTab, noteDownloadSource }
   from "./download-routing.js";
 import { PAGE_RUN_PREFIX, PAGES_KEY, getPages, createPage, bindPage, unbindPage, deletePage, editPages } from "./execution-pages.js";
+import { tableWorkbookDataUrl } from "./table-workbook.js";
 async function updatePageOutline(tabId, page) {
   if (!Number.isInteger(tabId)) return;
   const update = { type: "flowdetect-page-outline-update", page: page || null };
@@ -15,8 +16,8 @@ async function updatePageOutline(tabId, page) {
 }
 
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.75";
-const CONTENT_RUNTIME_VERSION = "0.2.75";
+const RUNTIME_VERSION = "0.2.95";
+const CONTENT_RUNTIME_VERSION = "0.2.95";
 const STUDIO_TEST_BRIDGE = "http://127.0.0.1:18453";
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const PAIR_CODE_KEY = "flowdetectStudioPairCode";
@@ -139,6 +140,18 @@ async function importStudioAutomation(job) {
   return { ok: true, steps: imported.steps.length };
 }
 
+async function runStudioTableMapping(job){
+  const [tab]=await chrome.tabs.query({active:true,lastFocusedWindow:true});
+  if(!tab?.id || !/^https?:\/\//i.test(tab.url||''))throw Error('Abra a tabela no Chrome antes de mapear.');
+  if(activeRuns.size)throw Error('Pare as automações antes de mapear uma tabela.');
+  await chrome.scripting.executeScript({target:{tabId:tab.id},files:['table-reader.js']});
+  const result=await chrome.tabs.sendMessage(tab.id,job?.request?.pick_control?{type:'flowdetect-control-pick'}:job?.request?.descriptor?{type:'flowdetect-table-preview',config:job.request}:{type:'flowdetect-table-pick'});
+  if(!result?.ok||result.control)return result;
+  const {rows,actions,...schema}=result;
+  const fixedButtons=[...new Map((actions||[]).flat().map(a=>[JSON.stringify([a.column,a.signature]),a])).values()];
+  return {...schema,rows:[],actions:[fixedButtons],schema_only:true};
+}
+
 async function handleStudioChainJob(job) {
   if (job.type === "chain_pages") {
     const pages = await getPages();
@@ -255,6 +268,8 @@ function startStudioTestBridge() {
             ? await importStudioAutomation(job)
             : job.type === "test_recognition"
               ? await runStudioRecognitionTest(job)
+              : job.type === "map_table"
+                ? await runStudioTableMapping(job)
               : { ok: false, error: "Pedido desconhecido do Studio." };
         } catch (error) {
           result = { ok: false, error: String(error?.message || error) };
@@ -332,7 +347,7 @@ function createRun(automation, tabId, startRow = 1, loopIncludedIndices = null, 
     startedAt: new Date().toISOString(),
     finishedAt: "",
     currentStep: 0,
-    totalSteps: Array.isArray(automation?.steps) ? automation.steps.length : 0,
+    totalSteps: Array.isArray(automation?.steps) ? automation.steps.filter(step=>!['loop_start','loop_end'].includes(step.type)).length : 0,
     loopIncludedIndices: Array.isArray(loopIncludedIndices) ? loopIncludedIndices : null,
     loopExcludedRows: Array.isArray(loopExcludedRows) ? loopExcludedRows : [],
     recentSteps: [],
@@ -613,7 +628,7 @@ function setSpreadsheetRowVariables(run, source, row) {
   });
   run.variables[sourceName] = value;
   run.variables.valor = value;
-  run.variables.empresa = spreadsheetColumnValue(rowData, "empresa") || value;
+  run.variables.empresa = spreadsheetColumnValue(rowData, "empresa") || (source?.tableSource ? run.variables.empresa || '' : value);
   run.variables.linha_atual = line;
   run.variables.linha = line;
   return value;
@@ -1020,12 +1035,262 @@ async function executeOcrTargets(run, step) {
 }
 
 async function executeStep(run, rawStep) {
+  if(rawStep.type==='table_read'){
+    const config=replaceVariables(rawStep.table,run.variables);
+    const tableCommand=async(message)=>{
+      if(run.cancelled)throw Error('Execução interrompida.');
+      const mutating=['flowdetect-table-click','flowdetect-table-return'].includes(message.type);
+      const authorized=mutating&&message.runId===run.id&&Boolean(message.nonce)&&run.pendingTableClick===message.nonce;
+      if(mutating&&!authorized)throw Error('A operação de clique não possui autorização válida nesta execução.');
+      if(authorized)delete run.pendingTableClick;
+      const operationId=message.nonce||`${run.id}:${Date.now()}:${Math.random()}`;
+      const deadline=Date.now()+(message.type==='flowdetect-table-return'?20000:message.type==='flowdetect-table-preview'?5000:180000);
+      const request={...message,operationId,deadline,authorized};
+      let watchdog;
+      const execute=async()=>{
+      await chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},files:['table-reader.js']});
+      if(run.cancelled||Date.now()>=deadline)throw Error('A operação da tabela foi interrompida antes de iniciar.');
+      if(message.type==='flowdetect-table-return'){
+        const started=await chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},func:request=>{
+          const operations=globalThis.__flowDetectTableOperations||=new Map();
+          for(const [id,entry] of operations)if(entry.deadline&&entry.deadline<Date.now())operations.delete(id);
+          const operation={aborted:false,used:false,state:'running',deadline:request.deadline,phase:'Iniciando o fechamento.'};operations.set(request.operationId,operation);
+          const permit=async()=>{
+            if(!request.authorized||operation.used||operation.aborted||Date.now()>=request.deadline)return false;
+            operation.used=true;return true;
+          };
+          const dispatchClose=button=>new Promise((resolve,reject)=>{
+            if(operation.aborted||Date.now()>=request.deadline){reject(Error('Fechamento interrompido antes do clique.'));return;}
+            button.setAttribute('data-flowdetect-close-token',request.operationId);
+            operation.clickRequest={token:request.operationId,signature:request.config.return_control.signature,origin:location.origin,pathname:location.pathname,deadline:request.deadline};
+            operation.phase='Botão validado; enviando o clique no contexto da página.';
+            operation.resolveClick=result=>{
+              button.removeAttribute('data-flowdetect-close-token');delete operation.clickRequest;delete operation.resolveClick;
+              result?.ok?resolve():reject(Error(result?.error||'O portal não confirmou o envio do clique.'));
+            };
+          });
+          // Retain the task in the tab and return only a synchronous receipt.
+          // Closing the modal must not own a long-lived injection response.
+          operation.task=Promise.resolve().then(()=>globalThis.FlowDetectTables.returnToList(request.config,permit,phase=>{operation.phase=phase;},dispatchClose))
+            .then(data=>{operation.response={ok:true,...data};operation.state='done';},error=>{operation.response={ok:false,error:String(error?.message||error)};operation.state='done';});
+          return {operationId:request.operationId};
+        },args:[request]});
+        if(!started?.find(item=>item.frameId===0)?.result?.operationId)throw Error('Não foi possível iniciar o fechamento na aba. Nenhum clique será repetido.');
+        let clickDispatched=false;
+        while(!run.cancelled&&Date.now()<deadline){
+          const polled=await chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},func:id=>{
+            const operations=globalThis.__flowDetectTableOperations,op=operations?.get(id);
+            if(!op)return {state:'missing'};
+            const status={state:op.state,phase:op.phase,response:op.response,clickRequest:op.clickRequest};
+            if(op.state==='done')operations.delete(id);
+            return status;
+          },args:[operationId]});
+          const status=polled?.find(item=>item.frameId===0)?.result;
+          if(!status||status.state==='missing')throw Error('A aba perdeu a tarefa de fechamento. Nenhum clique será repetido.');
+          if(status.phase&&run.tableOperationPhase!==status.phase){
+            run.tableOperationPhase=status.phase;
+            if(typeof persistRun==='function')await persistRun(run);
+          }
+          if(status.clickRequest&&!clickDispatched){
+            if(run.cancelled||Date.now()>=deadline)throw Error('Fechamento interrompido antes do clique.');
+            clickDispatched=true;
+            if(!chrome.debugger?.attach)throw Error('O fechamento nativo precisa da permissão debugger. Recarregue e habilite a extensão atualizada no Chrome.');
+            const target={tabId:run.tabId};let attached=false;
+            let clickResult;
+            try{
+            await chrome.debugger.attach(target,'1.3');attached=true;
+            await chrome.debugger.sendCommand(target,'Emulation.setFocusEmulationEnabled',{enabled:true});
+            let point=null,lastPointError='',stablePoint='';
+            for(let attempt=0;attempt<40&&!run.cancelled&&Date.now()<deadline;attempt++){
+            const prepared=await chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},world:'MAIN',func:request=>{
+              try{
+                if(Date.now()>=request.deadline||location.origin!==request.origin||location.pathname!==request.pathname)throw Error('A página mudou antes do clique de fechar.');
+                const matches=[...document.querySelectorAll('[data-flowdetect-close-token]')].filter(b=>b.getAttribute('data-flowdetect-close-token')===request.token);
+                if(matches.length!==1)throw Error('O botão de fechar mudou antes do clique.');
+                const b=matches[0],signature={tag:b.tagName.toLowerCase(),aria:b.getAttribute('aria-label')||'',title:b.getAttribute('title')||'',text:String(b.innerText??b.textContent??'').replace(/\s+/g,' ').trim(),icons:[...b.querySelectorAll('i,svg,[data-icon]')].map(i=>i.getAttribute('data-icon')||[...i.classList].filter(c=>/^(fa-|bi-|icon-)/.test(c)).sort().join(' ')).filter(Boolean).join('|')};
+                if(!b.isConnected||!b.getClientRects().length||b.closest('[hidden],[aria-hidden="true"]')||b.disabled||b.getAttribute('aria-disabled')==='true'||!['tag','aria','title','text','icons'].every(k=>signature[k]===(request.signature[k]??'')))throw Error('O botão de fechar não está mais disponível com o mapeamento confirmado.');
+                b.scrollIntoView({block:'nearest',inline:'nearest'});
+                const r=b.getBoundingClientRect(),blockers=new Set();
+                if(r.width<=0||r.height<=0)throw Error('O botão Fechar ainda não possui área visível.');
+                const fractions=[[.5,.5],[.2,.2],[.8,.2],[.2,.8],[.8,.8],[.5,.2],[.5,.8],[.2,.5],[.8,.5]];
+                for(const [fx,fy] of fractions){
+                  const x=r.left+r.width*fx,y=r.top+r.height*fy;
+                  if(x<0||y<0||x>=innerWidth||y>=innerHeight)continue;
+                  const top=document.elementFromPoint(x,y);
+                  if(top&&(top===b||b.contains(top)))return {ok:true,x,y};
+                  if(top)blockers.add(top.tagName.toLowerCase()+'.'+[...top.classList].slice(0,4).join('.'));
+                }
+                throw Error('O botão Fechar está coberto. Elemento à frente: '+([...blockers].join(', ').slice(0,240)||'fora da área visível')+'. Nenhum clique foi enviado.');
+              }catch(error){return {ok:false,error:String(error?.message||error)};}
+            },args:[status.clickRequest]});
+            const candidate=prepared?.find(item=>item.frameId===0)?.result;
+            if(candidate?.ok){
+              const position=candidate.x.toFixed(1)+':'+candidate.y.toFixed(1);
+              if(position===stablePoint){point=candidate;break;}
+              stablePoint=position;
+            }else{stablePoint='';lastPointError=candidate?.error||'Não foi possível validar o botão antes do clique nativo.';}
+            await new Promise(resolve=>setTimeout(resolve,100));
+            }
+            if(!point)throw Error(lastPointError||'O botão Fechar não estabilizou antes do clique nativo.');
+            if(run.cancelled||Date.now()>=deadline)throw Error('Fechamento interrompido antes do clique nativo.');
+            await chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},func:request=>{
+              const button=[...document.querySelectorAll('[data-flowdetect-close-token]')].find(b=>b.getAttribute('data-flowdetect-close-token')===request.token);
+              if(!button)throw Error('O botão mudou antes do clique nativo.');
+              globalThis.__flowDetectNativeClick={runId:request.runId,target:button,expiresAt:Math.min(request.deadline,Date.now()+2000),types:['pointerdown','mousedown','pointerup','mouseup','click']};
+            },args:[{token:operationId,runId:run.id,deadline}]});
+            if(run.cancelled||Date.now()>=deadline)throw Error('Fechamento interrompido antes do clique nativo.');
+            await chrome.debugger.sendCommand(target,'Input.dispatchMouseEvent',{type:'mouseMoved',x:point.x,y:point.y});
+            if(run.cancelled||Date.now()>=deadline)throw Error('Fechamento interrompido antes de pressionar o botão do mouse.');
+            await chrome.debugger.sendCommand(target,'Input.dispatchMouseEvent',{type:'mousePressed',x:point.x,y:point.y,button:'left',buttons:1,clickCount:1});
+            await chrome.debugger.sendCommand(target,'Input.dispatchMouseEvent',{type:'mouseReleased',x:point.x,y:point.y,button:'left',buttons:0,clickCount:1});
+            clickResult={ok:true};
+            }finally{
+              chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},func:()=>{delete globalThis.__flowDetectNativeClick;},args:[]}).catch(()=>{});
+              if(attached){
+                await chrome.debugger.sendCommand(target,'Emulation.setFocusEmulationEnabled',{enabled:false}).catch(()=>{});
+                await chrome.debugger.detach(target).catch(()=>{});
+              }
+            }
+            await chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},func:result=>{globalThis.__flowDetectTableOperations?.get(result.operationId)?.resolveClick?.(result.response);},args:[{operationId,response:clickResult}]});
+          }
+          if(status.state==='done')return [{frameId:0,result:status.response}];
+          await new Promise(resolve=>setTimeout(resolve,100));
+        }
+        throw Error('O fechamento foi interrompido. '+(run.tableOperationPhase||''));
+      }
+      return chrome.scripting.executeScript({
+        target:{tabId:run.tabId,frameIds:[0]},
+        func:async request=>{
+          const operations=globalThis.__flowDetectTableOperations||=new Map();
+          const operation={aborted:false,used:false};operations.set(request.operationId,operation);
+          try{
+            const tables=globalThis.FlowDetectTables;
+            if(!tables)throw Error('O leitor de tabelas não foi carregado nesta aba.');
+            // The worker already authorized this isolated-world invocation.
+            // No nested runtime message may block the click permission.
+            const permit=async()=>{
+              if(!request.authorized||operation.used||operation.aborted||Date.now()>=request.deadline)return false;
+              operation.used=true;return true;
+            };
+            let data;
+            if(request.type==='flowdetect-table-click'){await tables.waitReady(request.config);data=await tables.clickRow(request.config,permit);}
+            else if(request.type==='flowdetect-table-preview')data=tables.describe(await tables.waitReady({...request.config,wait_ready:false,allow_empty:true}));
+            else data=await tables.read(request.config);
+            return {ok:true,...data};
+          }catch(error){return {ok:false,error:String(error?.message||error)};}
+          finally{operations.delete(request.operationId);}
+        },args:[request]
+      });
+      };
+      let results;
+      try{
+        results=await Promise.race([execute(),new Promise((_,reject)=>{
+          watchdog=setInterval(()=>{
+            if(!run.cancelled&&Date.now()<deadline)return;
+            clearInterval(watchdog);
+            chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},func:id=>{const op=globalThis.__flowDetectTableOperations?.get(id);if(op){op.aborted=true;op.resolveClick?.({ok:false,error:'Fechamento interrompido.'});}},args:[operationId]}).catch(()=>{});
+            reject(Error(run.cancelled?'Execução interrompida.':'Tempo limite da operação da tabela. '+(run.tableOperationPhase||'Sem confirmação de início na aba.')+' A execução parou; nenhum clique será repetido automaticamente.'));
+          },100);
+        })]);
+      }catch(error){
+        if(message.type==='flowdetect-table-return')chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},func:id=>{const op=globalThis.__flowDetectTableOperations?.get(id);if(op){op.aborted=true;op.resolveClick?.({ok:false,error:'Fechamento interrompido.'});}},args:[operationId]}).catch(()=>{});
+        throw error;
+      }finally{clearInterval(watchdog);delete run.tableOperationPhase;}
+      if(run.cancelled)throw Error('Execução interrompida.');
+      if(Date.now()>=deadline)throw Error('Tempo limite da operação da tabela. O resultado atrasado não será usado.');
+      const response=results?.find(item=>item.frameId===0)?.result;
+      if(!response)throw Error('A aba perdeu a conexão durante a operação da tabela. Nenhum clique será repetido automaticamente.');
+      return response;
+    };
+    if(config.mode==='export'){
+      const bundle=run.tableCollections?.[config.variable]||{groups:{},guides:[]};
+      const records=Object.values(bundle.groups).flat();
+      run.variables[config.variable]=JSON.stringify(records);
+      if(config.xlsx)await chrome.downloads.download({url:tableWorkbookDataUrl(bundle.guides,records),filename:`FlowDetect/${config.variable}.xlsx`,saveAs:false,conflictAction:'uniquify'});
+      if(config.csv){
+        const quote=value=>'"'+String(value??'').replaceAll('"','""').replace(/^[\s]*[=+@-]/,"'"+'$&')+'"';
+        for(const [label,rows] of [['Guias',bundle.guides],['Detalhamento',records]]){
+          const columns=[...new Set(rows.flatMap(row=>Object.keys(row)))];
+          const csv='\uFEFF'+[columns,...rows.map(row=>columns.map(c=>row[c]))].map(row=>row.map(quote).join(';')).join('\r\n');
+          await chrome.downloads.download({url:'data:text/csv;charset=utf-8,'+encodeURIComponent(csv),filename:`FlowDetect/${config.variable}_${label}.csv`,saveAs:false});
+        }
+      }
+      return `Coleta concluída: ${bundle.guides.length} guia(s), ${records.length} linha(s) de detalhes.`;
+    }
+    if(config.mode==='return'){
+      if(run.cancelled)throw Error('Execução interrompida.');
+      if(config.return_mode==='back')await chrome.tabs.goBack(run.tabId);
+      else{
+        const nonce=crypto.randomUUID();run.pendingTableClick=nonce;let result;
+        try{result=await tableCommand({type:'flowdetect-table-return',config,runId:run.id,nonce});}finally{delete run.pendingTableClick;}
+        if(!result?.ok||!result.returned)throw Error(result?.error||'Não foi possível fechar o detalhe.');
+      }
+      let lastTableError='';
+      for(let i=0;i<75;i++){
+        if(run.cancelled)throw Error('Execução interrompida.');
+        try{const p=await tableCommand({type:'flowdetect-table-preview',config:{descriptor:config.descriptor}});if(p?.ok)return 'Detalhe fechado; lista de guias disponível para a próxima linha.';lastTableError=p?.error||'';}catch(error){lastTableError=String(error.message||error);}
+        await sleep(200);
+      }throw Error('A lista de guias não reapareceu após fechar o detalhe. '+lastTableError);
+    }
+    if(config.mode==='click'){
+      if(run.cancelled)throw Error('Execução interrompida pelo usuário.');
+      if(String(config.match_value||'').includes('{{'))throw Error(`A variável da linha ${config.match_value} ainda não foi preenchida. Leia a lista e crie o loop antes deste clique. Para o percurso automático, mapeie a tabela do detalhe e use Criar percurso no mapa.`);
+      const nonce=crypto.randomUUID();run.pendingTableClick=nonce;
+      let result;
+      try{result=await tableCommand({type:'flowdetect-table-click',config,runId:run.id,nonce});}finally{delete run.pendingTableClick;}
+      if(!result?.ok||!result.clicked)throw Error(result?.error||'O botão da linha não confirmou o clique.');
+      if(config.traversal_id)(run.tableContexts||={})[config.traversal_id]={company:String(config.company||run.variables.empresa||''),key:String(config.match_value),guide:{...(run.spreadsheetLoop?.rowData||{})}};
+      return `Tabela: ${result.action} — ${result.key}: ${result.value}.`;
+    }
+    const name=config.variable;
+    if(!/^[A-Za-z_][A-Za-z0-9_]{0,47}$/.test(name)||['__proto__','constructor','prototype'].includes(name))throw Error('Nome de variável da tabela inválido.');
+    delete run.variables[name];if(run.capturedVariables)delete run.capturedVariables[name];
+    if(config.prepare_loop)run.dataSource=null;
+    const readConfig=config.accumulate?{...config,expected_guide:run.tableContexts?.[config.traversal_id]?.key}:config;
+    let result;
+    try{result=await tableCommand({type:'flowdetect-table-read',config:readConfig});}
+    catch(error){
+      if(/message channel closed|context invalidated|receiving end does not exist/i.test(String(error?.message||error)))throw Error('A comunicação com a aba foi interrompida durante a captura. A coleta parou sem avançar para outra guia. Recarregue o FGTS e confira se há somente uma execução nesta aba.');
+      throw error;
+    }
+    if(!result?.ok)throw Error(result?.error||'Falha ao ler a tabela.');
+    if(typeof result.value!=='string'||result.value.length>2000000)throw Error('Resultado da tabela excedeu o limite.');
+    run.variables[name]=result.value;(run.capturedVariables ||= {})[name]=result.value;
+    if(config.prepare_loop && config.mode!=='value'){
+      if(config.key_column&&!result.columns.includes(config.key_column))throw Error('Inclua a coluna identificadora na leitura da lista.');
+      if(config.traversal_id){const keys=result.rows.map(row=>String(row[config.key_column]??'').trim());if(keys.some(k=>!k)||new Set(keys).size!==keys.length)throw Error('A lista contém identificadores vazios ou repetidos. Nenhuma guia foi aberta.');}
+      run.dataSource={name:name+'_linha',values:result.rows.map(row=>String(row[config.key_column||result.columns[0]]??'')),rows:result.rows,index:run.currentIndex,interval:0,tableSource:true,allowEmpty:!!config.traversal_id};
+      if(config.traversal_id){
+        const company=String(config.company||run.variables.empresa||'');if(company.includes('{{'))throw Error('A variável da empresa ainda não foi preenchida.');
+        const bundle=(run.tableCollections||={})[config.collection]||={groups:{},guides:[]};
+        const indexed=new Map(bundle.guides.map(row=>[JSON.stringify([row.Empresa,row[config.key_column]]),row]));
+        for(const row of result.rows){const id=JSON.stringify([company,row[config.key_column]]);indexed.set(id,{'Captura do detalhe':'Aguardando',...indexed.get(id),...row,Empresa:company,'Número da Guia':String(row[config.key_column])});}
+        bundle.guides=[...indexed.values()];
+        if(bundle.guides.length>10000||JSON.stringify(bundle.guides).length>2000000)throw Error('A lista consolidada de guias excedeu o limite de dados.');
+      }
+    }
+    if(config.accumulate){
+      const context=run.tableContexts?.[config.traversal_id];if(!context)throw Error('O detalhe não possui uma guia de origem.');
+      const bundle=(run.tableCollections||={})[name];if(!bundle)throw Error('Inicie a coleta pela lista de guias.');
+      const rows=result.rows.map(row=>Object.fromEntries([['Empresa',context.company],['Número da Guia',context.key],...Object.entries(row).map(([k,v])=>['Detalhe · '+k,v])]));
+      bundle.groups[JSON.stringify([context.company,context.key])]=rows;
+      for(const guide of bundle.guides)if(guide.Empresa===context.company&&guide['Número da Guia']===context.key){guide['Captura do detalhe']='Concluída';guide['Linhas do detalhe']=rows.length;}
+      const total=Object.values(bundle.groups).flat();if(total.length>10000||JSON.stringify(total).length>2000000)throw Error('A coleta completa excedeu o limite de dados.');
+      run.variables[name]=JSON.stringify(total);run.capturedVariables[name]=run.variables[name];
+    }
+    if(config.csv){
+      const quote=value=>'"'+String(value??'').replaceAll('"','""').replace(/^[=+@-]/,"'"+'$&')+'"';
+      const csv='\uFEFF'+[result.columns,...result.rows.map(row=>result.columns.map(c=>row[c]))].map(row=>row.map(quote).join(';')).join('\r\n');
+      await chrome.downloads.download({url:'data:text/csv;charset=utf-8,'+encodeURIComponent(csv),filename:`FlowDetect/${name}.csv`,saveAs:false});
+    }
+    return `Tabela capturada: ${result.row_count} linha(s) em {{${name}}}.`;
+  }
   if(rawStep.variable_capture?.enabled) {
     delete run.variables[rawStep.variable_capture.name];
     if(run.capturedVariables) delete run.capturedVariables[rawStep.variable_capture.name];
   }
   if(rawStep.type==='focused_text' || rawStep.type==='element_action') {
-    const declared=(run.automationSnapshot?.steps||[]).map(s=>s.variable_capture).filter(c=>c?.enabled).map(c=>c.name);
+    const declared=(run.automationSnapshot?.steps||[]).flatMap(s=>s.type==='table_read'?(s.table?.mode==='click'?[]:[s.table?.variable]):s.variable_capture?.enabled?[s.variable_capture.name]:[]).filter(Boolean);
     for(const token of JSON.stringify(rawStep).matchAll(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g)) {
       if(declared.includes(token[1]) && !Object.hasOwn(run.variables,token[1])) throw Error(`A variável ${token[1]} ainda não foi capturada nesta linha.`);
     }
@@ -1258,7 +1523,9 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       const loopEnd = pairs.get(index);
       if (!Number.isInteger(loopEnd)) throw new Error("O bloco Início do loop não possui um Fim do loop.");
       const source = run.dataSource || { name: "valor", values: [] };
-      if (!source.values.length) throw new Error("O loop não possui valores da planilha para executar.");
+      if (!source.values.length && !source.allowEmpty) throw new Error("O loop não possui valores da planilha para executar.");
+      const bodyUnits=steps.slice(index+1,loopEnd).filter(item=>!['loop_start','loop_end'].includes(item.type)).length;
+      run.totalSteps=Math.max(0,Number(run.totalSteps||steps.filter(s=>!['loop_start','loop_end'].includes(s.type)).length)+bodyUnits*(source.values.length-1));
       if (run.report) run.report.sourceName = source.name;
       const firstRow = run.manualSpreadsheetLoopStarted
         ? 0
@@ -1332,12 +1599,19 @@ async function executeRange(run, steps, start, end, pairs, indexes, depth = 0) {
       await waitForRouteDelay(run, flow);
       index = nextIndex;
     } catch (error) {
+      if(step.type==='table_read'){
+        const phase={click:'Abrir guia',return:'Voltar à lista',export:'Consolidar dados'}[step.table?.mode]||(step.table?.accumulate?'Ler detalhe':'Ler lista');
+        const key=run.tableContexts?.[step.table?.traversal_id]?.key||run.spreadsheetLoop?.rowData?.['Número da Guia']||run.dataSource?.values?.[run.spreadsheetLoop?.row]||'';
+        const wrapped=new Error(`B${String(step.source_order||index+1).padStart(2,'0')} · ${phase}${key?' · Guia '+key:''}: ${error.message||error}`);wrapped.cause=error;error=wrapped;
+        run.lastError=error.message;
+      }
       if (run.recentSteps?.at(-1)?.index === index) {
         run.recentSteps.at(-1).state = run.cancelled ? "stopped" : "failed";
         run.recentSteps.at(-1).message = String(error?.message || error);
       }
       if (run.cancelled) throw error;
-      const canRoute = !error?.flowdetectCaptureUnavailable && !error?.flowdetectContentRuntimeMismatch
+      const tableMustStop=step.type==='table_read'&&(step.table?.traversal_id||['return','export'].includes(step.table?.mode));
+      const canRoute = !tableMustStop && !error?.flowdetectCaptureUnavailable && !error?.flowdetectContentRuntimeMismatch
         && !error?.flowdetectOcrTargetFailure && flowContinues(step.on_failure);
       const nextIndex = canRoute ? mapPathActionToIndex(run, step.on_failure, indexes, indexes.nextByIndex.get(index)) : null;
       run.blockFailure = { serial: Number(run.blockFailure?.serial || 0) + 1,
@@ -1477,6 +1751,12 @@ async function executeAutomationOnPage(automation, tabId, startRow, loopIncluded
 }
 
 async function handleMessage(message, sender) {
+  if(message?.type==='flowdetect-table-permit-click'){
+    const run=activeRuns.get(message.runId);
+    const allowed=Boolean(run&&!run.cancelled&&run.tabId===sender?.tab?.id&&run.pendingTableClick&&run.pendingTableClick===message.nonce);
+    if(allowed)delete run.pendingTableClick;
+    return {allowed};
+  }
   if (message?.type === "flowdetect-input-lock-state") {
     const run = [...activeRuns.values()].find(item => item.tabId === sender?.tab?.id && item.blockInput && !item.cancelled);
     return { locked: Boolean(run), runId: run?.id || null };
