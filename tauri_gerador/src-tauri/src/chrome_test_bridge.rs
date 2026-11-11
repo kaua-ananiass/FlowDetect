@@ -15,7 +15,7 @@ use std::{
 };
 
 const ADDRESS: &str = "127.0.0.1:18453";
-const EXTENSION_VERSION: &str = "0.2.75";
+const EXTENSION_VERSION: &str = "0.2.95";
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static BRIDGE: OnceLock<Arc<(Mutex<BridgeState>, Condvar)>> = OnceLock::new();
 
@@ -174,6 +174,11 @@ pub fn chrome_extension_connection_status() -> Value {
         "phase": state.phase,
         "extensionId": if connected { state.extension_id.as_str() } else { "" },
     })
+}
+
+#[tauri::command]
+pub async fn map_chrome_table(request: Option<Value>)->Result<Value,String>{
+    tauri::async_runtime::spawn_blocking(move ||wait_for_job(json!({"type":"map_table", "request":request}))).await.map_err(|e|e.to_string())?
 }
 
 pub async fn send_automation(automation: Value) -> Result<Value, String> {

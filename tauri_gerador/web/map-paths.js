@@ -8,7 +8,7 @@ export function initMapPaths({invoke,chooseFile,getRoadmap,getLibrary,getPage,be
     $('mapPathChromePageField').hidden=!chrome;
     $('mapPathEngineHelp').textContent=chrome
       ? 'Executa na aba vinculada à extensão, no computador que roda a automação.'
-      : 'Usa mouse e teclado nos programas do computador que roda a automação, como o Alterdata.';
+      : 'Usa mouse e teclado nos programas do computador que roda a automação, como editores e sistemas internos.';
   }
   $('mapPathEngine').addEventListener('change',syncExecutionFields);
   syncExecutionFields();
