@@ -45,58 +45,9 @@ test('Remote HTTP mouse coalesces moves with only one in-flight command',async()
   assert.equal(remote.httpPointerSending,false);
   assert.equal(remote.pendingRemotePointerMove,null);
 });
-test('Snapshot stream reuses unchanged frame and adapts compression profile',async()=>{
-  const frames=[];
-  const timers=[];
-  const calls=[];
-  let sourceChanges=0;
-  const screenImage={hidden:true,set src(v){sourceChanges++;this._src=v;},get src(){return this._src}};
-  const video={hidden:true};
-  const status={textContent:''};
-  const quality={value:'fast'};
-  const remote={physicalAgentId:'agent-1',screenStreaming:true,screenGeneration:7,screenStreamTimer:null,screenSnapshotUrl:'',screenSnapshotHash:'',screenError:'',address:'192.0.2.10:18452'};
-  let full=true;
-  const context=vm.createContext({
-    state:{remoteControl:remote},
-    document:{getElementById:()=>quality},
-    studioControlScreenImage:screenImage,
-    studioControlScreenVideo:video,
-    studioControlScreenStatus:status,
-    performance:{now:()=>Date.now()},
-    window:{setTimeout:(cb,ms)=>{timers.push({cb,ms});return timers.length;}},
-    renderStudioControlScreenOnly:()=>{},
-    releasePhysicalRemoteInput:()=>{},
-    invoke:async(_name,args)=>{
-      calls.push({...args});
-      if(full){full=false;return {data:'AAAA',mime:'image/jpeg',frame_hash:'a'.repeat(64),capture_ms:27};}
-      return {unchanged:true,frame_hash:'a'.repeat(64),capture_ms:8};
-    }
-  });
-  vm.runInContext(fragment('physicalRemoteScreenProfile','stopStudioControlScreenStream'),context);
-  context.startPhysicalSnapshotStream(7);
-  await microtasks();
-  assert.equal(calls.length,1);
-  assert.equal(calls[0].width,960);
-  assert.equal(calls[0].quality,43);
-  assert.equal(sourceChanges,1);
-  assert.equal(remote.screenSnapshotHash,'a'.repeat(64));
-  assert.equal(timers.length,1);
-  timers.shift().cb();
-  await microtasks();
-  assert.equal(calls.length,2);
-  assert.equal(calls[1].previousHash,'a'.repeat(64));
-  assert.equal(sourceChanges,1,'unchanged frames do not trigger DOM image replace');
-  quality.value='balanced';
-  remote.screenSnapshotHash='';
-  timers.shift().cb();
-  await microtasks();
-  assert.equal(calls[2].width,1280);
-  assert.equal(calls[2].quality,53);
-  assert.equal(calls[2].previousHash,null);
-  remote.screenStreaming=false;
-});
-test('Remote Agent physical screen avoids an unsupported WebRTC handshake',()=>{
+test('Physical screen is WebRTC only and exposes an actionable failure',()=>{
   const start=fragment('startStudioControlScreenStream','startStudioControlPolling');
-  assert.match(start,/if\s*\(remote\.physicalAgentId\)\s*\{\s*\/\/.*?Agent/s);
-  assert.ok(start.indexOf('startPhysicalSnapshotStream(generation)')<start.indexOf('startStudioControlWebRtc()'));
+  assert.match(start,/startStudioControlWebRtc\(\)/);
+  assert.match(start,/failStudioVideo\(error\)/);
+  assert.doesNotMatch(source,/startPhysicalSnapshotStream|physicalRemoteScreenProfile|invoke\("remote_agent_screen_snapshot"/);
 });

@@ -27,6 +27,11 @@ test('physical agents: persistence, migration, isolated screen, input, reconnect
       window.RTCPeerConnection = undefined; // deterministic compatibility-path test
       window.__TAURI__ = { core: { invoke: async (command, payload = {}) => {
         window.calls.push({command, payload});
+        if (command === 'remote_agent_discover') return [{address:'192.0.2.40:18452',name:'Executor por senha',agent_id:'password-device'}];
+        if (command === 'remote_agent_pair_by_password') {
+          if(payload.password !== 'Senha-de-teste-12345' || payload.address !== '192.0.2.40:18452') throw Error('Wrong password payload');
+          return {address:payload.address,agent_id:'password-device',pairing_protocol:1};
+        }
         if (command === 'remote_agent_ping') {
           if (window.failPing) throw new Error('PC desligado');
           return {pairing_protocol:1,agent_version:'3.1.0',agent:'Agent de teste'};
@@ -36,7 +41,7 @@ test('physical agents: persistence, migration, isolated screen, input, reconnect
           return {address:'192.0.2.30:18452',name:'Agent de teste',agent_id:'1234567890abcdef1234567890abcdef',pairing_protocol:1,agent_version:'3.1.0'};
         }
         if (command === 'remote_agent_webrtc_offer') return {session_id:'rtc-test'};
-        if (command === 'remote_agent_webrtc_answer') return window.waitVideo ? {} : {session_id:'rtc-test', answer:{type:'answer',sdp:'mock'}};
+        if (command === 'remote_agent_webrtc_answer') return window.waitVideo ? {} : {session_id:'rtc-test', answer:{type:'error',message:'Ative o video no Agent'}};
         if (command === 'remote_agent_screen_snapshot') {
           if (window.failSnapshot) throw new Error('Rede indisponível');
           return {mime:'image/svg+xml', data:btoa('<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><rect width="1280" height="720" fill="#193147"/><text x="100" y="200" fill="white" font-size="48">PC remoto - teste</text></svg>')};
@@ -84,54 +89,33 @@ test('physical agents: persistence, migration, isolated screen, input, reconnect
     await edited.waitFor();
     await page.evaluate(() => window.calls = []);
     await edited.locator('[data-agent-action="connect"]').click();
-    await page.waitForSelector('#agentScreenPanel.is-active #studioControlScreenImage:not([hidden])');
-    await page.waitForFunction(() => document.getElementById('studioControlScreenImage').naturalWidth === 1280);
+    await page.waitForFunction(() => document.getElementById('studioControlScreenStatus').textContent.includes('WebRTC'));
     assert.equal(await page.locator('#agentScreenTitle').innerText(),'Executor DP');
     assert.equal(await page.locator('#agentScreenVmSelect').isVisible(),false);
-    assert.match(await page.locator('#studioControlScreenStatus').innerText(),/Modo compatível/);
-    if (process.env.AGENTS_SCREENSHOT) await page.screenshot({path:process.env.AGENTS_SCREENSHOT.replace(/\.png$/, '-screen.png')});
-    assert.equal(await page.locator('#studioControlRemoteInputToggle').isChecked(),true);
-    await page.locator('#studioControlScreenImage').click();
-    await page.keyboard.press('a');
-    await page.keyboard.down('Shift');
-    await page.keyboard.press('Escape');
-    const events = await page.evaluate(() => window.calls.filter(c => c.command === 'remote_agent_control_event').map(c => c.payload));
-    assert.ok(events.some(p => p.event.kind === 'mouse' && p.event.event === 'down'));
-    assert.ok(events.some(p => p.event.key === 'a' && p.event.event === 'down'));
-    assert.ok(events.some(p => p.event.key === 'Shift' && p.event.event === 'up'));
-    assert.ok(events.every(p => p.address === '192.0.2.30:18452'));
-    const calls = await page.evaluate(() => window.calls.map(c => c.command));
-    assert.ok(!calls.some(c => /start_hyperv|open_native_hyperv|execute_watch|remote_agent_execute$/.test(c)), 'Viewing physical screen must not start VM or automation');
-    await page.locator('#studioControlHypervCloseButton').click();
     assert.equal(await page.locator('#studioControlScreenImage').isVisible(),false);
-    await page.locator('#agentPhysicalReconnectButton').click();
-    await page.waitForSelector('#studioControlScreenImage:not([hidden])');
-    await page.evaluate(() => window.failSnapshot = true);
-    await page.waitForFunction(() => document.getElementById('studioControlScreenStatus').textContent.includes('Rede indisponível'));
-    assert.equal(await page.locator('#studioControlScreenImage').isVisible(),true, 'A última imagem válida deve continuar visível');
-    await page.evaluate(() => { window.failSnapshot = false; window.failPing = true; });
-    await page.locator('#agentPhysicalReconnectButton').click();
-    await page.waitForFunction(() => document.getElementById('studioControlScreenStatus').textContent.includes('PC desligado'));
-    await page.evaluate(() => window.failPing = false);
-    await page.locator('#agentsTabButton').click(); await page.locator('#agentsPhysicalTabButton').click();
-    await page.locator('.physical-agent-card').filter({hasText:'PC legado'}).locator('[data-agent-action="connect"]').click();
-    await page.waitForSelector('#studioControlScreenImage:not([hidden])');
-    assert.equal(await page.locator('#agentScreenTitle').innerText(),'PC legado');
-    await page.locator('#studioControlHypervCloseButton').click();
-    // The deployed Agent does not implement a WebRTC video sender yet.
-    // Physical sessions must use the responsive authenticated JPEG transport.
-    await page.locator('#agentPhysicalQualitySelect').selectOption('sharp');
-    await page.locator('#agentPhysicalReconnectButton').click();
-    await page.waitForSelector('#studioControlScreenImage:not([hidden])');
-    await page.waitForFunction(() => window.calls.some(c => c.command === 'remote_agent_screen_snapshot' && c.payload.width === 1600));
-    assert.equal(await page.evaluate(() => window.calls.some(c => c.command === 'remote_agent_webrtc_offer')),false);
-    await page.locator('#studioControlHypervCloseButton').click();
     assert.equal(await page.locator('#studioControlScreenVideo').isVisible(),false);
+    assert.ok(!await page.evaluate(() => window.calls.some(c=>c.command==='remote_agent_screen_snapshot')));
+    await page.locator('#agentPhysicalReconnectButton').click();
+    await page.waitForFunction(() => document.getElementById('studioControlScreenStatus').textContent.includes('WebRTC'));
     assert.equal(await page.locator('#studioControlScreenImage').isVisible(),false);
+    const calls = await page.evaluate(() => window.calls.map(c => c.command));
+    assert.ok(!calls.some(c => /start_hyperv|open_native_hyperv|execute_watch|remote_agent_execute$/.test(c)));
+    await page.locator('#studioControlHypervCloseButton').click();
     await page.locator('#agentsTabButton').click(); await page.locator('#agentsMachinesTabButton').click();
     assert.equal(await page.locator('.physical-agent-card').count(),0);
     assert.ok(await page.locator('.vm-launcher-card').count() > 0);
     await page.locator('#agentsPhysicalTabButton').click();
+    await page.locator('[data-agent-action="new"]').click();
+    await page.locator('#agentNameInput').fill('Executor por senha');
+    await page.locator('#agentPasswordDiscover').evaluate(el=>el.closest('details').open=true);
+    await page.locator('#agentPasswordDiscover').click();
+    await page.waitForFunction(()=>document.querySelector('#agentPasswordComputer').options.length>1);
+    await page.locator('#agentPasswordComputer').selectOption('192.0.2.40:18452');
+    await page.locator('#agentPasswordInput').fill('Senha-de-teste-12345');
+    await page.locator('[data-agent-action="create-save"]').click();
+    await page.waitForFunction(()=>document.querySelectorAll('.physical-agent-card').length===3);
+    assert.ok(await page.evaluate(()=>window.calls.some(c=>c.command==='remote_agent_pair_by_password')));
+    assert.ok(await page.evaluate(()=>!JSON.stringify(localStorage).includes('Senha-de-teste-12345')), 'Password must not persist in browser storage');
     if (process.env.AGENTS_SCREENSHOT) await page.screenshot({path:process.env.AGENTS_SCREENSHOT});
     await page.setViewportSize({width:800,height:900});
     assert.ok(await page.locator('#agentsMachinesView').evaluate(el => el.scrollWidth <= el.clientWidth + 1));

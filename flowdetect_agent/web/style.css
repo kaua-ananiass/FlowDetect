@@ -2194,3 +2194,12 @@ body.agent-service-mode .agent-pairing-code { display: none; }
 .agent-chrome-setup input:focus-visible { border-color: var(--theme-accent); box-shadow: 0 0 0 3px var(--theme-accent-surface); }
 .agent-chrome-setup p { flex-basis: 100%; margin: 0; line-height: 1.5; }
 .agent-chrome-setup .is-error { color: #ffb3b3; }
+ .agent-video-controls { display:grid; gap:5px; max-width:280px; }
+ .agent-video-controls small { font-size:11px; line-height:1.4; color:#a5becd; }
+ #agentVideoButton[aria-pressed="true"] { border-color:#2dd4bf; color:#77ead9; }
+.agent-unattended-setup { margin:16px; padding:16px; border:1px solid #264b60; background:#0b1b2a; border-radius:14px; }
+.agent-unattended-setup summary { cursor:pointer; font-weight:600; color:#86e5dc; }
+.agent-unattended-setup form { display:flex; gap:12px; align-items:end; flex-wrap:wrap; margin:12px 0; }
+.agent-unattended-setup label { display:grid; gap:6px; font-size:12px; }
+.agent-unattended-setup input { padding:10px; border:1px solid #345066; border-radius:8px; color:#e9f6fc; background:#14283a; }
+.agent-unattended-setup small { color:#9dbaca; line-height:1.5; }
