@@ -1,0 +1,9 @@
+/* Utilities only: no Tailwind preflight/reset across the existing Studio. */
+@layer theme, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@source "./**/*.tsx";
+@layer utilities {
+  #chatgptWorkspace {
+    @tailwind utilities;
+  }
+}
