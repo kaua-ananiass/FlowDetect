@@ -46,6 +46,8 @@
       "../../scripts/runtime/executar_automacao.bat": "executar_automacao.bat",
       "../../reconhecimento_worker.py": "reconhecimento_worker.py",
       "../../gerenciar_roteiro.py": "gerenciar_roteiro.py",
+      "../../chatgpt_guided.py": "chatgpt_guided.py",
+      "../../block_knowledge.json": "block_knowledge.json",
       "../../gerenciar_dados_planilha.py": "gerenciar_dados_planilha.py",
       "../../listar_janelas_abertas.py": "listar_janelas_abertas.py",
       "../../overlay_janela_alvo.py": "overlay_janela_alvo.py",

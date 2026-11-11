@@ -300,6 +300,8 @@ $itemsToCopy = @(
     "executar_automacao.py",
     "marcador_visual.py",
     "gerenciar_roteiro.py",
+    "chatgpt_guided.py",
+    "block_knowledge.json",
     "gerenciar_dados_planilha.py",
     "listar_janelas_abertas.py",
     "comandos_teclado.py",

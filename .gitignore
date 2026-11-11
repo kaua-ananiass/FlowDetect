@@ -110,3 +110,8 @@ tauri_gerador/src-tauri/installer_support/python_runtime_prebuilt/**/*.pyc
 
 # Required OCR engine (other exported executables remain ignored).
 !tauri_gerador/src-tauri/installer_support/Tesseract-OCR/tesseract.exe
+
+# Local captured values and private chat stores
+/.flowdetect_capture_values.json
+/chatgpt-session.dat
+/conversations.dat
