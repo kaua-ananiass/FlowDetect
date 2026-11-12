@@ -16,8 +16,8 @@ async function updatePageOutline(tabId, page) {
 }
 
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const RUNTIME_VERSION = "0.2.95";
-const CONTENT_RUNTIME_VERSION = "0.2.95";
+const RUNTIME_VERSION = "0.2.96";
+const CONTENT_RUNTIME_VERSION = "0.2.96";
 const STUDIO_TEST_BRIDGE = "http://127.0.0.1:18453";
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const PAIR_CODE_KEY = "flowdetectStudioPairCode";
