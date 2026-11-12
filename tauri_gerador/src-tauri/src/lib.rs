@@ -3,9 +3,13 @@ use serde::Serialize;
 #[cfg(windows)]
 mod native_rdp;
 mod chrome_test_bridge;
-mod automation_chain;
+mod chrome_map_bridge;
 mod desktop_platform;
 mod agent_pairing;
+mod native_capture;
+mod remote_input;
+mod chatgpt;
+mod chat_history;
 #[cfg(windows)]
 use image::{codecs::jpeg::JpegEncoder, imageops::FilterType, ImageBuffer, Rgba};
 use serde_json::Value;
@@ -36,7 +40,7 @@ use windows::Win32::{
     Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
     UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT,
-        KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
+        KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, KEYEVENTF_EXTENDEDKEY, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN,
         MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
         MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, VIRTUAL_KEY,
         VK_CONTROL, VK_F12, VK_SHIFT,
@@ -58,6 +62,8 @@ const BUNDLED_EXECUTAR_AUTOMACAO: &[u8] = include_bytes!("../../../executar_auto
 const BUNDLED_MARCADOR_VISUAL: &[u8] = include_bytes!("../../../marcador_visual.py");
 const BUNDLED_GERENCIAR_DADOS_PLANILHA: &[u8] = include_bytes!("../../../gerenciar_dados_planilha.py");
 const BUNDLED_GERENCIAR_ROTEIRO: &[u8] = include_bytes!("../../../gerenciar_roteiro.py");
+const BUNDLED_CHATGPT_GUIDED: &[u8] = include_bytes!("../../../chatgpt_guided.py");
+const BUNDLED_BLOCK_KNOWLEDGE: &[u8] = include_bytes!("../../../block_knowledge.json");
 const BUNDLED_LISTAR_JANELAS_ABERTAS: &[u8] = include_bytes!("../../../listar_janelas_abertas.py");
 const BUNDLED_MAPEAR_ELEMENTOS_JANELA: &[u8] = include_bytes!("../../../mapear_elementos_janela.py");
 const BUNDLED_OVERLAY_AUTOMACAO_TELA: &[u8] = include_bytes!("../../../overlay_automacao_tela.py");
@@ -1993,6 +1999,8 @@ fn bundled_python_script_bytes(script_name: &str) -> Option<&'static [u8]> {
         "marcador_visual.py" => Some(BUNDLED_MARCADOR_VISUAL),
         "gerenciar_dados_planilha.py" => Some(BUNDLED_GERENCIAR_DADOS_PLANILHA),
         "gerenciar_roteiro.py" => Some(BUNDLED_GERENCIAR_ROTEIRO),
+        "chatgpt_guided.py" => Some(BUNDLED_CHATGPT_GUIDED),
+        "block_knowledge.json" => Some(BUNDLED_BLOCK_KNOWLEDGE),
         "listar_janelas_abertas.py" => Some(BUNDLED_LISTAR_JANELAS_ABERTAS),
         "mapear_elementos_janela.py" => Some(BUNDLED_MAPEAR_ELEMENTOS_JANELA),
         "overlay_automacao_tela.py" => Some(BUNDLED_OVERLAY_AUTOMACAO_TELA),
@@ -2115,6 +2123,8 @@ fn run_python_script(
 }
 
 fn run_helper_json(root: &PathBuf, args: &[String]) -> Result<Value, String> {
+    ensure_python_script_integrity(root, "chatgpt_guided.py")?;
+    ensure_python_script_integrity(root, "block_knowledge.json")?;
     let raw = run_python_script(root, "gerenciar_roteiro.py", args)?;
     serde_json::from_str(&raw)
         .map_err(|err| format!("Falha ao interpretar retorno do gerador: {err}"))
@@ -2588,11 +2598,42 @@ fn import_saved_automation_zip(app: AppHandle, arquivo: String) -> Result<Value,
 async fn map_paths_action(app: AppHandle, request: Value) -> Result<Value, String> {
     let root=workspace_root(&app);
     tauri::async_runtime::spawn_blocking(move || {
-        if automation_chain::active() || get_remote_agent_snapshot(&root)["snapshot"]["running"]==true {
+        if get_remote_agent_snapshot(&root)["snapshot"]["running"]==true {
             return Err("Pare a execucao antes de modificar os caminhos.".into());
         }
         run_helper_json(&root,&["map-paths".into(),"--request".into(),request.to_string()])
     }).await.map_err(|error|error.to_string())?
+}
+
+#[tauri::command]
+async fn chatgpt_action(app: AppHandle, mut request: Value) -> Result<Value, String> {
+    if request["action"] == "cancel" { chatgpt::cancel(); return Ok(serde_json::json!({"cancelled":true})); }
+    let dir=app.path().app_data_dir().map_err(|_|"Pasta local do Studio indisponível.".to_string())?.join("chatgpt");
+    let root=workspace_root(&app);
+    let stream_app=app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let generate=request["action"]=="generate";
+        let chat=request["action"]=="chat";
+        let guide=request["action"]=="guide";
+        if matches!(request["action"].as_str(),Some("history_load"|"history_save")){return chat_history::action(&dir,request);}
+        let request_id=request["request_id"].as_str().unwrap_or("").chars().take(100).collect::<String>();
+        if generate || chat || guide {
+            if let Some(expected)=request["automation_id"].as_str().filter(|s|!s.is_empty()) {
+                let library=run_helper_json(&root,&["automation-library-list".into()])?;
+                if library["active_id"].as_str()!=Some(expected){return Err("Abra a automação vinculada a esta conversa antes de continuar.".into());}
+            }
+            request["context"]=run_helper_json(&root,&["map-paths".into(),"--request".into(),serde_json::json!({"action":if guide{"ai_guide_context"}else{"ai_context"}}).to_string()])?;
+        }
+        let result=chatgpt::action_with_stream(&dir,request,|delta|{if chat {let _=stream_app.emit("chatgpt-text-delta",serde_json::json!({"request_id":request_id,"delta":delta}));}})?;
+        if guide {
+            return run_helper_json(&root,&["map-paths".into(),"--request".into(),serde_json::json!({"action":"ai_guide_validate","plan":result}).to_string()]);
+        }
+        if generate {
+            if result.to_string().len()>16_000 { return Err("A proposta ficou extensa demais. Divida o processo em partes menores.".into()); }
+            return run_helper_json(&root,&["map-paths".into(),"--request".into(),serde_json::json!({"action":"ai_validate","draft":result}).to_string()]);
+        }
+        Ok(result)
+    }).await.map_err(|_|"A operação ChatGPT foi interrompida.".to_string())?
 }
 
 #[tauri::command]
@@ -3145,7 +3186,8 @@ fn agent_remote_mouse_enabled_store() -> Arc<AtomicBool> {
 
 fn agent_remote_mouse_enabled_payload() -> Value {
     serde_json::json!({
-        "mouse_enabled": agent_remote_mouse_enabled_store().load(Ordering::SeqCst)
+        "mouse_enabled": agent_remote_mouse_enabled_store().load(Ordering::SeqCst),
+        "keyboard_enabled": agent_remote_mouse_enabled_store().load(Ordering::SeqCst)
     })
 }
 
@@ -3340,41 +3382,66 @@ fn send_remote_mouse_event(event: &Value) -> Result<(), String> {
     };
     let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
     if sent == 0 {
-        Err("Windows recusou o evento de mouse remoto.".to_string())
+        Err("Windows recusou o mouse remoto. Se a janela de destino estiver elevada, execute o Agent como administrador. A tela de bloqueio/UAC nao pode ser controlada.".to_string())
     } else {
         Ok(())
     }
 }
 
 #[cfg(windows)]
-fn send_remote_key_event(event: &Value) -> Result<(), String> {
+fn remote_keyboard_inputs(event: &Value) -> Result<Vec<INPUT>, String> {
     let key = event.get("key").and_then(Value::as_str).unwrap_or("");
-    let Some(vk) = browser_key_to_vk(key) else {
-        return Ok(());
-    };
     let is_up = event.get("event").and_then(Value::as_str).unwrap_or("down") == "up";
-    let input = INPUT {
+    let vk=browser_key_to_vk(key);
+    let unicode:Vec<u16>=key.encode_utf16().collect();
+    if vk.is_none() && key.chars().count()!=1{return Err(format!("Tecla remota nao suportada: {key}"));}
+    let scans=if vk.is_some(){vec![0]}else{unicode};
+    let mut flags=if is_up{KEYEVENTF_KEYUP}else{KEYBD_EVENT_FLAGS(0)};
+    if vk.is_none(){flags|=KEYEVENTF_UNICODE;}
+    else if matches!(key,"ArrowLeft"|"ArrowRight"|"ArrowUp"|"ArrowDown"|"Home"|"End"|"PageUp"|"PageDown"|"Insert"|"Delete"|"Meta"){flags|=KEYEVENTF_EXTENDEDKEY;}
+    let inputs:Vec<INPUT>=scans.into_iter().map(|scan|INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
-                wVk: VIRTUAL_KEY(vk),
-                wScan: 0,
-                dwFlags: if is_up {
-                    KEYEVENTF_KEYUP
-                } else {
-                    KEYBD_EVENT_FLAGS(0)
-                },
+                wVk: VIRTUAL_KEY(vk.unwrap_or(0)),
+                wScan: scan,
+                dwFlags: flags,
                 time: 0,
                 dwExtraInfo: 0,
             },
         },
-    };
-    let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
-    if sent == 0 {
-        Err("Windows recusou o evento de teclado remoto.".to_string())
+    }).collect();
+    Ok(inputs)
+}
+
+#[cfg(windows)]
+fn send_remote_key_event(event:&Value)->Result<(),String>{
+    let inputs=remote_keyboard_inputs(event)?;
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 {
+        Err("Windows recusou o teclado remoto. Se a janela de destino estiver elevada, execute o Agent como administrador. A tela de bloqueio/UAC nao pode ser controlada.".to_string())
     } else {
         Ok(())
     }
+}
+
+#[cfg(all(test,windows))]
+mod remote_input_packet_tests {
+    use super::*;
+    #[test] fn keyboard_packets_cover_shortcuts_extended_keys_unicode_and_releases(){unsafe{
+        let packet=|key:&str,event:&str|remote_keyboard_inputs(&serde_json::json!({"key":key,"event":event})).unwrap();
+        assert_eq!(packet("Control","down")[0].Anonymous.ki.wVk.0,0x11);
+        assert_eq!(packet("a","down")[0].Anonymous.ki.wVk.0,0x41);
+        assert!(packet("ArrowRight","up")[0].Anonymous.ki.dwFlags.contains(KEYEVENTF_EXTENDEDKEY|KEYEVENTF_KEYUP));
+        for key in ["é","ç","!"] {
+            let input=packet(key,"down")[0].Anonymous.ki;
+            assert_eq!(input.wVk.0,0);assert_eq!(input.wScan,key.encode_utf16().next().unwrap());
+            assert!(input.dwFlags.contains(KEYEVENTF_UNICODE));
+            assert!(packet(key,"up")[0].Anonymous.ki.dwFlags.contains(KEYEVENTF_UNICODE|KEYEVENTF_KEYUP));
+        }
+        assert_eq!(packet("😀","down").len(),2);
+        assert!(remote_keyboard_inputs(&serde_json::json!({"key":"UnknownKey"})).is_err());
+    }}
 }
 
 pub(crate) fn handle_agent_remote_control_event(event: Value) -> Result<Value, String> {
@@ -3387,21 +3454,19 @@ pub(crate) fn handle_agent_remote_control_event(event: Value) -> Result<Value, S
     }
     #[cfg(windows)]
     {
+        if !remote_input::allows(agent_remote_mouse_enabled_store().load(Ordering::SeqCst),&event) {
+            return Ok(serde_json::json!({"ok":false,"ignored":true,"reason":"input_disabled"}));
+        }
         match event.get("kind").and_then(Value::as_str).unwrap_or("") {
             "mouse" => {
-                if !agent_remote_mouse_enabled_store().load(Ordering::SeqCst) {
-                    return Ok(serde_json::json!({
-                        "ok": true,
-                        "ignored": true,
-                        "reason": "mouse_disabled"
-                    }));
-                }
                 send_remote_mouse_event(&event)?;
             }
             "key" => send_remote_key_event(&event)?,
             _ => {}
         }
-        Ok(serde_json::json!({ "ok": true }))
+        let mut result=agent_remote_mouse_enabled_payload();
+        result["ok"]=serde_json::json!(true);
+        Ok(result)
     }
 }
 
@@ -3729,7 +3794,7 @@ fn execute_remote_automation(
     let map_finished=Arc::new(AtomicBool::new(false));
     let bridge_finished=map_finished.clone();
     let bridge_root=root.clone();
-    let map_bridge_thread=thread::spawn(move || automation_chain::serve_map_bridge(&bridge_root,&map_bridge_dir,bridge_finished));
+    let map_bridge_thread=thread::spawn(move || chrome_map_bridge::serve_map_bridge(&bridge_root,&map_bridge_dir,bridge_finished));
 
     let started_snapshot = remote_status_payload(
         root,
@@ -3862,8 +3927,8 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
     let method = parts.next().unwrap_or("");
     let path = parts.next().unwrap_or("");
     let clean_path = path.split('?').next().unwrap_or(path);
-    let public_endpoint = (method == "GET" && matches!(clean_path,"/api/ping"|"/api/pair/challenge"))
-        || (method == "POST" && clean_path == "/api/pair/complete");
+    let public_endpoint = (method == "GET" && matches!(clean_path,"/api/ping"|"/api/pair/challenge"|"/api/password/challenge"))
+        || (method == "POST" && matches!(clean_path,"/api/pair/complete"|"/api/password/complete"));
     let credentials_dir = app.path().app_data_dir().unwrap_or_else(|_| root.join(".credentials"));
     let (body, auth_key) = if public_endpoint {
         (incoming_body, None)
@@ -3881,11 +3946,7 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
         mark_remote_agent_contact();
     }
 
-    let reserved_by_chain = automation_chain::active() && method != "GET" &&
-        (clean_path.starts_with("/api/automations/") || ["/api/automation-import-zip", "/api/watch-automation/execute", "/api/spreadsheet-column/clear"].contains(&clean_path));
-    let response = if reserved_by_chain {
-        http_json_response("409 Conflict",serde_json::json!({"error":"O encadeamento reservou o agente. Pare e confira o processo antes de modificar outra automação."}))
-    } else if method == "OPTIONS" {
+    let response = if method == "OPTIONS" {
         http_json_response("204 No Content", serde_json::json!({}))
     } else if method == "GET" && clean_path == "/api/ping" {
         http_json_response(
@@ -3906,6 +3967,17 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
     } else if method == "POST" && clean_path == "/api/pair/complete" {
         let payload=serde_json::from_slice::<Value>(&body).unwrap_or_default();
         match agent_pairing::complete(&credentials_dir,&payload){
+            Ok(value)=>http_json_response("200 OK",value),
+            Err(error)=>http_json_response("403 Forbidden",serde_json::json!({"error":error})),
+        }
+    } else if method == "GET" && clean_path == "/api/password/challenge" {
+        match agent_pairing::password_challenge(&credentials_dir){
+            Ok(value)=>http_json_response("200 OK",value),
+            Err(error)=>http_json_response("403 Forbidden",serde_json::json!({"error":error})),
+        }
+    } else if method == "POST" && clean_path == "/api/password/complete" {
+        let payload=serde_json::from_slice::<Value>(&body).unwrap_or_default();
+        match agent_pairing::password_complete(&credentials_dir,&payload){
             Ok(value)=>http_json_response("200 OK",value),
             Err(error)=>http_json_response("403 Forbidden",serde_json::json!({"error":error})),
         }
@@ -3948,12 +4020,6 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
                 "500 Internal Server Error",
                 serde_json::json!({"error": error}),
             ),
-        }
-    } else if method == "POST" && clean_path == "/api/chain" {
-        let request=serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
-        match automation_chain::action(&app,&root,request) {
-            Ok(value)=>http_json_response("200 OK",value),
-            Err(error)=>http_json_response("400 Bad Request",serde_json::json!({"error":error})),
         }
     } else if method == "GET" && clean_path == "/api/status" {
         http_json_response("200 OK", get_remote_agent_snapshot(&root))
@@ -4061,13 +4127,6 @@ fn handle_agent_http_client(mut stream: TcpStream, app: AppHandle, root: PathBuf
             ),
         }
     } else if method == "POST" && clean_path == "/api/stop" {
-        if automation_chain::active() {
-            let _=automation_chain::action(&app,&root,serde_json::json!({"action":"stop"}));
-            let response=http_json_response("200 OK",get_remote_agent_snapshot(&root));
-            let reply=if let Some(key)=auth_key {agent_pairing::encrypted_http_response(&response,&key)} else {response};
-            let _=stream.write_all(&reply);
-            return;
-        }
         let _ = fs::write(root.join(".parar_automacao.flag"), b"stop");
         let snapshot = remote_status_payload(
             &root,
@@ -4241,7 +4300,6 @@ fn agent_http_server_status() -> &'static Mutex<Value> {
 }
 
 fn start_agent_http_server(app: AppHandle, root: PathBuf) {
-    automation_chain::initialize(&root);
     // Bind before publishing readiness or opening the UI so startup errors are
     // immediately visible and never masquerade as a healthy Agent.
     let listener = match TcpListener::bind("0.0.0.0:18452") {
@@ -4792,11 +4850,11 @@ fn remote_agent_request(
         .ok_or_else(|| format!("Endereco do Agent invalido: {normalized}"))?;
     let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(3))
         .map_err(|err| format!("Nao foi possivel conectar ao Agent em {normalized}: {err}"))?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(if path == "/api/chain" {55} else {8})));
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(8)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(8)));
     let _ = stream.set_nodelay(true);
     let body_bytes = body.unwrap_or(&[]);
-    let auth = if path=="/api/ping"||path.starts_with("/api/pair/") {
+    let auth = if path=="/api/ping"||path.starts_with("/api/pair/")||matches!(path,"/api/password/challenge"|"/api/password/complete") {
         None
     }else{agent_pairing::authenticated_request(&normalized,method,path,body_bytes)?};
     let (extra_headers, request_body) = if let Some((headers,body,_))=auth.as_ref(){
@@ -4860,14 +4918,6 @@ fn remote_agent_open_automation(address: String, id: String) -> Result<Value, St
 #[tauri::command]
 fn remote_agent_status(address: String) -> Result<Value, String> {
     remote_agent_request(&address, "GET", "/api/status", None)
-}
-
-#[tauri::command]
-async fn remote_agent_chain(address: String, request: Value) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let body=serde_json::to_vec(&request).map_err(|e|e.to_string())?;
-        remote_agent_request(&address,"POST","/api/chain",Some(&body))
-    }).await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]
@@ -5008,6 +5058,41 @@ fn agent_meshcentral_start(
 }
 
 #[tauri::command]
+fn agent_unattended_status(app:AppHandle)->Result<Value,String>{
+    if !is_flowdetect_agent_runtime(&app){return Err("Disponivel apenas no Agent".into());}
+    Ok(agent_pairing::unattended_status(&app.path().app_data_dir().map_err(|e|e.to_string())?))
+}
+#[tauri::command]
+async fn agent_unattended_configure(app:AppHandle,enabled:bool,password:String)->Result<Value,String>{
+    if !is_flowdetect_agent_runtime(&app){return Err("Disponivel apenas no Agent".into());}
+    let root=app.path().app_data_dir().map_err(|e|e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move||{
+        let status=agent_pairing::configure_unattended(&root,enabled,&password)?;
+        remote_input::save(&root,enabled)?;
+        set_agent_remote_mouse_enabled_value(enabled);
+        clear_webrtc_signal();
+        Ok(status)
+    }).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+async fn remote_agent_discover()->Result<Vec<Value>,String>{
+    tauri::async_runtime::spawn_blocking(agent_pairing::discover).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+async fn remote_agent_pair_by_password(address:String,password:String)->Result<Value,String>{
+    tauri::async_runtime::spawn_blocking(move||agent_pairing::pair_by_password(&password,&address)).await.map_err(|e|e.to_string())?
+}
+
+#[tauri::command]
+async fn agent_native_frame(app: AppHandle) -> Result<tauri::ipc::Response, String> {
+    if !is_flowdetect_agent_runtime(&app) {return Err("Disponivel apenas no Agent".into());}
+    let root=app.path().app_data_dir().map_err(|e|e.to_string())?;
+    if !agent_pairing::unattended_enabled(&root) {return Err("Acesso nao assistido desativado no Agent".into());}
+    tauri::async_runtime::spawn_blocking(||native_capture::frame().map(tauri::ipc::Response::new))
+        .await.map_err(|e|e.to_string())?
+}
+
+#[tauri::command]
 fn agent_webrtc_poll_offer() -> Result<Value, String> {
     Ok(get_webrtc_signal_payload())
 }
@@ -5028,7 +5113,8 @@ fn get_agent_mouse_control_state() -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn set_agent_mouse_control_enabled(enabled: bool) -> Result<Value, String> {
+fn set_agent_mouse_control_enabled(app:AppHandle,enabled: bool) -> Result<Value, String> {
+    remote_input::save(&app.path().app_data_dir().map_err(|e|e.to_string())?,enabled)?;
     Ok(set_agent_remote_mouse_enabled_value(enabled))
 }
 
@@ -9672,7 +9758,7 @@ fn test_ocr_recognition(
 
 #[tauri::command]
 async fn test_screen_variable_capture(app: AppHandle, reference: String, capture: Value, texts: Option<Vec<String>>, state: State<'_, RuntimeState>) -> Result<Value, String> {
-    if *state.running.lock().map_err(|_| "Estado da execução indisponível")? || automation_chain::active() {
+    if *state.running.lock().map_err(|_| "Estado da execução indisponível")? {
         return Err("Pare a automação antes de testar a captura na tela.".into());
     }
     if reference.trim().is_empty() || reference.len() > 500 || capture["enabled"] != true {
@@ -10396,6 +10482,9 @@ pub fn run() {
             let app_handle = app.handle().clone();
             if is_flowdetect_agent_runtime(&app_handle) {
                 let root = workspace_root(&app_handle);
+                if let Ok(path)=app_handle.path().app_data_dir(){
+                    set_agent_remote_mouse_enabled_value(remote_input::load(&path,agent_pairing::unattended_enabled(&path)));
+                }
                 let _ = app_handle.path().app_data_dir().map(|p| fs::create_dir_all(p));
                 agent_pairing::serve_discovery(app_handle.path().app_data_dir().unwrap_or_else(|_|root.join(".credentials")),agent_identity_name(&root),app_handle.package_info().version.to_string());
                 start_agent_http_server(app_handle.clone(), root);
@@ -10447,6 +10536,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            chatgpt_action,
             set_agent_compact_mode,
             get_roadmap,
             get_workbook_meta,
@@ -10454,7 +10544,6 @@ pub fn run() {
             remove_workbook_preview_row,
             clear_workbook_column,
             list_saved_automations,
-            remote_agent_chain,
             map_paths_action,
             list_open_windows,
             map_window_elements,
@@ -10582,6 +10671,7 @@ pub fn run() {
             chrome_web_capture_element,
             chrome_web_test_element,
             chrome_test_bridge::test_chrome_extension_recognition,
+            chrome_test_bridge::map_chrome_table,
             chrome_test_bridge::chrome_extension_connection_status,
             chrome_test_bridge::pair_chrome_extension,
             chrome_web_open_site,
@@ -10612,6 +10702,11 @@ pub fn run() {
             remote_agent_meshcentral_start,
             agent_meshcentral_status,
             agent_meshcentral_start,
+            agent_unattended_status,
+            agent_unattended_configure,
+            remote_agent_pair_by_password,
+            remote_agent_discover,
+            agent_native_frame,
             agent_webrtc_poll_offer,
             agent_webrtc_set_answer,
             agent_webrtc_clear,

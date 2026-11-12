@@ -97,7 +97,7 @@ pub fn challenge()->Result<Value,String>{
     Ok(json!({"challenge":nonce,"pairing_protocol":PROTOCOL,"expires_in":90}))
 }
 #[derive(Serialize,Deserialize,Clone)]
-struct AgentClient{id:String,name:String,key:String,created_at:u64}
+struct AgentClient{id:String,name:String,key:String,created_at:u64,#[serde(default)] password_auth:bool}
 fn agent_clients(root:&Path)->Result<Vec<AgentClient>,String>{
     let file=root.join("flowdetect_agent_pairings_v1.dat");
     if !file.exists(){return Ok(Vec::new());}
@@ -126,7 +126,7 @@ pub fn complete(root:&Path,payload:&Value)->Result<Value,String>{
     let id=hex(&random_bytes::<8>()?);
     let session_key=random_bytes::<32>()?;
     let mut clients=agent_clients(root)?;
-    clients.push(AgentClient{id:id.clone(),name:name.chars().take(80).collect(),key:hex(&session_key),created_at:now()});
+    clients.push(AgentClient{id:id.clone(),name:name.chars().take(80).collect(),key:hex(&session_key),created_at:now(),password_auth:false});
     if clients.len()>64{clients.remove(0);}
     save_agent_clients(root,&clients)?;
     st.expires=0;ensure_fresh(&mut st)?;
@@ -542,7 +542,7 @@ fn dpapi(data:&[u8],protect:bool)->Result<Vec<u8>,String>{
     unsafe { LocalFree(output.data as *mut std::ffi::c_void); }
     Ok(decrypted)
 }
-fn secure_write(path:&Path,payload:&[u8])->Result<(),String>{
+pub(crate) fn secure_write(path:&Path,payload:&[u8])->Result<(),String>{
     #[cfg(windows)]
     let payload={
         let mut data=b"FDP1".to_vec();data.extend_from_slice(&dpapi(&payload,true)?);data
@@ -550,7 +550,7 @@ fn secure_write(path:&Path,payload:&[u8])->Result<(),String>{
     #[cfg(not(windows))] let payload=payload.to_vec();
     fs::write(path,payload).map_err(|e|e.to_string())
 }
-fn secure_read(path:&Path)->Result<Vec<u8>,String>{
+pub(crate) fn secure_read(path:&Path)->Result<Vec<u8>,String>{
     let bytes=fs::read(path).map_err(|e|e.to_string())?;
     #[cfg(windows)]
     {
@@ -559,4 +559,147 @@ fn secure_read(path:&Path)->Result<Vec<u8>,String>{
     }
     #[cfg(not(windows))]
     { Ok(bytes) }
+}
+
+// Password grants a normal authenticated Studio session. It is never sent or
+// stored as plaintext. DPAPI protects the salted PBKDF2 verifier at rest.
+const PASSWORD_ITERATIONS:u64=600_000;
+#[derive(Serialize,Deserialize)]
+struct Unattended {enabled:bool,salt:String,verifier:String}
+#[derive(Default)]
+struct PasswordAttempts {challenges:HashMap<String,u64>,failures:u8,blocked_until:u64}
+static PASSWORD_ATTEMPTS:OnceLock<Mutex<PasswordAttempts>>=OnceLock::new();
+static UNATTENDED:OnceLock<std::sync::atomic::AtomicBool>=OnceLock::new();
+fn password_attempts()->&'static Mutex<PasswordAttempts>{PASSWORD_ATTEMPTS.get_or_init(||Mutex::new(PasswordAttempts::default()))}
+fn unattended_config(root:&Path)->Result<Unattended,String>{
+    serde_json::from_slice(&secure_read(&root.join("unattended_v1.dat"))?).map_err(|_|"Configuracao de acesso invalida".into())
+}
+pub fn unattended_enabled(root:&Path)->bool{
+    UNATTENDED.get_or_init(||std::sync::atomic::AtomicBool::new(unattended_config(root).map(|c|c.enabled).unwrap_or(false)))
+        .load(std::sync::atomic::Ordering::SeqCst)
+}
+pub fn unattended_status(root:&Path)->Value{json!({"enabled":unattended_enabled(root),"capture":"dxgi","password_configured":unattended_config(root).map(|c|!c.verifier.is_empty()).unwrap_or(false)})}
+#[cfg(windows)]
+fn derive_password(password:&str,salt:&[u8],iterations:u64)->Result<[u8;32],String>{
+    use std::ffi::c_void;
+    #[link(name="bcrypt")] extern "system"{
+        fn BCryptOpenAlgorithmProvider(handle:*mut *mut c_void,algorithm:*const u16,implementation:*const u16,flags:u32)->i32;
+        fn BCryptDeriveKeyPBKDF2(handle:*mut c_void,password:*const u8,password_len:u32,salt:*const u8,salt_len:u32,iterations:u64,key:*mut u8,key_len:u32,flags:u32)->i32;
+        fn BCryptCloseAlgorithmProvider(handle:*mut c_void,flags:u32)->i32;
+    }
+    let mut handle=std::ptr::null_mut();let algorithm:Vec<u16>="SHA256\0".encode_utf16().collect();let mut out=[0u8;32];
+    unsafe {
+        if BCryptOpenAlgorithmProvider(&mut handle,algorithm.as_ptr(),std::ptr::null(),8)<0{return Err("PBKDF2 indisponivel".into());}
+        let status=BCryptDeriveKeyPBKDF2(handle,password.as_ptr(),password.len() as u32,salt.as_ptr(),salt.len() as u32,iterations,out.as_mut_ptr(),32,0);
+        BCryptCloseAlgorithmProvider(handle,0);
+        if status<0{return Err("Falha ao derivar senha".into());}
+    }Ok(out)
+}
+#[cfg(not(windows))]
+fn derive_password(_password:&str,_salt:&[u8],_iterations:u64)->Result<[u8;32],String>{Err("Disponivel apenas no Windows".into())}
+pub fn configure_unattended(root:&Path,enabled:bool,password:&str)->Result<Value,String>{
+    if enabled && (password.chars().count()<12 || password.len()>256){return Err("Use uma senha entre 12 e 256 caracteres.".into());}
+    fs::create_dir_all(root).map_err(|e|e.to_string())?;
+    let config=if enabled {
+        let salt=random_bytes::<16>()?;
+        Unattended{enabled:true,salt:hex(&salt),verifier:hex(&derive_password(password,&salt,PASSWORD_ITERATIONS)?)}
+    }else{Unattended{enabled:false,salt:String::new(),verifier:String::new()}};
+    secure_write(&root.join("unattended_v1.dat"),&serde_json::to_vec(&config).map_err(|e|e.to_string())?)?;
+    UNATTENDED.get_or_init(||std::sync::atomic::AtomicBool::new(false)).store(enabled,std::sync::atomic::Ordering::SeqCst);
+    // Password changes revoke grants established using the previous password.
+    let mut clients=agent_clients(root)?;clients.retain(|c|!c.password_auth);save_agent_clients(root,&clients)?;
+    *password_attempts().lock().map_err(|_|"Estado indisponivel")?=PasswordAttempts::default();
+    Ok(unattended_status(root))
+}
+pub fn password_challenge(root:&Path)->Result<Value,String>{
+    if !unattended_enabled(root){return Err("Acesso nao assistido desativado neste Agent".into());}
+    let config=unattended_config(root)?;
+    let mut st=password_attempts().lock().map_err(|_|"Estado indisponivel")?;
+    if now()<st.blocked_until{return Err("Tentativas bloqueadas por 60 segundos".into());}
+    st.challenges.retain(|_,t|*t>now());
+    if st.challenges.len()>=32{return Err("Muitas tentativas; aguarde".into());}
+    let challenge=hex(&random_bytes::<32>()?);st.challenges.insert(challenge.clone(),now()+60);
+    Ok(json!({"salt":config.salt,"challenge":challenge,"iterations":PASSWORD_ITERATIONS,"expires_in":60}))
+}
+fn password_wrap(key:&[u8],challenge:&str)->[u8;32]{hmac(key,format!("FlowDetect password session v1:{challenge}").as_bytes())}
+pub fn password_complete(root:&Path,payload:&Value)->Result<Value,String>{
+    if !unattended_enabled(root){return Err("Acesso nao assistido desativado".into());}
+    let config=unattended_config(root)?;let key=unhex(&config.verifier)?;
+    let nonce=payload["challenge"].as_str().unwrap_or("");
+    let mut st=password_attempts().lock().map_err(|_|"Estado indisponivel")?;
+    if now()<st.blocked_until{return Err("Tentativas bloqueadas por 60 segundos".into());}
+    if st.challenges.remove(nonce).unwrap_or(0)<=now(){return Err("Desafio expirado ou ja utilizado".into());}
+    let wrapping=password_wrap(&key,nonce);
+    let expected=hmac(&wrapping,format!("password-pair:{nonce}").as_bytes());
+    if !equal(&expected,&unhex(payload["proof"].as_str().unwrap_or("")).unwrap_or_default()){
+        st.failures+=1;if st.failures>=5{st.blocked_until=now()+60;st.failures=0;}
+        return Err("Senha incorreta".into());
+    }
+    st.failures=0;
+    let id=hex(&random_bytes::<8>()?);let session_key=random_bytes::<32>()?;
+    let mut clients=agent_clients(root)?;
+    clients.push(AgentClient{id:id.clone(),name:"Studio por senha".into(),key:hex(&session_key),created_at:now(),password_auth:true});
+    if clients.len()>64{clients.remove(0);}
+    save_agent_clients(root,&clients)?;
+    cipher_encrypt(&wrapping,json!({"id":id,"key":hex(&session_key),"agent_id":device_id(root)?}).to_string().as_bytes())
+}
+pub fn pair_by_password(password:&str,address:&str)->Result<Value,String>{
+    if password.len()<12 || password.len()>256{return Err("Informe a senha configurada no Agent (minimo 12 caracteres)".into());}
+    let parsed:std::net::SocketAddr=address.parse().map_err(|_|"Informe o endereco local do Agent com porta 18452")?;
+    if !permitted(parsed.ip()) || parsed.port()!=18452{return Err("Use endereco de rede privada e porta 18452".into());}
+    let challenge=super::remote_agent_request(address,"GET","/api/password/challenge",None)?;
+    if challenge["iterations"].as_u64()!=Some(PASSWORD_ITERATIONS){return Err("Parametros de autenticacao incompativeis".into());}
+    let nonce=challenge["challenge"].as_str().ok_or("Desafio ausente")?;
+    let salt=unhex(challenge["salt"].as_str().unwrap_or(""))?;if salt.len()!=16 || nonce.len()!=64{return Err("Desafio invalido".into());}
+    let key=derive_password(password,&salt,PASSWORD_ITERATIONS)?;let wrapping=password_wrap(&key,nonce);
+    let body=json!({"challenge":nonce,"proof":hex(&hmac(&wrapping,format!("password-pair:{nonce}").as_bytes()))}).to_string().into_bytes();
+    let response=super::remote_agent_request(address,"POST","/api/password/complete",Some(&body))?;
+    let result:Value=serde_json::from_slice(&cipher_decrypt(&wrapping,&response)?).map_err(|_|"Resposta invalida")?;
+    let client=StudioClient{id:result["id"].as_str().unwrap_or("").into(),key:result["key"].as_str().unwrap_or("").into(),name:"Agent".into(),protocol:PROTOCOL,agent_id:result["agent_id"].as_str().unwrap_or("").into()};
+    if client.id.len()!=16 || client.key.len()!=64{return Err("Credenciais invalidas".into());}
+    let device=client.agent_id.clone();
+    let mut clients=studio_clients().lock().map_err(|_|"Credenciais indisponiveis")?;
+    clients.insert(address.into(),client);save_studio_clients(&clients)?;
+    Ok(json!({"ok":true,"address":address,"agent_id":device,"pairing_protocol":PROTOCOL}))
+}
+
+#[cfg(all(test,windows))]
+mod password_security_tests {
+    use super::*;
+    #[test]
+    fn kdf_matches_pbkdf2_sha256_vector(){
+        assert_eq!(hex(&derive_password("password",b"salt",1).unwrap()),"120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b");
+    }
+    #[test]
+    fn password_grants_are_encrypted_replay_safe_limited_and_revoked(){
+        let dir=std::env::temp_dir().join(format!("flowdetect-password-test-{}",hex(&random_bytes::<8>().unwrap())));
+        fs::create_dir_all(&dir).unwrap();
+        let password="Local agent testing! 92841";
+        assert!(configure_unattended(&dir,true,"short").is_err());
+        configure_unattended(&dir,true,password).unwrap();
+        let file=fs::read(dir.join("unattended_v1.dat")).unwrap();
+        assert!(file.starts_with(b"FDP1"));assert!(!String::from_utf8_lossy(&file).contains(password));
+        let challenge=password_challenge(&dir).unwrap();
+        let nonce=challenge["challenge"].as_str().unwrap();
+        let key=derive_password(password,&unhex(challenge["salt"].as_str().unwrap()).unwrap(),PASSWORD_ITERATIONS).unwrap();
+        let wrapping=password_wrap(&key,nonce);
+        let proof=hex(&hmac(&wrapping,format!("password-pair:{nonce}").as_bytes()));
+        let payload=json!({"challenge":nonce,"proof":proof});
+        let response=password_complete(&dir,&payload).unwrap();
+        assert!(response.get("key").is_none());
+        let grant:Value=serde_json::from_slice(&cipher_decrypt(&wrapping,&response).unwrap()).unwrap();
+        assert_eq!(grant["key"].as_str().unwrap().len(),64);
+        assert!(password_complete(&dir,&payload).is_err());
+        assert_eq!(agent_clients(&dir).unwrap().len(),1);
+        for _ in 0..5 {
+            let c=password_challenge(&dir).unwrap();
+            assert!(password_complete(&dir,&json!({"challenge":c["challenge"],"proof":"00"})).is_err());
+        }
+        assert!(password_challenge(&dir).is_err());
+        configure_unattended(&dir,false,"").unwrap();
+        assert!(!unattended_enabled(&dir));
+        assert!(agent_clients(&dir).unwrap().is_empty());
+        assert!(password_challenge(&dir).is_err());
+        let _=fs::remove_dir_all(&dir);
+    }
 }

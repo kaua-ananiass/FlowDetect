@@ -600,10 +600,15 @@ test("Chrome runner advances the spreadsheet row when a flow returns to its firs
 
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/manifest.json"), "utf8"));
 
-test("Chrome sends key blocks to the page without attaching the debugger", () => {
-  assert.doesNotMatch(source, /chrome\.debugger/);
-  assert.match(source, /if \(step\.type === "key_sequence"\) return executePageStep\(run, step\);/);
-  assert.equal(manifest.permissions.includes("debugger"), false);
+test("key blocks use the page runner; debugger permission is reserved for native table return clicks", async () => {
+  const calls=[];
+  const context=runner({executePageStep:async(run,step)=>{calls.push({tab:run.tabId,step});return {ok:true};},chrome:{debugger:{attach:()=>{throw Error('Key blocks must not attach the debugger');}}}});
+  const execute=source.match(/^async function executeStep\(.*?^}/ms)[0];
+  vm.runInContext(execute,context);
+  await context.executeStep({tabId:22,variables:{}},{type:'key_sequence',keys:['tab']});
+  assert.equal(calls.length,1);assert.equal(calls[0].tab,22);assert.equal(calls[0].step.type,'key_sequence');
+  assert.equal(manifest.permissions.includes("debugger"),true);
+  assert.match(source,/Input\.dispatchMouseEvent/);
 });
 
 test("visual recognition locates an image even when it has no text", () => {

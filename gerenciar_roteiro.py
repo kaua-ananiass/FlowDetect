@@ -75,6 +75,8 @@ ARQUIVOS_RUNTIME_ATUALIZACAO = [
     "executar_automacao.py",
     "executar_automacao.bat",
     "gerenciar_roteiro.py",
+    "chatgpt_guided.py",
+    "block_knowledge.json",
     "gerenciar_dados_planilha.py",
     "capturar_imagem_tela.py",
     "capturar_cliques.py",
@@ -927,6 +929,20 @@ def _converter_evento_para_chrome(evento, colunas_relatorio=None, pasta_automaca
         })
         return passo, None
 
+    if tipo == "chrome_tabela":
+        config = detalhes.get("table") or {}
+        if config.get("setup_pending") and not config.get("generated_traversal"):
+            raise ValueError(f"Bloco {ordem}: conclua os quatro passos da tabela e use Criar automacao com essas etapas. A configuracao atual e um rascunho.")
+        if config.get("mode") not in {"return", "export"} and (not config.get("descriptor") or (config.get("mode") != "click" and not config.get("columns"))):
+            raise ValueError(f"Bloco {ordem}: mapeie a tabela e selecione as colunas antes de exportar.")
+        if config.get("mode") == "click" and (not config.get("action") or not config.get("match_column") or not str(config.get("match_value") or "").strip()):
+            raise ValueError(f"Bloco {ordem}: selecione o botao e informe o identificador da linha.")
+        passo = passo_chrome_base(evento, "table_read", detalhes)
+        if "ao_nao_encontrar" not in detalhes:
+            passo["on_failure"] = {"action":"parar", "block":"", "sequence":""}
+        passo["table"] = config
+        return passo, None
+
     if tipo == "procurar_texto_ocr":
         if str(detalhes.get("fonte_ocr") or "").lower() == "elemento":
             seletor = str(detalhes.get("texto") or "").strip()
@@ -1182,6 +1198,15 @@ def exportar_automacao_para_chrome(automacao_id, item, destino_json=None):
         "steps": passos,
         "warnings": avisos,
     }
+    for passo in passos:
+        tabela = passo.get("table") or {}
+        if passo.get("type") != "table_read" or tabela.get("mode") != "click":
+            continue
+        token_linha = "{{" + str(tabela.get("match_column") or "") + "}}"
+        depende_da_linha = token_linha in str(tabela.get("match_value") or "")
+        tem_fonte = any(p.get("type") in {"data_source", "loop_start"} or p.get("table", {}).get("prepare_loop") or p.get("variable_capture", {}).get("name") == tabela.get("match_column") for p in passos)
+        if depende_da_linha and not tem_fonte:
+            raise ValueError(f"Bloco {passo.get('source_order', '?')}: {token_linha} depende de uma lista e de um loop, que ainda nao foram criados. Mapeie a tabela do detalhe e clique em Criar percurso no mapa; Salvar configuracao apenas salva o rascunho.")
     destino_json.write_text(json.dumps(exportacao, indent=2, ensure_ascii=False), encoding="utf-8")
     return {
         "json_path": str(destino_json),
@@ -2838,6 +2863,11 @@ def card_do_evento(evento):
         titulo = "Texto livre"
         subtitulo = resumir_texto(evento.get("texto", ""))
         descricao = f"{len(evento.get('texto', ''))} caracteres"
+    elif tipo == "chrome_tabela":
+        tabela = detalhes.get("table", {})
+        titulo = {"click":"Abrir detalhe da linha", "return":"Voltar para a lista", "export":"Consolidar dados"}.get(tabela.get("mode"), "Ler tabela")
+        subtitulo = (tabela.get("action") or {}).get("label", "Mapeie o botao") if tabela.get("mode") == "click" else ", ".join(tabela.get("columns", [])) or "Mapeie a tabela no Chrome"
+        descricao = "Acao na linha identificada, sem coordenadas" if tabela.get("mode") == "click" else "Captura de colunas pelo HTML, sem OCR"
     elif tipo == "atalho":
         titulo = "Atalho"
         subtitulo = " + ".join(tecla_para_exibicao(tecla) for tecla in evento.get("teclas", []))
@@ -2941,7 +2971,7 @@ def card_do_evento(evento):
         "id": evento.get("id", ""),
         "order": evento.get("ordem", 0),
         "type": tipo,
-        "title": titulo,
+        "title": detalhes.get("chatgpt_title") or titulo,
         "subtitle": subtitulo,
         "description": descricao,
         "sequence": evento.get("sequencia", "principal"),
@@ -3261,7 +3291,7 @@ def converter_projeto_chrome_importado(projeto, pasta):
     passos = projeto.get("steps")
     if projeto.get("schema") != "flowdetect_chrome_automation" or not isinstance(passos, list) or not passos or not all(isinstance(p, dict) for p in passos):
         raise ValueError("Escolha um JSON ou ZIP de automacao FlowDetect valido.")
-    tipos = {"ocr_text", "key_sequence", "data_source", "report_result", "navigate", "focused_text", "loop_start", "loop_end", "visual_match", "element_action"}
+    tipos = {"ocr_text", "key_sequence", "data_source", "report_result", "navigate", "focused_text", "loop_start", "loop_end", "visual_match", "element_action", "table_read"}
     desconhecidos = sorted({str(p.get("type")) for p in passos if p.get("type") not in tipos})
     if desconhecidos:
         raise ValueError("Este JSON Chrome possui tipos ainda nao importaveis: " + ", ".join(desconhecidos) + ". Use o ZIP original do Studio para esses blocos.")
@@ -3322,6 +3352,8 @@ def converter_projeto_chrome_importado(projeto, pasta):
         elif tipo == "key_sequence":
             evento.update(tipo="atalho" if len(passo.get("keys") or []) > 1 else "tecla", teclas=passo.get("keys") or [])
             detalhes["repeticoes"] = passo.get("repetitions", 1)
+        elif tipo == "table_read":
+            evento.update(tipo="chrome_tabela", texto="Ler tabela"); detalhes["table"] = dict(passo.get("table") or {})
         elif tipo == "focused_text":
             evento.update(tipo="texto_livre", texto=passo.get("text", "")); detalhes["limpar_antes"] = passo.get("clear_before", False)
         elif tipo == "navigate":
@@ -3337,10 +3369,318 @@ def converter_projeto_chrome_importado(projeto, pasta):
     return {"sequencia_inicial": normalizar_nome_sequencia(projeto.get("initial_sequence")), "eventos": eventos}
 
 
+AI_REUSABLE_TYPES = {"chrome_tabela", "clicar_imagem", "procurar_texto_ocr",
+                     "texto_livre", "abrir_url", "tecla", "atalho", "inicio_loop", "fim_loop", "resultado_relatorio"}
+
+
+def conhecimento_blocos_chatgpt():
+    """Share UI semantics, never DOM selectors, model code or workbook contents."""
+    catalog = json.loads(Path(__file__).resolve().with_name("block_knowledge.json").read_text(encoding="utf-8"))
+    return {"version": catalog["version"], "principles": catalog["principles"], "blocks": catalog["blocks"],
+            "focus_targets": {key: {k: value[k] for k in ("label", "description", "types") if k in value}
+                              for key, value in catalog["targets"].items()}}
+
+
+def contexto_chatgpt(payload):
+    """Only structure is shared. No workbook rows, screenshots or captured values."""
+    # Saving updates timestamps and summaries, which must not invalidate a proposal.
+    semantic = {k: payload.get(k) for k in ("eventos", "sequencia_inicial", "configuracoes_sequencia", "map_paths")}
+    semantic["eventos"] = [{k: v for k, v in event.items() if k not in {"id", "comando_python"}} for event in payload.get("eventos", [])]
+    revision = hashlib.sha256(json.dumps(semantic, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    knowledge = conhecimento_blocos_chatgpt()
+    blocks = []
+    for event in payload.get("eventos", []):
+        if event.get("tipo") not in knowledge["blocks"]:
+            continue
+        details = event.get("detalhes") or {}
+        table = details.get("table") or {}
+        blocks.append({"source_order": event["ordem"], "type": event["tipo"],
+                       "can_reuse_in_proposal": event["tipo"] in AI_REUSABLE_TYPES,
+                       "title": str(details.get("chatgpt_title") or details.get("nome") or details.get("block_name") or details.get("rotulo_execucao") or card_do_evento(event)["title"])[:120],
+                       "sequence": event.get("sequencia"),
+                       "table": {"mode": table.get("mode"), "headers": (table.get("descriptor") or {}).get("headers", []),
+                                 "prepare_loop": bool(table.get("prepare_loop")), "accumulate": bool(table.get("accumulate")),
+                                 "variable": table.get("variable"), "traversal_id": table.get("traversal_id")},
+                       "ocr_anchor": str(details.get("texto_ocr_busca") or "")[:200]})
+    for block in blocks:
+        event = next(event for event in payload.get("eventos", []) if event["ordem"] == block["source_order"])
+        details = event.get("detalhes") or {}
+        if event.get("tipo") in {"clicar_imagem", "procurar_texto_ocr"}:
+            block["recognition_settings"] = {"mode": details.get("modo_reconhecimento", "imagem"), "source": details.get("fonte_ocr", "legado"),
+                                             "has_reference": bool(details.get("imagem") or details.get("imagem_ocr")), "click_on_execution": bool(details.get("clicar")),
+                                             "clicks": details.get("cliques", 1), "test_clicks": False}
+    return {"revision": revision, "engine": "chrome", "blocks": blocks, "block_knowledge": knowledge}
+
+
+def preparar_proposta_chatgpt(payload, draft):
+    """Compile a deliberately small data language through existing block constructors."""
+    if not isinstance(draft, dict) or draft.get("revision") != contexto_chatgpt(payload)["revision"]:
+        raise ValueError("O mapa mudou desde a geração. Gere a proposta novamente para usar os mapeamentos atuais.")
+    if len(json.dumps(draft, ensure_ascii=False)) > 24000:
+        raise ValueError("A proposta é extensa demais. Divida a rotina em partes menores.")
+    name = draft.get("name")
+    steps, questions = draft.get("steps"), draft.get("questions", [])
+    if not isinstance(name, str) or not name.strip() or len(name) > 120:
+        raise ValueError("A proposta precisa de um nome de até 120 caracteres.")
+    if not isinstance(questions, list) or len(questions) > 10 or any(not isinstance(q, str) or len(q) > 1000 for q in questions):
+        raise ValueError("Perguntas da proposta inválidas.")
+    if not isinstance(steps, list) or len(steps) > 80 or (not steps and not questions):
+        raise ValueError("A proposta precisa conter etapas ou explicar os mapeamentos que faltam.")
+    source = {e["ordem"]: e for e in payload.get("eventos", [])}
+    events, preview, stack = [], [], []
+    safe_keys = {"ctrl", "alt", "shift", "win", "enter", "tab", "esc", "escape", "space", "backspace", "delete", "up", "down", "left", "right", "home", "end", "pageup", "pagedown"} | set("abcdefghijklmnopqrstuvwxyz0123456789") | {f"f{i}" for i in range(1, 13)}
+
+    def clear_routes(value):
+        if isinstance(value, list):
+            return [clear_routes(v) for v in value]
+        if not isinstance(value, dict):
+            return value
+        result = {}
+        for k, v in value.items():
+            if k.startswith("bloco_") or k.startswith("sequencia_") or k in {"block", "bloco", "after_loop_sequence"}:
+                result[k] = ""
+            elif k.startswith("ao_"):
+                result[k] = "continuar" if k == "ao_sucesso" else "parar"
+            elif k in {"action", "acao"} and v in {"ir_para_bloco", "ir_para_sequencia"}:
+                result[k] = "parar"
+            else:
+                result[k] = clear_routes(v)
+        return result
+
+    for i, step in enumerate(steps, 1):
+        if not isinstance(step, dict):
+            raise ValueError(f"Etapa {i} inválida.")
+        kind, title = step.get("kind"), step.get("title")
+        if not isinstance(title, str) or not title.strip() or len(title) > 120:
+            raise ValueError(f"Etapa {i}: informe um título curto.")
+        if kind == "reuse":
+            order = step.get("source_order")
+            if type(order) is not int or order not in source or source[order].get("tipo") not in AI_REUSABLE_TYPES:
+                raise ValueError(f"Etapa {i}: bloco mapeado não existe ou não é compatível.")
+            event = json.loads(json.dumps(source[order]))
+            event["detalhes"] = clear_routes(event.get("detalhes") or {})
+            event.pop("id", None)
+        elif kind == "text":
+            text = step.get("text")
+            if not isinstance(text, str) or not text.strip() or len(text) > 10000:
+                raise ValueError(f"Etapa {i}: texto inválido.")
+            event = criar_bloco_texto(text, 0)
+        elif kind == "navigate":
+            from urllib.parse import urlsplit
+            url = step.get("url")
+            try:
+                parsed = urlsplit(url) if isinstance(url, str) else None
+            except ValueError:
+                parsed = None
+            if not parsed or parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or len(url) > 2000:
+                raise ValueError(f"Etapa {i}: use um endereço HTTP(S) válido, sem credenciais.")
+            event = criar_bloco_abrir_url(url, navegador="chrome")
+        elif kind == "keys":
+            keys = step.get("keys")
+            if not isinstance(keys, list) or not 1 <= len(keys) <= 4 or any(not isinstance(k, str) or k not in safe_keys for k in keys):
+                raise ValueError(f"Etapa {i}: teclas não reconhecidas.")
+            event = criar_bloco_teclas("+".join(keys), 0)
+        elif kind in {"loop_start", "loop_end"}:
+            event = criar_bloco_marcador_loop("inicio_loop" if kind == "loop_start" else "fim_loop")
+        else:
+            raise ValueError(f"Etapa {i}: tipo de bloco não permitido. A IA não pode fornecer código ou seletores.")
+        event.update(ordem=i, sequencia="principal")
+        event.setdefault("detalhes", {})["chatgpt_title"] = title.strip()
+        event["detalhes"]["ao_sucesso"] = "continuar"
+        if event["tipo"] == "inicio_loop":
+            if stack or not any(e.get("detalhes", {}).get("table", {}).get("prepare_loop") for e in events):
+                raise ValueError("O loop precisa de uma lista de tabela configurada antes dele. Loops aninhados não são suportados nesta integração.")
+            stack.append(i)
+        if event["tipo"] == "fim_loop":
+            if not stack:
+                raise ValueError("A proposta fecha um loop que não foi aberto.")
+            stack.pop()
+        events.append(event)
+        preview.append({"number": i, "title": title.strip(), "type": event["tipo"], "source_order": step.get("source_order"),
+                        "description": step.get("url") or step.get("text") or " + ".join(step.get("keys") or []) or "Usa a configuração já mapeada no Studio."})
+    if stack:
+        raise ValueError("A proposta possui um loop sem fechamento.")
+    traversal_ids = {}
+    def isolate_traversals(value):
+        if isinstance(value, list):
+            for item in value:
+                isolate_traversals(item)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                if key in {"traversal_id", "generated_traversal", "table_traversal_id"} and isinstance(item, str) and item:
+                    value[key] = traversal_ids.setdefault(item, uuid.uuid4().hex)
+                else:
+                    isolate_traversals(item)
+    isolate_traversals(events)
+    return {"sequencia_inicial": "principal", "eventos": events}, preview
+
+
 def comando_caminhos_mapa(args):
     pedido = json.loads(args.request)
     payload = carregar_e_normalizar()
     acao = pedido.get("action")
+    if acao in {"ai_guide_context", "ai_guide_validate", "ai_guide_create", "ai_guide_update"}:
+        # The embedded Windows runtime deliberately omits the script directory
+        # from sys.path. Load only our sibling module, without widening imports.
+        import importlib.util
+        module_path = Path(__file__).resolve().with_name("chatgpt_guided.py")
+        module_spec = importlib.util.spec_from_file_location("flowdetect_chatgpt_guided", module_path)
+        if module_spec is None or module_spec.loader is None or not module_path.is_file():
+            raise ValueError("O módulo da criação guiada não foi encontrado. Reabra o Studio atualizado.")
+        chatgpt_guided = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(chatgpt_guided)
+        helper = sys.modules[__name__]
+        if acao == "ai_guide_context":
+            return chatgpt_guided.context(helper, payload, include_values=pedido.get("include_values") is True)
+        if acao == "ai_guide_validate":
+            return chatgpt_guided.validate(helper, payload, pedido.get("plan"))
+        roadmap, block_id = (chatgpt_guided.update_step if acao == "ai_guide_update" else chatgpt_guided.create_step)(helper, payload, pedido)
+        return {"roadmap": roadmap, "block_id": block_id, "context": chatgpt_guided.context(helper, payload)}
+    if acao == "ai_context":
+        return contexto_chatgpt(payload)
+    if acao in {"ai_validate", "ai_apply"}:
+        draft = pedido.get("draft")
+        origin, preview = preparar_proposta_chatgpt(payload, draft)
+        if acao == "ai_validate":
+            return {"draft": draft, "preview": preview, "can_apply": bool(preview) and not draft.get("questions")}
+        if draft.get("questions") or not preview:
+            raise ValueError("Responda as perguntas e gere novamente antes de adicionar os blocos.")
+        path = mesclar_caminho_mapa(payload, origin, draft["name"], pedido.get("parent") or "principal")
+        path["engine"] = "chrome"
+        path["page_id"] = str(pedido.get("pageId") or "1")
+        return salvar_e_retornar(payload)
+    if acao in {"table_traversal_create", "table_traversal_update"}:
+        indice, origem = localizar_evento(payload, int(pedido.get("order") or 0))
+        if origem.get("tipo") != "chrome_tabela":
+            raise ValueError("Selecione um bloco de tabela.")
+        anterior = origem.get("detalhes", {}).get("table", {})
+        updating = acao == "table_traversal_update"
+        if anterior.get("generated_traversal") and not updating:
+            raise ValueError("Este percurso ja foi criado. Edite os blocos gerados no mapa.")
+        if updating and not anterior.get("generated_traversal"):
+            raise ValueError("Crie o percurso antes de atualizar suas etapas.")
+        supplied = pedido.get("table") or {}
+        cfg = {k:supplied[k] for k in ("descriptor", "action", "action_choices", "variable") if k in supplied}
+        options = pedido.get("traversal") or {}
+        headers = cfg.get("descriptor", {}).get("headers") or []
+        key = str(options.get("key_column") or "")
+        detail = options.get("detail_descriptor") or {}
+        detail_headers = detail.get("headers") or []
+        name = str(options.get("collection") or "detalhes_guias")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,47}", name) or name in {"__proto__", "constructor", "prototype"}:
+            raise ValueError("Use um nome de resultado com letras, numeros e sublinhado.")
+        source_name = str(cfg.get("variable") or "guias")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,47}", source_name) or source_name in {"__proto__", "constructor", "prototype"}:
+            raise ValueError("Use um nome de variavel valido para a lista de guias.")
+        if key not in headers or not cfg.get("action", {}).get("signature") or not detail_headers:
+            raise ValueError("Mapeie a tabela principal, o botao de abrir e a tabela do detalhe.")
+        if key == cfg.get("action", {}).get("column"):
+            raise ValueError("Escolha uma coluna de dados, como Numero da Guia, para identificar as linhas. A coluna de botoes nao identifica cada guia.")
+        if detail.get("origin") != cfg.get("descriptor", {}).get("origin"):
+            raise ValueError("As tabelas devem pertencer ao mesmo portal.")
+        return_mode = options.get("return_mode") or "button"
+        if return_mode not in {"button", "back"} or (return_mode == "button" and not options.get("return_control", {}).get("signature")):
+            raise ValueError("Mapeie o botao para fechar ou escolha Voltar do navegador.")
+        token = anterior.get("generated_traversal") if updating else uuid.uuid4().hex
+        company = str(options.get("company") or "")
+        cfg.update(mode="list", columns=headers, prepare_loop=True, all_pages=True, wait_ready=True, allow_empty=True, key_column=key, traversal_id=token, generated_traversal=token, collection=name, company=company, variable=source_name, traversal_options=options)
+        sequencia = origem.get("sequencia") or "principal"
+        def tabela(config):
+            return {"tipo":"chrome_tabela", "texto":"Tabela", "sequencia":sequencia, "teclas":[], "intervalo_antes":0, "detalhes":{"table":config, "ao_sucesso":"continuar"}}
+        gerados = [
+            criar_bloco_marcador_loop("inicio_loop", sequencia=sequencia),
+            tabela({"mode":"click", "descriptor":cfg["descriptor"], "action":cfg["action"], "match_column":key, "match_value":"{{"+key+"}}", "wait_ready":True, "traversal_id":token, "company":company}),
+            tabela({"mode":"list", "descriptor":detail, "columns":detail_headers, "variable":name, "all_pages":True, "allow_empty":True, "wait_ready":True, "accumulate":True, "traversal_id":token}),
+            tabela({"mode":"return", "descriptor":cfg["descriptor"], "return_mode":return_mode, "return_control":options.get("return_control"), "wait_ready":True, "traversal_id":token}),
+            criar_bloco_marcador_loop("fim_loop", sequencia=sequencia),
+            tabela({"mode":"export", "variable":name, "csv":bool(options.get("csv", False)), "xlsx":bool(options.get("xlsx", True)), "traversal_id":token})
+        ]
+        for marker in (gerados[0], gerados[4]):
+            marker.setdefault("detalhes", {})["table_traversal_id"] = token
+        if updating:
+            related = [e for e in payload["eventos"] if e.get("detalhes", {}).get("table", {}).get("traversal_id") == token and e is not origem]
+            def unique(items, label):
+                if len(items) > 1:
+                    raise ValueError(f"O percurso possui mais de uma etapa {label}. Remova a duplicata no mapa antes de salvar.")
+                return items[0] if items else None
+            opened = unique([e for e in related if e["detalhes"]["table"].get("mode") == "click"], "de abrir")
+            captured = unique([e for e in related if e["detalhes"]["table"].get("accumulate")], "de captura")
+            candidates = []
+            for e in payload["eventos"][indice+1:]:
+                if e.get("sequencia") != sequencia:
+                    continue
+                if e.get("detalhes", {}).get("table", {}).get("generated_traversal"):
+                    break
+                candidates.append(e)
+            legacy = [e for e in candidates if not e.get("detalhes", {}).get("table", {}).get("traversal_id")]
+            returned = unique([e for e in related if e["detalhes"]["table"].get("mode") == "return"], "de voltar")
+            exported = unique([e for e in related if e["detalhes"]["table"].get("mode") == "export"], "de consolidar")
+            if opened or captured:
+                returned = returned or unique([e for e in legacy if e.get("detalhes", {}).get("table", {}).get("mode") == "return" and e["detalhes"]["table"].get("descriptor") == anterior.get("descriptor")], "antiga de voltar")
+                exported = exported or unique([e for e in legacy if e.get("detalhes", {}).get("table", {}).get("mode") == "export" and e["detalhes"]["table"].get("variable") == anterior.get("collection")], "antiga de consolidar")
+            markers = [e for e in candidates if e.get("detalhes", {}).get("table_traversal_id") == token]
+            start = unique([e for e in markers if e.get("tipo") == "inicio_loop"], "de inicio do loop")
+            end = unique([e for e in markers if e.get("tipo") == "fim_loop"], "de fim do loop")
+            if opened or captured:
+                first = opened or captured
+                last = returned or captured or opened
+                start = start or unique([e for e in candidates[:candidates.index(first)] if e.get("tipo") == "inicio_loop" and not e.get("detalhes", {}).get("table_traversal_id")], "antiga de inicio do loop")
+                end_candidates = candidates[candidates.index(last)+1:]
+                if exported in end_candidates:
+                    end_candidates = end_candidates[:end_candidates.index(exported)]
+                end = end or unique([e for e in end_candidates if e.get("tipo") == "fim_loop" and not e.get("detalhes", {}).get("table_traversal_id")], "antiga de fim do loop")
+            existing = [start, opened, captured, returned, end, exported]
+            positions = [payload["eventos"].index(e) for e in existing if e is not None]
+            if positions != sorted(positions):
+                raise ValueError("As etapas existentes do percurso estao fora de ordem. Reorganize abrir, capturar, voltar e fim do loop antes de salvar.")
+            mapa = mapa_ordens_eventos_existentes(payload["eventos"])
+            origem.setdefault("detalhes", {}).update(table=cfg, ao_sucesso="continuar")
+            cursor = origem
+            for stage, replacement in enumerate(gerados):
+                event = existing[stage]
+                if event is None:
+                    following = next((e for e in existing[stage+1:] if e is not None), None)
+                    location = payload["eventos"].index(following) if following is not None else payload["eventos"].index(cursor)+1
+                    event = replacement
+                    payload["eventos"].insert(location, event)
+                elif replacement["tipo"] == "chrome_tabela":
+                    event.setdefault("detalhes", {})["table"] = replacement["detalhes"]["table"]
+                else:
+                    event.setdefault("detalhes", {})["table_traversal_id"] = token
+                cursor = event
+            remapear_referencias_de_blocos(payload, mapa)
+            return salvar_e_retornar(payload)
+        mapa = mapa_ordens_eventos_existentes(payload.get("eventos", []))
+        origem.setdefault("detalhes", {}).update(table=cfg, ao_sucesso="continuar")
+        payload["eventos"][indice+1:indice+1] = gerados
+        remapear_referencias_de_blocos(payload, mapa)
+        return salvar_e_retornar(payload)
+    if acao == "table_save":
+        supplied = pedido.get("table") or {}
+        config = {key: value for key, value in supplied.items() if key in {
+            "variable", "descriptor", "columns", "mode", "match_column", "match_value",
+            "all_pages", "csv", "xlsx", "prepare_loop", "action", "action_choices", "traversal_options",
+            "wait_ready", "allow_empty", "key_column", "traversal_id", "generated_traversal", "collection", "company", "accumulate", "return_mode", "return_control", "setup_pending"
+        }}
+        variable = str(config.get("variable") or "tabela")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,47}", variable) or variable in {"__proto__", "constructor", "prototype"}:
+            raise ValueError("Use um nome de variavel com letras, numeros e sublinhado.")
+        config["variable"] = variable
+        if config.get("descriptor"):
+            descriptor = config["descriptor"]
+            config["descriptor"] = {key: descriptor[key] for key in ("headers", "origin", "pathname") if key in descriptor}
+        if pedido.get("order"):
+            _, evento = localizar_evento(payload, int(pedido["order"]))
+            if evento.get("tipo") != "chrome_tabela":
+                raise ValueError("Este bloco nao e uma tabela Chrome.")
+            evento.setdefault("detalhes", {})["table"] = config
+        else:
+            evento = {"tipo":"chrome_tabela", "texto":"Ler tabela", "teclas":[], "sequencia":pedido.get("sequence") or "principal", "intervalo_antes":float(pedido.get("delay") or 0), "detalhes":{"table":config,"ao_sucesso":"continuar"}}
+            if int(pedido.get("targetOrder") or 0)>0:
+                inserir_evento(payload, evento, int(pedido["targetOrder"]), pedido.get("position") or "after")
+            else:
+                payload.setdefault("eventos", []).append(evento)
+        return salvar_e_retornar(payload)
     if acao in {"create", "import", "importFile"}:
         if acao == "importFile":
             arquivo = Path(str(pedido.get("file") or ""))

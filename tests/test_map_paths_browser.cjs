@@ -78,7 +78,7 @@ test('map imports an editable lower lane and draws a failure connection inside t
     await page.locator('#mapPathLibrary option[value=other]').waitFor({state:'attached'});
     await page.locator('#mapPathLibrary').selectOption('other');
     assert.equal(await page.locator('#mapPathChromePageField').isVisible(),false);
-    assert.match(await page.locator('#mapPathEngineHelp').textContent(),/Alterdata/);
+    assert.match(await page.locator('#mapPathEngineHelp').textContent(),/mouse e teclado/);
     await page.locator('#mapPathEngine').selectOption('chrome');
     assert.equal(await page.locator('#mapPathChromePageField').isVisible(),true);
     await page.locator('#mapPathEngine').selectOption('desktop');

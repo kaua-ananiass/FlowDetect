@@ -1,6 +1,6 @@
 const AUTOMATIONS_KEY = "flowdetectChromeAutomations";
 const RUN_STORAGE_KEY = "flowdetectChromeLastRun";
-const REQUIRED_RUNTIME_VERSION = "0.2.75";
+const REQUIRED_RUNTIME_VERSION = "0.2.95";
 const PAGES_KEY = "flowdetectChromeExecutionPages";
 const PAGE_RUN_PREFIX = "flowdetectChromePageRun:";
 let executionPages = [];
@@ -356,6 +356,10 @@ function blockPreviewImage(step) {
 
 function blockCardDetails(step) {
   const type = String(step?.type || "");
+  if(type==='table_read'){
+    const c=step.table||{},mode=c.mode||'list';
+    return {title:({click:'Abrir detalhe da guia',return:'Voltar à lista de guias',export:'Gerar planilha consolidada'})[mode]||(c.accumulate?'Capturar tabela do detalhe':'Ler lista de guias'),description:mode==='click'?`Botão: ${c.action?.label||'Detalhar'} · Identificador: ${c.match_column||'não definido'}`:mode==='return'?'Fechar o detalhe e aguardar a lista reaparecer.':mode==='export'?'Reunir todas as guias e detalhes na planilha.':`${c.columns?.length||0} colunas · ${c.all_pages?'Todas as páginas':'Página atual'}`,icon:'TBL'};
+  }
   const titles = {
     navigate: "Abrir página", element_action: "Elemento da página", ocr_text: "Reconhecimento OCR",
     visual_match: "Reconhecimento visual", visual_state: "Verificar estado", focused_text: "Digitar texto",
@@ -371,6 +375,11 @@ function blockCardDetails(step) {
 }
 
 function blockActivityPreview(step, run, active) {
+  if(step?.type==='table_read'){
+    const c=step.table||{},loop=run?.spreadsheetLoop,context=run?.tableContexts?.[c.traversal_id];
+    const guide=context?.key||loop?.rowData?.['Número da Guia']||run?.dataSource?.values?.[loop?.row]||'';
+    return {kind:'TABELA',symbol:'▦',count:loop?`Guia ${Number(loop.row)+1} de ${loop.total}`:'',label:blockCardDetails(step).title,value:String(guide||c.variable||'Preparando tabela'),message:active&&run.status==='running'?(c.mode==='click'?'Localizando a linha e confirmando o botão antes de clicar.':c.mode==='return'?'Aguardando o retorno à lista.':c.mode==='export'?'Preparando o arquivo Excel.':'Aguardando a tabela carregar e lendo as linhas.'):'Consulte o resultado abaixo e as etapas em Ao vivo.',mode:'table',tone:run.status==='failed'?'danger':'info',animating:active&&run.status==='running'};
+  }
   if (step?.type === "data_source") {
     const values = Array.isArray(step.values) ? step.values : [];
     const row = Number(run?.spreadsheetLoop?.row);
@@ -483,6 +492,11 @@ function renderLiveSteps(container, automation, run) {
       }
       item.append(detailList);
     }
+    if(entry.state==='failed'&&entry.message){
+      const open=document.createElement('button');open.type='button';open.className='live-step-error-button';open.textContent='Ver motivo da falha';
+      open.addEventListener('click',async()=>{const key=String(automation.id),state=carouselStates.get(key);if(state){state.following=false;state.index=entry.index;state.feedback=null;await renderAutomations();for(const el of document.querySelectorAll('.assisted-content,.assisted-execution,.block-carousel-slide'))el.scrollTop=0;document.documentElement.scrollTop=0;document.body.scrollTop=0;}});
+      item.append(open);
+    }
     return item;
   }));
 }
@@ -569,16 +583,22 @@ function renderBlockCarousel(container, automation, run) {
       feedbackElement.textContent = `B${blockNumber} · ${result}${routed ? ` → B${String(destination?.source_order || failure.nextIndex + 1).padStart(2, "0")}` : ""}`;
       feedbackElement.dataset.tone = feedback.type === "success" ? "success" : routed ? "routed" : "failed";
     }
-    const status = showingFailure ? (showingRoute ? "Redirecionando" : "Falhou")
+    const selectedFailed=(run.recentSteps||[]).some(entry=>entry.index===state.index&&entry.state==='failed');
+    const status = selectedFailed&&!showingRoute ? "Falhou" : showingFailure ? (showingRoute ? "Redirecionando" : "Falhou")
       : showingSuccess ? "Encontrado" : state.index !== activeIndex ? "No fluxo" :
       run.status === "running" ? "Executando" : run.status === "completed" ? "Concluído" :
       run.status === "failed" ? "Falhou" : run.status === "stopped" ? "Parado" : "Aguardando";
     const statusElement = container.querySelector(".block-carousel-state");
     statusElement.textContent = status;
-    statusElement.dataset.status = showingFailure ? showingRoute ? "routed" : "failed" : showingSuccess ? "completed"
+    statusElement.dataset.status = selectedFailed&&!showingRoute ? "failed" : showingFailure ? showingRoute ? "routed" : "failed" : showingSuccess ? "completed"
       : state.index === activeIndex ? run.status || "ready" : "history";
     container.querySelector(".block-carousel-title").textContent = details.title;
     container.querySelector(".block-carousel-description").textContent = details.description;
+    let errorBox=container.querySelector('.block-carousel-error');
+    if(!errorBox){errorBox=document.createElement('p');errorBox.className='block-carousel-error';errorBox.setAttribute('role','alert');container.querySelector('.block-carousel-description').after(errorBox);}
+    const rowError=[...(run.recentSteps||[])].reverse().find(entry=>entry.state==='failed'&&(entry.index===state.index||state.index===activeIndex));
+    const errorText=rowError?.message||(run.status==='failed'&&state.index===activeIndex?(run.lastError||[...(run.logs||[])].reverse().find(log=>log.level==='error')?.message||run.lastMessage):'');
+    errorBox.hidden=!errorText;errorBox.textContent=errorText?'Motivo da falha: '+errorText:'';
     const previewImage = container.querySelector(".block-carousel-image");
     const placeholder = container.querySelector(".block-carousel-placeholder");
     const activity = !image ? blockActivityPreview(step, run, state.index === activeIndex) : null;

@@ -696,10 +696,10 @@ function renderMouseControlState() {
     button.classList.toggle("is-enabled", enabled);
     button.classList.toggle("is-disabled", !enabled);
     button.setAttribute("aria-pressed", enabled ? "true" : "false");
-    button.textContent = enabled ? "Mouse ligado" : "Mouse desligado";
+    button.textContent = enabled ? "Mouse e teclado ligados" : "Mouse e teclado bloqueados";
     button.title = enabled
-      ? "Mouse remoto liberado. Clique para bloquear movimentos e cliques enviados pelo Studio."
-      : "Mouse remoto bloqueado. Clique para permitir movimentos e cliques enviados pelo Studio.";
+      ? "Controle remoto liberado. Clique para bloquear mouse e teclado enviados pelo Studio."
+      : "Controle remoto bloqueado. Clique para permitir mouse e teclado enviados pelo Studio.";
   });
 }
 
@@ -713,6 +713,7 @@ async function loadMouseControlState() {
   }
   renderMouseControlState();
 }
+window.addEventListener('flowdetect-input-state-changed',()=>{void loadMouseControlState();});
 
 async function toggleMouseControl() {
   const nextEnabled = !Boolean(state.mouseControlEnabled);
@@ -1988,3 +1989,12 @@ async function boot() {
 }
 
 boot();
+const agentNativeInvoke=(command,args)=>tauriCore.invoke(command,args);
+const nativeScreen=window.createNativeScreen?.(agentNativeInvoke);
+const agentVideo=window.createAgentVideo?.({
+  invoke: agentNativeInvoke,
+  native: nativeScreen,
+  button: document.getElementById('agentVideoButton'),
+  status: document.getElementById('agentVideoStatus'),
+});
+window.initUnattended?.({invoke:agentNativeInvoke,video:agentVideo,native:nativeScreen});

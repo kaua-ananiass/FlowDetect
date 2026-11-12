@@ -5,13 +5,31 @@
   "type": "module",
   "scripts": {
     "mac:check": "node ../scripts/macos/check-environment.cjs",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:dev": "npm run chat:build && tauri dev",
+    "tauri:build": "npm run chat:build && tauri build",
+    "chat:build": "node scripts/build-chat.mjs",
+    "chat:check": "tsc --noEmit"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.1"
+    "@tailwindcss/cli": "^4.3.5",
+    "@tauri-apps/cli": "^2.11.1",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.2",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@tauri-apps/plugin-dialog": "^2.7.1"
+    "@base-ui/react": "^1.9.0",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.72.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.7.0",
+    "thinking-orbs": "^0.3.2"
   }
 }

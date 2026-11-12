@@ -97,7 +97,8 @@ export function moveVariableRegion(container, target, clientX, clientY) {
 export function collectVariables(events = []) {
   const grouped = new Map();
   for (const event of events) {
-    const c = captureFromDetails(event.details || event.detalhes || {});
+    const d=event.details||event.detalhes||{};
+    const c=event.type==='chrome_tabela'||event.tipo==='chrome_tabela'?{enabled:d.table?.mode!=='click',name:d.table?.variable,kind:'text'}:captureFromDetails(d);
     if (!c.enabled || !c.name) continue;
     const item = grouped.get(c.name) || {name:c.name,kind:c.kind,orders:[]};
     item.orders.push(event.order ?? event.ordem);
@@ -117,7 +118,7 @@ export function renderTextVariableLibrary(events = []) {
   const variables = collectVariables(events);
   return `<details class="text-variable-library" ${variables.length?'open':''}>
     <summary>Inserir vari\u00e1vel <span>${variables.length}</span></summary>
-    <div class="text-variable-chips">${variables.map(v=>`<button type="button" data-insert-text-variable="${esc(v.name)}" title="Inserir valor capturado pelo OCR \u00b7 Bloco ${esc(v.orders.join(', '))}"><span>${esc(v.name)}</span><small>OCR ${esc(v.orders.join(', '))}</small></button>`).join('') || '<small>Configure uma vari\u00e1vel em um bloco OCR para usar aqui.</small>'}</div>
+    <div class="text-variable-chips">${variables.map(v=>`<button type="button" data-insert-text-variable="${esc(v.name)}" title="Inserir valor capturado \u00b7 Bloco ${esc(v.orders.join(', '))}"><span>${esc(v.name)}</span><small>Bloco ${esc(v.orders.join(', '))}</small></button>`).join('') || '<small>Configure uma vari\u00e1vel em um bloco OCR ou Ler tabela para usar aqui.</small>'}</div>
     ${variables.length?'<small>Clique para inserir no texto. O valor ser\u00e1 preenchido durante a execu\u00e7\u00e3o.</small>':''}
   </details>`;
 }

@@ -64,18 +64,3 @@ sem uma segunda busca independente pela âncora. O painel mostra os OCRs e
 “Variável encontrada” em amarelo com o valor lido. Os atalhos de teste na
 configuração da variável abrem esse mesmo teste conjunto. Se a região contiver
 mais de um valor, ajuste o retângulo amarelo; o OCR pode continuar confirmado.
-
-
-## Confirmação e desempenho
-
-- **Só confirmar** valida o OCR sem clicar. O marcador de clique fica oculto
-  na imagem dessa configuração; a captura da variável continua funcionando.
-- No teste local, OCR e variável usam o mesmo desenho e aparecem em sequência:
-  primeiro azul, depois amarelo. As marcações só começam após terminar as leituras.
-- A referência é calibrada pelo texto na imagem salva para não confundir a margem
-  do retângulo do editor com a caixa real das letras.
-- As quatro leituras de conferência são mantidas, com até dois processos OCR
-  simultâneos. O ganho medido depende do processador e do conteúdo da tela.
-
-No bloco **Texto livre**, a biblioteca **Inserir variável** insere `{{valor_nota}}`
-na posição do cursor e substitui o trecho selecionado. Salve o bloco após editar.

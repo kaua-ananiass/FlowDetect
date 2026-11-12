@@ -65,6 +65,10 @@
         </div>
 
         <div class="agent-hero-actions">
+          <div class="agent-video-controls">
+            <button id="agentVideoButton" class="agent-secondary-button" type="button" aria-pressed="false">Ativar vídeo</button>
+            <small id="agentVideoStatus" role="status">Captura nativa · configure o acesso abaixo</small>
+          </div>
           <div class="agent-pairing-code" aria-label="Código de pareamento para conectar um Studio">
             <span>PAREAR STUDIO</span>
             <strong id="agentPairCode">Preparando código…</strong>
@@ -79,6 +83,20 @@
           <input id="automationZipInput" type="file" accept=".zip,application/zip" hidden />
         </div>
       </section>
+
+    <section class="agent-unattended-setup">
+      <details>
+        <summary>Acesso não assistido · senha e captura nativa</summary>
+        <p id="agentUnattendedStatus" role="status">Conferindo configuração…</p>
+        <form id="agentUnattendedForm">
+          <label>Nova senha<input id="agentAccessPassword" type="password" minlength="12" maxlength="256" required autocomplete="new-password" placeholder="Pelo menos 12 caracteres" /></label>
+          <label>Confirme a senha<input id="agentAccessPasswordConfirm" type="password" minlength="12" maxlength="256" required autocomplete="new-password" /></label>
+          <button class="agent-primary-button" type="submit">Salvar e ativar</button>
+          <button class="agent-secondary-button" id="agentUnattendedDisable" type="button">Desativar acesso</button>
+        </form>
+        <small>Após ativar, Studios autorizados podem conectar enquanto o Agent estiver aberto, sem selecionar a tela. Use apenas na sua rede privada. A sessão Windows deve estar desbloqueada. Alterar a senha revoga os pareamentos feitos com a senha anterior.</small>
+      </details>
+    </section>
 
       <section class="agent-chrome-setup" aria-label="Conexão com o Chrome deste computador">
         <div><strong>Chrome do agente</strong><small id="agentChromeStatus" role="status">Verificando conexão…</small></div>
@@ -260,6 +278,10 @@
       </section>
     </main>
 
+
+    <script src="./native-screen.js"></script>
+    <script src="./unattended.js"></script>
+    <script src="./agent-video.js"></script>
     <script src="./main.js"></script>
   </body>
 </html>

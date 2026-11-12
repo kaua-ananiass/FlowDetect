@@ -43,7 +43,7 @@ test("Original flow capture preserves the actual cards, curves and manual layout
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "flowdetect-studio-functional-"));
   const exported = ["captureEntireFlow","captureOriginalFlowPage","saveFlowCapture","flowCaptureState","state","renderCommandMap","setWorkspaceTab","setCommandMapZoom"];
   // Instrument only the served copy; the production module exposes no test API.
-  const instrumented = main.replace(/\nboot\(\);\r?\n}\s*$/,
+  const instrumented = main.replace(/\nboot\(\);\r?\n}/,
     `\nwindow.__functionalQA = {${exported.join(",")}};\nboot();\n}`);
   assert.notEqual(instrumented, main);
   const server = http.createServer((req, res) => {

@@ -34,10 +34,10 @@ test("Studio loads with the original styles and preserves expanded and compact O
   const exported = ["renderOcrTargetRows", "renderOcrTargetActionRows", "ocrTargetLayoutsFromContainer",
     "syncOcrTargetActionRows", "setCommandCardOcrRouteDelay", "syncOcrTargetActionControlToSource",
     "applyOcrTargetActionChoice", "defaultDelayForNewBlockLink", "relativeOcrInvokeArgs", "renderCommandMapTreeDelayControl", "createInsertPanelState",
-    "insertValuesFromPanel", "state"];
+    "insertValuesFromPanel", "renderInsertPanel", "renderTreeEditorFields", "state"];
   // Instrument only the served copy; the production module exposes no test API.
-  const instrumented = main.replace(/\nboot\(\);\r?\n}\s*$/,
-    `\nwindow.__functionalQA = {${exported.join(",")}};\nboot();\n}`);
+  const instrumented = main.replace('initTableBlocks({invoke,applyRoadmap});',
+    `window.__functionalQA = {${exported.join(",")}};\ninitTableBlocks({invoke,applyRoadmap});`);
   assert.notEqual(instrumented, main);
   const server = http.createServer((req, res) => {
     const pathname = decodeURIComponent(new URL(req.url, "http://localhost").pathname);
@@ -184,6 +184,11 @@ test("Studio loads with the original styles and preserves expanded and compact O
       qa.setCommandCardOcrRouteDelay(card,0,'success',-10);
       check('negative delay is clamped', qa.ocrTargetLayoutsFromContainer(card)[0].successDelay===0);
       const originalInsertPanel = qa.state.insertPanel;
+      qa.state.insertPanel = {...qa.createInsertPanelState(1,'after'),type:'table'};
+      const tableCreate=qa.renderInsertPanel(1);
+      check('table creation is accessible in command map',tableCreate.includes('data-insert-type="table"') && tableCreate.includes('Ler tabela'));
+      const tableEditor=qa.renderTreeEditorFields({type:'chrome_tabela',order:1,details:{table:{variable:'dados'}}});
+      check('table details render mapping and variable controls',tableEditor.includes('data-table-action="map"') && tableEditor.includes('guide-steps'));
       qa.state.insertPanel = {...qa.createInsertPanelState(1,'after'),type:'image',
         recognitionMode:'texto_ocr',ocrTargetLayouts:[{action:'clicar',clicks:1}]};
       const compactCreate = document.createElement('div');
@@ -196,7 +201,7 @@ test("Studio loads with the original styles and preserves expanded and compact O
       qa.state.insertPanel = originalInsertPanel;
       card.remove(); return checks;
     })()`);
-    assert.equal(result.length, 18);
+    assert.equal(result.length, 20);
     assert.deepEqual(errors, []);
   } finally {
     if (socket) socket.close();

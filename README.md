@@ -27,6 +27,10 @@ O **FlowDetect** transforma tarefas repetitivas em fluxos visuais reutilizáveis
 | Gravador inteligente | Leitura e escrita em planilhas | Relatórios PDF e exportação |
 | Janela alvo | Tratamento de downloads | Acompanhamento de progresso |
 
+## Atualização em desenvolvimento
+
+Chat IA com histórico de conversas, criação guiada de blocos reais e tutorial visual com halo nos controles. Inclui variáveis OCR, percursos de tabelas no Chrome e captura nativa do Agent. [Confira as mudanças, os dez commits e a validação](docs/ATUALIZACAO_CHAT_GUIADO_2026-11-11.md).
+
 ## Galeria
 > Imagens oficiais de releases anteriores. A interface atual pode apresentar alterações.
 
@@ -63,7 +67,7 @@ O **FlowDetect** transforma tarefas repetitivas em fluxos visuais reutilizáveis
 ## Para desenvolvedores
 
 O mapa também permite [seções conectadas na mesma página](docs/MAPA_CAMINHOS.md),
-[encadeamentos no Agente](docs/ENCADEAMENTOS.md) e [pedidos de DP](docs/ALTERDATA_TAREFAS_DP.md).
+[Chat IA e criação guiada](docs/CHATGPT_STUDIO.md) e [tabelas do Chrome](docs/TABELAS_CHROME.md).
 Veja a [auditoria dos arquivos e recursos de build](docs/AUDITORIA_REPOSITORIO.md).
 
 <details><summary><b>Estrutura do código, preparação do ambiente e referências técnicas</b></summary>

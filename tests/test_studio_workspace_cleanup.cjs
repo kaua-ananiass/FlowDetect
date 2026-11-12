@@ -1,0 +1,42 @@
+const {test}=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs/promises');const path=require('node:path');const http=require('node:http');const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+test('Studio opens chat and map without the retired catalog, Alterdata or chains',async()=>{
+ const web=path.resolve(__dirname,'../tauri_gerador/web');
+ const server=http.createServer(async(req,res)=>{try{const file=path.resolve(web,'.'+new URL(req.url,'http://localhost').pathname.replace(/\/$/,'/index.html'));if(!file.startsWith(web+path.sep)){res.writeHead(403).end();return;}res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.css':'text/css','.woff2':'font/woff2'})[path.extname(file)]||'application/octet-stream');let body=await fs.readFile(file);if(path.basename(file)==='main.js')body=body.toString('utf8').replace('chatWorkspace=initChatGPT(', 'window.__guideTest={navigate:navigateChatGuidance,seed:applyPersistedRoadmap};chatWorkspace=initChatGPT(');res.end(body);}catch{res.writeHead(404).end();}});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const browser=await chromium.launch({headless:true});
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[],requests=[];page.on('pageerror',e=>errors.push(e.message));page.on('request',r=>requests.push(r.url()));await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  await page.addStyleTag({content:'#loginOverlay{display:none!important}.builder-shell{visibility:visible!important;pointer-events:auto!important;filter:none!important}'});
+  await page.locator('#integrationsTabButton').click();await page.waitForSelector('#integrationsPanel.is-active .fdchat');
+  assert.equal(await page.locator('#integrationsTabButton').textContent(),'Chat IA');
+  assert.equal(await page.locator('.workspace-panel.is-active').count(),1);
+  assert.equal(await page.locator('#integrationsPanel > section').count(),1);
+  assert.equal(await page.locator('#alterdataTabButton,#chainTabButton,#alterdataPanel,#chainPanel,.integration-card,.integrations-shell').count(),0);
+  assert.equal(await page.locator('#flowChatInput').isVisible(),true);
+  await page.locator('#launcherTabButton').click();assert.equal(await page.locator('#integrationsPanel').isVisible(),false);
+  await page.locator('#commandTabButton').click();assert.equal(await page.locator('#commandsPanel').isVisible(),true);
+  await page.locator('#mapChatGPTButton').click();assert.equal(await page.locator('#flowChatInput').isVisible(),true);
+  assert.equal(await page.locator('.workspace-panel.is-active').count(),1);
+  assert.ok(!requests.some(url=>/\/(alterdata|automation-chain|integrations)\.(js|css)/.test(url)));
+  await fs.mkdir(path.join(web,'../../output/chatgpt'),{recursive:true});await page.screenshot({path:path.join(web,'../../output/chatgpt/studio-clean-chat.png'),fullPage:true});
+  await page.evaluate(async()=>{window.__guideTest.seed({initial_sequence:'principal',sequences:['principal'],summary:{total:1},sequence_settings:{},map_paths:[],workbook:{workbooks:[],sheets:[]},events:[{id:'reference-id',order:1,type:'clicar_imagem',title:'Configurar consulta',subtitle:'Capturar referência',sequence:'principal',text:'Consulta',delay:0,keys:[],details:{imagem:'',clicar:false,modo_reconhecimento:'imagem',ao_sucesso:'continuar'}}]});await window.__guideTest.navigate({tab:'commands',order:99,block_id:'reference-id',title:'Capturar o botão Consultar',reason:'No Chrome, abra a tela da guia. Capture o botão Consultar e configure o OCR neste editor.'});});
+  await page.locator('.command-tree-card.is-inline-expanded[data-order="1"]').waitFor({state:'visible'});
+  assert.equal(await page.locator('.fdchat-guidance-dock').isVisible(),true);assert.ok((await page.locator('.fdchat-guidance-dock').textContent()).includes('Capture o botão Consultar'));
+  await page.locator('.fdchat-guidance-halo[data-target="recognition.capture"]').waitFor({state:'visible'});
+  const halo=await page.locator('.fdchat-guidance-halo').boundingBox();const capture=await page.locator('.command-tree-card [data-recognition-tab-panel="visual"] button[data-tree-action="capture-image"]').first().boundingBox();assert.ok(halo.x<capture.x&&halo.y<capture.y&&halo.width>capture.width);
+  await page.getByRole('button',{name:'Próximo passo',exact:true}).click();await page.getByRole('button',{name:'Próximo passo',exact:true}).click();
+  await page.locator('.fdchat-guidance-halo[data-target="recognition.click_mode"]').waitFor({state:'visible'});assert.equal(await page.locator('.command-tree-card [data-recognition-tab-panel="behavior"]').isVisible(),true);
+  assert.ok((await page.locator('.fdchat-guidance-dock').textContent()).includes('Só confirmar'));
+  await page.evaluate(async()=>window.__guideTest.navigate({tab:'commands',block_id:'reference-id',focus:'recognition.test',title:'Procurar não executa o clique',reason:'Veja a diferença entre teste e execução.'}));
+  await page.locator('.fdchat-guidance-halo[data-target="recognition.test"]').waitFor({state:'visible'});assert.ok((await page.locator('.fdchat-guidance-dock').textContent()).includes('NÃO clica'));
+  await page.screenshot({path:path.join(web,'../../output/chatgpt/studio-guided-editor.png'),fullPage:true});
+  await page.evaluate(async()=>{window.__guideTest.seed({initial_sequence:'principal',sequences:['principal'],summary:{total:1},sequence_settings:{},map_paths:[],workbook:{workbooks:[],sheets:[]},events:[{id:'ocr-id',order:1,type:'procurar_texto_ocr',title:'Leitura OCR',sequence:'principal',text:'Consulta',delay:0,keys:[],details:{texto:'Consultar',fonte_ocr:'chrome',clicar:false,ao_sucesso:'continuar'}}]});await window.__guideTest.navigate({tab:'commands',block_id:'ocr-id',title:'Configurar OCR',reason:'Escolha a origem da leitura.'});});
+  await page.locator('.fdchat-guidance-halo[data-target="ocr.source"]').waitFor({state:'visible'});
+  await page.getByRole('button',{name:'Próximo passo',exact:true}).click();await page.locator('.fdchat-guidance-halo[data-target="ocr.text"]').waitFor({state:'visible'});
+  await page.getByRole('button',{name:'Próximo passo',exact:true}).click();await page.locator('.fdchat-guidance-halo[data-target="ocr.click_mode"]').waitFor({state:'visible'});
+  assert.ok((await page.locator('.fdchat-guidance-dock').textContent()).includes('Apenas confirmar'));
+  await page.getByRole('button',{name:'Voltar ao chat e conferir'}).click();assert.equal(await page.locator('#integrationsPanel').isVisible(),true);
+  assert.deepEqual(errors,[]);
+ }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
+ for(const name of ['integrations.js','integrations.css','alterdata.js','alterdata.css','automation-chain.js','automation-chain.css'])await assert.rejects(fs.access(path.join(web,name)));
+ await assert.rejects(fs.access(path.join(web,'../src-tauri/src/automation_chain.rs')));
+});
