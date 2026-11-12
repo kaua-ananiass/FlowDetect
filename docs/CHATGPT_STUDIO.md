@@ -30,6 +30,10 @@ Falhas agora mostram o evento, código, parâmetro, motivo de interrupção e id
 
 O contexto enviado contém tipos/títulos dos blocos, nomes de colunas, variáveis de tabela e âncoras OCR. Na criação guiada, o plano editado também acompanha a mensagem, incluindo textos, endereços e teclas dos cartões. Não envia linhas de planilha, valores capturados ou imagens automaticamente. O texto que você escrever e os nomes/âncoras dos mapeamentos são enviados à OpenAI. Não coloque senhas na descrição.
 
+## Assistente visual e criação de vários blocos
+
+O modo **Mapa + conversa** usa o editor real do Studio. Em **Fazer comigo**, pedidos completos podem criar vários blocos em sequência, com perguntas essenciais feitas antes da primeira alteração. O cursor **Assistente** mostra as ações e acompanha a navegação no mapa. Veja os exemplos, limites e validação em [Assistente visual — 12/11/2026](ASSISTENTE_VISUAL_2026-11-12.md).
+
 ## Demonstração no Chrome
 
 É possível evoluir para **Gravar demonstração → revisar ações → gerar fluxo**. A extensão registrará explicitamente cliques, navegações, alvos DOM e estruturas de tabelas; a IA poderá propor loops e variáveis. O usuário precisará indicar os trechos que devem repetir, e diferenças de empresa serão verificadas antes de executar. O login não acompanha o navegador sozinho. A gravação de demonstração para esta integração ainda não está implementada nesta versão.
