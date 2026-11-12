@@ -1,5 +1,11 @@
 # Histórico de versões
 
+## 0.2.96 — pacote da release FlowDetect 4.0.0
+
+- Versões da extensão e da ponte local alinhadas para o Studio 4.0.0.
+- Inclui os recursos de tabelas, execução assistida, OCR e transferência do Studio consolidados na versão anterior.
+- ZIP preparado diretamente dos arquivos de distribuição, sem dados de execução ou automações pessoais.
+
 ## 0.2.76–0.2.95 — consolidação de 11/11/2026
 
 - Mapeamento de tabelas e botões por estrutura, com percurso por todas as linhas e páginas.

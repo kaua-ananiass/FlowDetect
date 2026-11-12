@@ -15,7 +15,7 @@ use std::{
 };
 
 const ADDRESS: &str = "127.0.0.1:18453";
-const EXTENSION_VERSION: &str = "0.2.95";
+const EXTENSION_VERSION: &str = "0.2.96";
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static PORT_IN_USE: AtomicBool = AtomicBool::new(false);
 static STARTING: Mutex<()> = Mutex::new(());
