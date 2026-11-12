@@ -11,6 +11,7 @@ const names = [
   "getCommandMapTreeStageConstants", "getCommandMapTreeCardLayoutWidth",
   "getCommandMapTreeInsertPreview", "buildCommandMapTreeStageLayout",
   "captureCommandMapTreeInsertion", "placeCreatedCommandMapTreeNode",
+  "applyChatRoadmap",
 ];
 const functions = names.map(name => {
   const match = source.match(new RegExp(`^function ${name}\\(.*?^}`, "ms"));
@@ -30,7 +31,7 @@ function setup(events, layouts = {}, sequence = "principal") {
     commandMapZoom: 0.4, commandMapTreePanOffset: { x: -870, y: 120 },
   };
   const context = vm.createContext({
-    state,
+    state,chatEditorContext:null,
     normalizeSequenceName: value => String(value || 'principal').trim(),
     getCommandMapEvents: (page = state.commandMapPageSequence) => state.roadmap.events.filter(e => e.sequence === page),
     getCommandMapPageDefinition: sequence => ({ sequence }),
@@ -38,6 +39,8 @@ function setup(events, layouts = {}, sequence = "principal") {
     buildCommandMapTreeBranches: () => [],
     nextCommandMapClientKey: () => `created-${++nextKey}`,
     persistCommandMapTreeLayouts: () => {},
+    captureCommandMapCardPositions: () => ({}),
+    applyRoadmap: (roadmap,options) => {state.roadmap=roadmap;state.lastApplyOptions=options;},
   });
   vm.runInContext(functions, context);
   return context;
@@ -68,6 +71,34 @@ test('independent paths occupy separate rows and restart their horizontal positi
   assert.equal(b.x,d.x);
   assert.ok(c.y>a.y+700);
   assert.ok(layout.height>d.y+600);
+});
+
+test('a save returning after page navigation keeps the anchor layout and the current page',()=>{
+ const original=[{...event(1),id:'anchor'},{...event(2,'pagina_2'),id:'other'}];
+ const context=setup(original,{principal:{1:{x:1800,y:250}},pagina_2:{2:{x:400,y:180}}},'pagina_2');
+ context.applyChatRoadmap({events:[original[0],{...event(2),id:'new'}, {...original[1],order:3}]},{anchor_id:'anchor',anchor_order:1,position:'after'});
+ assert.deepEqual(plain(context.state.commandMapTreeLayouts.principal[2]),{x:2360,y:250});
+ assert.equal(context.state.commandMapPageSequence,'pagina_2');
+ assert.equal(context.state.lastApplyOptions.preserveCommandMapSequence,'pagina_2');
+ assert.equal(context.state.lastApplyOptions.resetCommandMapNavigation,undefined);
+ assert.deepEqual(plain(context.state.commandMapTreeLayouts.pagina_2[3]),{x:400,y:180});
+ assert.equal(context.state.roadmap.events.length,3);
+});
+
+test('opening New block only shifts following blocks in the same section',()=>{
+  const context=setup([event(1),event(2),event(3,'recuperacao'),event(4,'recuperacao')]);
+  const before=plain(context.buildCommandMapTreeStageLayout(context.state.roadmap.events,{sequence:'principal'}));
+  context.state.insertPanel={targetOrder:1,position:'after'};
+  const opened=plain(context.buildCommandMapTreeStageLayout(context.state.roadmap.events,{sequence:'principal'}));
+  assert.equal(opened.nodes[0].x,before.nodes[0].x);
+  assert.ok(opened.nodes[1].x>before.nodes[1].x);
+  for(const index of [2,3]){
+    assert.equal(opened.nodes[index].x,before.nodes[index].x);
+    assert.equal(opened.nodes[index].y,before.nodes[index].y);
+  }
+  assert.deepEqual(plain(context.state.commandMapTreeLayouts),{});
+  context.state.insertPanel=null;
+  assert.deepEqual(plain(context.buildCommandMapTreeStageLayout(context.state.roadmap.events,{sequence:'principal'})).nodes,before.nodes);
 });
 
 test("appending places the new card ahead of its manually moved origin, ignoring a stale order", () => {
@@ -136,7 +167,7 @@ test("creation does not change zoom or pan and never persists the temporary pane
   const context = setup([event(1), event(2)]);
   context.state.insertPanel = { targetOrder: 1, position: "after" };
   const preview = context.buildCommandMapTreeStageLayout(context.state.roadmap.events, { sequence: "principal" });
-  assert.equal(preview.nodes[1].x, 996);
+  assert.equal(preview.nodes[1].x, 1192);
   const { insertion, positions } = insert(context, 1);
   assert.equal(insertion.layout.nodes[1].x, 632);
   assert.equal(positions[3].x, 1192);

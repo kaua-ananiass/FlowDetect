@@ -113,7 +113,12 @@ test('map imports an editable lower lane and draws a failure connection inside t
     assert.match(downward,/^M .* L /);
     const primary=await page.locator('path[id^="commandTreeStage_1_2_success_"]').getAttribute('d');
     const coords=primary.match(/-?\d+(?:\.\d+)?/g).map(Number);
-    assert.equal(coords[1],coords.at(-1));
+    const endpoints=await page.evaluate(()=>{
+      const stage=document.querySelector('.command-map-tree-stage'),r=stage.getBoundingClientRect(),scale=r.width/stage.offsetWidth;
+      return [1,2].map(order=>{const box=document.querySelector(`.command-tree-card[data-order="${order}"]`).getBoundingClientRect();return (box.top+box.height/2-r.top)/scale;});
+    });
+    assert.ok(Math.abs(coords[1]-endpoints[0])<2);
+    assert.ok(Math.abs(coords.at(-1)-endpoints[1])<2);
     assert.equal((primary.match(/Q /g)||[]).length,0);
     const headerCollisions=await page.evaluate(()=>{
       const stage=document.querySelector('.command-map-tree-stage'),bounds=stage.getBoundingClientRect(),zoom=bounds.width/stage.offsetWidth;
@@ -139,6 +144,14 @@ test('map imports an editable lower lane and draws a failure connection inside t
     assert.deepEqual(await page.locator('#mapPathSource option').evaluateAll(nodes=>nodes.map(node=>node.value)),['3','4']);
     await page.locator('#mapPathsClose').click();
     await page.locator('.command-tree-card[data-order="4"] [data-tree-action="insert-after"]').click();
+    await page.locator('.command-map-tree-insert.is-after').waitFor({state:'visible'});
+    const spacing=await page.locator('.command-map-tree-insert.is-after').evaluate(panel=>{
+      const card=panel.parentElement.querySelector('.command-tree-card');
+      const stage=panel.closest('.command-map-tree-stage');
+      const scale=stage.getBoundingClientRect().width/stage.offsetWidth;
+      return (panel.getBoundingClientRect().left-card.getBoundingClientRect().right)/scale;
+    });
+    assert.ok(spacing>=40,`New block should be separated from its origin, got ${spacing}px`);
     await page.locator('.insert-card-panel [data-insert-type="text"]').click();
     await page.locator('.insert-card-panel [data-insert-action="save"]').click();
     await page.waitForFunction(()=>document.querySelectorAll('.command-map-tree-node-slot').length===5);

@@ -9903,7 +9903,7 @@ label span {
 
 .command-map-tree-insert.is-after {
   position: absolute;
-  left: 100%;
+  left: 560px;
   top: 0;
   margin: 0;
   z-index: 14;
@@ -17290,3 +17290,17 @@ label span {
   overflow-wrap: anywhere;
 }
 .agent-pairing-inline-error[hidden] { display: none !important; }
+
+
+.command-insert-preview-link{position:absolute;left:0;top:0;width:560px;height:220px;overflow:visible;pointer-events:none;z-index:2}
+.command-insert-preview-link path{fill:none;stroke:#77e7d4;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 4px #5eead499);stroke-dasharray:7 3;animation:insert-preview-energy 1.8s linear infinite}
+@keyframes insert-preview-energy{to{stroke-dashoffset:-40}}
+@media(prefers-reduced-motion:reduce){.command-insert-preview-link path{animation:none}}
+/* Local assistant actions stay visible without intercepting the user's mouse. */
+.fd-assistant-cursor{position:fixed;left:0;top:0;z-index:2147483600;pointer-events:none;display:flex;flex-direction:column;align-items:flex-start;filter:drop-shadow(0 2px 5px #04191480)}
+.fd-assistant-cursor-name{position:absolute;bottom:100%;left:12px;padding:5px 10px;border-radius:7px;background:#86e6ce;color:#082d2a;font:600 12px/1.2 sans-serif;white-space:nowrap}
+.fd-assistant-cursor small{position:absolute;top:31px;left:14px;padding:4px 8px;border-radius:6px;background:#092b31;color:#d9fff5;font:11px/1.4 sans-serif;white-space:nowrap;max-width:240px}
+.fd-assistant-target{outline:2px solid #86e6ce!important;outline-offset:4px!important}
+.fd-assistant-cursor.is-clicking svg{animation:fd-assistant-click .22s ease-out}
+@keyframes fd-assistant-click{50%{transform:scale(.82)}to{transform:scale(1)}}
+@media(prefers-reduced-motion:reduce){.fd-assistant-cursor.is-clicking svg{animation:none}}
