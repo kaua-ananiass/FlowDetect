@@ -115,3 +115,7 @@ tauri_gerador/src-tauri/installer_support/python_runtime_prebuilt/**/*.pyc
 /.flowdetect_capture_values.json
 /chatgpt-session.dat
 /conversations.dat
+
+# Local assistant undo snapshots contain automation data.
+/.flowdetect_ai_editor_undo.json
+/.flowdetect_ai_editor_undo.tmp

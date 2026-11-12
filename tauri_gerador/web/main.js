@@ -1,8 +1,12 @@
 import {createChatGuidance} from './chat-guidance.js';
+import {createChatMapWorkspace} from './chat-map-workspace.js';
+import {createChatEditorContext} from './chat-editor-context.js';
+import {createAssistantCursor} from './assistant-cursor.js';
 import { startRemoteVideoStats } from "./remote-video-stats.js";
 import {renderTableEditor,initTableBlocks} from './table-blocks.js';
 import {initChatGPT} from './chatgpt.js';
 let chatWorkspace = null;
+let chatMapWorkspace = null;
 const tauriCore = window.__TAURI__?.core ?? null;
 const tauriEvent = window.__TAURI__?.event ?? null;
 import { validateRoadmap } from "./map-validator.js";
@@ -54,6 +58,9 @@ async function saveNativeFileDialog(options = {}) {
 }
 
 if (!window.__FLOWDETECT_DESIGN_SYSTEM__) {
+let chatEditorContext=null;
+function isCommandMapVisible(){return state.activeTab === "commands" || !!chatMapWorkspace?.isVisible();}
+
 const AGENTS_STORAGE_KEY = "flowdetect_agents_vms_v1";
 const AGENT_SCHEDULER_STORAGE_KEY = "flowdetect_agent_scheduler_v1";
 const COMMAND_MAP_TREE_LAYOUT_STORAGE_KEY = "flowdetect_command_map_tree_layout_v1";
@@ -1002,7 +1009,7 @@ function markWorkspaceRenderDirty(options = {}) {
 function renderActiveWorkspaceContent() {
   let renderedCommandMap = false;
   let renderedAssist = false;
-  if (state.activeTab === "commands" && state.renderDirty.commandMap) {
+  if (isCommandMapVisible() && state.renderDirty.commandMap) {
     renderCommandMap();
     state.renderDirty.commandMap = false;
     renderedCommandMap = true;
@@ -1032,7 +1039,7 @@ function renderActiveWorkspaceContent() {
     renderSmartRecorder();
   }
 
-  if (state.activeTab === "commands") {
+  if (isCommandMapVisible()) {
     scheduleCommandMapAutoFit();
     if (state.commandMapFocusOrder) {
       requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
@@ -1065,7 +1072,7 @@ function scheduleActiveWorkspaceRender() {
 
 function releaseInactiveWorkspaceDom(previousTab = "") {
   window.setTimeout(() => {
-    if (previousTab === "commands" && state.activeTab !== "commands" && commandMapList) {
+    if (previousTab === "commands" && !isCommandMapVisible() && commandMapList) {
       commandMapList.innerHTML = "";
       state.renderDirty.commandMap = true;
     }
@@ -1117,11 +1124,13 @@ function setWorkspaceTab(tabName) {
     return;
   }
   const previousTab = state.activeTab;
+  if(previousTab!==tabName)window.dispatchEvent(new Event('flow-chat-guide-dismiss'));
   if (previousTab === "agent-screen" && tabName !== "agent-screen") {
     releasePhysicalRemoteInput();
     hideNativeHypervSurface(true);
   }
   state.activeTab = tabName;
+  chatMapWorkspace?.sync();
   const launcherActive = tabName === "launcher";
   const editorActive = tabName === "editor";
   const assistActive = tabName === "assist";
@@ -1145,7 +1154,7 @@ function setWorkspaceTab(tabName) {
   launcherPanel.classList.toggle("is-active", launcherActive);
   editorPanel.classList.toggle("is-active", editorActive);
   assistPanel.classList.toggle("is-active", assistActive);
-  commandsPanel.classList.toggle("is-active", commandsActive);
+  commandsPanel.classList.toggle("is-active", commandsActive || !!chatMapWorkspace?.isVisible());
   if (commandsActive) refreshCommandMapChromeStatus();
   workbookPanel.classList.toggle("is-active", workbookActive);
   remoteControlPanel?.classList.toggle("is-active", remoteControlActive);
@@ -1423,7 +1432,7 @@ function moveCommandMapTreePanOffset(deltaX = 0, deltaY = 0) {
 }
 
 function autoFitCommandMapZoom() {
-  if (!commandMapList || state.activeTab !== "commands") {
+  if (!commandMapList || !isCommandMapVisible()) {
     return;
   }
   state.commandMapRequestedZoom = normalizeCommandMapZoom(state.commandMapRequestedZoom, state.commandMapZoom || 1);
@@ -1447,7 +1456,7 @@ function findAdjacentCommandFlowSegment(element, direction = "previous") {
 }
 
 function updateCommandConnectorPositions() {
-  if (!commandMapList || state.activeTab !== "commands") {
+  if (!commandMapList || !isCommandMapVisible()) {
     return;
   }
 
@@ -1534,7 +1543,7 @@ function clearCommandJumpLayer(row) {
 }
 
 function renderCommandJumpPaths() {
-  if (!commandMapList || state.activeTab !== "commands") {
+  if (!commandMapList || !isCommandMapVisible()) {
     return;
   }
 
@@ -1891,7 +1900,7 @@ function fitCommandMapSectionBounds(stage) {
 }
 
 function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive = false) {
-  if (!root || (!allowInactive && state.activeTab !== "commands")) {
+  if (!root || (!allowInactive && !isCommandMapVisible())) {
     return;
   }
   const tree = root.querySelector(".command-map-tree");
@@ -2003,7 +2012,7 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
             ? sourceRect.right + (gap - labelRect.width) / 2
             : sourceRect.right + 18;
           label.style.left = `${Math.round(labelX)}px`;
-          const commonY=(Math.max(sourceRect.top,targetRect.top)+Math.min(sourceRect.bottom,targetRect.bottom))/2;
+          const commonY=(sourceRect.centerY+targetRect.centerY)/2;
           label.style.top = `${Math.round(commonY - labelRect.height / 2)}px`;
         }
       } else if (isUpperBranch) {
@@ -2184,9 +2193,9 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
         const startX = sourceRect.right;
         const commonY=(Math.max(sourceRect.top,targetRect.top)+Math.min(sourceRect.bottom,targetRect.bottom))/2;
         const aligned=Math.max(sourceRect.top,targetRect.top)<Math.min(sourceRect.bottom,targetRect.bottom);
-        const startY = aligned ? commonY : sourceRect.centerY;
+        const startY = sourceRect.centerY;
         const endX = targetRect.left;
-        const endY = aligned ? commonY : targetRect.centerY;
+        const endY = targetRect.centerY;
         if (hasManualLabelPosition) {
           const labelX = labelRect.centerX;
           const labelY = labelRect.centerY;
@@ -2378,7 +2387,7 @@ function renderCommandMapTreeReferenceLinks(root = commandMapList, allowInactive
 }
 
 function scheduleCommandMapRoutePreviewRefresh() {
-  if (!commandMapList || state.activeTab !== "commands") {
+  if (!commandMapList || !isCommandMapVisible()) {
     return;
   }
   if (state.commandMapRoutePreviewFrame) {
@@ -2388,7 +2397,7 @@ function scheduleCommandMapRoutePreviewRefresh() {
   // enquanto o navegador ainda conclui a mudanca de valor.
   state.commandMapRoutePreviewFrame = requestAnimationFrame(() => {
     state.commandMapRoutePreviewFrame = 0;
-    if (state.activeTab !== "commands") {
+    if (!isCommandMapVisible()) {
       return;
     }
     renderCommandMap({ preserveScroll: true, skipAutoFit: true, suppressFocusScroll: true, quietUpdate: true });
@@ -2419,7 +2428,7 @@ function scheduleCommandConnectorLayout(options = {}) {
 }
 
 function scheduleCommandConnectorLayoutBurst(duration = 420, options = {}) {
-  if (!commandMapList || state.activeTab !== "commands") {
+  if (!commandMapList || !isCommandMapVisible()) {
     return;
   }
 
@@ -2485,7 +2494,7 @@ function setCommandMapZoom(nextZoom, options = {}) {
   }
   // O zoom escala o proprio plano da arvore. Recriar as conexoes aqui removia
   // e recriava os pontos animados em cada entalhe do mouse, causando travadas.
-  if (!options.suppressFocusCenter && state.activeTab === "commands" && state.commandMapFocusOrder) {
+  if (!options.suppressFocusCenter && isCommandMapVisible() && state.commandMapFocusOrder) {
     requestAnimationFrame(() => centerCommandMapOrder(state.commandMapFocusOrder, "auto"));
   }
 }
@@ -3810,7 +3819,7 @@ async function refreshChromePairStatus() {
   const status = await invoke("chrome_extension_connection_status").catch(() => null);
   chromePairStatus.classList.toggle("is-connected", Boolean(status?.connected));
   if (status?.connected) chromePairFormError = "";
-  chromePairStatus.textContent = chromePairFormError || (!status?.bridgeActive ? "Ponte local indisponível. Reinicie o Studio atualizado."
+  chromePairStatus.textContent = chromePairFormError || (status?.anotherStudio ? "Outra janela do Studio está usando a conexão. Feche a outra instância; esta janela tentará conectar novamente." : !status?.bridgeActive ? "Ponte local indisponível. Reinicie o Studio atualizado."
     : status?.connected ? "Extensão conectada e pronta para testes e automações."
     : status?.paired && status?.studioDetected ? "Código aceito. Aguardando a extensão confirmar..."
     : status?.studioDetected ? "Extensão detectada. Digite o código mostrado nela."
@@ -3829,21 +3838,22 @@ function openChromePairDialog() {
 }
 
 async function refreshCommandMapChromeStatus() {
-  if (!commandMapChromeStatus || state.activeTab !== "commands") return;
+  if (!commandMapChromeStatus || !isCommandMapVisible()) return;
   const status = await invoke("chrome_extension_connection_status").catch(() => null);
   commandMapChromeStatus.classList.toggle("is-connected", Boolean(status?.connected));
   commandMapChromeStatus.classList.toggle("is-awaiting", !status?.connected && Boolean(status?.studioDetected));
   commandMapChromeStatus.textContent = status?.connected ? "Chrome conectado"
+    : status?.anotherStudio ? "Chrome em outro Studio"
     : !status?.bridgeActive ? "Chrome indisponível"
     : status?.studioDetected ? "Chrome: parear"
     : status?.paired ? "Chrome offline" : "Chrome não pareado";
   commandMapChromeStatus.title = status?.connected
     ? `Extensão conectada (${String(status.extensionId || "").slice(-6)})`
-    : "Clique para conectar a extensão Chrome";
+    : status?.anotherStudio ? "A extensão está conectada a outra instância. Feche o outro Studio para liberar a conexão nesta janela." : "Clique para conectar a extensão Chrome";
 }
 
 commandMapChromeStatus?.addEventListener("click", openChromePairDialog);
-setInterval(() => { if (state.activeTab === "commands") refreshCommandMapChromeStatus(); }, 3000);
+setInterval(() => { if (isCommandMapVisible()) refreshCommandMapChromeStatus(); }, 3000);
 
 openChromePairButton?.addEventListener("click", openChromePairDialog);
 ocrTestPairButton?.addEventListener("click", openChromePairDialog);
@@ -3885,7 +3895,7 @@ async function refreshOcrTestConnection() {
   const phase = status?.phase || "";
   ocrTestConnection.classList.toggle("is-connected", Boolean(status?.connected) && !["queued", "delivered"].includes(phase));
   ocrTestConnection.classList.toggle("is-busy", Boolean(status?.connected) && ["queued", "delivered"].includes(phase));
-  ocrTestConnection.textContent = !status?.bridgeActive ? "Ponte com o Chrome indisponível — reinicie o Studio"
+  ocrTestConnection.textContent = status?.anotherStudio ? "Chrome conectado a outro Studio. Feche a outra instância para usar nesta janela." : !status?.bridgeActive ? "Ponte com o Chrome indisponível — reinicie o Studio"
     : !status?.connected ? "Extensão não pareada — clique em Conectar extensão"
     : phase === "queued" ? "Conectado · enviando teste à extensão..."
     : phase === "delivered" ? "Conectado · extensão recebeu o teste"
@@ -6245,7 +6255,7 @@ function applyCommandMapFocus(behavior = "smooth", options = {}) {
 
   updateCommandMapNavButtons();
 
-  if (!suppressVisualFocus && !suppressScroll && state.activeTab === "commands" && focusOrder) {
+  if (!suppressVisualFocus && !suppressScroll && isCommandMapVisible() && focusOrder) {
     requestAnimationFrame(() => centerCommandMapOrder(focusOrder, behavior, { mode: scrollMode }));
   }
 }
@@ -12435,7 +12445,7 @@ function startCommandMapMarqueeSelection(event) {
   if (
     !commandMapList
     || event.button !== 0
-    || state.activeTab !== "commands"
+    || !isCommandMapVisible()
     || !(event.ctrlKey || event.metaKey)
     || event.target.closest("button, input, textarea, select, label, a, [contenteditable='true'], .command-tree-card, .insert-card-panel, .command-map-tree-edge-label, .command-map-tree-terminal-node")
     || !event.target.closest(".command-flow-row, .command-map-tree, .command-map-tree-stage, .command-map-list")
@@ -20771,7 +20781,7 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
-  if (state.activeTab !== "commands" || state.captureTarget) {
+  if (!isCommandMapVisible() || state.captureTarget) {
     return;
   }
 
@@ -21148,9 +21158,8 @@ function rememberCommandMapTreeNodePosition(order, x, y, pageSequence = state.co
   rememberCommandMapTreeItemPosition(String(numericOrder), x, y, pageSequence);
 }
 
-function captureCommandMapTreeInsertion(targetOrder, position) {
-  const events = getCommandMapCanvasEvents();
-  const pageSequence = state.commandMapPageSequence;
+function captureCommandMapTreeInsertion(targetOrder, position, pageSequence = state.commandMapPageSequence) {
+  const events = getCommandMapCanvasEvents(pageSequence);
   return {
     targetOrder: Number(targetOrder),
     position,
@@ -21170,6 +21179,7 @@ function placeCreatedCommandMapTreeNode(roadmap, insertion) {
   const created = events.find(event => Number(event.order) === createdOrder);
   if (!created) return roadmap;
   insertion.createdOrder = createdOrder;
+  chatEditorContext?.created(created);
 
   // O backend renumera todos os blocos. Preserve a identidade dos existentes,
   // inclusive quando ha dois blocos iguais ou rotas com numeros alterados.
@@ -21764,9 +21774,11 @@ function getCommandMapTreeInsertPreview(events = [], nodes = [], constants = {})
   return {
     originIndex,
     originOrder: Number(originNode.order),
+    originSequence: normalizeSequenceName(originNode.event.sequence),
     originX: Number(originNode.x),
-    panelRight: Number(originNode.x) + originCardWidth + Number(constants.insertPanelWidth || 320),
-    shiftX: Number(constants.insertPanelWidth || 320) + Number(constants.insertPanelGap || 44),
+    panelX: Number(originNode.x) + constants.columnGap,
+    panelRight: Number(originNode.x) + constants.columnGap + Number(constants.insertPanelWidth || 320),
+    shiftX: constants.columnGap,
   };
 }
 
@@ -21864,7 +21876,8 @@ function buildCommandMapTreeStageLayout(events, pageDefinition, { includeInsertP
     // os seguintes. Abra esse espaco apenas enquanto ele estiver visivel;
     // posicoes manuais continuam salvas e voltam ao fechar o painel.
     nodes.forEach((node) => {
-      if (node.index > insertPreview.originIndex) {
+      if (node.index > insertPreview.originIndex
+        && normalizeSequenceName(node.event.sequence) === insertPreview.originSequence) {
         node.x += insertPreview.shiftX;
       }
     });
@@ -21961,7 +21974,7 @@ function buildCommandMapTreeStageLayout(events, pageDefinition, { includeInsertP
   );
   // A pre-visualizacao abre na frente do card. Reserve a largura dela no
   // palco para que o ultimo bloco tambem continue acessivel pelo scroll.
-  const insertPreviewRight = insertPreviewNode ? insertPreviewNode.x + 680 : 0;
+  const insertPreviewRight = insertPreviewNode ? insertPreviewNode.x + constants.columnGap + constants.insertPanelWidth : 0;
   const stageWidth = Math.max(
     720,
     constants.paddingX * 2 + Math.max(0, ...laneColumns.values()) * constants.columnGap + 280,
@@ -21983,7 +21996,7 @@ function buildCommandMapTreeStageLayout(events, pageDefinition, { includeInsertP
 function renderCommandMapTreeStageNode(node, events) {
   const shouldRenderInsert = state.insertPanel?.targetOrder === node.event.order;
   const insertPanel = shouldRenderInsert
-    ? `<div class="command-map-tree-insert is-${escapeHtml(state.insertPanel?.position || "after")}" data-insert-origin-order="${escapeHtml(node.event.order)}">${renderInsertPanel(node.event.order)}</div>`
+    ? `<div class="command-map-tree-insert is-${escapeHtml(state.insertPanel?.position || "after")}" data-insert-origin-order="${escapeHtml(node.event.order)}">${renderInsertPanel(node.event.order)}</div>${state.insertPanel?.position==='after'?'<svg class="command-insert-preview-link" viewBox="0 0 560 220" aria-hidden="true"><path d="M 236 118 C 330 118 466 118 560 118"/></svg>':''}`
     : "";
   const card = renderCommandMapCardSegment(node.event, node.index, events, {
     treeNode: true,
@@ -22298,7 +22311,7 @@ function stopCommandMapTreeNodeDrag(event, commit = true) {
 }
 
 function isCommandMapTreeModeActive() {
-  return state.activeTab === "commands"
+  return isCommandMapVisible()
     && normalizeCommandMapViewMode(state.commandMapViewMode) === "tree"
     && Boolean(commandMapList?.querySelector(".command-map-tree"));
 }
@@ -22421,20 +22434,29 @@ function handleCommandMapTreeWheelZoom(event) {
   });
 }
 
+document.addEventListener('mousedown',event=>{if(event.target.closest('#mapVariablesHost')){event.preventDefault();event.stopPropagation();}},true);
+document.addEventListener('click',event=>{
+ const summary=event.target.closest('#mapVariablesHost summary');if(!summary)return;
+ event.preventDefault();event.stopImmediatePropagation();
+ const panel=summary.closest('details');panel.open=!panel.open;
+},true);
+
 function renderCommandMap(options = {}) {
   let variablesHost = document.getElementById('mapVariablesHost');
   if (!variablesHost) {
     variablesHost = document.createElement('div');
     variablesHost.id = 'mapVariablesHost';
-    commandMapList.parentElement.append(variablesHost);
+    commandMapShell.querySelector('.command-map-header').append(variablesHost);
+    variablesHost.addEventListener('pointerdown', event => event.stopPropagation());
     variablesHost.addEventListener('click', async event => {
+      event.stopPropagation();
       const button = event.target.closest('[data-copy-variable]');
       if (!button) return;
       try { await navigator.clipboard.writeText(`{{${button.dataset.copyVariable}}}`); setMessage('Variável copiada. Cole no campo de texto desejado.', 'success'); }
       catch { setMessage(`Use {{${button.dataset.copyVariable}}} no campo de texto.`, 'info'); }
     });
   }
-  variablesHost.innerHTML = renderVariablesPanel((state.roadmap?.events || []).map(event => applyCommandMapDraftToEvent(event)));
+  variablesHost.innerHTML = renderVariablesPanel((state.roadmap?.events || []).map(event => applyCommandMapDraftToEvent(event)),!!variablesHost.querySelector('details')?.open);
   const {
     layoutSnapshot = null,
     layoutAnimationMode = "arc",
@@ -22658,7 +22680,7 @@ function applyRoadmap(roadmap, options = {}) {
   }
   syncAssistTheme();
   markWorkspaceRenderDirty({ commandMap: true, assist: true, workbook: true });
-  if (state.activeTab === "commands" && state.renderDirty.commandMap && commandMapLayoutSnapshot) {
+  if (isCommandMapVisible() && state.renderDirty.commandMap && commandMapLayoutSnapshot) {
     renderCommandMap({
       layoutSnapshot: commandMapLayoutSnapshot,
       layoutAnimationMode: commandMapLayoutAnimationMode,
@@ -24564,7 +24586,7 @@ commandMapViewButtons.forEach((button) => {
 });
 
 window.addEventListener("resize", () => {
-  if (state.activeTab === "commands") {
+  if (isCommandMapVisible()) {
     scheduleCommandMapAutoFit();
     scheduleCommandConnectorLayout();
   }
@@ -24581,7 +24603,7 @@ window.addEventListener("resize", () => {
 });
 
 commandMapList?.addEventListener("scroll", () => {
-  if (state.activeTab === "commands" && state.insertPanel) {
+  if (isCommandMapVisible() && state.insertPanel) {
     scheduleCommandConnectorLayout();
   }
 }, { passive: true });
@@ -24861,8 +24883,86 @@ composerWorkbookSelect.addEventListener("change", () => {
 
 editorTabButton.addEventListener("click", () => setWorkspaceTab("commands"));
 document.getElementById('mapChatGPTButton')?.addEventListener('click',()=>{setWorkspaceTab('integrations');document.getElementById('chatgptWorkspace')?.scrollIntoView({block:'start'});});
-const navigateChatGuidance=createChatGuidance({getEvent:getCommandMapEventByOrder,getEvents:()=>state.roadmap?.events||[],isRunning:()=>state.remoteControl.running,openTab:setWorkspaceTab,onReturn:threadId=>window.dispatchEvent(new CustomEvent('flow-chat-guide-return',{detail:{threadId}})),openBlock:async order=>{state.commandMapPageSequenceLock=null;state.commandMapViewMode='tree';setCommandMapFocus(order,'auto');openExpandedTreeCard(order);await new Promise(resolve=>requestAnimationFrame(resolve));setCommandMapFocus(order,'smooth',{animateFocusPulse:true});}});
-chatWorkspace=initChatGPT({invoke,navigate:navigateChatGuidance,getAutomation:()=>{const id=state.library.activeId;const item=state.library.items.find(item=>item.id===id);return id?{id,name:item?.nome||exportNameInput.value||id}:null;},openAutomation:async id=>{if(state.remoteControl.running)throw Error("Pare a execucao antes de trocar de automacao.");await persistCommandMapDraftsForExecution();const result=await invoke("open_saved_automation",{id});state.insertPanel=null;applyPersistedRoadmap(result);await refreshTestLoopData();state.library.items=result.library?.items||state.library.items;state.library.categories=result.library?.categories||state.library.categories;state.library.activeId=result.library?.active_id||id;if(result.active_automation?.nome)exportNameInput.value=result.active_automation.nome;renderLauncherLibrary();},beforeGenerate:()=>persistCommandMapDraftsForExecution(),getPage:()=>state.commandMapPageSequence,apply:roadmap=>{state.commandMapViewMode='tree';applyPersistedRoadmap(roadmap);requestAnimationFrame(frameCommandMapPaths);},openMap:()=>setWorkspaceTab('commands')});
+chatMapWorkspace=createChatMapWorkspace({panel:commandsPanel,getTab:()=>state.activeTab,onLayout:()=>{markWorkspaceRenderDirty({commandMap:true});scheduleActiveWorkspaceRender();requestAnimationFrame(()=>{scheduleCommandMapAutoFit();scheduleCommandConnectorLayout();});},getSelection:()=>getChatEditorContext(),onSelection:selection=>window.dispatchEvent(new CustomEvent('flow-chat-map-selection',{detail:selection}))});
+chatEditorContext=createChatEditorContext({panel:commandsPanel,getEvents:()=>state.roadmap?.events||[],getExpandedOrder:()=>state.expandedTreeCardOrder,getFocusedOrder:()=>state.commandMapFocusOrder,isSplit:()=>chatMapWorkspace.isVisible()});
+const getChatEditorContext=()=>chatEditorContext.read();
+const navigateChatGuidance=createChatGuidance({getAnchorBoundary:()=>chatMapWorkspace.isVisible()?document.querySelector('.fdchat-map-host'):null,getEvent:getCommandMapEventByOrder,getEvents:()=>state.roadmap?.events||[],isRunning:()=>state.remoteControl.running,openTab:tab=>{if(tab==='commands'&&chatMapWorkspace.isVisible())return;setWorkspaceTab(tab);},onReturn:threadId=>window.dispatchEvent(new CustomEvent('flow-chat-guide-return',{detail:{threadId}})),openBlock:async order=>{if(chatMapWorkspace.isVisible())setCommandMapZoom(1,{suppressFocusCenter:true});state.commandMapPageSequenceLock=null;state.commandMapViewMode='tree';setCommandMapFocus(order,'auto');openExpandedTreeCard(order);await new Promise(resolve=>requestAnimationFrame(resolve));setCommandMapFocus(order,'smooth',{animateFocusPulse:true});}});
+async function performChatEditorAction(action,blockId){
+ if(state.remoteControl.running)throw Error('Pare a execucao antes de usar o editor.');
+ const event=(state.roadmap?.events||[]).find(e=>e.id===blockId);if(!event)throw Error('Bloco nao encontrado.');
+ const selectors={capture:'[data-tree-action="capture-image"]',test:'[data-tree-action="test-image-recognition"]',map_table:'[data-table-action="map"]'};
+ const selector=selectors[action];if(!selector)throw Error('Acao do editor nao permitida.');
+ const card=commandMapList.querySelector(`.command-tree-card[data-order="${Number(event.order)}"]`);
+ const button=[...(card?.querySelectorAll(selector)||[])].find(el=>!el.disabled&&el.getClientRects().length);
+ if(!button)throw Error('Este controle nao esta disponivel no modo atual do bloco.');
+ const pointer=createAssistantCursor();try{await pointer.act(()=>commandMapList.querySelector(`.command-tree-card[data-order="${Number(event.order)}"]`)?.querySelector(selector),'Abrindo '+action,el=>el.click());}finally{pointer.finish();}
+}
+async function performAssistantOperation(step,commit){
+ if(state.remoteControl.running)throw Error('Pare a execucao antes de configurar os blocos.');
+ const order=step.source_order||step.placement?.anchor_order;
+ const identity=step.block_id||step.placement?.anchor_id;
+ const event=(state.roadmap?.events||[]).find(e=>identity?e.id===identity:Number(e.order)===Number(order));
+ const operationPage=event?resolveCommandMapParentPage(event.sequence):state.commandMapPageSequence;
+ const pointer=createAssistantCursor({isSuspended:()=>!isCommandMapVisible()||state.commandMapPageSequence!==operationPage});
+ const owner=Symbol('assistant-insertion');let ownedPanel=null;
+ const card=()=>event?commandMapList.querySelector(`.command-tree-card[data-order="${Number(event.order)}"]`):null;
+ try{
+  if(!event)return await pointer.act(()=>document.getElementById('mapSaveButton'),'Criando etapa no mapa',commit);
+  if(!step.block_id&&!step.source_order&&step.placement){
+   const position=step.placement.position==='before'?'before':'after';
+   await pointer.act(()=>card()?.querySelector(`[data-tree-action="insert-${position}"]`),'Abrindo Novo bloco',el=>el.click());
+   if(state.insertPanel){state.insertPanel.assistantOwner=owner;ownedPanel=state.insertPanel;}
+   const type={text:'text',keys:'key',navigate:'open_url',ocr:'image',table:'table'}[step.kind];
+   if(!type)throw Error('Tipo de bloco indisponível para criação assistida.');
+   const panel=()=>{
+    if(!state.insertPanel&&ownedPanel&&state.commandMapPageSequence===operationPage){state.insertPanel=ownedPanel;renderCommandMap({preserveScroll:true,skipAutoFit:true,suppressFocusScroll:true});}
+    if(state.insertPanel?.assistantOwner===owner)ownedPanel=state.insertPanel;
+    return state.insertPanel?.assistantOwner===owner?commandMapList.querySelector(`.insert-card-panel[data-target-order="${Number(event.order)}"]`):null;
+   };
+   await pointer.act(()=>panel()?.querySelector(`[data-insert-type="${type}"]`),'Selecionando o tipo de bloco',el=>el.click());
+   return await pointer.act(()=>panel()?.querySelector('[data-insert-action="save"]'),'Criando bloco',commit);
+  }
+  await pointer.act(()=>card(),'Abrindo bloco '+event.order,()=>openExpandedTreeCard(event.order));
+  await new Promise(resolve=>requestAnimationFrame(resolve));
+  const configuration=step.configuration||{};
+  const visible=selector=>[...(card()?.querySelectorAll(selector)||[])].find(el=>el.getClientRects().length&&!el.hidden&&el.type!=='hidden');
+  const choices={clicks:['clickOnFind',{0:'identify',1:'single',2:'double'}[configuration.clicks]],success:['successAction',configuration.success],failure:['failureAction',configuration.failure]};
+  if(Object.keys(choices).some(key=>key in configuration)&&visible('[data-recognition-tab-target="behavior"]')){
+   await pointer.act(()=>visible('[data-recognition-tab-target="behavior"]'),'Abrindo Clique e ajustes',el=>el.click());
+   for(const [key,[field,value]] of Object.entries(choices)){
+    if(!(key in configuration)||!value)continue;
+    const resolve=()=>visible(`[data-recognition-set-field="${field}"][data-recognition-set-value="${value}"]`);
+    if(resolve())await pointer.act(resolve,'Selecionando '+resolve().textContent.trim(),el=>el.click());
+   }
+  }
+  const fields={text:['ocrText','Texto OCR'],timeout:['timeout','Tempo de espera'],confidence:['confidence','Precisao'],source:['ocrSource','Origem da leitura']};
+  for(const [key,[field,label]] of Object.entries(fields)){
+   if(!(key in configuration))continue;
+   const resolve=()=>[...(card()?.querySelectorAll(`[data-tree-field="${field}"],${key==='text'?'input[data-ocr-target-field]':'[data-assistant-no-match]'}`)||[])].find(el=>el.getClientRects().length&&!el.hidden&&el.type!=='hidden');
+   if(!resolve())continue;
+   await pointer.act(resolve,label,el=>{el.focus({preventScroll:true});if(el instanceof HTMLInputElement||el instanceof HTMLTextAreaElement)el.select();
+    const value=key==='source'?({screen:'legado',visual:'visual',chrome:'chrome'}[configuration[key]]):String(configuration[key]);
+    if(value!==undefined&&(!(el instanceof HTMLSelectElement)||[...el.options].some(option=>option.value===value))){el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}
+   });
+  }
+  return await pointer.act(()=>card()?.querySelector('[data-tree-action="save"]')||card(),step.block_id?'Salvando configuracao':'Criando novo bloco',commit);
+ }finally{pointer.finish();if(state.insertPanel?.assistantOwner===owner){state.insertPanel=null;renderCommandMap({preserveScroll:true,skipAutoFit:true,suppressFocusScroll:true});}}
+}
+function applyChatRoadmap(roadmap,placement){
+ const currentPage=state.commandMapPageSequence;
+ const layoutSnapshot=captureCommandMapCardPositions();
+ if(placement){
+  const anchor=(state.roadmap?.events||[]).find(e=>placement.anchor_id?e.id===placement.anchor_id:Number(e.order)===Number(placement.anchor_order));
+  if(anchor){
+   const page=resolveCommandMapParentPage(anchor.sequence);
+   const insertion=captureCommandMapTreeInsertion(anchor.order,placement.position,page);
+   roadmap=placeCreatedCommandMapTreeNode(roadmap,insertion);
+  }
+ }
+ state.commandMapViewMode='tree';
+ applyRoadmap(roadmap,{resetCommandMapDrafts:true,preserveCommandMapSequence:currentPage,commandMapLayoutSnapshot:layoutSnapshot});
+}
+chatWorkspace=initChatGPT({invoke,revealBlock:async blockId=>{const block=(state.roadmap?.events||[]).find(e=>e.id===blockId);if(block){setCommandMapFocus(block.order,'auto');openExpandedTreeCard(block.order);}},assistOperation:performAssistantOperation,editorAction:performChatEditorAction,mountMap:host=>{setCommandMapZoom(1,{suppressFocusCenter:true});return chatMapWorkspace.mount(host);},getEditorContext:getChatEditorContext,navigate:navigateChatGuidance,getAutomation:()=>{const id=state.library.activeId;const item=state.library.items.find(item=>item.id===id);return id?{id,name:item?.nome||exportNameInput.value||id}:null;},openAutomation:async id=>{if(state.remoteControl.running)throw Error("Pare a execucao antes de trocar de automacao.");await persistCommandMapDraftsForExecution();const result=await invoke("open_saved_automation",{id});state.insertPanel=null;applyPersistedRoadmap(result);await refreshTestLoopData();state.library.items=result.library?.items||state.library.items;state.library.categories=result.library?.categories||state.library.categories;state.library.activeId=result.library?.active_id||id;if(result.active_automation?.nome)exportNameInput.value=result.active_automation.nome;renderLauncherLibrary();},beforeGenerate:async()=>{if(commandMapMutationActive)throw Error('Aguarde a edicao atual terminar.');},beforeMutate:()=>persistCommandMapDraftsForExecution(),getPage:()=>state.commandMapPageSequence,apply:applyChatRoadmap,openMap:()=>setWorkspaceTab('commands')});
 initMapPaths({invoke,chooseFile:()=>openNativeFileDialog({multiple:false,filters:[{name:'Automação FlowDetect',extensions:['json','zip']}]}),getRoadmap:()=>state.roadmap,getLibrary:()=>state.library.items,getPage:()=>state.commandMapPageSequence,beforeChange:()=>persistCommandMapDraftsForExecution(),apply:(roadmap,action)=>{state.commandMapViewMode='tree';applyPersistedRoadmap(roadmap);if(action!=='connect'&&action!=='delete')requestAnimationFrame(frameCommandMapPaths);}});
 document.getElementById('mapPathsFit')?.addEventListener('click',frameCommandMapPaths);
 integrationsTabButton?.addEventListener("click", () => setWorkspaceTab("integrations"));
@@ -27099,7 +27199,7 @@ commandMapList.addEventListener("change", (event) => {
     syncVariableOverlays(card);
     editor.querySelector('[data-variable-token]').textContent = `Use depois: {{${capture.name || 'valor_nota'}}}`;
     syncCommandMapDraftFromCard(card);
-    document.getElementById('mapVariablesHost').innerHTML = renderVariablesPanel((state.roadmap?.events || []).map(item => applyCommandMapDraftToEvent(item)));
+    document.getElementById('mapVariablesHost').innerHTML = renderVariablesPanel((state.roadmap?.events || []).map(item => applyCommandMapDraftToEvent(item)),!!document.querySelector('#mapVariablesHost details')?.open);
     return;
   }
   if (syncOcrTargetActionControlToSource(target)) {

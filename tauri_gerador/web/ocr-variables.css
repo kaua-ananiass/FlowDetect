@@ -12,15 +12,19 @@
 .ocr-variable-fields summary { font-size:11px; cursor:pointer; color:#a9c6d4; }
 .ocr-variable-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
 .ocr-variable-fields output { font-size:12px; color:#70e6cf; overflow-wrap:anywhere; }
-.map-variables { position:absolute; right:18px; bottom:18px; z-index:8; width:250px; max-height:38%; overflow:auto; border:1px solid #264452; border-radius:14px; background:rgba(8,22,34,.96); padding:12px; color:#e6f7ff; }
-.map-variables summary { cursor:pointer; font-size:12px; font-weight:650; }
-.map-variables summary span { color:#60ded0; margin-left:6px; }
-.map-variable-list { display:grid; grid-template-columns:1fr 1fr; gap:7px; padding-top:10px; }
-.map-variable-list button { display:grid; gap:5px; text-align:left; padding:9px; min-width:0; border:1px solid #254d5b; border-radius:9px; background:#102c3c; color:#8ae9df; cursor:pointer; transition:background 140ms ease-out; }
-.map-variable-list button:hover { background:#194356; }
-.map-variable-list button b { font-size:11px; overflow-wrap:anywhere; }
-.map-variables small,.map-variable-list p { font-size:10px; line-height:1.5; color:#9eb9c9; }
-.map-variable-list p { grid-column:1/-1; }
+#mapVariablesHost{position:absolute;right:0;top:100%;z-index:40;margin-top:6px;pointer-events:auto}
+.map-variables{position:relative;color:#d5e8ed;text-align:left}
+.map-variables summary{display:flex;align-items:center;gap:7px;list-style:none;cursor:pointer;font-size:11px;font-weight:550;padding:7px 11px;border:1px solid #29444e;border-radius:7px;background:#10232d;white-space:nowrap}
+.map-variables summary::-webkit-details-marker{display:none}
+.map-variables summary::before{content:'{}';font:600 12px monospace;color:#82d7c7}
+.map-variables summary span{color:#80cabb;font-size:10px}
+.map-variables[open] summary{border-color:#4c8c80;color:#c9f5e8}
+.map-variable-list{position:absolute;right:0;top:calc(100% + 6px);display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:10px;width:310px;max-width:calc(100vw - 36px);max-height:min(340px,50vh);overflow:auto;background:#0d1d27;border:1px solid #29414a;border-radius:9px;box-shadow:0 10px 30px #0004}
+.map-variable-list button{display:flex;flex-direction:column;gap:5px;text-align:left;padding:10px;min-width:0;border:0;border-radius:5px;background:#172c35;color:#9be2d2;cursor:pointer;transition:background 140ms ease-out}
+.map-variable-list button:hover{background:#214139}
+.map-variable-list button b{font:500 11px monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
+.map-variable-list button small{font-size:9px;color:#839fa8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}
+.map-variable-list p{grid-column:1/-1;font-size:11px;color:#94aeb8;line-height:1.7;margin:3px}
 @media(prefers-reduced-motion:reduce) { .map-variable-list button { transition:none; } }
 .recognition-variable-region { position:absolute; box-sizing:border-box; z-index:12; pointer-events:auto; border:1.5px solid #f4bc67; background:rgba(244,188,103,.16); cursor:move; touch-action:none; min-width:8px; min-height:8px; }
 .recognition-variable-region > span { position:absolute; left:0; top:-19px; padding:2px 5px; border-radius:4px 4px 0 0; font:600 10px/1.4 'Segoe UI',sans-serif; background:#f4bc67; color:#17212c; pointer-events:none; white-space:nowrap; }

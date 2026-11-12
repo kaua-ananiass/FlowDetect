@@ -3519,7 +3519,7 @@ def comando_caminhos_mapa(args):
     pedido = json.loads(args.request)
     payload = carregar_e_normalizar()
     acao = pedido.get("action")
-    if acao in {"ai_guide_context", "ai_guide_validate", "ai_guide_create", "ai_guide_update"}:
+    if acao in {"ai_guide_context", "ai_guide_validate", "ai_guide_create", "ai_guide_update", "ai_assist_apply", "ai_assist_undo"}:
         # The embedded Windows runtime deliberately omits the script directory
         # from sys.path. Load only our sibling module, without widening imports.
         import importlib.util
@@ -3530,10 +3530,12 @@ def comando_caminhos_mapa(args):
         chatgpt_guided = importlib.util.module_from_spec(module_spec)
         module_spec.loader.exec_module(chatgpt_guided)
         helper = sys.modules[__name__]
+        if acao in {"ai_assist_apply", "ai_assist_undo"}:
+            return chatgpt_guided.assist(helper, payload, pedido)
         if acao == "ai_guide_context":
             return chatgpt_guided.context(helper, payload, include_values=pedido.get("include_values") is True)
         if acao == "ai_guide_validate":
-            return chatgpt_guided.validate(helper, payload, pedido.get("plan"))
+            return chatgpt_guided.validate(helper, payload, pedido.get("plan"), require_placement=pedido.get("require_placement") is True)
         roadmap, block_id = (chatgpt_guided.update_step if acao == "ai_guide_update" else chatgpt_guided.create_step)(helper, payload, pedido)
         return {"roadmap": roadmap, "block_id": block_id, "context": chatgpt_guided.context(helper, payload)}
     if acao == "ai_context":

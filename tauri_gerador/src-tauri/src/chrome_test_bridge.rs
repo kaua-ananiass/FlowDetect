@@ -17,6 +17,8 @@ use std::{
 const ADDRESS: &str = "127.0.0.1:18453";
 const EXTENSION_VERSION: &str = "0.2.95";
 static RUNNING: AtomicBool = AtomicBool::new(false);
+static PORT_IN_USE: AtomicBool = AtomicBool::new(false);
+static STARTING: Mutex<()> = Mutex::new(());
 static BRIDGE: OnceLock<Arc<(Mutex<BridgeState>, Condvar)>> = OnceLock::new();
 
 #[derive(Default)]
@@ -40,6 +42,7 @@ fn bridge() -> Arc<(Mutex<BridgeState>, Condvar)> {
 }
 
 pub fn start(pairing_path: Option<PathBuf>) -> Result<(), String> {
+    let _start=STARTING.lock().map_err(|_|"Ponte Chrome indisponivel.")?;
     if RUNNING.load(Ordering::SeqCst) {
         return Ok(());
     }
@@ -60,8 +63,10 @@ pub fn start(pairing_path: Option<PathBuf>) -> Result<(), String> {
         state.pairing_path = Some(path);
     }
     let listener = TcpListener::bind(ADDRESS).map_err(|error| {
+        PORT_IN_USE.store(error.kind()==std::io::ErrorKind::AddrInUse,Ordering::SeqCst);
         format!("Nao foi possivel iniciar a ponte com a extensao em {ADDRESS}: {error}")
     })?;
+    PORT_IN_USE.store(false,Ordering::SeqCst);
     RUNNING.store(true, Ordering::SeqCst);
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
@@ -152,6 +157,12 @@ pub async fn test_chrome_extension_recognition(
 
 #[tauri::command]
 pub fn chrome_extension_connection_status() -> Value {
+    // Recover after a previous Studio releases the port, without requiring
+    // another restart or incorrectly claiming this process owns its bridge.
+    if !RUNNING.load(Ordering::SeqCst){
+        let path={let shared=bridge();let (lock,_)=&*shared;lock.lock().ok().and_then(|state|state.pairing_path.clone())};
+        if path.is_some(){let _=start(path);}
+    }
     let shared = bridge();
     let (lock, _) = &*shared;
     let Ok(state) = lock.lock() else {
@@ -169,6 +180,7 @@ pub fn chrome_extension_connection_status() -> Value {
     json!({
         "connected": connected,
         "bridgeActive": RUNNING.load(Ordering::SeqCst),
+        "anotherStudio": PORT_IN_USE.load(Ordering::SeqCst),
         "studioDetected": studio_detected,
         "paired": !state.paired_extension_id.is_empty(),
         "phase": state.phase,

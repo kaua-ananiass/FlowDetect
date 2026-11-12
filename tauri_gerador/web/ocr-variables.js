@@ -106,11 +106,10 @@ export function collectVariables(events = []) {
   }
   return [...grouped.values()];
 }
-export function renderVariablesPanel(events = []) {
+export function renderVariablesPanel(events = [], open = false) {
   const variables = collectVariables(events);
-  return `<details class="map-variables" ${variables.length?'open':''}><summary>Variáveis <span>${variables.length}</span></summary>
+  return `<details class="map-variables" ${open?'open':''}><summary>Variáveis <span>${variables.length}</span></summary>
     <div class="map-variable-list">${variables.length ? variables.map(v => `<button type="button" data-copy-variable="${esc(v.name)}" title="Copiar para usar em um campo · Bloco ${esc(v.orders.join(', '))}"><b>{{${esc(v.name)}}}</b><small>${esc(({money:'Dinheiro',number:'Número',date:'Data',text:'Texto'})[v.kind]||'Texto')} · Bloco ${esc(v.orders.join(', '))}</small></button>`).join('') : '<p>Ative “Salvar uma informação” na aba Variável de um bloco OCR.</p>'}</div>
-    ${variables.length?'<small>Definições da automação. Os valores são obtidos durante a execução. Clique para copiar.</small>':''}
   </details>`;
 }
 

@@ -112,6 +112,12 @@ test('Studio configures capture inside OCR and lists automation variables withou
     assert.ok(resized.width>moved.width,JSON.stringify(resized));
     assert.ok(resized.height>moved.height);
     assert.equal(await page.locator('[data-copy-variable="valor_nota"]').count(),1);
+    const variables=page.locator('#mapVariablesHost .map-variables');
+    assert.equal(await variables.getAttribute('open'),null);
+    await variables.locator('summary').click();
+    assert.equal(await page.locator('[data-copy-variable="valor_nota"]').isVisible(),true);
+    assert.equal(await variables.locator(':scope>small').count(),0);
+    await variables.locator('summary').click();
     await card.locator('[data-variable-test="chrome"]').click({force:true});
     await page.waitForFunction(()=>document.querySelector('#ocrTestResult .is-found-variable')?.textContent.includes('61,36'));
     await page.locator('#ocrTestCloseButton').click();

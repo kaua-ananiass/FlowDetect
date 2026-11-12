@@ -2615,6 +2615,7 @@ async fn chatgpt_action(app: AppHandle, mut request: Value) -> Result<Value, Str
         let generate=request["action"]=="generate";
         let chat=request["action"]=="chat";
         let guide=request["action"]=="guide";
+
         if matches!(request["action"].as_str(),Some("history_load"|"history_save")){return chat_history::action(&dir,request);}
         let request_id=request["request_id"].as_str().unwrap_or("").chars().take(100).collect::<String>();
         if generate || chat || guide {
@@ -2622,11 +2623,21 @@ async fn chatgpt_action(app: AppHandle, mut request: Value) -> Result<Value, Str
                 let library=run_helper_json(&root,&["automation-library-list".into()])?;
                 if library["active_id"].as_str()!=Some(expected){return Err("Abra a automação vinculada a esta conversa antes de continuar.".into());}
             }
-            request["context"]=run_helper_json(&root,&["map-paths".into(),"--request".into(),serde_json::json!({"action":if guide{"ai_guide_context"}else{"ai_context"}}).to_string()])?;
+            request["context"]=run_helper_json(&root,&["map-paths".into(),"--request".into(),serde_json::json!({"action":if guide||request["editor_context"].is_object(){"ai_guide_context"}else{"ai_context"}}).to_string()])?;
+            // Resolve the UI selection against the saved map. No client-supplied
+            // selectors, field values or invented block identities reach the model.
+            let editor=&request["editor_context"];
+            let selected=request["context"]["blocks"].as_array().and_then(|blocks|blocks.iter().find(|block|{
+                if let Some(id)=editor["block_id"].as_str(){block["block_id"].as_str()==Some(id)}
+                else{editor["order"].as_u64().is_some_and(|order|block["source_order"].as_u64()==Some(order))}
+            })).cloned();
+            request["context"]["active_editor"]=selected.unwrap_or(Value::Null);
+            request["context"]["assistant_mode"]=serde_json::json!(request["assistant_mode"]==true);
+            request["context"]["workspace"]=serde_json::json!(if request["editor_context"]["workspace"]=="map-and-chat"{"map-and-chat"}else{"studio"});
         }
         let result=chatgpt::action_with_stream(&dir,request,|delta|{if chat {let _=stream_app.emit("chatgpt-text-delta",serde_json::json!({"request_id":request_id,"delta":delta}));}})?;
         if guide {
-            return run_helper_json(&root,&["map-paths".into(),"--request".into(),serde_json::json!({"action":"ai_guide_validate","plan":result}).to_string()]);
+            return run_helper_json(&root,&["map-paths".into(),"--request".into(),serde_json::json!({"action":"ai_guide_validate","plan":result,"require_placement":true}).to_string()]);
         }
         if generate {
             if result.to_string().len()>16_000 { return Err("A proposta ficou extensa demais. Divida o processo em partes menores.".into()); }

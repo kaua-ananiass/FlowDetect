@@ -22,13 +22,32 @@ fn read_store(dir:&Path)->Result<Value,String> {
     if !value.is_object(){return Err("Conexão ChatGPT salva está inválida.".into());}Ok(value)
 }
 fn save(dir:&Path,v:&Value)->Result<(),String>{
+    let mut stored=v.clone();remember_registration(&mut stored);
     fs::create_dir_all(dir).map_err(|_|"Não foi possível criar a pasta de conexão.".to_string())?;
     let target=dir.join("chatgpt-session.dat");let tmp=dir.join("chatgpt-session.tmp");
-    super::agent_pairing::secure_write(&tmp,&serde_json::to_vec(v).map_err(|_|"Conexão inválida.")?)?;
+    super::agent_pairing::secure_write(&tmp,&serde_json::to_vec(&stored).map_err(|_|"Conexão inválida.")?)?;
     fs::rename(tmp,target).map_err(|_|"Não foi possível salvar a conexão ChatGPT.".into())
 }
 fn sharing(v:&Value)->bool{v["scope"].as_str().unwrap_or("").split_whitespace().any(|s|s==SCOPE)}
-fn public(v:&Value)->Value{json!({"connected":v["access_token"].as_str().is_some(),"sharing":sharing(v)&&v["access_token"].as_str().is_some(),"email":v["email"],"account":v["sub"],"client_id":v["client_id"]})}
+const PROFILE_FIELDS:&[&str]=&["client_id","sub","email","access_token","refresh_token","id_token","scope","expires_at"];
+fn remember_registration(v:&mut Value){
+    let Some(id)=v["client_id"].as_str().filter(|s|!s.is_empty()&&*s!="dynamic_agent_client").map(String::from) else{return;};
+    let mut profile=json!({});for key in PROFILE_FIELDS{if !v[*key].is_null(){profile[*key]=v[*key].clone();}}
+    if !v["registrations"].is_array(){v["registrations"]=json!([]);}
+    let profiles=v["registrations"].as_array_mut().unwrap();
+    if let Some(old)=profiles.iter_mut().find(|p|p["client_id"].as_str()==Some(&id)){*old=profile;}else{profiles.push(profile);}
+}
+fn selected_registration(v:&Value,id:&str)->Result<Value,String>{
+    let mut selected=v.clone();remember_registration(&mut selected);
+    let profile=selected["registrations"].as_array().and_then(|profiles|profiles.iter().find(|p|p["client_id"].as_str()==Some(id))).cloned().ok_or("Conta salva não encontrada.")?;
+    for key in PROFILE_FIELDS{selected.as_object_mut().unwrap().remove(*key);if !profile[*key].is_null(){selected[*key]=profile[*key].clone();}}
+    Ok(selected)
+}
+fn public(v:&Value)->Value{
+    let mut all=v.clone();remember_registration(&mut all);
+    let accounts:Vec<Value>=all["registrations"].as_array().into_iter().flatten().enumerate().map(|(index,p)|json!({"id":p["client_id"],"email":p["email"],"label":format!("Conta {} · {}",index+1,p["email"].as_str().unwrap_or("ChatGPT")),"connected":p["access_token"].is_string()})).collect();
+    json!({"connected":v["access_token"].as_str().is_some(),"sharing":sharing(v)&&v["access_token"].as_str().is_some(),"email":v["email"],"account":v["sub"],"client_id":v["client_id"],"accounts":accounts})
+}
 fn response_json(response:Response)->Result<Value,String>{
     let status=response.status();
     let request_id=response.headers().get("x-request-id").and_then(|s|s.to_str().ok()).unwrap_or("").to_string();
@@ -79,6 +98,7 @@ fn callback(target:&str,state:&str,issued:Option<&str>)->Result<(String,String),
 }
 fn login(dir:&Path,c:&Client,mut v:Value,new_account:bool)->Result<Value,String>{
     CANCEL.store(false,Ordering::SeqCst);
+    remember_registration(&mut v);
     if v["host_id"].as_str().is_none(){
         let mut bytes=[0u8;16];getrandom::getrandom(&mut bytes).map_err(|_|"Falha ao criar identificador local.")?;bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
         let h:String=bytes.iter().map(|b|format!("{b:02x}")).collect();v["host_id"]=json!(format!("urn:uuid:{}-{}-{}-{}-{}",&h[..8],&h[8..12],&h[12..16],&h[16..20],&h[20..]));save(dir,&v)?;
@@ -108,12 +128,13 @@ fn login(dir:&Path,c:&Client,mut v:Value,new_account:bool)->Result<Value,String>
         if !target.contains(&format!("state={state}")){continue;}
         let (code,id)=result?;
         // Persist an issued registration even if its first code exchange fails.
-        let mut pending=json!({"host_id":v["host_id"],"client_id":id});
+        let mut pending=json!({"host_id":v["host_id"],"registrations":v["registrations"],"client_id":id});
         if !new_account {pending=v.clone();pending["client_id"]=json!(id);}
         if issued.is_none()&&!new_account{save(dir,&pending)?;}
         let t=token(c,&[("grant_type","authorization_code"),("client_id",&id),("code",&code),("code_verifier",&verifier),("redirect_uri",&redirect),("resource",RESOURCE)])?;
         let identity=verified_identity(c,t["id_token"].as_str().ok_or("Login sem identidade verificável.")?,&id,&nonce)?;
         if issued.is_some()&&v["sub"].is_string()&&v["sub"]!=identity["sub"]{return Err("A conta retornada é diferente da conexão selecionada.".into());}
+        if new_account&&v["registrations"].as_array().into_iter().flatten().any(|p|p["client_id"]==id){return Err("O registro retornado já pertence a uma conta salva. Selecione essa conta e use Reconectar.".into());}
         pending["email"]=identity["email"].clone();pending["sub"]=identity["sub"].clone();install_tokens(&mut pending,&t)?;save(dir,&pending)?;
         return Ok(public(&pending));
     }
@@ -131,7 +152,13 @@ pub fn action_with_stream(dir:&Path,request:Value,mut on_delta:impl FnMut(&str))
     match request["action"].as_str().unwrap_or("") {
         "status"=>Ok(public(&v)),
         "usage"=>{launch("https://chatgpt.com/settings/usage")?;Ok(json!({"opened":true}))},
-        "login"=>login(dir,&c,v,request["new_account"]==true),
+        "login"=>{if request["new_account"]!=true{if let Some(id)=request["account_id"].as_str(){v=selected_registration(&v,id)?;}}login(dir,&c,v,request["new_account"]==true)},
+        "select_account"=>{
+            let id=request["account_id"].as_str().ok_or("Selecione uma conta salva.")?;
+            let selected=selected_registration(&v,id)?;
+            if !selected["access_token"].is_string(){return login(dir,&c,selected,false);}
+            save(dir,&selected)?;Ok(public(&selected))
+        },
         "logout"=>{
             let mut confirmed=true;
             if let Some(refresh)=v["refresh_token"].as_str(){
@@ -142,7 +169,7 @@ pub fn action_with_stream(dir:&Path,request:Value,mut on_delta:impl FnMut(&str))
                 })().unwrap_or(false);
             }
             for k in ["access_token","refresh_token","id_token","scope","expires_at"]{v.as_object_mut().unwrap().remove(k);}
-            save(dir,&v)?;Ok(json!({"connected":false,"sharing":false,"revoked":confirmed}))
+            save(dir,&v)?;let mut result=public(&v);result["revoked"]=json!(confirmed);Ok(result)
         },
         "models"=>{let a=access(&c,dir,&mut v)?;response_json(c.get(format!("{RESOURCE}/models")).bearer_auth(a).send().map_err(|_|"Não foi possível consultar os modelos da conta.")?)},
         "generate"|"chat"|"guide"=>{
@@ -293,8 +320,24 @@ fn read_events_stream(mut reader:impl BufRead,request_id:&str,mut on_delta:impl 
         let v=json!({"host_id":"urn:uuid:test","client_id":"issued-test","access_token":"secret-test-access","refresh_token":"secret-test-refresh"});
         save(&dir,&v).unwrap();let raw=fs::read(dir.join("chatgpt-session.dat")).unwrap();
         #[cfg(windows)] assert!(!String::from_utf8_lossy(&raw).contains("secret-test"));
-        assert_eq!(read_store(&dir).unwrap(),v);
-        let mut changed=v.clone();changed["access_token"]=json!("rotated-token");save(&dir,&changed).unwrap();assert_eq!(read_store(&dir).unwrap(),changed);
+        let stored=read_store(&dir).unwrap();assert_eq!(stored["client_id"],v["client_id"]);assert_eq!(stored["registrations"][0]["access_token"],v["access_token"]);
+        let mut changed=stored.clone();changed["access_token"]=json!("rotated-token");save(&dir,&changed).unwrap();assert_eq!(read_store(&dir).unwrap()["registrations"][0]["access_token"],"rotated-token");
         fs::remove_file(dir.join("chatgpt-session.dat")).unwrap();fs::remove_dir(dir).unwrap();
+    }
+    #[test] fn account_registrations_keep_identity_tokens_and_host_separate(){
+        let mut work=json!({"host_id":"stable-host","client_id":"work-client","sub":"work-sub","email":"same@example.com","access_token":"work-secret","refresh_token":"work-refresh","scope":SCOPE});
+        remember_registration(&mut work);
+        let mut personal=json!({"host_id":work["host_id"],"registrations":work["registrations"],"client_id":"personal-client","sub":"personal-sub","email":"same@example.com","access_token":"personal-secret","scope":SCOPE});
+        remember_registration(&mut personal);
+        assert_eq!(personal["registrations"].as_array().unwrap().len(),2);
+        let mut selected=selected_registration(&personal,"work-client").unwrap();
+        assert_eq!(selected["host_id"],"stable-host");assert_eq!(selected["sub"],"work-sub");assert_eq!(selected["refresh_token"],"work-refresh");
+        for key in ["access_token","refresh_token","id_token","scope","expires_at"]{selected.as_object_mut().unwrap().remove(key);}
+        remember_registration(&mut selected);
+        let other=selected_registration(&selected,"personal-client").unwrap();assert_eq!(other["access_token"],"personal-secret");
+        assert!(selected_registration(&selected,"invented-client").is_err());
+        let visible=public(&other);assert_eq!(visible["accounts"].as_array().unwrap().len(),2);
+        assert_ne!(visible["accounts"][0]["label"],visible["accounts"][1]["label"]);
+        assert!(!visible.to_string().contains("secret"));assert!(!visible.to_string().contains("refresh"));
     }
 }

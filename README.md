@@ -2,6 +2,8 @@
 <img src="docs/readme-media/flowdetect-banner.png" alt="FlowDetect — automação visual para desktop e web" width="100%">
 
 # FlowDetect
+
+**Atualização de desenvolvimento:** [assistente visual, criação de blocos em lote e contas ChatGPT](docs/ASSISTENTE_VISUAL_2026-11-12.md).
 **AUTOMAÇÃO VISUAL · DESKTOP & WEB · STUDIO + AGENT + CHROME**
 
 Crie, teste e execute automações em blocos em sistemas Windows e páginas web — mesmo sem API.
