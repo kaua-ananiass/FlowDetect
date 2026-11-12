@@ -1,5 +1,5 @@
 import {ArrowRight,Check,Image,Layers3,MousePointer2,RefreshCw,Table2,Type,ExternalLink,Keyboard} from 'lucide-react';
-export type GuideStep={id:string;kind:'reuse'|'text'|'navigate'|'keys'|'ocr'|'table'|'manual';title:string;description:string;instruction:string;source_order?:number;block_id?:string;configured?:boolean;missing?:string[];text?:string;url?:string;keys?:string[];tab?:string;focus?:string};
+export type GuideStep={id:string;kind:'reuse'|'text'|'navigate'|'keys'|'ocr'|'table'|'manual';title:string;description:string;instruction:string;source_order?:number;block_id?:string;configured?:boolean;missing?:string[];text?:string;url?:string;keys?:string[];tab?:string;focus?:string;placement?:{anchor_order?:number;anchor_step?:string;anchor_id?:string;position:'before'|'after'};configuration?:Record<string,unknown>;editor_action?:'capture'|'test'|'map_table'};
 export type Guide={name:string;message:string;revision:string;questions:string[];steps:GuideStep[];navigation?:{tab:string;order?:number;block_id?:string;reason:string;focus?:string}};
 export type GuideNavigation={tab:string;order?:number;block_id?:string;reason:string;title?:string;focus?:string};
 const labels={reuse:'Bloco do mapa',text:'Digitar texto',navigate:'Abrir página',keys:'Teclas',ocr:'Reconhecimento visual / OCR',table:'Tabela do Chrome',manual:'Preparação'};
