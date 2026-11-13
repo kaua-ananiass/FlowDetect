@@ -47,6 +47,7 @@ class MarcadorVisualTest(unittest.TestCase):
     @unittest.skipUnless(motor.os.name == "nt", "Marcador nativo apenas no Windows")
     def test_native_marker_applies_margin_around_the_target(self):
         executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.modo_teste_reconhecimento = True
         executor.marcar_area_reconhecida_windows = Mock(return_value=True)
         executor.marcar_area_reconhecida(
             {"left": 100, "top": 200, "width": 80, "height": 24},

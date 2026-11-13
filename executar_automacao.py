@@ -1410,6 +1410,8 @@ class ExecutorAutomacao:
         etiqueta=None,
         margem=16,
     ):
+        if not getattr(self, 'modo_teste_reconhecimento', False):
+            return False
         if os.name == "nt" and hasattr(ctypes, "windll"):
             esquerda, topo, largura, altura = self.bounds_reconhecimento(local)
             # O marcador Win32 recebe coordenadas absolutas; antes a margem
@@ -1744,6 +1746,8 @@ class ExecutorAutomacao:
         etiqueta=None,
         margem=16,
     ):
+        if not getattr(self, 'modo_teste_reconhecimento', False) and tema != 'variavel':
+            return False
         # Os marcadores usam uma janela temporaria, mas recebem estilo nativo
         # click-through/no-activate. Assim eles voltam a aparecer tambem na
         # execucao assistida sem cobrir a interacao nem trocar o foco do alvo.
@@ -3301,7 +3305,7 @@ class ExecutorAutomacao:
         if self.cancelamento_solicitado():
             return "cancelado"
         time.sleep(0.04)
-        pyautogui.click(x=destino_x, y=destino_y, clicks=acao["clicks"], interval=0.08)
+        self.com_cursor_flow(destino_x, destino_y, 'Clique', lambda: pyautogui.click(x=destino_x, y=destino_y, clicks=acao["clicks"], interval=0.08))
         safe_print(
             f"OCR {acao['indice'] + 1}: clique individual executado em X/Y: {destino_x}/{destino_y} | clicks={acao['clicks']}",
             flush=True,
@@ -4053,6 +4057,19 @@ class ExecutorAutomacao:
         if janela_preparada:
             time.sleep(0.08)
         total_clicks = max(1, int(clicks or 1))
+        def enviar_cliques():
+            return self._enviar_cliques_tela(destino_x, destino_y, total_clicks, button)
+        self.com_cursor_flow(destino_x, destino_y, 'Clique', enviar_cliques)
+        self._ultimo_clique_visual_em = time.perf_counter()
+        self._ultima_posicao_clique_visual = {
+            "x": int(destino_x), "y": int(destino_y),
+            "button": str(button or "left"), "clicks": int(total_clicks),
+        }
+        time.sleep(0.12)
+        safe_print(f"Clique executado em X/Y: {destino_x}/{destino_y} | clicks={total_clicks}", flush=True)
+        return {"x": destino_x, "y": destino_y}
+
+    def _enviar_cliques_tela(self, destino_x, destino_y, total_clicks, button):
         if hasattr(ctypes, "windll"):
             user32 = ctypes.windll.user32
             eventos = {
@@ -4078,16 +4095,6 @@ class ExecutorAutomacao:
                 pyautogui.mouseUp(x=destino_x, y=destino_y, button=button)
                 if indice < total_clicks - 1:
                     time.sleep(0.09)
-        self._ultimo_clique_visual_em = time.perf_counter()
-        self._ultima_posicao_clique_visual = {
-            "x": int(destino_x),
-            "y": int(destino_y),
-            "button": str(button or "left"),
-            "clicks": int(total_clicks),
-        }
-        time.sleep(0.12)
-        safe_print(f"Clique executado em X/Y: {destino_x}/{destino_y} | clicks={total_clicks}", flush=True)
-        return {"x": destino_x, "y": destino_y}
 
     def liberar_teclas_modificadoras(self):
         for tecla in ("shift", "ctrl", "alt", "win"):
@@ -4582,6 +4589,16 @@ class ExecutorAutomacao:
         return monitores
 
     def capturar_tela_pil(self, region=None):
+        modulo_cursor = sys.modules.get('_flowdetect_marcador_visual')
+        if modulo_cursor:
+            modulo_cursor.suspender_cursor_windows(True)
+        try:
+            return self._capturar_tela_sem_cursor(region)
+        finally:
+            if modulo_cursor:
+                modulo_cursor.suspender_cursor_windows(False)
+
+    def _capturar_tela_sem_cursor(self, region=None):
         if not PIL_DISPONIVEL:
             raise RuntimeError("Pillow indisponivel para captura visual.")
 
@@ -7156,6 +7173,12 @@ class ExecutorAutomacao:
         pyautogui.press(mapa.get(tecla_normalizada, tecla_normalizada))
 
     def invocar_controle_uia(self, control):
+        rect = self.retangulo_controle_uia(control)
+        if rect:
+            return self.com_cursor_flow(rect['left'] + rect['width']/2, rect['top'] + rect['height']/2, 'Clique', lambda: self._invocar_controle_sem_cursor(control))
+        return self._invocar_controle_sem_cursor(control)
+
+    def _invocar_controle_sem_cursor(self, control):
         tentativas = [
             lambda: control.GetInvokePattern().Invoke(),
             lambda: control.Invoke(),
@@ -7194,6 +7217,10 @@ class ExecutorAutomacao:
         return atual.lower() == esperado.lower()
 
     def colar_texto_rapido(self, texto):
+        x, y = pyautogui.position()
+        return self.com_cursor_flow(x, y, 'Digitando', lambda: self._colar_texto_sem_cursor(texto))
+
+    def _colar_texto_sem_cursor(self, texto):
         try:
             import pyperclip
 
@@ -7205,6 +7232,12 @@ class ExecutorAutomacao:
             return "teclado"
 
     def definir_texto_uia(self, control, valor, limpar_antes=True):
+        rect = self.retangulo_controle_uia(control)
+        if rect:
+            return self.com_cursor_flow(rect['left'] + rect['width']/2, rect['top'] + rect['height']/2, 'Digitando', lambda: self._definir_texto_uia_sem_cursor(control, valor, limpar_antes))
+        return self._definir_texto_uia_sem_cursor(control, valor, limpar_antes)
+
+    def _definir_texto_uia_sem_cursor(self, control, valor, limpar_antes=True):
         valor_texto = str(valor or "")
         try:
             control.GetValuePattern().SetValue(valor_texto)
@@ -9004,7 +9037,7 @@ class ExecutorAutomacao:
         destino_y = int(resultado["top"] + resultado["height"] / 2 + int(offset_y or 0))
         if clicar:
             time.sleep(0.08)
-            pyautogui.click(destino_x, destino_y, clicks=max(1, int(clicks or 1)))
+            self.com_cursor_flow(destino_x, destino_y, 'Clique', lambda: pyautogui.click(destino_x, destino_y, clicks=max(1, int(clicks or 1))))
             self._ultimo_clique_visual_em = time.perf_counter()
             self._ultima_posicao_clique_visual = {
                 "x": destino_x,
@@ -9015,6 +9048,7 @@ class ExecutorAutomacao:
         return {"x": destino_x, "y": destino_y}
 
     def executar_bloco_procurar_texto_ocr(self, evento):
+        self.analisar_com_cursor_flow()
         detalhes = evento.get("detalhes") or {}
         ordem = int(evento.get("ordem", 0) or 0)
         texto = str(detalhes.get("texto", "") or "").strip()
@@ -9305,6 +9339,9 @@ class ExecutorAutomacao:
         raise RuntimeError(f"Texto nao encontrado na tela: {texto}{extra}")
 
     def cancelamento_solicitado(self):
+        modulo_cursor = sys.modules.get('_flowdetect_marcador_visual')
+        if modulo_cursor:
+            modulo_cursor.atualizar_cursor_windows()
         if self.cancelar.is_set():
             return True
         if self.arquivo_cancelamento is None:
@@ -9371,7 +9408,62 @@ class ExecutorAutomacao:
     def eh_texto_simples(self, nome):
         return len(nome) == 1 and nome not in {"\r", "\n", "\t"}
 
+    def com_cursor_flow(self, x, y, etiqueta, acao):
+        """Mostra o cursor sem tomar foco. Uma falha visual nunca repete uma ação."""
+        executada = False
+        resultado = None
+
+        def executar_uma_vez():
+            nonlocal executada, resultado
+            if self.cancelamento_solicitado():
+                raise RuntimeError('Execução interrompida antes da ação.')
+            executada = True
+            resultado = acao()
+
+        if os.name == 'nt' and not getattr(self, 'modo_teste_reconhecimento', False):
+            try:
+                modulo = sys.modules.get('_flowdetect_marcador_visual')
+                if modulo is None:
+                    spec = importlib.util.spec_from_file_location('_flowdetect_marcador_visual', APP_ROOT / 'marcador_visual.py')
+                    modulo = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(modulo)
+                    sys.modules[spec.name] = modulo
+                obter_posicao = getattr(modulo, 'posicao_cursor_windows', lambda: None)
+                origem = obter_posicao() or getattr(self, '_cursor_flow_posicao', None) or pyautogui.position()
+                animar_cursor = getattr(modulo, 'executar_cursor_windows', None)
+                if animar_cursor:
+                    animar_cursor(x, y, etiqueta, origem, executar_uma_vez, self.cancelamento_solicitado)
+                else:
+                    modulo.exibir_marcador_windows(
+                        x, y, 190, 96, 0.26, etiqueta,
+                        cursor=origem, acao=executar_uma_vez, cancelar=self.cancelamento_solicitado, persistir=True,
+                    )
+            except Exception:
+                if executada:
+                    raise
+                # A apresentação é opcional; os comandos continuam disponíveis.
+        if not executada:
+            executar_uma_vez()
+        self._cursor_flow_posicao = (x, y)
+        return resultado
+
+    def analisar_com_cursor_flow(self, ativo=True):
+        if os.name != 'nt' or getattr(self, 'modo_teste_reconhecimento', False):
+            return
+        modulo = sys.modules.get('_flowdetect_marcador_visual')
+        if ativo and (not modulo or not modulo.definir_analise_cursor_windows(True)):
+            x, y = getattr(self, '_cursor_flow_posicao', None) or pyautogui.position()
+            self.com_cursor_flow(x, y, 'Analisando', lambda: None)
+        elif modulo and not ativo:
+            modulo.definir_analise_cursor_windows(False)
+
     def escrever_texto(self, texto):
+        if not self.preparar_foco_para_digitacao():
+            return False
+        x, y = pyautogui.position()
+        return self.com_cursor_flow(x, y, 'Digitando', lambda: self._escrever_texto_sem_cursor(texto))
+
+    def _escrever_texto_sem_cursor(self, texto):
         if not self.preparar_foco_para_digitacao():
             return False
         for caractere in str(texto):
@@ -9402,6 +9494,7 @@ class ExecutorAutomacao:
         leitura_relativa=None,
         preservar_janelas=True,
     ):
+        self.analisar_com_cursor_flow()
         caminho_imagem, imagem_id = self.resolver_imagem(imagem)
         if not imagem_id:
             raise FileNotFoundError("Nenhuma imagem foi informada para o bloco clicar por imagem.")
@@ -10308,8 +10401,7 @@ class ExecutorAutomacao:
         if acao_ocr_individual in {"confirmar", "clicar", "ir_para_bloco"}:
             return local
 
-        # A borda verde continua informando a confirmacao, so que com uma
-        # exibicao curta para nao atrasar cada proximo bloco da automacao.
+        # O teste visual mantém o contorno. Na execução normal o cursor indica a ação.
         if not marcador_hibrido:
             self.marcar_area_reconhecida(local, duracao=0.28, bloqueante=True, etiqueta="Reconhecimento")
         offset_click_x, offset_click_y = self.escalar_offset_referencia(
@@ -10820,6 +10912,14 @@ class ExecutorAutomacao:
         return self.resultado_sucesso_evento(evento)
 
     def executar_evento(self, evento, contexto_loop=None):
+        try:
+            return self._executar_evento_com_cursor(evento, contexto_loop)
+        finally:
+            modulo_cursor = sys.modules.get('_flowdetect_marcador_visual')
+            if modulo_cursor:
+                modulo_cursor.definir_analise_cursor_windows(False)
+
+    def _executar_evento_com_cursor(self, evento, contexto_loop=None):
         self.preparar_escopo_variaveis(contexto_loop)
         capture = self.configuracao_captura_variavel(evento.get("detalhes", {}))
         if capture.get("enabled"):
@@ -11122,7 +11222,10 @@ class ExecutorAutomacao:
             return self.resultado_fluxo("continuar")
 
         self.preparar_janela_para_acao()
+        x, y = pyautogui.position()
+        return self.com_cursor_flow(x, y, 'Teclado', lambda: self._executar_teclas_com_foco(evento, teclas))
 
+    def _executar_teclas_com_foco(self, evento, teclas):
         if len(teclas) > 1:
             repeticoes = max(1, int((evento.get("detalhes") or {}).get("repeticoes", 1) or 1))
             for _ in range(repeticoes):
@@ -12176,6 +12279,9 @@ class ExecutorAutomacao:
         return self.executar_loop_legado(loop_start)
 
     def fechar_sessao_chrome(self):
+        modulo_cursor = sys.modules.get('_flowdetect_marcador_visual')
+        if modulo_cursor:
+            modulo_cursor.fechar_cursor_windows()
         try:
             if self._playwright_runtime is not None:
                 self._playwright_runtime.stop()

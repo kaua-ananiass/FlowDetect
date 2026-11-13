@@ -8,6 +8,9 @@ import ctypes
 import math
 import os
 import time
+import threading
+import queue
+from functools import lru_cache
 from ctypes import wintypes
 from pathlib import Path
 
@@ -66,6 +69,7 @@ class _WindowClass(ctypes.Structure):
     ]
 
 
+@lru_cache(maxsize=16)
 def _fonte(tamanho):
     for nome in ("seguisb.ttf", "segoeui.ttf"):
         caminho = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / nome
@@ -197,7 +201,178 @@ def _pixels_premultiplicados(imagem):
     )).tobytes()
 
 
-def exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, tema="visual"):
+_cursores_retidos = {}
+_servicos_cursor = {}
+CURSOR_HOTSPOT = (10, 38)
+
+
+class _ServicoCursor:
+    """A janela e sua animação pertencem à mesma thread; entrada fica no executor."""
+    def __init__(self):
+        self.fila = queue.Queue()
+        self.erro = None
+        self.thread = threading.Thread(target=self._rodar, name='FlowDetectCursor', daemon=True)
+        self.thread.start()
+
+    def enviar(self, tipo, **dados):
+        if not self.thread.is_alive():
+            raise RuntimeError('Cursor visual indisponível.') from self.erro
+        pedido = dict(dados, tipo=tipo, pronto=threading.Event(), fim=threading.Event())
+        self.fila.put(pedido)
+        return pedido
+
+    def chamar(self, tipo, **dados):
+        pedido = self.enviar(tipo, **dados)
+        if not pedido['fim'].wait(3):
+            raise RuntimeError('O cursor visual não respondeu.')
+        if pedido.get('erro'):
+            raise pedido['erro']
+        return pedido.get('resultado')
+
+    def _rodar(self):
+        try:
+            while True:
+                try:
+                    pedido = self.fila.get(timeout=1/60)
+                except queue.Empty:
+                    atualizar_cursor_windows()
+                    continue
+                try:
+                    tipo = pedido['tipo']
+                    if tipo == 'mover':
+                        origem = posicao_cursor_windows() or pedido['origem']
+                        pedido['resultado'] = exibir_marcador_windows(
+                            pedido['x'], pedido['y'], 190, 96, .26, pedido['etiqueta'],
+                            cursor=origem, acao=pedido['pronto'].set,
+                            cancelar=pedido['cancelar'].is_set, persistir=True,
+                        )
+                    elif tipo == 'analise':
+                        pedido['resultado'] = definir_analise_cursor_windows(pedido['ativo'])
+                    elif tipo == 'suspender':
+                        suspender_cursor_windows(pedido['ativo'])
+                    elif tipo == 'posicao':
+                        pedido['resultado'] = posicao_cursor_windows()
+                    elif tipo == 'fechar':
+                        return
+                except Exception as erro:
+                    pedido['erro'] = erro
+                finally:
+                    pedido['pronto'].set()
+                    pedido['fim'].set()
+                atualizar_cursor_windows()
+        except Exception as erro:
+            self.erro = erro
+        finally:
+            fechar_cursor_windows()
+
+
+def executar_cursor_windows(x, y, etiqueta, origem, acao, cancelar):
+    identidade = threading.get_ident()
+    servico = _servicos_cursor.get(identidade)
+    if servico is None:
+        servico = _servicos_cursor[identidade] = _ServicoCursor()
+    interrupcao = threading.Event()
+    pedido = servico.enviar('mover', x=x, y=y, etiqueta=etiqueta, origem=origem, cancelar=interrupcao)
+    while not pedido['pronto'].wait(.01):
+        if cancelar():
+            interrupcao.set()
+            pedido['fim'].wait(1)
+            raise RuntimeError('Execução interrompida antes da ação.')
+        if not servico.thread.is_alive():
+            raise RuntimeError('Cursor visual indisponível.') from servico.erro
+    if pedido.get('erro'):
+        raise pedido['erro']
+    if cancelar() or not pedido.get('resultado', True) and pedido['fim'].is_set():
+        raise RuntimeError('Execução interrompida antes da ação.')
+    try:
+        return acao()
+    finally:
+        pedido['fim'].wait(1)
+
+
+def fechar_cursor_windows():
+    servico = _servicos_cursor.pop(threading.get_ident(), None)
+    if servico:
+        try:
+            servico.chamar('fechar')
+        except Exception:
+            pass
+        finally:
+            servico.thread.join(timeout=1)
+    estado = _cursores_retidos.pop(threading.get_ident(), None)
+    if estado:
+        estado['limpar']()
+
+
+def suspender_cursor_windows(suspenso=True):
+    servico = _servicos_cursor.get(threading.get_ident())
+    if servico:
+        return servico.chamar('suspender', ativo=suspenso)
+    estado = _cursores_retidos.get(threading.get_ident())
+    if estado:
+        estado['suspenso'] = suspenso
+        if not suspenso and estado.get('analisando'):
+            estado['origem_busca'] = estado['posicao']
+            estado['inicio_busca'] = time.monotonic()
+        estado['user32'].ShowWindow(estado['hwnd'], 0 if suspenso else 4)
+
+
+def atualizar_cursor_windows():
+    """Processa mensagens da janela passiva durante as esperas do executor."""
+    if threading.get_ident() in _servicos_cursor:
+        return
+    estado = _cursores_retidos.get(threading.get_ident())
+    if not estado:
+        return
+    user32 = estado['user32']
+    if estado.get('analisando') and not estado.get('suspenso') and time.monotonic() - estado.get('ultimo_frame', 0) > 1/60:
+        estado['ultimo_frame'] = time.monotonic()
+        elapsed = time.monotonic() - estado['inicio_busca']
+        fase = elapsed * math.pi / 3
+        entrada = min(1, elapsed/.5)
+        base_x, base_y = estado['origem_busca']
+        left, top = user32.GetSystemMetrics(76), user32.GetSystemMetrics(77)
+        right, bottom = left + user32.GetSystemMetrics(78), top + user32.GetSystemMetrics(79)
+        x = max(left+24, min(right-24, base_x+math.sin(fase)*120*entrada))
+        y = max(top+40, min(bottom-32, base_y+(1-math.cos(fase))*60*entrada))
+        estado['posicao'] = (x, y)
+        estado['desenhar']('Analisando', (time.monotonic() % 1.4) / 1.4, (x,y))
+    user32.PeekMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT]
+    user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+    user32.DispatchMessageW.restype = ctypes.c_ssize_t
+    user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+    mensagem = wintypes.MSG()
+    for _ in range(16):
+        if not user32.PeekMessageW(ctypes.byref(mensagem), estado['hwnd'], 0, 0, 1):
+            break
+        user32.TranslateMessage(ctypes.byref(mensagem))
+        user32.DispatchMessageW(ctypes.byref(mensagem))
+
+
+def definir_analise_cursor_windows(ativo=True):
+    servico = _servicos_cursor.get(threading.get_ident())
+    if servico:
+        return servico.chamar('analise', ativo=ativo)
+    estado = _cursores_retidos.get(threading.get_ident())
+    if not estado:
+        return False
+    if ativo and not estado.get('analisando'):
+        estado['inicio_busca'] = time.monotonic()
+        estado['origem_busca'] = estado['posicao']
+    estado['analisando'] = ativo
+    estado['desenhar']('Analisando' if ativo else 'Aguardando', 0)
+    return True
+
+
+def posicao_cursor_windows():
+    servico = _servicos_cursor.get(threading.get_ident())
+    if servico:
+        return servico.chamar('posicao')
+    estado = _cursores_retidos.get(threading.get_ident())
+    return estado['posicao'] if estado else None
+
+
+def exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, tema="visual", *, cursor=None, acao=None, cancelar=None, persistir=False):
     if os.name != "nt":
         return False
     user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -244,7 +419,7 @@ def exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, 
             return -1  # HTTRANSPARENT
         return user32.DefWindowProcW(hwnd, mensagem, wparam, lparam)
 
-    primeira = desenhar_marcador(largura, altura, etiqueta, tema, 0)
+    primeira = desenhar_cursor(etiqueta) if cursor else desenhar_marcador(largura, altura, etiqueta, tema, 0)
     largura_total, altura_total = primeira.size
     nome_classe = f"FlowDetectMarkerAlpha_{os.getpid()}_{time.monotonic_ns()}"
     instancia = kernel32.GetModuleHandleW(None)
@@ -252,6 +427,23 @@ def exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, 
     if not user32.RegisterClassW(ctypes.byref(classe)):
         raise OSError(f"RegisterClassW: {ctypes.get_last_error()}")
     hwnd = hdc_tela = hdc_memoria = bitmap = bitmap_anterior = None
+    reter = False
+
+    def limpar():
+        # Keep the WNDPROC alive for the entire lifetime of a retained window.
+        referencias = (tratar_janela, classe)
+        if hwnd:
+            user32.DestroyWindow(hwnd)
+        if hdc_memoria and bitmap_anterior:
+            gdi32.SelectObject(hdc_memoria, bitmap_anterior)
+        if bitmap:
+            gdi32.DeleteObject(bitmap)
+        if hdc_memoria:
+            gdi32.DeleteDC(hdc_memoria)
+        if hdc_tela:
+            user32.ReleaseDC(None, hdc_tela)
+        user32.UnregisterClassW(nome_classe, instancia)
+
     try:
         estilos = 0x00080000 | 0x00000008 | 0x00000020 | 0x00000080 | 0x08000000
         hwnd = user32.CreateWindowExW(
@@ -277,29 +469,42 @@ def exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, 
         tamanho = _Size(largura_total, altura_total)
         origem = _Point(0, 0)
         blend = _Blend(0, 0, 255, 1)  # AC_SRC_OVER / AC_SRC_ALPHA
-        duracao_total = max(0.12, float(duracao))
+        tempo_movimento = min(.42, max(.18, .16 + math.hypot(esquerda-cursor[0], topo-cursor[1])*.0003)) if cursor else 0
+        duracao_total = max(tempo_movimento + .10, float(duracao)) if cursor else max(0.12, float(duracao))
         inicio = time.monotonic()
         fim = inicio + duracao_total
         ultimo_frame = -1
         ultima_chave = None
+        acao_executada = False
         animar_varredura = int(largura) * int(altura) <= 320_000
         quadros_por_segundo = 24 if animar_varredura else 12
         tempo_entrada = min(0.24, duracao_total * 0.34)
         tempo_varredura = min(0.55, max(0.1, duracao_total * 0.55))
         while True:
+            if cancelar and cancelar():
+                return False
             agora = time.monotonic()
             decorrido = min(duracao_total, agora - inicio)
-            frame = int(decorrido * quadros_por_segundo)
+            frame = int(decorrido * (60 if cursor else quadros_por_segundo))
             if frame != ultimo_frame:
                 abertura = progresso_flip(decorrido, duracao_total)
                 varredura = (min(1.0, max(0.0, (decorrido - tempo_entrada) / tempo_varredura))
                              if animar_varredura else 1.0)
                 chave = (round(abertura, 2), round(varredura, 2))
+                if cursor:
+                    progresso = min(1.0, decorrido / tempo_movimento)
+                    suavizado = progresso**3 * (10 + progresso * (-15 + 6*progresso))
+                    px = cursor[0] + (esquerda-cursor[0])*suavizado
+                    py = cursor[1] + (topo-cursor[1])*suavizado
+                    posicao = _Point(round(px)-CURSOR_HOTSPOT[0], round(py)-CURSOR_HOTSPOT[1])
+                    imagem = desenhar_cursor(etiqueta, progresso >= 1 and not acao_executada and etiqueta == 'Clique')
+                    chave = frame
                 if chave != ultima_chave:
-                    base = primeira if frame == 0 else desenhar_marcador(
+                    base = primeira if frame == 0 or cursor else desenhar_marcador(
                         largura, altura, etiqueta, tema, varredura,
                     )
-                    imagem = aplicar_flip(base, abertura, tema)
+                    if not cursor:
+                        imagem = aplicar_flip(base, abertura, tema)
                     pixels = _pixels_premultiplicados(imagem)
                     ctypes.memmove(bits.value, pixels, len(pixels))
                     if not user32.UpdateLayeredWindow(
@@ -309,21 +514,63 @@ def exibir_marcador_windows(esquerda, topo, largura, altura, duracao, etiqueta, 
                         raise OSError(f"UpdateLayeredWindow: {ctypes.get_last_error()}")
                     if ultimo_frame == -1:
                         user32.ShowWindow(hwnd, 4)  # SW_SHOWNOACTIVATE
+                        if cursor and persistir:
+                            fechar_cursor_windows()
                     ultima_chave = chave
                 ultimo_frame = frame
+            if cursor and decorrido >= tempo_movimento and not acao_executada:
+                acao_executada = True
+                if acao:
+                    acao()
             if agora >= fim:
                 break
             time.sleep(0.008)
+        reter = bool(cursor and persistir)
         return True
     finally:
-        if hwnd:
-            user32.DestroyWindow(hwnd)
-        if hdc_memoria and bitmap_anterior:
-            gdi32.SelectObject(hdc_memoria, bitmap_anterior)
-        if bitmap:
-            gdi32.DeleteObject(bitmap)
-        if hdc_memoria:
-            gdi32.DeleteDC(hdc_memoria)
-        if hdc_tela:
-            user32.ReleaseDC(None, hdc_tela)
-        user32.UnregisterClassW(nome_classe, instancia)
+        if reter:
+            fechar_cursor_windows()
+            def redesenhar(rotulo, fase, ponto=None):
+                if ponto:
+                    posicao.x, posicao.y = round(ponto[0])-CURSOR_HOTSPOT[0], round(ponto[1])-CURSOR_HOTSPOT[1]
+                pixels_cursor = _pixels_premultiplicados(desenhar_cursor(rotulo, fase=fase))
+                ctypes.memmove(bits.value, pixels_cursor, len(pixels_cursor))
+                user32.UpdateLayeredWindow(hwnd, hdc_tela, ctypes.byref(posicao), ctypes.byref(tamanho), hdc_memoria, ctypes.byref(origem), 0, ctypes.byref(blend), 2)
+            _cursores_retidos[threading.get_ident()] = {'limpar': limpar, 'hwnd': hwnd, 'user32': user32, 'desenhar': redesenhar, 'analisando': etiqueta == 'Analisando', 'posicao': (esquerda,topo), 'origem_busca': (esquerda,topo), 'inicio_busca': time.monotonic()}
+        else:
+            limpar()
+
+
+@lru_cache(maxsize=64)
+def desenhar_cursor(etiqueta='Clique', clicando=False, fase=0):
+    """Desenho em alta resolução, bordas suaves e um único selo compacto."""
+    escala = 3
+    imagem = Image.new('RGBA', (190*escala, 96*escala))
+    desenho = ImageDraw.Draw(imagem)
+    def box(coordenadas):
+        return tuple(round(v*escala) for v in coordenadas)
+    # Sombra leve fora da ponta; o hotspot continua exatamente em (10, 38).
+    sombra = Image.new('RGBA', imagem.size)
+    ds = ImageDraw.Draw(sombra)
+    ds.rounded_rectangle(box((20, 5, 126, 33)), radius=12*escala, fill=(0, 8, 15, 65))
+    ds.polygon([box(p) for p in [(11,40),(30,56),(22,59),(18,67)]], fill=(0,8,15,90))
+    imagem.alpha_composite(sombra.filter(ImageFilter.GaussianBlur(2*escala)))
+    desenho = ImageDraw.Draw(imagem)
+    desenho.rounded_rectangle(box((19, 3, 124, 31)), radius=11*escala, fill=(9,25,34,240), outline=(104,235,211,95), width=escala)
+    desenho.ellipse(box((29,14,34,19)), fill='#65e4c6')
+    desenho.text(box((40,9)), 'FlowDetect', font=_fonte(11*escala), fill='#e7fff9')
+    pontos=[(10,38),(29,54),(20,57),(17,65),(14,53)]
+    desenho.polygon([box(p) for p in pontos], fill='#aff6e3' if clicando else '#effffb')
+    desenho.line([box(p) for p in pontos+[pontos[0]]], fill='#163c3b', width=escala+1, joint='curve')
+    if clicando:
+        # Halo pequeno junto à seta; nenhum painel ou retângulo sobre o botão.
+        desenho.arc(box((2,30,28,56)), 30, 300, fill=(101,228,198,150), width=escala)
+    elif etiqueta == 'Analisando':
+        dx=math.sin(fase*math.tau)*1.5
+        desenho.ellipse(box((36+dx,39,49+dx,52)), outline='#7ae9ce', width=escala+1)
+        desenho.line([box((47+dx,50)),box((54+dx,57))], fill='#7ae9ce', width=2*escala)
+    # Só operações em curso têm legenda. Clique é comunicado pela própria seta.
+    rotulo = {'Analisando':'Analisando…','Digitando':'Digitando…','Teclado':'Teclado'}.get(etiqueta)
+    if rotulo:
+        desenho.text(box((31,66)), rotulo, font=_fonte(10*escala), fill='#92c3ba', stroke_width=escala, stroke_fill=(5,19,25,180))
+    return imagem.resize((190,96), Image.Resampling.LANCZOS)
