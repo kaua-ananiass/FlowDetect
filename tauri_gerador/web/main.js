@@ -5,6 +5,8 @@ import {createAssistantCursor} from './assistant-cursor.js';
 import { startRemoteVideoStats } from "./remote-video-stats.js";
 import {renderTableEditor,initTableBlocks} from './table-blocks.js';
 import {initChatGPT} from './chatgpt.js';
+import {initGoogleWorkspace} from './google-workspace.js';
+
 let chatWorkspace = null;
 let chatMapWorkspace = null;
 const tauriCore = window.__TAURI__?.core ?? null;
@@ -29243,6 +29245,23 @@ async function boot() {
   }
 }
 initTableBlocks({invoke,applyRoadmap});
+// Keep the Google callbacks in the same lexical scope as the workbook editor.
+initGoogleWorkspace({
+  host: document.getElementById('googleWorkspacePanel'), invoke, pickFile: openNativeFileDialog,
+  isRunning: () => state.assist.mode === 'running',
+  onWorkbook: async (workbookId, {automatic = false} = {}) => {
+    const currentId = state.previewWorkbookId;
+    const sheet = automatic && currentId === workbookId ? state.workbookSelectedSheet : '';
+    const table = document.getElementById('workbookTableWrap');
+    const scroll = {top: table?.scrollTop || 0, left: table?.scrollLeft || 0};
+    await refreshWorkbookMeta();
+    if (automatic && currentId && currentId !== workbookId) return;
+    state.previewWorkbookId = workbookId;
+    await loadWorkbookPreview(sheet, workbookId);
+    populateSheetSelect('');
+    if (automatic && table) {table.scrollTop = scroll.top; table.scrollLeft = scroll.left;}
+  },
+});
 
 updateLoginResolutionPreview();
 applyLoginStateUI();
