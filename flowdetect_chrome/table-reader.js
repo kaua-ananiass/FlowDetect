@@ -5,6 +5,12 @@
   const previousListener=globalThis.__flowDetectTableListener;
   if(previousListener)chrome.runtime.onMessage.removeListener(previousListener);
   let capturedDetail=null;
+  async function cursorClick(button){
+    await globalThis.FlowDetectCursor?.move(button,'Clique');
+    if(!button.isConnected||!visible(button)||button.disabled)throw Error('O botão mudou antes do clique.');
+    globalThis.FlowDetectCursor?.indicate(button,'Clique');
+    button.click();
+  }
   const norm=s=>String(s??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toLowerCase();
   const text=e=>String(e?.innerText??e?.textContent??'').replace(/\s+/g,' ').trim();
   const visible=e=>{
@@ -87,7 +93,7 @@
   async function changePage(d,direction){
     const e=locate(d),p=pagination(e),button=direction==='previous'?p.previous:p.next;
     if(!button||button.disabled||button.getAttribute('aria-disabled')==='true')throw Error('Não foi possível navegar na paginação da tabela.');
-    button.click();await waitPageChange(d,p,direction);
+    await cursorClick(button);await waitPageChange(d,p,direction);
   }
   async function waitPageChange(d,before,direction='next'){
     let stable=null,lastError='A tabela não confirmou a troca de página.';
@@ -138,7 +144,7 @@
         const b=matchesButton[0];if(b.disabled||b.getAttribute('aria-disabled')==='true')throw Error('O botão desta linha está desabilitado.');
         if(!await permit())throw Error('Execução interrompida. Nenhum clique foi realizado.');
         if(!b.isConnected||!visible(b)||b.disabled||b.getAttribute('aria-disabled')==='true'||norm(text(rowCells(matches[0])[index]))!==norm(value))throw Error('A linha mudou antes do clique.');
-        capturedDetail=null;b.scrollIntoView({block:'center',inline:'nearest'});b.click();
+        capturedDetail=null;b.scrollIntoView({block:'center',inline:'nearest'});await cursorClick(b);
         return {clicked:true,key,value,action:action.label};
       }
       if(!pagination(e).hasNext)break;
@@ -173,13 +179,18 @@
     });
   }
   async function waitReady(config){
+    globalThis.FlowDetectCursor?.analyzing();
+    try{return await waitReadyAnalyzing(config);}
+    finally{globalThis.FlowDetectCursor?.analyzing(false);}
+  }
+  async function waitReadyAnalyzing(config){
     let error;
     for(let i=0;i<(config.wait_ready?75:1);i++){
       try{const e=locate(config.descriptor),p=pagination(e);if(e.querySelector('[aria-busy="true"]'))throw Error('A tabela ainda está carregando.');if(!rowNodes(e).length&&!(config.allow_empty&&p.total===0))throw Error('As linhas da tabela ainda estão carregando.');return e;}catch(e){error=e;}
       if(config.wait_ready)await new Promise(r=>setTimeout(r,200));
     }throw error;
   }
-  async function returnToList(config,permit,progress=()=>{},dispatchClose=button=>button.click()){
+  async function returnToList(config,permit,progress=()=>{},dispatchClose=cursorClick){
     stopMapping();
     progress('Procurando o botão Fechar no detalhe capturado.');
     if(config.return_mode==='back'){
@@ -249,7 +260,7 @@
       if(!p.hasNext){if(expected!==null && (all.length!==expected || p.start!==all.length-part.length+1))throw Error(`Captura incompleta: ${all.length} de ${expected} registros; página ${p.label || 'não informada'}. O portal não disponibilizou todas as linhas ou a próxima página.`);break;}
       if(!config.all_pages)throw Error('Há outras páginas. Ative Ler todas as páginas ou volte a uma tabela completa.');
       if(p.start===null)throw Error('A paginação não informa contagem verificável.');
-      previousEnd=p.end;p.next.click();await waitPageChange(d,p);
+      previousEnd=p.end;await cursorClick(p.next);await waitPageChange(d,p);
       if(page===99)throw Error('Limite de 100 páginas excedido.');
     }
     if(config.mode==='value'){

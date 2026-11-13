@@ -793,6 +793,13 @@ async function waitForActiveTargetTab(run) {
 }
 
 async function captureImage(run) {
+  const cursor = await chrome.tabs.sendMessage(run.tabId, {type:'flowdetect-cursor-suspend'}).catch(()=>null);
+  if(cursor?.visible) await new Promise(resolve=>setTimeout(resolve,50));
+  try { return await captureImageWithoutCursor(run); }
+  finally { await chrome.tabs.sendMessage(run.tabId, {type:'flowdetect-cursor-resume'}).catch(()=>{}); }
+}
+
+async function captureImageWithoutCursor(run) {
   if (run.captureMode === "tab") {
     try {
       const response = await chrome.runtime.sendMessage({
@@ -851,6 +858,8 @@ async function findVisualMatch(run, asset, capturedSource = null) {
 }
 
 async function waitForVisualMatch(run, step, asset) {
+  await chrome.tabs.sendMessage?.(run.tabId, {type:'flowdetect-cursor-analysis',active:true}).catch(()=>{});
+  try {
   const interval = Math.max(180, Number(step.interval_ms || 550));
   const timeout = Math.max(500, Number(step.timeout_ms || 10000));
   const attempts = Math.max(Number(step.attempts || 1), Math.ceil(timeout / interval));
@@ -864,6 +873,9 @@ async function waitForVisualMatch(run, step, asset) {
     if (attempt < attempts - 1) await sleep(interval);
   }
   throw new Error(`Referência visual não encontrada. Melhor similaridade: ${Math.max(0, best.score * 100).toFixed(0)}%.`);
+  } finally {
+    await chrome.tabs.sendMessage?.(run.tabId, {type:'flowdetect-cursor-analysis',active:false}).catch(()=>{});
+  }
 }
 
 async function clickVisualResult(run, step, match, label = "VISUAL") {
@@ -896,6 +908,8 @@ async function executeVisualMatch(run, step) {
 }
 
 async function executeVisualState(run, step) {
+  await chrome.tabs.sendMessage?.(run.tabId, {type:'flowdetect-cursor-analysis',active:true}).catch(()=>{});
+  try {
   const candidates = [];
   if (step.active_image) candidates.push({ state: "ativo", asset: step.active_image });
   if (step.inactive_image) candidates.push({ state: "desativado", asset: step.inactive_image });
@@ -909,6 +923,9 @@ async function executeVisualState(run, step) {
     message: `${step.name || "Botão"}: ${best.state} (${(best.match.score * 100).toFixed(0)}%).`,
     flow: step.state_flows?.[best.state] || step.on_success
   };
+  } finally {
+    await chrome.tabs.sendMessage?.(run.tabId, {type:'flowdetect-cursor-analysis',active:false}).catch(()=>{});
+  }
 }
 
 async function executePageStep(run, step) {
@@ -1048,7 +1065,7 @@ async function executeStep(run, rawStep) {
       const request={...message,operationId,deadline,authorized};
       let watchdog;
       const execute=async()=>{
-      await chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},files:['table-reader.js']});
+      await chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},files:['automation-cursor.js','table-reader.js']});
       if(run.cancelled||Date.now()>=deadline)throw Error('A operação da tabela foi interrompida antes de iniciar.');
       if(message.type==='flowdetect-table-return'){
         const started=await chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},func:request=>{
@@ -1140,6 +1157,9 @@ async function executeStep(run, rawStep) {
             },args:[{token:operationId,runId:run.id,deadline}]});
             if(run.cancelled||Date.now()>=deadline)throw Error('Fechamento interrompido antes do clique nativo.');
             await chrome.debugger.sendCommand(target,'Input.dispatchMouseEvent',{type:'mouseMoved',x:point.x,y:point.y});
+            await chrome.scripting.executeScript({target:{tabId:run.tabId,frameIds:[0]},func:p=>{
+              globalThis.FlowDetectCursor?.indicate(document.elementFromPoint(p.x,p.y),'Clique',p);
+            },args:[point]});
             if(run.cancelled||Date.now()>=deadline)throw Error('Fechamento interrompido antes de pressionar o botão do mouse.');
             await chrome.debugger.sendCommand(target,'Input.dispatchMouseEvent',{type:'mousePressed',x:point.x,y:point.y,button:'left',buttons:1,clickCount:1});
             await chrome.debugger.sendCommand(target,'Input.dispatchMouseEvent',{type:'mouseReleased',x:point.x,y:point.y,button:'left',buttons:0,clickCount:1});
@@ -1738,6 +1758,7 @@ async function executeAutomationOnPage(automation, tabId, startRow, loopIncluded
     await addLog(run, String(error?.message || error), "error");
   } finally {
     run.blockInput = false;
+    await chrome.tabs.sendMessage(tabId, { type: 'flowdetect-cursor-stop' }).catch(() => {});
     await chrome.tabs.sendMessage(tabId, { type: "flowdetect-input-lock-refresh" }).catch(() => {});
     if (downloadRouteId) await deactivateDownloadRoute(run.id).catch(() => {});
     await stopTabCapture(run).catch(() => {});
@@ -1751,6 +1772,16 @@ async function executeAutomationOnPage(automation, tabId, startRow, loopIncluded
 }
 
 async function handleMessage(message, sender) {
+  if (message?.type === 'flowdetect-cursor-position') {
+    const tabId=sender?.tab?.id;
+    const run=[...activeRuns.values()].find(r=>r.tabId===tabId&&!r.cancelled&&r.status==='running');
+    if (!run || (sender.frameId ?? 0)!==0) return {ok:false,position:null};
+    const p=message.position;
+    if (p && Number.isFinite(p.x) && Number.isFinite(p.y) && Math.abs(p.x)<100000 && Math.abs(p.y)<100000) {
+      run.cursorPosition={x:p.x,y:p.y};
+    }
+    return {ok:true,position:run.cursorPosition||null};
+  }
   if(message?.type==='flowdetect-table-permit-click'){
     const run=activeRuns.get(message.runId);
     const allowed=Boolean(run&&!run.cancelled&&run.tabId===sender?.tab?.id&&run.pendingTableClick&&run.pendingTableClick===message.nonce);
@@ -1907,6 +1938,7 @@ async function handleMessage(message, sender) {
     const running = [...activeRuns.values()].find((run) => run.id === message.runId && (!message.pageId || run.pageId === message.pageId));
     if (running) {
       running.cancelled = true;
+      await chrome.tabs.sendMessage(running.tabId, {type:'flowdetect-cursor-stop'}).catch(()=>{});
       await addLog(running, "Parada solicitada pelo usuário.", "warning");
     }
     return { ok: true, stopped: Boolean(running) };
@@ -1916,7 +1948,10 @@ async function handleMessage(message, sender) {
     if ((await activeTabForWindow(tab.windowId))?.id !== tab.id) {
       throw new Error("Abra a aba escolhida antes de capturar a imagem de referencia.");
     }
-    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+    await chrome.tabs.sendMessage(tab.id, {type:'flowdetect-cursor-suspend'}).catch(()=>{});
+    let dataUrl;
+    try { dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }); }
+    finally { await chrome.tabs.sendMessage(tab.id, {type:'flowdetect-cursor-resume'}).catch(()=>{}); }
     if ((await activeTabForWindow(tab.windowId))?.id !== tab.id) {
       throw new Error("A aba ativa mudou durante a captura. Tente novamente na aba escolhida.");
     }
