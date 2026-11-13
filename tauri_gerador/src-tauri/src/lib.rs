@@ -63,6 +63,7 @@ const BUNDLED_MARCADOR_VISUAL: &[u8] = include_bytes!("../../../marcador_visual.
 const BUNDLED_GERENCIAR_DADOS_PLANILHA: &[u8] = include_bytes!("../../../gerenciar_dados_planilha.py");
 const BUNDLED_GERENCIAR_ROTEIRO: &[u8] = include_bytes!("../../../gerenciar_roteiro.py");
 const BUNDLED_CHATGPT_GUIDED: &[u8] = include_bytes!("../../../chatgpt_guided.py");
+const BUNDLED_GOOGLE_WORKSPACE: &[u8] = include_bytes!("../../../google_workspace.py");
 const BUNDLED_BLOCK_KNOWLEDGE: &[u8] = include_bytes!("../../../block_knowledge.json");
 const BUNDLED_LISTAR_JANELAS_ABERTAS: &[u8] = include_bytes!("../../../listar_janelas_abertas.py");
 const BUNDLED_MAPEAR_ELEMENTOS_JANELA: &[u8] = include_bytes!("../../../mapear_elementos_janela.py");
@@ -2000,6 +2001,7 @@ fn bundled_python_script_bytes(script_name: &str) -> Option<&'static [u8]> {
         "gerenciar_dados_planilha.py" => Some(BUNDLED_GERENCIAR_DADOS_PLANILHA),
         "gerenciar_roteiro.py" => Some(BUNDLED_GERENCIAR_ROTEIRO),
         "chatgpt_guided.py" => Some(BUNDLED_CHATGPT_GUIDED),
+        "google_workspace.py" => Some(BUNDLED_GOOGLE_WORKSPACE),
         "block_knowledge.json" => Some(BUNDLED_BLOCK_KNOWLEDGE),
         "listar_janelas_abertas.py" => Some(BUNDLED_LISTAR_JANELAS_ABERTAS),
         "mapear_elementos_janela.py" => Some(BUNDLED_MAPEAR_ELEMENTOS_JANELA),
@@ -5878,6 +5880,24 @@ fn get_roadmap(app: AppHandle) -> Result<Value, String> {
 fn get_workbook_meta(app: AppHandle) -> Result<Value, String> {
     let root = workspace_root(&app);
     run_helper_json(&root, &[String::from("workbook-meta")])
+}
+
+#[tauri::command]
+async fn google_workspace_action(app: AppHandle, payload: Value) -> Result<Value, String> {
+    let root = workspace_root(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        // Serialize refresh-token updates and local workbook synchronization.
+        static GOOGLE_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = GOOGLE_LOCK.lock().map_err(|_| "A conexão Google está ocupada.".to_string())?;
+        if payload.get("action").and_then(Value::as_str) == Some("sync") {
+            let runtime = app.state::<RuntimeState>();
+            let running = runtime.running.lock().map_err(|_| "Não foi possível verificar a execução.".to_string())?;
+            if *running {
+                return Ok(serde_json::json!({"paused": true}));
+            }
+        }
+        run_script_json(&root, "google_workspace.py", &[payload.to_string()])
+    }).await.map_err(|_| "A operação Google foi interrompida.".to_string())?
 }
 
 #[tauri::command]
@@ -10551,6 +10571,7 @@ pub fn run() {
             set_agent_compact_mode,
             get_roadmap,
             get_workbook_meta,
+            google_workspace_action,
             get_workbook_preview,
             remove_workbook_preview_row,
             clear_workbook_column,
