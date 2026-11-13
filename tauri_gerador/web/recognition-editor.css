@@ -1,0 +1,223 @@
+/* The open recognition editor is a workspace; the closed map card stays compact. */
+.ocr-target-actions-workspace { display: grid; gap: 10px; min-width: 0; }
+.ocr-target-subtabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.ocr-target-subtabs button { width: auto; min-height: 30px; padding: 6px 14px; border-radius: 8px; border: 1px solid #2b4553; background: #10212d; color: #a9c1cc; font: 600 11px var(--font-body, sans-serif); cursor: pointer; }
+.ocr-target-subtabs button[aria-selected="true"] { background: #123b42; color: #baf6ee; border-color: #38b6bd; }
+.ocr-target-subtabs button:focus-visible { outline: 2px solid #72d9cc; outline-offset: 2px; }
+.ocr-target-action-row[hidden] { display: none !important; }
+.command-tree-card.is-inline-expanded:has(.recognition-expanded-editor) {
+  --command-expanded-width: min(700px, calc(100vw - 80px));
+  width: var(--command-expanded-width);
+  max-width: var(--command-expanded-width);
+  flex-basis: var(--command-expanded-width);
+  height: auto;
+  max-height: min(680px, calc(100vh - 150px));
+  padding: 14px;
+  border-radius: 18px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+.command-tree-card.is-inline-expanded:has(.recognition-expanded-editor) .command-tree-grid {
+  min-height: 0;
+  max-height: min(540px, calc(100vh - 270px));
+  overflow: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.command-tree-card.is-inline-expanded .recognition-expanded-editor {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  gap: 12px;
+}
+.command-tree-card.is-inline-expanded .recognition-card-tabs.has-preview {
+  position: sticky;
+  top: 0;
+  z-index: 18;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 0 0 10px;
+  background: #0c1722;
+  gap: 8px;
+}
+.command-tree-card.is-inline-expanded .recognition-card-tab {
+  min-height: 34px;
+  font-size: 10px;
+}
+.command-tree-card.is-inline-expanded [data-recognition-tab-panel="visual"].is-active:has(.recognition-ocr-embedded-panel) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px 16px;
+  align-items: start;
+}
+.recognition-visual-settings { display: contents; }
+.command-tree-card.is-inline-expanded .recognition-ocr-embedded-panel,
+.command-tree-card.is-inline-expanded .recognition-ocr-embedded-panel .ocr-text-editor-simple { display: contents; }
+.command-tree-card.is-inline-expanded .recognition-ocr-embedded-panel .ocr-text-editor-simple > label:first-of-type { grid-column: 1; grid-row: 2; }
+.command-tree-card.is-inline-expanded .recognition-ocr-embedded-panel .ocr-source-chrome-fields,
+.command-tree-card.is-inline-expanded .recognition-ocr-embedded-panel .ocr-source-element-fields { grid-column: 2; grid-row: 2 / span 2; }
+.command-tree-card.is-inline-expanded .recognition-ocr-embedded-panel .ocr-text-editor-simple > .recognition-card-helper { display: none; }
+.command-tree-card.is-inline-expanded [data-recognition-tab-panel="visual"] > .recognition-ocr-embedded-panel { grid-column: 1 / -1; grid-row: 2; }
+.command-tree-card.is-inline-expanded .recognition-visual-settings > .recognition-preview-compact-wrap { grid-column: 1 / -1; grid-row: 1; }
+.command-tree-card.is-inline-expanded .recognition-visual-settings > .recognition-simple-actions {
+  grid-column: 1 / -1;
+  grid-row: 4;
+  justify-self: center;
+  width: 100%;
+  gap: 10px;
+  margin: 0;
+}
+.command-tree-card.is-inline-expanded .recognition-visual-settings > .recognition-simple-actions .tree-open-button {
+  min-height: 40px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border-color: rgba(230, 247, 255, 0.1);
+  background: rgba(230, 247, 255, 0.035);
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.3;
+}
+.command-tree-card.is-inline-expanded .recognition-visual-settings > .recognition-simple-actions .tree-open-button:hover {
+  border-color: rgba(230, 247, 255, 0.18);
+  background: rgba(230, 247, 255, 0.065);
+}
+.command-tree-card.is-inline-expanded .recognition-visual-settings > .recognition-marker-switch {
+  grid-column: 1;
+  grid-row: 3;
+  justify-self: center;
+  width: 100%;
+  padding: 10px 12px;
+  margin: 0;
+}
+.command-tree-card.is-inline-expanded .recognition-visual-settings > .recognition-ocr-field { grid-column: 1 / -1; }
+.command-tree-card.is-inline-expanded .recognition-preview-compact-wrap .recognition-preview-stage {
+  min-height: 165px;
+  max-height: none;
+}
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .recognition-preview-image-map { width: min(100%, calc(170px * var(--preview-aspect, 2.5))); }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .recognition-preview-image { width: 100%; height: auto; max-height: none; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .recognition-preview-stage { min-height: 165px; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .recognition-card-helper {
+  font-size: 10px;
+  line-height: 1.5;
+}
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .recognition-cell > span,
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-source-field > span { font-size: 10px; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor input:not([type="checkbox"]):not([type="hidden"]),
+.command-tree-card.is-inline-expanded .recognition-expanded-editor select {
+  min-height: 32px;
+  font-size: 11px;
+}
+.command-tree-card.is-inline-expanded:has(.recognition-expanded-editor) .command-tree-actions {
+  max-width: none;
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid #84ced51f;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+.command-tree-card.is-inline-expanded:has(.recognition-expanded-editor) .command-tree-actions button { min-height: 36px; font-size: 11px; border-radius: 10px; }
+.command-tree-card.is-inline-expanded:has(.recognition-expanded-editor) .command-action-group { margin: 0; gap: 5px; }
+.command-tree-card.is-inline-expanded:has(.recognition-expanded-editor) .command-action-group-primary,
+.command-tree-card.is-inline-expanded:has(.recognition-expanded-editor) .command-action-group-secondary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.command-tree-card.is-inline-expanded:has(.recognition-expanded-editor) .command-action-group-reorder { grid-template-columns: repeat(2, 36px); }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .insert-outcome-groups {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 12px;
+}
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .recognition-panel-grid-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-actions-card {
+  padding: 0;
+  border: 0;
+  background: none;
+  gap: 10px;
+}
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-actions-card > .insert-outcome-header,
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-actions-card > .recognition-card-helper { display: none; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-action-list {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-action-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
+  align-items: start;
+  gap: 12px 16px;
+  padding: 12px;
+  border-radius: 14px;
+}
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-action-heading {
+  grid-column: 1 / -1;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #8ccbd71a;
+  font-size: 11px;
+}
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-action-preview {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+}
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-action-preview .recognition-preview-stage { min-height: 165px; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-action-preview .recognition-preview-image { max-height: none; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-action-preview .recognition-preview-meta { display: none; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-outcome.is-success { grid-column: 1; grid-row: 3; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-outcome.is-failure { grid-column: 2; grid-row: 3; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-outcome {
+  align-self: stretch;
+  align-content: start;
+  padding: 10px;
+  gap: 8px;
+}
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-outcome .recognition-choice-button { font-size: 10px; min-height: 30px; line-height: 1.25; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-outcome .recognition-choice-group > span { font-size: 9px; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-outcome .insert-outcome-header strong { font-size: 11px; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 16px; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-identity { grid-column: 1 / -1; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-fields > .recognition-simple-actions:has([data-tree-action]) { grid-column: 1; grid-row: 2; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-fields > .recognition-simple-actions:has([data-variable-test]) { grid-column: 2; grid-row: 2; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-fields > [data-variable-token] { grid-column: 1; grid-row: 3; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-fields > small:last-child { grid-column: 2; grid-row: 3; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-fields > small,
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-fields > output { grid-column: 1 / -1; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-editor { display: grid; gap: 10px; padding: 0; border: 0; background: none; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-editor > p { margin: 0; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-toggle { display: flex; justify-content: space-between; gap: 16px; padding: 10px 12px; border: 1px solid #31515c; border-radius: 10px; background: #10222d; cursor: pointer; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-toggle:has(input:checked) { border-color: #54c9b2; background: #12352f; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-toggle strong { display: block; font-size: 12px; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-toggle small { display: block; margin-top: 3px; font-size: 10px; font-weight: 400; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-toggle input { appearance: none; position: relative; width: 40px; height: 22px; border: 1px solid #476271; border-radius: 20px; background: #263d48; cursor: pointer; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-toggle input::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #d5e8eb; transition: transform 140ms ease; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-toggle input:checked { background: #227e69; border-color: #5ed3b8; }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-toggle input:checked::after { transform: translateX(18px); }
+.command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-toggle input:focus-visible { outline: 2px solid #7fe4cc; outline-offset: 3px; }
+@media(max-width: 760px) {
+  .command-tree-card.is-inline-expanded:has(.recognition-expanded-editor) { --command-expanded-width: min(580px, calc(100vw - 48px)); padding: 10px; gap: 8px; }
+  .command-tree-card.is-inline-expanded:has(.recognition-expanded-editor) .command-tree-actions { grid-template-columns: 1fr 1fr; gap: 6px; }
+  .command-tree-card.is-inline-expanded:has(.recognition-expanded-editor) .command-action-group-reorder { grid-column: 1 / -1; justify-content: center; }
+}
+@media(max-width: 520px) {
+  .command-tree-card.is-inline-expanded [data-recognition-tab-panel="visual"].is-active:has(.recognition-ocr-embedded-panel),
+  .command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-fields,
+  .command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-action-list { grid-template-columns: 1fr; }
+  .command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-fields > .variable-image-editor { grid-column: 1; grid-row: auto; }
+  .command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-action-row { grid-template-columns: 1fr; }
+  .command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-action-preview,
+  .command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-outcome.is-success,
+  .command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-target-outcome.is-failure { grid-column: 1; grid-row: auto; }
+  .command-tree-card.is-inline-expanded .recognition-ocr-embedded-panel .ocr-source-chrome-fields { grid-column: 1; grid-row: 3; }
+  .command-tree-card.is-inline-expanded .recognition-visual-settings > .recognition-marker-switch { grid-row: 4; }
+  .command-tree-card.is-inline-expanded .recognition-visual-settings > .recognition-simple-actions { grid-row: 5; }
+  .command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-fields > .recognition-simple-actions,
+  .command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-fields > small { grid-column: 1; grid-row: auto; }
+}
+@media(prefers-reduced-motion: reduce) {
+  .command-tree-card.is-inline-expanded .recognition-expanded-editor .ocr-variable-toggle input::after { transition: none; }
+}
