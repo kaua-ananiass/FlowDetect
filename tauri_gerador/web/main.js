@@ -5,6 +5,8 @@ import {createAssistantCursor} from './assistant-cursor.js';
 import { startRemoteVideoStats } from "./remote-video-stats.js";
 import {renderTableEditor,initTableBlocks} from './table-blocks.js';
 import {initChatGPT} from './chatgpt.js';
+import {initGoogleWorkspace} from './google-workspace.js';
+
 let chatWorkspace = null;
 let chatMapWorkspace = null;
 const tauriCore = window.__TAURI__?.core ?? null;
@@ -58,6 +60,12 @@ async function saveNativeFileDialog(options = {}) {
 }
 
 if (!window.__FLOWDETECT_DESIGN_SYSTEM__) {
+document.addEventListener('load', event => {
+  const image = event.target;
+  if (image instanceof HTMLImageElement && image.matches('.recognition-preview-image') && image.naturalHeight > 0) {
+    image.closest('.recognition-preview-image-map')?.style.setProperty('--preview-aspect', String(image.naturalWidth / image.naturalHeight));
+  }
+}, true);
 let chatEditorContext=null;
 function isCommandMapVisible(){return state.activeTab === "commands" || !!chatMapWorkspace?.isVisible();}
 
@@ -358,6 +366,7 @@ const state = {
   commandMapReorderSyncTimer: 0,
   commandMapReorderKeyLastAt: 0,
   recognitionTreeTabs: {},
+  recognitionOcrActionTabs: {},
   recognitionPreviewMarkersVisible: {},
   spreadsheetTreeTabs: {},
   downloadTreeTabs: {},
@@ -10418,7 +10427,7 @@ function addOcrTargetRow(container, fieldAttr, actionAttr, value = "") {
 }
 
 function removeOcrTargetRow(button) {
-  const container = button?.closest(".ocr-text-editor");
+  const container = button?.closest(".command-tree-card, .flow-card, .insert-card-panel") || button?.closest(".ocr-text-editor");
   const row = button?.closest("[data-ocr-target-row]");
   const rows = Array.from(container?.querySelectorAll("[data-ocr-target-row]") || []);
   if (!container || !row || rows.length <= 1) return;
@@ -10465,10 +10474,15 @@ function renderOcrTargetOnlyPreview(relativeOcr = {}, clickTarget = {}, layouts 
 
 function renderOcrTargetActionRows(details = {}, currentOrder = null) {
   const targets = splitOcrTargetText(details.texto_ocr_busca ?? details.texto ?? "");
+  const activeIndex = Math.min(Math.max(0, state.recognitionOcrActionTabs[currentOrder] || 0), Math.max(0, targets.length - 1));
   const layouts = Array.isArray(details.ocr_target_layouts) ? details.ocr_target_layouts : [];
   const relativeOcr = details.relativeOcr || recognitionRelativeOcrDetails(details);
   const clickTarget = details.clickTarget || recognitionClickTargetDetails(details);
   return `
+    <div class="ocr-target-actions-workspace">
+    <div class="ocr-target-subtabs" role="tablist" aria-label="Escolher OCR para configurar">
+      ${targets.map((target, index) => `<button type="button" role="tab" data-ocr-action-tab="${index}" aria-selected="${index === activeIndex}" tabindex="${index === activeIndex ? 0 : -1}" title="${escapeHtml(target)}">OCR ${index + 1}</button>`).join('')}
+    </div>
     <div class="ocr-target-action-list" data-ocr-target-action-list>
       ${targets.map((target, index) => {
         const targetAction = ocrTargetActionLayout(layouts, index);
@@ -10478,7 +10492,7 @@ function renderOcrTargetActionRows(details = {}, currentOrder = null) {
         const nextTargetLabel = hasNextTarget ? `Continuar para OCR ${index + 2}` : "Continuar automacao";
         const failureContinueLabel = hasNextTarget ? `Procurar OCR ${index + 2}` : "Continuar automacao";
         return `
-          <section class="ocr-target-action-row" data-ocr-target-action-row data-ocr-target-action-index="${index}">
+          <section class="ocr-target-action-row" role="tabpanel" aria-label="OCR ${index + 1}: ${escapeHtml(target)}" data-ocr-target-action-row data-ocr-target-action-index="${index}" ${index === activeIndex ? '' : 'hidden'}>
             <div class="ocr-target-action-heading">
               <span class="ocr-target-color-dot" data-ocr-target-color="${escapeHtml(OCR_TARGET_COLORS[index % OCR_TARGET_COLORS.length])}" aria-hidden="true"></span>
               <strong data-ocr-action-target-label>OCR ${index + 1}: ${escapeHtml(compactText(target, "Texto ainda nao definido"))}</strong>
@@ -10548,8 +10562,42 @@ function renderOcrTargetActionRows(details = {}, currentOrder = null) {
         `;
       }).join("")}
     </div>
+    </div>
   `;
 }
+
+function selectOcrActionTab(button) {
+  const workspace = button.closest('.ocr-target-actions-workspace');
+  const card = button.closest('.command-tree-card, .flow-card, .insert-card-panel');
+  if (!workspace || !card) return;
+  const index = Number(button.dataset.ocrActionTab);
+  const order = Number(card.dataset.order) || null;
+  state.recognitionOcrActionTabs[order] = index;
+  workspace.querySelectorAll('[data-ocr-action-tab]').forEach(tab => {
+    const selected = Number(tab.dataset.ocrActionTab) === index;
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+  workspace.querySelectorAll('[data-ocr-target-action-row]').forEach(row => {
+    row.hidden = Number(row.dataset.ocrTargetActionIndex) !== index;
+  });
+  hydrateRecognitionPreviewCards(card);
+  requestAnimationFrame(() => updateRelativeOcrPreviewOverlay(card));
+}
+
+document.addEventListener('keydown', event => {
+  if (!event.target.matches?.('[data-ocr-action-tab]')) return;
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  const tabs = Array.from(event.target.closest('.ocr-target-subtabs').querySelectorAll('[data-ocr-action-tab]'));
+  let index = tabs.indexOf(event.target);
+  if (event.key === 'Home') index = 0;
+  else if (event.key === 'End') index = tabs.length - 1;
+  else index = (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  tabs[index].focus();
+  selectOcrActionTab(tabs[index]);
+}, true);
 
 function applyOcrTargetActionVisibility(row) {
   if (!row) return;
@@ -10591,11 +10639,16 @@ function applyOcrTargetActionVisibility(row) {
 
 function syncOcrTargetActionRows(container) {
   const sourceRows = Array.from(container?.querySelectorAll("[data-ocr-target-row]") || []);
+  const targetCount = sourceRows.filter(row => row.querySelector('[data-ocr-target-field]')?.value.trim()).length;
+  const actionCount = container?.querySelectorAll('[data-ocr-target-action-row]').length || 0;
+  if (targetCount !== actionCount) refreshOcrTargetActionRows(container);
   container?.querySelectorAll("[data-ocr-target-action-row]").forEach((actionRow, index) => {
     const source = sourceRows[index];
     const target = String(source?.querySelector("[data-ocr-target-field]")?.value || "").trim();
     const label = actionRow.querySelector("[data-ocr-action-target-label]");
     if (label) label.textContent = `OCR ${index + 1}: ${compactText(target, "Texto ainda nao definido")}`;
+    const tab = container.querySelector(`[data-ocr-action-tab="${index}"]`);
+    if (tab) tab.title = target;
     const action = source?.querySelector("[data-ocr-target-action]")?.value || "continuar";
     const block = source?.querySelector("[data-ocr-target-block]")?.value || "";
     const clicks = source?.querySelector("[data-ocr-target-clicks]")?.value || "1";
@@ -11227,7 +11280,7 @@ function renderRecognitionExpandedTreeEditor(event) {
             }, event.order, { embeddedHybrid: true })}
           </div>
         ` : ""}
-        <div>
+        <div class="recognition-visual-settings">
         <input data-tree-field="imagePath" type="hidden" value="${escapeHtml(details.imagem ?? "")}" />
         <input data-tree-field="windowTitle" type="hidden" value="" />
         <div class="recognition-preview-compact-wrap">
@@ -27755,6 +27808,11 @@ window.addEventListener("pointercancel", (event) => {
 });
 
 commandMapList.addEventListener("click", async (event) => {
+  const ocrActionTab = event.target.closest('[data-ocr-action-tab]');
+  if (ocrActionTab) {
+    selectOcrActionTab(ocrActionTab);
+    return;
+  }
   const ocrTargetActionChoice = event.target.closest("[data-ocr-target-action-choice]");
   if (ocrTargetActionChoice) {
     applyOcrTargetActionChoice(ocrTargetActionChoice);
@@ -29243,6 +29301,23 @@ async function boot() {
   }
 }
 initTableBlocks({invoke,applyRoadmap});
+// Keep the Google callbacks in the same lexical scope as the workbook editor.
+initGoogleWorkspace({
+  host: document.getElementById('googleWorkspacePanel'), invoke, pickFile: openNativeFileDialog,
+  isRunning: () => state.assist.mode === 'running',
+  onWorkbook: async (workbookId, {automatic = false} = {}) => {
+    const currentId = state.previewWorkbookId;
+    const sheet = automatic && currentId === workbookId ? state.workbookSelectedSheet : '';
+    const table = document.getElementById('workbookTableWrap');
+    const scroll = {top: table?.scrollTop || 0, left: table?.scrollLeft || 0};
+    await refreshWorkbookMeta();
+    if (automatic && currentId && currentId !== workbookId) return;
+    state.previewWorkbookId = workbookId;
+    await loadWorkbookPreview(sheet, workbookId);
+    populateSheetSelect('');
+    if (automatic && table) {table.scrollTop = scroll.top; table.scrollLeft = scroll.left;}
+  },
+});
 
 updateLoginResolutionPreview();
 applyLoginStateUI();

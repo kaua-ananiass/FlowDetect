@@ -80,13 +80,14 @@ test("Chrome capture is bound to the automation tab, not the currently visible t
 test("visual recognition uses the bound stream without capturing another active tab", async () => {
   const messages = [];
   let bitmapClosed = false;
-  const context = runner(["captureImage"], {
+  const cursorMessages = [];
+  const context = runner(["captureImage", "captureImageWithoutCursor"], {
     chrome: {
       runtime: { sendMessage: async (message) => {
         messages.push(message);
         return { ok: true, dataUrl: "data:image/png;base64,AAAA", width: 1920, height: 1080 };
       } },
-      tabs: { captureVisibleTab: () => { throw new Error("Wrong capture path"); } },
+      tabs: { sendMessage: async (tabId, message) => { assert.equal(tabId,42);cursorMessages.push(message.type);return {visible:false}; }, captureVisibleTab: () => { throw new Error("Wrong capture path"); } },
     },
     bitmapFromCapture: async () => ({ width: 980, height: 551, close: () => { bitmapClosed = true; } }),
     imageDataFromBitmap: () => ({ width: 980, height: 551 }),
@@ -99,14 +100,16 @@ test("visual recognition uses the bound stream without capturing another active 
   assert.equal(frame.originalWidth, 1920);
   assert.equal(frame.scale, 980 / 1920);
   assert.equal(bitmapClosed, true);
+  assert.deepEqual(cursorMessages,['flowdetect-cursor-suspend','flowdetect-cursor-resume']);
 });
 
 test("fallback waits for the automation tab and never matches the other tab's screenshot", async () => {
   const logs = [];
   let queries = 0;
   let captures = 0;
-  const context = runner(["activeTabForWindow", "captureUnavailable", "waitForActiveTargetTab", "captureImage"], {
+  const context = runner(["activeTabForWindow", "captureUnavailable", "waitForActiveTargetTab", "captureImage", "captureImageWithoutCursor"], {
     chrome: { tabs: {
+      sendMessage: async () => ({visible:false}),
       get: async () => ({ id: 42, windowId: 7 }),
       query: async () => [{ id: ++queries === 1 ? 99 : 42 }],
       captureVisibleTab: async () => { captures += 1; return "target-frame"; },

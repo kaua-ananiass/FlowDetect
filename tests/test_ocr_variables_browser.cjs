@@ -86,6 +86,30 @@ test('Studio configures capture inside OCR and lists automation variables withou
     await page.locator('#commandTabButton').click();
     const card=page.locator('.command-tree-card[data-order="1"]').first();
     await card.locator('[data-tree-action="open-card-details"]').click({force:true});
+    await card.screenshot({path:path.join(root,'output/ocr-variables/search-editor.png')});
+    const layout=await card.evaluate(e=>{
+      const r=e.getBoundingClientRect(), grid=e.querySelector('.command-tree-grid');
+      const fields=e.querySelector('[data-tree-field="ocrSource"]').getBoundingClientRect();
+      const preview=e.querySelector('.recognition-preview-compact-wrap').getBoundingClientRect();
+      const tabs=[...e.querySelectorAll('.recognition-card-tabs > [data-recognition-tab-target]')].filter(t=>t.getBoundingClientRect().height>0).map(t=>t.getBoundingClientRect().top);
+      const footer=e.querySelector('.command-tree-actions').getBoundingClientRect();
+      return {width:r.width,height:r.height,bodyFits:grid.scrollHeight<=grid.clientHeight+2,previewFirst:preview.bottom<=fields.top,previewWide:preview.width>600,tabsOnOneLine:Math.max(...tabs)-Math.min(...tabs)<2,footerFits:footer.bottom<=r.bottom&&footer.top>=r.top,scrollTop:e.scrollTop};
+    });
+    assert.ok(layout.width>=650&&layout.height<=680,JSON.stringify(layout));
+    assert.equal(layout.previewFirst,true);
+    assert.equal(layout.previewWide,true);
+    assert.equal(layout.tabsOnOneLine,true,JSON.stringify(layout));
+    assert.equal(layout.bodyFits,true,'normal OCR search fits without internal scrolling');
+    assert.equal(layout.footerFits,true);
+    await card.screenshot({path:path.join(root,'output/ocr-variables/search-editor.png')});
+    await card.locator('[data-recognition-tab-target="ocr_actions"]').click();
+    await card.screenshot({path:path.join(root,'output/ocr-variables/actions-editor.png')});
+    const actionLayout=await card.locator('[data-ocr-target-action-row]').first().evaluate(e=>{
+      const r=e.getBoundingClientRect(), preview=e.querySelector('.ocr-target-action-preview').getBoundingClientRect();
+      const success=e.querySelector('.is-success').getBoundingClientRect(), failure=e.querySelector('.is-failure').getBoundingClientRect();
+      return {wide:r.width>600,previewFirst:preview.bottom<=success.top&&preview.bottom<=failure.top,actionsAligned:Math.abs(success.top-failure.top)<2,previewWide:preview.width>600,bodyFits:e.closest('.command-tree-grid').scrollHeight<=e.closest('.command-tree-grid').clientHeight+2};
+    });
+    assert.deepEqual(actionLayout,{wide:true,previewFirst:true,actionsAligned:true,previewWide:true,bodyFits:true});
     await card.locator('[data-recognition-tab-target="variable"]').click({force:true});
     await card.locator('[data-capture="enabled"]').check({force:true});
     await card.locator('[data-capture="name"]').fill('valor_nota');
@@ -121,7 +145,7 @@ test('Studio configures capture inside OCR and lists automation variables withou
     await card.locator('[data-variable-test="chrome"]').click({force:true});
     await page.waitForFunction(()=>document.querySelector('#ocrTestResult .is-found-variable')?.textContent.includes('61,36'));
     await page.locator('#ocrTestCloseButton').click();
-    await card.locator('[data-tree-action="test-image-recognition"]').click({force:true});
+    await card.locator('[data-tree-action="test-image-recognition"]').click();
     await page.locator('#ocrTestScreenButton').click();
     await page.waitForFunction(()=>document.querySelector('#ocrTestResult .is-found-variable')?.textContent.includes('84,67'));
     assert.equal(await page.locator('#ocrTestResult .is-found-ocr').count(),1);
@@ -156,6 +180,42 @@ test('Studio configures capture inside OCR and lists automation variables withou
     await textCard.locator('[data-insert-text-variable="valor_nota"]').click({force:true});
     assert.equal(await field.inputValue(),'Total: {{valor_nota}}{{valor_nota}} fim');
     await page.screenshot({path:path.join(root,'output/ocr-variable-general/text-library.png'),fullPage:true});
+    // Adding a target after the action editor exists must create its subtab.
+    if (await card.locator('[data-tree-action="open-card-details"]').count()) {
+      await card.locator('[data-tree-action="open-card-details"]').click({force:true});
+    }
+    await card.locator('[data-recognition-tab-target="visual"]').click({force:true});
+    await card.locator('[data-tree-action="add-ocr-target"]').click({force:true});
+    const secondTarget=card.locator('[data-ocr-target-field]').nth(1);
+    await secondTarget.fill('Confirmar documento');
+    await secondTarget.dispatchEvent('change');
+    await card.locator('[data-recognition-tab-target="ocr_actions"]').click({force:true});
+    assert.equal(await card.locator('[data-ocr-action-tab]').count(),2);
+    assert.equal(await card.locator('[data-ocr-target-action-row]:visible').count(),1);
+    const firstChoice=await card.locator('[data-ocr-target-action-index="0"] [data-ocr-target-action-control="clickChoice"]').inputValue();
+    await card.locator('[data-ocr-action-tab="1"]').click({force:true});
+    const secondAction=card.locator('[data-ocr-target-action-index="1"]');
+    assert.equal(await secondAction.isVisible(),true);
+    await secondAction.locator('[data-ocr-target-action-choice="clickChoice"][data-ocr-target-action-value="double"]').click({force:true});
+    await card.locator('[data-ocr-action-tab="0"]').click({force:true});
+    assert.equal(await card.locator('[data-ocr-target-action-index="0"] [data-ocr-target-action-control="clickChoice"]').inputValue(),firstChoice);
+    await card.locator('[data-ocr-action-tab="1"]').click({force:true});
+    assert.equal(await secondAction.locator('[data-ocr-target-action-control="clickChoice"]').inputValue(),'double');
+    await card.locator('[data-ocr-action-tab="1"]').focus();
+    await page.keyboard.press('ArrowLeft');
+    assert.equal(await card.locator('[data-ocr-action-tab="0"]').getAttribute('aria-selected'),'true');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await card.locator('[data-ocr-action-tab="1"]').getAttribute('aria-selected'),'true');
+    await card.screenshot({path:path.join(root,'output/ocr-variables/ocr-subtabs.png')});
+    await card.locator('[data-recognition-tab-target="visual"]').click({force:true});
+    await card.locator('[data-recognition-tab-target="ocr_actions"]').click({force:true});
+    assert.equal(await card.locator('[data-ocr-action-tab="1"]').getAttribute('aria-selected'),'true');
+    const count=await page.evaluate(()=>requests.filter(r=>r.command==='update_image_click_block').length);
+    await card.locator('[data-tree-action="save"]').click({force:true});
+    await page.waitForFunction(count=>requests.filter(r=>r.command==='update_image_click_block').length>count,count);
+    const savedTargets=await page.evaluate(()=>requests.filter(r=>r.command==='update_image_click_block').at(-1).args);
+    assert.equal(JSON.parse(savedTargets.ocrTargetLayouts).length,2);
+    assert.equal(JSON.parse(savedTargets.ocrTargetLayouts)[1].clicks,2);
     assert.deepEqual(errors,[]);
   }finally{await browser.close();await new Promise(r=>server.close(r));}
 });

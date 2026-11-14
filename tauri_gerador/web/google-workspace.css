@@ -1,0 +1,24 @@
+.google-connection { margin: 16px 0 24px; border-block: 1px solid #22404d; }
+.google-connection > summary { display:flex; justify-content:space-between; gap:16px; cursor:pointer; padding:18px 4px; font-weight:600; }
+.google-connection small { color:#8daab8; font-size:12px; line-height:1.6; }
+.google-content { padding:0 4px 20px; }
+.google-content header { display:flex; align-items:center; justify-content:space-between; gap:24px; }
+.google-content h3,.google-content h4 { margin:0 0 10px; }
+.google-content p { color:#a3bbc6; line-height:1.65; font-size:14px; }
+.google-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.google-content button { transition:transform .16s ease,filter .16s ease; }
+.google-content button:hover:not(:disabled) { transform:translateY(-1px); filter:brightness(1.1); }
+.google-setup { margin-block:18px; padding:14px 0; color:#a3bbc6; }
+.google-setup summary { cursor:pointer; color:#7fe0d0; }
+.google-setup li { margin:10px 0; line-height:1.6; font-size:14px; }
+.google-tools { display:grid; grid-template-columns:1.3fr 1fr; gap:32px; margin-top:24px; }
+.google-tools section { display:flex; flex-direction:column; gap:12px; min-width:0; }
+.google-tools label { display:flex; flex-direction:column; gap:8px; }
+.google-tools input { width:100%; box-sizing:border-box; min-height:42px; padding:10px 12px; border:1px solid #2a4857; border-radius:10px; background:#10212b; color:#e1eef2; font:inherit; }
+.google-tools input:focus { outline:2px solid #5dccbf; outline-offset:2px; }
+.google-tools a { color:#7fe0d0; }
+.google-auto { display:flex; flex-direction:column; align-items:flex-start; gap:8px; margin-block:8px; }
+.google-auto button[aria-pressed="true"] { border-color:#5dccbf; color:#7fe0d0; background:#163c39; }
+[data-google-status][data-error="true"] { color:#ffb4b4; }
+@media(max-width:850px) { .google-tools{grid-template-columns:1fr;} .google-content header{align-items:flex-start;flex-direction:column;} }
+@media(prefers-reduced-motion:reduce) { .google-content button{transition:none;} }

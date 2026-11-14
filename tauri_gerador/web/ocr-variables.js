@@ -36,15 +36,14 @@ export function renderCaptureEditor(details = {}, preview = '', standalone = fal
   const options = (values, selected) => values.map(([value,label]) => `<option value="${value}" ${value===selected?'selected':''}>${label}</option>`).join('');
   return `<section class="ocr-variable-editor" data-variable-editor data-capture-initial="${esc(JSON.stringify(c))}">
     ${standalone ? Object.entries({relativeOcrWidth:c.reference?.width||140,relativeOcrHeight:c.reference?.height||40,relativeOcrOffsetX:c.reference?.offsetX||0,relativeOcrOffsetY:c.reference?.offsetY||0,relativeOcrSide:'livre'}).map(([key,value])=>`<input data-tree-field="${key}" type="hidden" value="${esc(value)}">`).join('') : ''}
-    <label class="ocr-variable-toggle"><input type="checkbox" data-capture="enabled" ${c.enabled?'checked':''}> Salvar uma informação</label>
-    <p>Marque na imagem onde o valor aparece. Arraste a área Variável e ajuste pelos cantos.</p>
+    <div class="variable-image-editor">${preview || '<small>Abra um bloco com imagem de referência para marcar a variável.</small>'}</div>
+    <label class="ocr-variable-toggle"><span><strong>Salvar valor em variável</strong><small>Ative e ajuste a área amarela sobre o valor que deseja guardar.</small></span><input type="checkbox" role="switch" data-capture="enabled" ${c.enabled?'checked':''}></label>
     <div class="ocr-variable-fields" ${c.enabled?'':'hidden'}>
       <div class="ocr-variable-grid ocr-variable-identity">
       <label>Nome da variável<input data-capture="name" value="${esc(c.name)}" placeholder="valor_nota" maxlength="48" pattern="[a-zA-Z_][a-zA-Z0-9_]*" autocomplete="off"></label>
       <label>Informação<select data-capture="kind">${options([['money','Dinheiro'],['number','Número'],['date','Data'],['text','Texto']],c.kind||'money')}</select></label>
       </div>
       <input data-capture-region type="hidden" value="${esc(JSON.stringify(c.region || null))}">
-      <div class="variable-image-editor">${preview || '<small>Abra um bloco com imagem de referência para marcar a variável.</small>'}</div>
       <div class="recognition-simple-actions"><button class="tree-open-button" data-tree-action="capture-image" type="button">Tirar print</button><button class="tree-open-button" data-tree-action="select-image" type="button">Trocar imagem</button></div>
       <small data-variable-token>Use depois: {{${esc(c.name||'valor_nota')}}}</small>
       <div class="recognition-simple-actions"><button type="button" data-variable-test="screen" class="tree-open-button" title="Lê a tela deste computador com o OCR local">Testar tudo na tela</button><button type="button" data-variable-test="chrome" class="tree-open-button">Testar tudo no Chrome</button></div>

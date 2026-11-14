@@ -972,6 +972,8 @@ class OcrAnchorTests(unittest.TestCase):
 
     def test_visual_click_does_not_reactivate_an_old_context_by_default(self):
         executor = motor.ExecutorAutomacao.__new__(motor.ExecutorAutomacao)
+        executor.modo_teste_reconhecimento = True
+        executor.cancelamento_solicitado = Mock(return_value=False)
         executor.centro_area_reconhecida = Mock(return_value=(620, 330))
         executor.preparar_janela_para_acao = Mock(side_effect=AssertionError("Nao deve reativar contexto"))
         fake_pyautogui = SimpleNamespace(moveTo=Mock(), mouseDown=Mock(), mouseUp=Mock())

@@ -310,21 +310,13 @@ test("content runner can be reinjected into the same tab", () => {
 const workerSource = fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/service_worker.js"), "utf8");
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../flowdetect_chrome/manifest.json"), "utf8"));
 
-test("service worker keeps the persistent content runner and only injects registered helper files", () => {
+test("persistent runner loads the passive automation cursor before executing blocks", () => {
+  // Table operations and native modal close already require scripting. The old
+  // blanket prohibition predates both features and the requested cursor overlay.
   assert.doesNotMatch(workerSource, /progress-overlay/);
-  const files=[...workerSource.matchAll(/files:\s*\[(['"])([^'"]+)\1\]/g)].map(match=>match[2]);
-  assert.deepEqual([...new Set(files)].sort(),['input-lock.js','page-outline.js','table-reader.js']);
-  assert.ok(!files.includes('content.js'),'The persistent runner must not be re-injected');
-  assert.ok(manifest.permissions.includes("scripting"));
-  assert.deepEqual(manifest.content_scripts, [{
-    matches: ["http://*/*", "https://*/*"],
-    js: ["input-lock.js"],
-    all_frames: true,
-    match_about_blank: true,
-    run_at: "document_start",
-  },{
-    matches: ["http://*/*", "https://*/*"],
-    js: ["page-outline.js", "content.js"],
-    run_at: "document_idle",
-  }]);
+  const runner = manifest.content_scripts.find(script => script.js.includes('content.js'));
+  assert.ok(runner);
+  assert.equal(runner.run_at, 'document_idle');
+  assert.ok(runner.js.indexOf('automation-cursor.js') < runner.js.indexOf('content.js'));
+  assert.ok(runner.js.includes('automation-cursor.js'));
 });

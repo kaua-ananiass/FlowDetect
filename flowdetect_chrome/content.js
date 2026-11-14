@@ -340,6 +340,8 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   }
 
   async function waitForTextTarget(text, timeoutMs, attempts = 1, interval = 0, options = {}) {
+    globalThis.FlowDetectCursor?.analyzing();
+    try {
     const timeout = Math.max(500, Number(timeoutMs || 10000));
     const deadline = Date.now() + timeout;
     const retryDelay = Math.max(120, Number(interval || 0) || Math.min(500, Math.round(timeout / (Math.max(1, Number(attempts || 1)) + 1))));
@@ -350,6 +352,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       await sleep(retryDelay);
     }
     throw new Error("OCR nao encontrou o texto: " + text + ".");
+    } finally { globalThis.FlowDetectCursor?.analyzing(false); }
   }
 
   function resolveElement(selector = {}) {
@@ -369,6 +372,8 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
   }
 
   async function waitForElement(selector, timeoutMs) {
+    globalThis.FlowDetectCursor?.analyzing();
+    try {
     const deadline = Date.now() + Math.max(500, Number(timeoutMs || 10000));
     while (Date.now() <= deadline) {
       const element = resolveElement(selector);
@@ -376,6 +381,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
       await sleep(120);
     }
     throw new Error(`Não encontrei o elemento: ${selector?.value || "seletor vazio"}.`);
+    } finally { globalThis.FlowDetectCursor?.analyzing(false); }
   }
 
   function highlightRect(rect, { color = "#32e6c6", label = "" } = {}) {
@@ -464,6 +470,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     const clickable = focusableTarget(preferTarget ? target : (atRecognizedPoint || target));
     if (!clickable || !isVisible(clickable)) throw new Error("O alvo reconhecido nao esta visivel para receber o clique.");
     if (!isClickReady(clickable)) throw new Error("O alvo reconhecido esta desativado e nao recebeu o clique.");
+    globalThis.FlowDetectCursor?.indicate(clickable, 'Clique', point);
     const checkbox = checkboxControl(clickable);
     if (checkbox) {
       if (!isClickReady(checkbox)) throw new Error("A caixa de selecao esta desativada e nao recebeu o clique.");
@@ -541,6 +548,8 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     const before = checkboxState(control);
     if (ensureChecked && !control) throw new Error("O elemento encontrado nao e uma caixa de selecao.");
     if (ensureChecked && before === true) return clickable;
+    await globalThis.FlowDetectCursor?.move(clickable, 'Clique', point);
+    if (!clickable?.isConnected || !isClickReady(clickable)) throw Error('O alvo mudou antes do clique.');
     if (!control) return clickTarget(clickable, clicks, point, true);
     const rect = clickable.getBoundingClientRect();
     const refreshX = Number.isFinite(x) ? x : rect.left + rect.width / 2;
@@ -613,10 +622,12 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
   }
 
-  function applyTextToFocused(step) {
+  async function applyTextToFocused(step) {
     const element = document.activeElement;
     if (!element || element === document.body || element === document.documentElement) throw new Error("Selecione um campo na página antes do bloco Texto livre.");
     const text = String(step.text || "");
+    await globalThis.FlowDetectCursor?.move(element, 'Digitando');
+    if (document.activeElement !== element) throw Error('O foco mudou antes da digitação.');
     if (element.isContentEditable) setContentEditableValue(element, text, !step.clear_before);
     else if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) setNativeValue(element, step.clear_before ? text : `${element.value || ""}${text}`);
     else throw new Error("O elemento ativo não aceita texto.");
@@ -680,7 +691,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     }
     return false;
   }
-  function dispatchKeySequence(keys, repetitions = 1) {
+  async function dispatchKeySequence(keys, repetitions = 1) {
     const raw = (keys || []).map((key) => String(key || "").trim().toLowerCase()).filter(Boolean);
     if (!raw.length) throw new Error("Sequ?ncia de teclas vazia.");
     const modifiers = {
@@ -692,6 +703,7 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     const primaryKeys = raw.filter((key) => !MODIFIER_KEYS.has(key));
     if (!primaryKeys.length) throw new Error("Informe uma tecla junto com o atalho.");
     let target = currentKeyboardTarget();
+    await globalThis.FlowDetectCursor?.move(target, 'Teclado');
     for (let attempt = 0; attempt < Math.max(1, Number(repetitions || 1)); attempt += 1) {
       for (const key of primaryKeys) {
         target = currentKeyboardTarget();
@@ -722,12 +734,14 @@ if (globalThis.__flowDetectChromeRunnerVersion !== CONTENT_RUNTIME_VERSION) {
     if (type === "preencher" || type === "limpar") {
       if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) throw new Error("O seletor encontrado não é um campo editável.");
       const nextValue = type === "limpar" ? "" : value;
+      await globalThis.FlowDetectCursor?.move(element, type === 'limpar' ? 'Limpando campo' : 'Digitando');
       if (element.isContentEditable) setContentEditableValue(element, nextValue, action.clear_before === false);
       else setNativeValue(element, action.clear_before === false ? `${element.value}${nextValue}` : nextValue);
-      if (action.press_after) dispatchKeySequence([action.press_after]);
+      if (action.press_after) await dispatchKeySequence([action.press_after]);
       return type === "limpar" ? "Campo limpo." : "Campo preenchido.";
     }
     if (["selecionar_texto", "selecionar_valor", "selecionar_indice"].includes(type)) {
+      await globalThis.FlowDetectCursor?.move(element, 'Selecionando');
       if (!(element instanceof HTMLSelectElement)) throw new Error("O seletor encontrado não é uma lista de seleção.");
       if (type === "selecionar_indice") element.selectedIndex = Number.parseInt(value, 10);
       else {
